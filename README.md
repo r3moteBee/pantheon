@@ -593,7 +593,6 @@ Contributions are welcome! Please:
 
 - Issues: GitHub Issues
 - Discussions: GitHub Discussions
-- Documentation: https://agent-harness.readthedocs.io
 
 ## Roadmap
 
