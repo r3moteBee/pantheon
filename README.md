@@ -20,7 +20,7 @@ Agent Harness is a self-hosted, production-ready agentic AI framework with a 5-t
 ### 1. Clone and Setup
 
 ```bash
-git clone https://github.com/yourusername/agent-harness.git
+git clone https://github.com/r3moteBee/agent-harness.git
 cd agent-harness
 ```
 
