@@ -15,6 +15,20 @@ Agent Harness is a self-hosted, production-ready agentic AI framework with a 5-t
 - **WebSocket Communication**: Real-time agent status and message streaming
 - **Telegram Integration**: Optional Telegram bot for remote agent control
 
+## System Requirements
+
+**Docker mode** (recommended for servers):
+- Docker 24+ with the Compose plugin
+- Git
+- Any modern 64-bit OS (Linux, macOS, Windows with WSL2)
+
+**Local mode** (no Docker needed):
+- Git
+- Python 3.11+ — available natively on Ubuntu 22.04+, Debian 12+, Fedora 37+, macOS 13+ (Homebrew), Alpine 3.17+
+- Node.js 18+ and npm
+
+> The installer will attempt to install Python and Node automatically using your system's package manager (Homebrew, apt, dnf, yum, pacman, or apk) if they are not already present.
+
 ## Quick Start
 
 ### 1. Clone and Setup

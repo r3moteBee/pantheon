@@ -143,32 +143,92 @@ if [[ "$MODE" == "docker" ]]; then
   success "Docker daemon is running"
 
 else  # local mode
-  # Check Python 3.11+
+
+  # ── Detect package manager ─────────────────────────────────────────────────
+  PKG_MANAGER=""
+  if   [[ "$OS" == "macos" ]] && command -v brew &>/dev/null; then PKG_MANAGER="brew"
+  elif command -v apt-get  &>/dev/null; then PKG_MANAGER="apt"
+  elif command -v dnf      &>/dev/null; then PKG_MANAGER="dnf"
+  elif command -v yum      &>/dev/null; then PKG_MANAGER="yum"
+  elif command -v pacman   &>/dev/null; then PKG_MANAGER="pacman"
+  elif command -v apk      &>/dev/null; then PKG_MANAGER="apk"
+  elif [[ "$OS" == "macos" ]]; then
+    warn "Homebrew not found. Install it first: https://brew.sh"
+    warn "Then re-run this script."
+    die  "Homebrew is required to auto-install dependencies on macOS."
+  fi
+
+  pkg_install() {
+    # $1 = display name, $2+ = package name(s)
+    local label="$1"; shift
+    info "Installing ${label} via ${PKG_MANAGER}..."
+    if [[ "$SKIP_CONFIRM" == false ]]; then
+      read -rp "  OK to install ${label} now? [Y/n] " yn
+      [[ "${yn:-Y}" =~ ^[Yy]$ ]] || die "Cannot continue without ${label}. Install it manually and re-run."
+    fi
+    case "$PKG_MANAGER" in
+      brew)   brew install "$@" ;;
+      apt)    sudo apt-get update -qq && sudo apt-get install -y "$@" ;;
+      dnf)    sudo dnf install -y "$@" ;;
+      yum)    sudo yum install -y "$@" ;;
+      pacman) sudo pacman -S --noconfirm "$@" ;;
+      apk)    sudo apk add "$@" ;;
+      *)      die "${label} is required but no supported package manager was found. Install manually: https://python.org / https://nodejs.org" ;;
+    esac
+  }
+
+  # ── Check / install Python 3.11+ ──────────────────────────────────────────
   PYTHON_CMD=""
   for cmd in python3.11 python3.12 python3.13 python3; do
-    if command -v "$cmd" &>/dev/null; then
-      ver=$("$cmd" -c "import sys; print(sys.version_info[:2])" 2>/dev/null)
-      if "$cmd" -c "import sys; assert sys.version_info >= (3,11)" 2>/dev/null; then
-        PYTHON_CMD="$cmd"
-        success "Python found: $cmd ($ver)"
-        break
-      fi
+    if command -v "$cmd" &>/dev/null && "$cmd" -c "import sys; assert sys.version_info >= (3,11)" 2>/dev/null; then
+      PYTHON_CMD="$cmd"
+      success "Python found: $cmd ($($cmd --version))"
+      break
     fi
   done
-  [[ -n "$PYTHON_CMD" ]] || die "Python 3.11 or higher is required. Install from https://python.org"
 
-  # Check Node 18+
-  if command -v node &>/dev/null; then
-    NODE_VER=$(node -e "process.exit(parseInt(process.versions.node) < 18 ? 1 : 0)" 2>/dev/null && node --version || echo "too old")
-    if [[ "$NODE_VER" != "too old" ]]; then
-      success "Node.js found: $(node --version)"
-    else
-      die "Node.js 18 or higher is required. Install from https://nodejs.org"
-    fi
-  else
-    die "Node.js is required for local mode. Install from https://nodejs.org"
+  if [[ -z "$PYTHON_CMD" ]]; then
+    warn "Python 3.11+ not found."
+    case "$PKG_MANAGER" in
+      brew)   pkg_install "Python 3.11" python@3.11 ;;
+      apt)    pkg_install "Python 3.11" python3.11 python3.11-venv python3-pip ;;
+      dnf)    pkg_install "Python 3.11" python3.11 ;;
+      yum)    pkg_install "Python 3.11" python3.11 ;;
+      pacman) pkg_install "Python"      python ;;
+      apk)    pkg_install "Python 3.11" python3 py3-pip ;;
+    esac
+    # Re-check after install
+    for cmd in python3.11 python3.12 python3.13 python3; do
+      if command -v "$cmd" &>/dev/null && "$cmd" -c "import sys; assert sys.version_info >= (3,11)" 2>/dev/null; then
+        PYTHON_CMD="$cmd"; break
+      fi
+    done
+    [[ -n "$PYTHON_CMD" ]] || die "Python 3.11+ install failed. Please install manually: https://python.org"
+    success "Python installed: $PYTHON_CMD"
   fi
-  check_cmd npm "Install from https://nodejs.org"
+
+  # ── Check / install Node 18+ ──────────────────────────────────────────────
+  NODE_OK=false
+  if command -v node &>/dev/null && node -e "process.exit(parseInt(process.versions.node) < 18 ? 1 : 0)" 2>/dev/null; then
+    NODE_OK=true
+    success "Node.js found: $(node --version)"
+  fi
+
+  if [[ "$NODE_OK" == false ]]; then
+    warn "Node.js 18+ not found."
+    case "$PKG_MANAGER" in
+      brew)   pkg_install "Node.js" node ;;
+      apt)    pkg_install "Node.js" nodejs npm ;;
+      dnf)    pkg_install "Node.js" nodejs npm ;;
+      yum)    pkg_install "Node.js" nodejs npm ;;
+      pacman) pkg_install "Node.js" nodejs npm ;;
+      apk)    pkg_install "Node.js" nodejs npm ;;
+    esac
+    command -v node &>/dev/null || die "Node.js install failed. Please install manually: https://nodejs.org"
+    success "Node.js installed: $(node --version)"
+  fi
+
+  command -v npm &>/dev/null || die "npm not found after Node install. Please install manually: https://nodejs.org"
 fi
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
