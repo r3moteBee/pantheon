@@ -573,7 +573,9 @@ else
 
   # Point ChromaDB to in-process (PersistentClient) by clearing the host
   update_env "CHROMA_HOST" ""
+  update_env "DATA_DIR" "${INSTALL_DIR}/data"
   info "ChromaDB set to in-process mode (no container needed)"
+  info "DATA_DIR set to ${INSTALL_DIR}/data"
 
   # ── Python virtual environment ──────────────────────────────────────────────
   header "Setting up Python environment..."
