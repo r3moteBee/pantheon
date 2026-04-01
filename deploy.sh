@@ -391,7 +391,8 @@ else
   header "Setting up Python environment..."
 
   VENV_DIR="$INSTALL_DIR/.venv"
-  if [[ ! -d "$VENV_DIR" ]]; then
+  if [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+    rm -rf "$VENV_DIR"
     "$PYTHON_CMD" -m venv "$VENV_DIR"
     success "Created virtual environment at .venv"
   else
