@@ -84,6 +84,32 @@ make logs      # tail logs for all services
 
 > **Note:** The `make` commands are Docker-only. If you installed in local mode, use `start.sh` / `stop.sh` instead.
 
+### HTTPS with Caddy
+
+The installer can automatically set up [Caddy](https://caddyserver.com) as a reverse proxy with free Let's Encrypt HTTPS certificates. During installation, enter your domain when prompted, or pass it as a flag:
+
+```bash
+curl -fsSL .../deploy.sh | bash -s -- --mode local --domain agent.example.com
+```
+
+Prerequisites: your domain's DNS must point to the server, and ports 80 + 443 must be open in your firewall or cloud security group.
+
+To set up HTTPS after an existing install:
+
+```bash
+# Install Caddy (Ubuntu/Debian)
+sudo apt-get install -y caddy
+
+# Copy and edit the included Caddyfile
+sudo cp ~/agent-harness/Caddyfile /etc/caddy/Caddyfile
+# Edit /etc/caddy/Caddyfile and replace {$DOMAIN:localhost} with your domain
+
+# Start Caddy
+sudo systemctl enable caddy && sudo systemctl start caddy
+```
+
+Caddy will automatically obtain and renew TLS certificates. No manual cert management needed.
+
 ## Architecture Overview
 
 ```
