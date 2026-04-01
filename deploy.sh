@@ -412,84 +412,9 @@ else
   cd "$INSTALL_DIR"
   success "Frontend built"
 
-  # ── Write start.sh ──────────────────────────────────────────────────────────
-  header "Writing helper scripts..."
-
-  cat > "$INSTALL_DIR/start.sh" <<'STARTSCRIPT'
-#!/usr/bin/env bash
-# Start Agent Harness (local mode)
-set -euo pipefail
-
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT="${BACKEND_PORT:-8000}"
-FRONTEND_PORT="${FRONTEND_PORT:-3000}"
-PID_FILE="$DIR/.pids"
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
-info()    { echo -e "${CYAN}[info]${RESET}  $*"; }
-success() { echo -e "${GREEN}[ok]${RESET}    $*"; }
-die()     { echo -e "${RED}[error]${RESET} $*" >&2; exit 1; }
-
-[[ -f "$DIR/.venv/bin/activate" ]] || die "Virtual environment not found. Run deploy.sh first."
-[[ -d "$DIR/frontend/dist" ]]      || die "Frontend not built. Run deploy.sh first."
-
-# Kill any already-running processes
-if [[ -f "$PID_FILE" ]]; then
-  while IFS= read -r pid; do
-    kill "$pid" 2>/dev/null || true
-  done < "$PID_FILE"
-  rm -f "$PID_FILE"
-fi
-
-source "$DIR/.venv/bin/activate"
-
-info "Starting backend on port ${BACKEND_PORT}..."
-cd "$DIR/backend"
-uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" --log-level info &
-BACKEND_PID=$!
-echo "$BACKEND_PID" >> "$DIR/.pids"
-success "Backend started (PID ${BACKEND_PID})"
-
-info "Starting frontend on port ${FRONTEND_PORT}..."
-python3 -m http.server "$FRONTEND_PORT" --directory "$DIR/frontend/dist" &>/dev/null &
-FRONTEND_PID=$!
-echo "$FRONTEND_PID" >> "$DIR/.pids"
-success "Frontend started (PID ${FRONTEND_PID})"
-
-echo ""
-echo -e "${BOLD}${GREEN}Agent Harness is running!${RESET}"
-echo -e "  Web UI   → http://localhost:${FRONTEND_PORT}"
-echo -e "  API      → http://localhost:${BACKEND_PORT}"
-echo -e "  API Docs → http://localhost:${BACKEND_PORT}/docs"
-echo -e "  Stop     → $DIR/stop.sh"
-echo ""
-STARTSCRIPT
-  chmod +x "$INSTALL_DIR/start.sh"
-  success "Created start.sh"
-
-  # ── Write stop.sh ───────────────────────────────────────────────────────────
-  cat > "$INSTALL_DIR/stop.sh" <<'STOPSCRIPT'
-#!/usr/bin/env bash
-# Stop Agent Harness (local mode)
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PID_FILE="$DIR/.pids"
-
-if [[ ! -f "$PID_FILE" ]]; then
-  echo "No running processes found (.pids file missing)."
-  exit 0
-fi
-
-while IFS= read -r pid; do
-  if kill "$pid" 2>/dev/null; then
-    echo "Stopped PID $pid"
-  fi
-done < "$PID_FILE"
-
-rm -f "$PID_FILE"
-echo "Agent Harness stopped."
-STOPSCRIPT
-  chmod +x "$INSTALL_DIR/stop.sh"
-  success "Created stop.sh"
+  # ── Ensure helper scripts are executable ───────────────────────────────────
+  chmod +x "$INSTALL_DIR/start.sh" "$INSTALL_DIR/stop.sh"
+  success "start.sh and stop.sh are ready"
 
   # ── Start services ──────────────────────────────────────────────────────────
   header "Starting Agent Harness..."
