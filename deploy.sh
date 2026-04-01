@@ -99,7 +99,7 @@ if [[ -z "$MODE" ]]; then
   echo "        • Requires Docker (and nested virtualization on some VMs)"
   echo "        • Best for servers and consistent team environments"
   echo ""
-  read -rp "  Enter 1 or 2 [default: 2]: " mode_choice
+  read -rp "  Enter 1 or 2 [default: 2]: " mode_choice </dev/tty
   case "${mode_choice:-2}" in
     1) MODE="local"  ;;
     2) MODE="docker" ;;
@@ -158,21 +158,25 @@ else  # local mode
     die  "Homebrew is required to auto-install dependencies on macOS."
   fi
 
+  # Use sudo only when not already root
+  SUDO=""
+  [[ "$(id -u)" == "0" ]] || SUDO="sudo"
+
   pkg_install() {
     # $1 = display name, $2+ = package name(s)
     local label="$1"; shift
     info "Installing ${label} via ${PKG_MANAGER}..."
     if [[ "$SKIP_CONFIRM" == false ]]; then
-      read -rp "  OK to install ${label} now? [Y/n] " yn
+      read -rp "  OK to install ${label} now? [Y/n] " yn </dev/tty
       [[ "${yn:-Y}" =~ ^[Yy]$ ]] || die "Cannot continue without ${label}. Install it manually and re-run."
     fi
     case "$PKG_MANAGER" in
       brew)   brew install "$@" ;;
-      apt)    sudo apt-get update -qq && sudo apt-get install -y "$@" ;;
-      dnf)    sudo dnf install -y "$@" ;;
-      yum)    sudo yum install -y "$@" ;;
-      pacman) sudo pacman -S --noconfirm "$@" ;;
-      apk)    sudo apk add "$@" ;;
+      apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y "$@" ;;
+      dnf)    $SUDO dnf install -y "$@" ;;
+      yum)    $SUDO yum install -y "$@" ;;
+      pacman) $SUDO pacman -S --noconfirm "$@" ;;
+      apk)    $SUDO apk add "$@" ;;
       *)      die "${label} is required but no supported package manager was found. Install manually: https://python.org / https://nodejs.org" ;;
     esac
   }
@@ -245,7 +249,7 @@ echo -e "  LLM Model : ${BOLD}${LLM_MODEL}${RESET}"
 echo ""
 
 if [[ "$SKIP_CONFIRM" == false ]]; then
-  read -rp "Proceed with installation? [Y/n] " confirm
+  read -rp "Proceed with installation? [Y/n] " confirm </dev/tty
   confirm="${confirm:-Y}"
   [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
 fi

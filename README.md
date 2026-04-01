@@ -31,52 +31,58 @@ Agent Harness is a self-hosted, production-ready agentic AI framework with a 5-t
 
 ## Quick Start
 
-### 1. Clone and Setup
+The easiest way to install is with the one-line installer, which handles cloning, dependencies, and configuration automatically. It will ask whether you want **local mode** (no Docker) or **Docker mode** at the start.
 
 ```bash
-git clone https://github.com/r3moteBee/agent-harness.git
-cd agent-harness
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/agent-harness/main/deploy.sh | bash
 ```
 
-### 2. Copy Environment Configuration
+To skip the prompt, pass `--mode` directly:
 
 ```bash
-cp .env.example .env
+# Local mode (no Docker required)
+curl -fsSL .../deploy.sh | bash -s -- --mode local
+
+# Docker mode
+curl -fsSL .../deploy.sh | bash -s -- --mode docker
 ```
 
-### 3. Configure API Keys
-
-Edit `.env` and add your LLM provider credentials:
+Once installed, edit `.env` in your install directory and set your LLM credentials:
 
 ```bash
-nano .env
+nano ~/agent-harness/.env
 ```
 
 Required fields:
 - `LLM_API_KEY`: Your API key (OpenAI, Anthropic, etc.)
 - `LLM_BASE_URL`: Your LLM provider endpoint (or http://ollama:11434/v1 for local)
 - `LLM_MODEL`: Model name (gpt-4o, claude-3-sonnet, llama3, etc.)
-- `VAULT_MASTER_KEY`: Generate a random 32-character string
-- `SECRET_KEY`: Generate another random secret
 
-### 4. Start Services
+### Starting and Stopping
+
+**Local mode:**
 
 ```bash
-make up
+~/agent-harness/start.sh   # start backend + frontend
+~/agent-harness/stop.sh    # stop all processes
 ```
 
-This command will:
-- Build Docker images
-- Create necessary data directories
-- Start all services (backend, frontend, ChromaDB, Nginx)
-- Initialize the database
+- Web UI: http://localhost:3000
+- API / API Docs: http://localhost:8000 / http://localhost:8000/docs
 
-### 5. Access the Application
+**Docker mode:**
 
-- **Web UI**: http://localhost
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+```bash
+cd ~/agent-harness
+make up        # build images and start all services
+make down      # stop all services
+make logs      # tail logs for all services
+```
+
+- Web UI: http://localhost (port 80 by default)
+- API Docs: http://localhost/docs
+
+> **Note:** The `make` commands are Docker-only. If you installed in local mode, use `start.sh` / `stop.sh` instead.
 
 ## Architecture Overview
 
