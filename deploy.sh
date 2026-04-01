@@ -60,7 +60,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --base-url URL   LLM provider base URL (default: OpenAI)"
       echo "  --branch NAME    Git branch to deploy (default: main)"
       echo "  --domain DOMAIN      Domain name for HTTPS via Caddy (e.g. agent.example.com)"
-      echo "  --agent-name NAME    Name for the agent (default: Hermes)"
+      echo "  --agent-name NAME    Name for the agent (default: Pan)"
       echo "  --yes, -y            Skip confirmation and model selection prompts"
       echo ""
       echo "When run interactively (without --yes), the installer will:"
@@ -522,8 +522,8 @@ success "Data directories ready"
 SOUL_SRC="$INSTALL_DIR/backend/data/personality/soul.md"
 SOUL_DEST="$INSTALL_DIR/data/personality/soul.md"
 
-# Detect the current name baked into soul.md (default: Hermes)
-CURRENT_AGENT_NAME=$(grep -o "^You are [A-Za-z0-9_-]*" "$SOUL_SRC" 2>/dev/null | awk '{print $3}' || echo "Hermes")
+# Detect the current name baked into soul.md (default: Pan)
+CURRENT_AGENT_NAME=$(grep -o "^You are [A-Za-z0-9_-]*" "$SOUL_SRC" 2>/dev/null | awk '{print $3}' || echo "Pan")
 
 if [[ "$SKIP_CONFIRM" == false ]]; then
   echo ""
