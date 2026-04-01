@@ -55,10 +55,16 @@ while [[ $# -gt 0 ]]; do
       echo "  --model MODEL    LLM model name (default: gpt-4o)"
       echo "  --base-url URL   LLM provider base URL (default: OpenAI)"
       echo "  --branch NAME    Git branch to deploy (default: main)"
-      echo "  --yes, -y        Skip confirmation prompts"
+      echo "  --yes, -y        Skip confirmation and model selection prompts"
+      echo ""
+      echo "When run interactively (without --yes), the installer will:"
+      echo "  1. Ask for your LLM endpoint URL and API key"
+      echo "  2. Fetch the available model list from the endpoint"
+      echo "  3. Let you choose your primary, prefill, and embedding models"
       echo ""
       echo "Environment variables (alternative to flags):"
-      echo "  LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, AGENT_HARNESS_DIR, AGENT_HARNESS_PORT"
+      echo "  LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_PREFILL_MODEL,"
+      echo "  EMBEDDING_MODEL, AGENT_HARNESS_DIR, AGENT_HARNESS_PORT"
       exit 0
       ;;
     *) warn "Unknown option: $1"; shift ;;
@@ -326,16 +332,170 @@ update_env() {
   fi
 }
 
-[[ -n "$LLM_BASE_URL" ]] && update_env "LLM_BASE_URL" "$LLM_BASE_URL" && info "Set LLM_BASE_URL"
-[[ -n "$LLM_API_KEY"  ]] && update_env "LLM_API_KEY"  "$LLM_API_KEY"  && info "Set LLM_API_KEY"
-[[ -n "$LLM_MODEL"    ]] && update_env "LLM_MODEL"     "$LLM_MODEL"    && info "Set LLM_MODEL"
-
+# Auto-generate secure keys if still at defaults
 if grep -q "change-this-to-a-random" .env; then
   VAULT_KEY="$(generate_key)"
   SECRET_KEY="$(generate_key)"
   update_env "VAULT_MASTER_KEY" "$VAULT_KEY"
   update_env "SECRET_KEY"       "$SECRET_KEY"
   success "Generated secure VAULT_MASTER_KEY and SECRET_KEY"
+fi
+
+# ── Interactive LLM configuration ────────────────────────────────────────────
+# Fetch models from an OpenAI-compatible /v1/models endpoint and display a
+# numbered picker. Works with OpenAI, Ollama, Groq, LiteLLM, vLLM, etc.
+
+fetch_models() {
+  # $1 = base_url, $2 = api_key — returns newline-separated model IDs
+  local url="${1%/}/models"
+  local key="$2"
+  local response
+  response=$(curl -sf -H "Authorization: Bearer ${key}" "$url" 2>/dev/null) || return 1
+  echo "$response" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    models = data.get('data') or data.get('models') or []
+    for m in sorted(models, key=lambda x: x.get('id','')):
+        print(m.get('id',''))
+except: pass
+" 2>/dev/null
+}
+
+pick_model() {
+  # $1 = prompt text, $2 = model list (newline-separated), $3 = default value
+  local prompt_text="$1"
+  local model_list="$2"
+  local default_val="$3"
+  local count i choice
+
+  # Convert to array
+  local -a models
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && models+=("$line")
+  done <<< "$model_list"
+  count=${#models[@]}
+
+  if [[ "$count" -eq 0 ]]; then
+    warn "No models found."
+    read -rp "  Enter model name manually [${default_val}]: " choice </dev/tty
+    echo "${choice:-$default_val}"
+    return
+  fi
+
+  echo ""
+  echo -e "  ${BOLD}${prompt_text}${RESET}"
+  echo ""
+  for i in "${!models[@]}"; do
+    local marker=""
+    [[ "${models[$i]}" == "$default_val" ]] && marker=" ${YELLOW}(current)${RESET}"
+    echo -e "    $((i+1))) ${models[$i]}${marker}"
+  done
+  echo ""
+  read -rp "  Enter number or type a model name [${default_val}]: " choice </dev/tty
+
+  if [[ -z "$choice" ]]; then
+    echo "$default_val"
+  elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= count )); then
+    echo "${models[$((choice-1))]}"
+  else
+    echo "$choice"  # treat as a manually typed model name
+  fi
+}
+
+# Apply any values passed via flags first
+[[ -n "$LLM_BASE_URL" ]] && update_env "LLM_BASE_URL" "$LLM_BASE_URL" && info "Set LLM_BASE_URL"
+[[ -n "$LLM_API_KEY"  ]] && update_env "LLM_API_KEY"  "$LLM_API_KEY"  && info "Set LLM_API_KEY"
+[[ -n "$LLM_MODEL"    ]] && update_env "LLM_MODEL"     "$LLM_MODEL"    && info "Set LLM_MODEL"
+
+# Read current .env values
+CURRENT_BASE_URL=$(grep "^LLM_BASE_URL=" .env 2>/dev/null | cut -d= -f2-)
+CURRENT_API_KEY=$(grep "^LLM_API_KEY=" .env 2>/dev/null | cut -d= -f2-)
+CURRENT_MODEL=$(grep "^LLM_MODEL=" .env 2>/dev/null | cut -d= -f2-)
+CURRENT_EMBEDDING=$(grep "^EMBEDDING_MODEL=" .env 2>/dev/null | cut -d= -f2-)
+
+if [[ "$SKIP_CONFIRM" == false ]]; then
+  header "LLM Provider Configuration"
+  echo ""
+  echo "  Agent Harness works with any OpenAI-compatible API endpoint."
+  echo "  Common providers: OpenAI, Ollama (local), Groq, Together.ai, vLLM, LiteLLM"
+  echo ""
+
+  # ── Endpoint ──────────────────────────────────────────────────────────────
+  read -rp "  LLM Base URL [${CURRENT_BASE_URL:-https://api.openai.com/v1}]: " input_url </dev/tty
+  LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-https://api.openai.com/v1}}"
+  update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+
+  # ── API Key ───────────────────────────────────────────────────────────────
+  if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"localhost:11434"* ]]; then
+    LLM_API_KEY="${CURRENT_API_KEY:-ollama}"
+    info "Ollama detected — using placeholder API key"
+  else
+    # Mask the current key for display
+    if [[ -n "$CURRENT_API_KEY" && "$CURRENT_API_KEY" != "sk-your"* ]]; then
+      MASKED_KEY="${CURRENT_API_KEY:0:8}...${CURRENT_API_KEY: -4}"
+      read -rp "  API Key [${MASKED_KEY}]: " input_key </dev/tty
+      LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+    else
+      read -rp "  API Key: " input_key </dev/tty
+      LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+    fi
+  fi
+  update_env "LLM_API_KEY" "$LLM_API_KEY"
+
+  # ── Fetch available models ────────────────────────────────────────────────
+  info "Fetching available models from ${LLM_BASE_URL}..."
+  MODEL_LIST=$(fetch_models "$LLM_BASE_URL" "$LLM_API_KEY" 2>/dev/null) || MODEL_LIST=""
+
+  if [[ -n "$MODEL_LIST" ]]; then
+    MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
+    success "Found ${MODEL_COUNT} models"
+
+    # ── Primary chat model ────────────────────────────────────────────────
+    CHOSEN_MODEL=$(pick_model "Select primary chat model:" "$MODEL_LIST" "${CURRENT_MODEL:-gpt-4o}")
+    update_env "LLM_MODEL" "$CHOSEN_MODEL"
+    success "Primary model: ${CHOSEN_MODEL}"
+
+    # ── Prefill / fast model (optional) ───────────────────────────────────
+    echo ""
+    echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for tasks like${RESET}"
+    echo -e "  ${CYAN}summarization, memory consolidation, and background processing.${RESET}"
+    echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
+    CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
+    if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
+      update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
+      success "Prefill model: ${CHOSEN_PREFILL}"
+    else
+      info "Prefill model: same as primary (${CHOSEN_MODEL})"
+    fi
+
+    # ── Embedding model ───────────────────────────────────────────────────
+    # Filter model list for likely embedding models, but show all as fallback
+    EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
+    if [[ -z "$EMBED_MODELS" ]]; then
+      EMBED_MODELS="$MODEL_LIST"
+    fi
+    CHOSEN_EMBED=$(pick_model "Select embedding model:" "$EMBED_MODELS" "${CURRENT_EMBEDDING:-text-embedding-3-small}")
+    update_env "EMBEDDING_MODEL" "$CHOSEN_EMBED"
+    success "Embedding model: ${CHOSEN_EMBED}"
+
+  else
+    warn "Could not fetch model list from ${LLM_BASE_URL}"
+    warn "This can happen if the endpoint is not yet running or the API key is invalid."
+    echo ""
+
+    read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
+    update_env "LLM_MODEL" "${input_model:-${CURRENT_MODEL:-gpt-4o}}"
+
+    read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
+    [[ -n "$input_prefill" ]] && update_env "LLM_PREFILL_MODEL" "$input_prefill"
+
+    read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
+    update_env "EMBEDDING_MODEL" "${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
+  fi
+else
+  # --yes mode: just apply flag values or keep existing
+  info "Skipping interactive model selection (--yes mode)"
 fi
 
 # ── Create data directories ───────────────────────────────────────────────────
