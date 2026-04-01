@@ -814,6 +814,24 @@ if [[ -n "$DOMAIN" ]]; then
 
   setup_caddy "$DOMAIN"
   RUNNING_URL="https://${DOMAIN}"
+
+  # Rebuild the frontend without a hardcoded API URL so that all requests
+  # are relative and flow through Caddy. Without this, VITE_API_URL points
+  # to http://localhost:8000, which the user's browser can't reach.
+  header "Rebuilding frontend for HTTPS..."
+  if [[ -d "$INSTALL_DIR/frontend" ]]; then
+    cd "$INSTALL_DIR/frontend"
+    VITE_API_URL="" npm run build
+    cd "$INSTALL_DIR"
+    success "Frontend rebuilt for Caddy (relative API URLs)"
+
+    # Restart services to pick up new frontend build and updated .env
+    if [[ -f "$INSTALL_DIR/stop.sh" ]]; then
+      "$INSTALL_DIR/stop.sh" 2>/dev/null || true
+      sleep 1
+      "$INSTALL_DIR/start.sh"
+    fi
+  fi
 fi
 
 # =============================================================================

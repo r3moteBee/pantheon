@@ -7,9 +7,15 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
+from api.chat import router as chat_router, websocket_chat
+from api.files import router as files_router
+from api.memory import router as memory_router
+from api.personality import router as personality_router
+from api.projects import router as projects_router
+from api.settings import router as settings_router
+from api.tasks import router as tasks_router
 
 settings = get_settings()
 
@@ -58,6 +64,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── API routers ───────────────────────────────────────────────────────────────
+app.include_router(chat_router,        prefix="/api", tags=["chat"])
+app.include_router(files_router,       prefix="/api", tags=["files"])
+app.include_router(memory_router,      prefix="/api", tags=["memory"])
+app.include_router(personality_router, prefix="/api", tags=["personality"])
+app.include_router(projects_router,    prefix="/api", tags=["projects"])
+app.include_router(settings_router,    prefix="/api", tags=["settings"])
+app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
+
+# ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
+# The frontend derives the WS URL from window.location.host, so it always
+# connects to /ws/chat regardless of the API base URL.
+app.websocket("/ws/chat")(websocket_chat)
 
 
 @app.get("/health")
