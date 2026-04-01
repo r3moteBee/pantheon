@@ -233,6 +233,32 @@ else  # local mode
   fi
 
   command -v npm &>/dev/null || die "npm not found after Node install. Please install manually: https://nodejs.org"
+
+  # ── Install build dependencies for native Python packages ──────────────────
+  # ChromaDB's chroma-hnswlib requires C++ compilation and Python dev headers
+  PYTHON_VERSION=$("$PYTHON_CMD" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+  NEED_BUILD_DEPS=false
+
+  # Check for Python.h
+  if ! "$PYTHON_CMD" -c "import sysconfig; assert sysconfig.get_path('include')" 2>/dev/null \
+     || [[ ! -f "$("$PYTHON_CMD" -c "import sysconfig; print(sysconfig.get_path('include'))")/Python.h" ]]; then
+    NEED_BUILD_DEPS=true
+  fi
+  # Check for g++
+  command -v g++ &>/dev/null || NEED_BUILD_DEPS=true
+
+  if [[ "$NEED_BUILD_DEPS" == true ]]; then
+    info "Installing build dependencies for native Python packages..."
+    case "$PKG_MANAGER" in
+      brew)   ;; # Xcode command line tools handle this on macOS
+      apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y build-essential "python${PYTHON_VERSION}-dev" ;;
+      dnf)    $SUDO dnf install -y gcc-c++ "python${PYTHON_VERSION}-devel" ;;
+      yum)    $SUDO yum install -y gcc-c++ "python${PYTHON_VERSION}-devel" ;;
+      pacman) $SUDO pacman -S --noconfirm base-devel ;;
+      apk)    $SUDO apk add build-base python3-dev ;;
+    esac
+    success "Build dependencies installed"
+  fi
 fi
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
