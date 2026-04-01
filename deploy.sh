@@ -802,6 +802,16 @@ if [[ -z "$DOMAIN" && "$SKIP_CONFIRM" == false ]]; then
 fi
 
 if [[ -n "$DOMAIN" ]]; then
+  # Add the domain to CORS_ORIGINS so the backend accepts requests from it
+  CURRENT_CORS=$(grep "^CORS_ORIGINS=" .env 2>/dev/null | cut -d= -f2- || true)
+  if [[ -n "$CURRENT_CORS" && "$CURRENT_CORS" != *"${DOMAIN}"* ]]; then
+    update_env "CORS_ORIGINS" "${CURRENT_CORS},https://${DOMAIN}"
+    info "Added https://${DOMAIN} to CORS_ORIGINS"
+  elif [[ -z "$CURRENT_CORS" ]]; then
+    update_env "CORS_ORIGINS" "http://localhost:3000,http://localhost:5173,https://${DOMAIN}"
+    info "Set CORS_ORIGINS with https://${DOMAIN}"
+  fi
+
   setup_caddy "$DOMAIN"
   RUNNING_URL="https://${DOMAIN}"
 fi
