@@ -136,6 +136,7 @@ export const personalityApi = {
   getAgent: (projectId) => api.get('/api/personality/agent', { params: { project_id: projectId } }),
   updateAgent: (content, projectId) =>
     api.put('/api/personality/agent', { content }, { params: { project_id: projectId } }),
+  status: () => api.get('/api/personality/status'),
 }
 
 // Projects API

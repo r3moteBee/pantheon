@@ -1,6 +1,7 @@
 """Personality API — CRUD for soul.md and agent.md files."""
 from __future__ import annotations
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -12,7 +13,9 @@ from agent.personality import (
     save_soul,
     save_agent_config,
     load_project_personality,
+    _TEMPLATE_DIR,
 )
+from config import get_settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -81,4 +84,38 @@ async def get_full_personality(
         "soul": personality["soul"],
         "agent": personality["agent"],
         "project_id": project_id,
+    }
+
+
+@router.get("/personality/status")
+async def personality_status() -> dict[str, Any]:
+    """Diagnostic endpoint — show personality file paths, existence, and sizes."""
+    settings = get_settings()
+
+    def _file_info(path: Path) -> dict[str, Any]:
+        exists = path.exists()
+        size = path.stat().st_size if exists else 0
+        preview = ""
+        if exists and size > 0:
+            preview = path.read_text(encoding="utf-8")[:120].replace("\n", " ")
+        return {
+            "path": str(path),
+            "exists": exists,
+            "size_bytes": size,
+            "non_empty": size > 0,
+            "preview": preview,
+        }
+
+    return {
+        "data_dir": str(settings.data_dir),
+        "personality_dir": str(settings.personality_dir),
+        "global": {
+            "soul.md": _file_info(settings.personality_dir / "soul.md"),
+            "agent.md": _file_info(settings.personality_dir / "agent.md"),
+        },
+        "template_dir": str(_TEMPLATE_DIR),
+        "templates": {
+            "soul.md": _file_info(_TEMPLATE_DIR / "soul.md"),
+            "agent.md": _file_info(_TEMPLATE_DIR / "agent.md"),
+        },
     }

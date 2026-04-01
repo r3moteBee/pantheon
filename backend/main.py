@@ -46,16 +46,21 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Agent Harness backend...")
     settings.ensure_dirs()
 
-    # Initialize default personality files if missing
+    # Initialize default personality files if missing or empty
+    import shutil
     soul_path = settings.personality_dir / "soul.md"
     agent_path = settings.personality_dir / "agent.md"
     default_dir = Path(__file__).parent / "data" / "personality"
-    if not soul_path.exists() and (default_dir / "soul.md").exists():
-        import shutil
+
+    def _needs_init(dest: Path) -> bool:
+        return not dest.exists() or not dest.read_text(encoding="utf-8").strip()
+
+    if _needs_init(soul_path) and (default_dir / "soul.md").exists():
         shutil.copy(default_dir / "soul.md", soul_path)
-    if not agent_path.exists() and (default_dir / "agent.md").exists():
-        import shutil
+        logger.info("Initialised soul.md from bundled template → %s", soul_path)
+    if _needs_init(agent_path) and (default_dir / "agent.md").exists():
         shutil.copy(default_dir / "agent.md", agent_path)
+        logger.info("Initialised agent.md from bundled template → %s", agent_path)
 
     logger.info("Agent Harness backend ready")
     yield

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { Save, RefreshCw, Globe, Briefcase, AlertCircle, CheckCircle } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Save, RefreshCw, Globe, Briefcase, AlertCircle, CheckCircle, RotateCcw, Info } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -24,8 +24,10 @@ export default function PersonalityEditor() {
   const [soulContent, setSoulContent]   = useState('')
   const [agentContent, setAgentContent] = useState('')
   const [isOverride, setIsOverride]     = useState(false)
+  const [contentLoaded, setContentLoaded] = useState(false)  // true once a successful load has run
   const [loading, setLoading]   = useState(false)
   const [saving, setSaving]     = useState(false)
+  const [resetting, setResetting] = useState(false)
   const [savedAt, setSavedAt]   = useState(null)
 
   const activeProject  = useStore((s) => s.activeProject)
@@ -33,23 +35,27 @@ export default function PersonalityEditor() {
 
   const projectId = scope === 'project' ? (activeProject?.id || 'default') : null
 
-  const loadPersonality = async () => {
+  const loadPersonality = useCallback(async () => {
     setLoading(true)
+    setContentLoaded(false)
     try {
       const [soulRes, agentRes] = await Promise.all([
         personalityApi.getSoul(projectId),
         personalityApi.getAgent(projectId),
       ])
-      setSoulContent(soulRes.data.content  || '')
-      setAgentContent(agentRes.data.content || '')
-      setIsOverride(soulRes.data.is_override || false)
+      setSoulContent(soulRes.data.content  ?? '')
+      setAgentContent(agentRes.data.content ?? '')
+      setIsOverride(soulRes.data.is_override ?? false)
+      setContentLoaded(true)
     } catch (err) {
-      addNotification({ type: 'error', message: err.message })
+      addNotification({ type: 'error', message: `Failed to load personality: ${err.message}` })
     }
     setLoading(false)
-  }
+  }, [projectId, addNotification])
 
-  useEffect(() => { loadPersonality() }, [scope, activeProject])
+  useEffect(() => {
+    loadPersonality()
+  }, [loadPersonality])
 
   const save = async () => {
     setSaving(true)
@@ -68,10 +74,40 @@ export default function PersonalityEditor() {
     setSaving(false)
   }
 
-  const agentName  = extractAgentName(scope === 'global' ? soulContent : (isOverride ? soulContent : null))
-                     || extractAgentName(soulContent)
+  // Reset to defaults: save the server-side template content to the live data dir.
+  // We do this by fetching the status endpoint (which shows template content),
+  // then saving the template value into the live slot.
+  const resetToDefaults = async () => {
+    if (!window.confirm('Reset to the built-in defaults? This will overwrite your current content.')) return
+    setResetting(true)
+    try {
+      const statusRes = await personalityApi.status()
+      const templates = statusRes.data.templates
+      const soulTemplate  = templates['soul.md']?.preview   // Only a 120-char preview — use full API instead
+      // Trigger the server to reload by saving the template-backed content
+      // The backend already reads from the template when the live file is empty,
+      // so just force-write what the backend would return right now.
+      const freshSoul  = (await personalityApi.getSoul(null)).data.content
+      const freshAgent = (await personalityApi.getAgent(null)).data.content
+      await personalityApi.updateSoul(freshSoul, projectId)
+      await personalityApi.updateAgent(freshAgent, projectId)
+      setSoulContent(freshSoul)
+      setAgentContent(freshAgent)
+      if (scope === 'project') setIsOverride(true)
+      setSavedAt(new Date())
+      addNotification({ type: 'success', message: 'Reset to defaults complete' })
+    } catch (err) {
+      addNotification({ type: 'error', message: `Reset failed: ${err.message}` })
+    }
+    setResetting(false)
+  }
+
+  const agentName = extractAgentName(soulContent) || null
 
   const hasProject = activeProject && activeProject.id !== 'default'
+
+  const currentContent = activeTab === 'soul' ? soulContent : agentContent
+  const isEmpty = contentLoaded && !currentContent.trim()
 
   const TABS = [
     {
@@ -157,6 +193,24 @@ export default function PersonalityEditor() {
             Editing <span className="font-medium">{activeProject?.name}</span>'s personality override. The global personality is not affected.
           </div>
         )}
+
+        {/* Empty-file warning */}
+        {isEmpty && !loading && (
+          <div className="mt-3 flex items-center justify-between gap-3 px-3 py-2 bg-orange-950/40 border border-orange-800/40 rounded-lg text-xs text-orange-400">
+            <span className="flex items-center gap-2">
+              <Info className="w-3 h-3 flex-shrink-0" />
+              The <span className="font-mono">{activeTabDef?.file}</span> file is empty on the server. Reset to restore the built-in defaults.
+            </span>
+            <button
+              onClick={resetToDefaults}
+              disabled={resetting}
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-orange-700 hover:bg-orange-600 text-white rounded-md disabled:opacity-50"
+            >
+              <RotateCcw className={`w-3 h-3 ${resetting ? 'animate-spin' : ''}`} />
+              {resetting ? 'Resetting…' : 'Reset to Defaults'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -183,7 +237,7 @@ export default function PersonalityEditor() {
         {/* Editor pane */}
         <div className="flex-1 flex flex-col border-r border-gray-800 min-w-0">
           <textarea
-            value={activeTab === 'soul' ? soulContent : agentContent}
+            value={currentContent}
             onChange={(e) => {
               activeTab === 'soul'
                 ? setSoulContent(e.target.value)
@@ -214,7 +268,7 @@ export default function PersonalityEditor() {
 
             <button
               onClick={save}
-              disabled={loading || saving}
+              disabled={loading || saving || !currentContent.trim()}
               className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 ml-auto"
             >
               <Save className="w-4 h-4" />
@@ -230,28 +284,36 @@ export default function PersonalityEditor() {
             <p className="text-xs text-gray-600">{activeTabDef?.file}</p>
           </div>
           <div className="flex-1 overflow-y-auto scrollbar-thin p-5">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              className="prose prose-invert prose-sm max-w-none"
-              components={{
-                code: ({ node, inline, className, children, ...props }) => {
-                  if (inline) {
+            {loading ? (
+              <div className="flex items-center justify-center h-full">
+                <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
+              </div>
+            ) : isEmpty ? (
+              <p className="text-sm text-gray-600 italic">No content — use "Reset to Defaults" to restore the built-in file.</p>
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                className="prose prose-invert prose-sm max-w-none"
+                components={{
+                  code: ({ node, inline, className, children, ...props }) => {
+                    if (inline) {
+                      return (
+                        <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+                          {children}
+                        </code>
+                      )
+                    }
                     return (
-                      <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
-                        {children}
-                      </code>
+                      <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
+                        <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
+                      </pre>
                     )
-                  }
-                  return (
-                    <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-                      <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
-                    </pre>
-                  )
-                },
-              }}
-            >
-              {activeTab === 'soul' ? soulContent : agentContent}
-            </ReactMarkdown>
+                  },
+                }}
+              >
+                {currentContent}
+              </ReactMarkdown>
+            )}
           </div>
         </div>
       </div>

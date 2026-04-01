@@ -554,6 +554,14 @@ else
   success "Agent personality copied (name: ${AGENT_NAME})"
 fi
 
+# Always copy agent.md template to data dir (safe to overwrite — it's config, not user data)
+AGENT_SRC="$INSTALL_DIR/backend/data/personality/agent.md"
+AGENT_DEST="$INSTALL_DIR/data/personality/agent.md"
+if [[ -f "$AGENT_SRC" ]]; then
+  cp "$AGENT_SRC" "$AGENT_DEST"
+  success "Agent behavior config copied (agent.md)"
+fi
+
 # ── Web interface password ────────────────────────────────────────────────────
 CURRENT_AUTH_PW=$(grep "^AUTH_PASSWORD=" .env 2>/dev/null | cut -d= -f2- || true)
 
