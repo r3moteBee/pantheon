@@ -408,11 +408,11 @@ pick_model() {
 [[ -n "$LLM_API_KEY"  ]] && update_env "LLM_API_KEY"  "$LLM_API_KEY"  && info "Set LLM_API_KEY"
 [[ -n "$LLM_MODEL"    ]] && update_env "LLM_MODEL"     "$LLM_MODEL"    && info "Set LLM_MODEL"
 
-# Read current .env values
-CURRENT_BASE_URL=$(grep "^LLM_BASE_URL=" .env 2>/dev/null | cut -d= -f2-)
-CURRENT_API_KEY=$(grep "^LLM_API_KEY=" .env 2>/dev/null | cut -d= -f2-)
-CURRENT_MODEL=$(grep "^LLM_MODEL=" .env 2>/dev/null | cut -d= -f2-)
-CURRENT_EMBEDDING=$(grep "^EMBEDDING_MODEL=" .env 2>/dev/null | cut -d= -f2-)
+# Read current .env values (|| true needed — set -eo pipefail kills on grep no-match)
+CURRENT_BASE_URL=$(grep "^LLM_BASE_URL=" .env 2>/dev/null | cut -d= -f2- || true)
+CURRENT_API_KEY=$(grep "^LLM_API_KEY=" .env 2>/dev/null | cut -d= -f2- || true)
+CURRENT_MODEL=$(grep "^LLM_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
+CURRENT_EMBEDDING=$(grep "^EMBEDDING_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
 
 if [[ "$SKIP_CONFIRM" == false ]]; then
   header "LLM Provider Configuration"
