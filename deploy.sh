@@ -321,11 +321,14 @@ generate_key() {
 
 update_env() {
   local key="$1" value="$2"
+  # Escape sed special chars in value (|, &, \, /)
+  local escaped_value
+  escaped_value=$(printf '%s' "$value" | sed 's/[|&/\]/\\&/g')
   if grep -q "^${key}=" .env; then
     if [[ "$OS" == "macos" ]]; then
-      sed -i '' "s|^${key}=.*|${key}=${value}|" .env
+      sed -i '' "s|^${key}=.*|${key}=${escaped_value}|" .env
     else
-      sed -i "s|^${key}=.*|${key}=${value}|" .env
+      sed -i "s|^${key}=.*|${key}=${escaped_value}|" .env
     fi
   else
     echo "${key}=${value}" >> .env
@@ -364,6 +367,8 @@ except: pass
 
 pick_model() {
   # $1 = prompt text, $2 = model list (newline-separated), $3 = default value
+  # IMPORTANT: All display output goes to /dev/tty so that $() only captures
+  # the final model name echoed to stdout.
   local prompt_text="$1"
   local model_list="$2"
   local default_val="$3"
@@ -377,21 +382,24 @@ pick_model() {
   count=${#models[@]}
 
   if [[ "$count" -eq 0 ]]; then
-    warn "No models found."
+    warn "No models found." >/dev/tty
     read -rp "  Enter model name manually [${default_val}]: " choice </dev/tty
     echo "${choice:-$default_val}"
     return
   fi
 
-  echo ""
-  echo -e "  ${BOLD}${prompt_text}${RESET}"
-  echo ""
-  for i in "${!models[@]}"; do
-    local marker=""
-    [[ "${models[$i]}" == "$default_val" ]] && marker=" ${YELLOW}(current)${RESET}"
-    echo -e "    $((i+1))) ${models[$i]}${marker}"
-  done
-  echo ""
+  {
+    echo ""
+    echo -e "  ${BOLD}${prompt_text}${RESET}"
+    echo ""
+    for i in "${!models[@]}"; do
+      local marker=""
+      [[ "${models[$i]}" == "$default_val" ]] && marker=" ${YELLOW}(current)${RESET}"
+      echo -e "    $((i+1))) ${models[$i]}${marker}"
+    done
+    echo ""
+  } >/dev/tty
+
   read -rp "  Enter number or type a model name [${default_val}]: " choice </dev/tty
 
   if [[ -z "$choice" ]]; then
