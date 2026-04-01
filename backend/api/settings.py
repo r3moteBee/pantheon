@@ -19,6 +19,7 @@ class SettingsUpdate(BaseModel):
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
+    llm_prefill_model: str | None = None
     embedding_model: str | None = None
     search_url: str | None = None
     search_api_key: str | None = None
@@ -36,7 +37,10 @@ def _get_effective_settings() -> dict[str, Any]:
     vault = get_vault()
     return {
         "llm_base_url": vault.get_secret("llm_base_url") or settings_config.llm_base_url,
+        # Never return the key value — only whether one is saved
+        "llm_api_key_set": bool(vault.get_secret("llm_api_key") or settings_config.llm_api_key),
         "llm_model": vault.get_secret("llm_model") or settings_config.llm_model,
+        "llm_prefill_model": vault.get_secret("llm_prefill_model") or settings_config.llm_prefill_model,
         "embedding_model": vault.get_secret("embedding_model") or settings_config.embedding_model,
         "search_url": vault.get_secret("search_url") or settings_config.search_url,
         "search_api_key_set": bool(vault.get_secret("search_api_key") or settings_config.search_api_key),
@@ -63,6 +67,8 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("llm_api_key", req.llm_api_key)
     if req.llm_model is not None:
         vault.set_secret("llm_model", req.llm_model)
+    if req.llm_prefill_model is not None:
+        vault.set_secret("llm_prefill_model", req.llm_prefill_model)
     if req.embedding_model is not None:
         vault.set_secret("embedding_model", req.embedding_model)
     if req.search_url is not None:

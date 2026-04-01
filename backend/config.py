@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="https://api.openai.com/v1", env="LLM_BASE_URL")
     llm_api_key: str = Field(default="", env="LLM_API_KEY")
     llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
+    # Optional cheaper/faster model for summarisation, memory consolidation, etc.
+    # Falls back to llm_model when not set.
+    llm_prefill_model: str = Field(default="", env="LLM_PREFILL_MODEL")
     embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
 
     # Security

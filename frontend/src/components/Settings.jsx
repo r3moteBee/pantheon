@@ -4,7 +4,14 @@ import { useStore } from '../store'
 import { settingsApi } from '../api/client'
 
 function LLMSection() {
-  const [settings, setSettings] = useState({ llm_api_url: '', llm_api_key: '', llm_model: '' })
+  const [settings, setSettings] = useState({
+    llm_base_url: '',
+    llm_api_key: '',       // new value only; blank = keep existing
+    llm_model: '',
+    llm_prefill_model: '',
+    embedding_model: '',
+  })
+  const [apiKeySet, setApiKeySet] = useState(false)
   const [models, setModels] = useState([])
   const [showKey, setShowKey] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -12,19 +19,21 @@ function LLMSection() {
   const [testStatus, setTestStatus] = useState(null)
   const addNotification = useStore((s) => s.addNotification)
 
-  useEffect(() => {
-    loadSettings()
-  }, [])
+  useEffect(() => { loadSettings() }, [])
 
   const loadSettings = async () => {
     setLoading(true)
     try {
       const res = await settingsApi.get()
+      const d = res.data
       setSettings({
-        llm_api_url: res.data.llm_api_url || '',
-        llm_api_key: res.data.llm_api_key || '',
-        llm_model: res.data.llm_model || '',
+        llm_base_url:      d.llm_base_url      || '',
+        llm_api_key:       '',                      // never returned; blank = keep existing
+        llm_model:         d.llm_model         || '',
+        llm_prefill_model: d.llm_prefill_model || '',
+        embedding_model:   d.embedding_model   || '',
       })
+      setApiKeySet(d.llm_api_key_set || false)
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -36,7 +45,7 @@ function LLMSection() {
     try {
       const res = await settingsApi.listModels()
       setModels(res.data.models || [])
-      addNotification({ type: 'success', message: 'Models loaded' })
+      addNotification({ type: 'success', message: `${res.data.count} models loaded` })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -61,85 +70,137 @@ function LLMSection() {
   const save = async () => {
     setLoading(true)
     try {
-      await settingsApi.update(settings)
-      addNotification({ type: 'success', message: 'Settings saved' })
+      const payload = {
+        llm_base_url:      settings.llm_base_url,
+        llm_model:         settings.llm_model,
+        llm_prefill_model: settings.llm_prefill_model,
+        embedding_model:   settings.embedding_model,
+      }
+      // Only send key if user typed a new one
+      if (settings.llm_api_key) {
+        payload.llm_api_key = settings.llm_api_key
+        setApiKeySet(true)
+      }
+      await settingsApi.update(payload)
+      setSettings((s) => ({ ...s, llm_api_key: '' }))  // clear the key field after save
+      addNotification({ type: 'success', message: 'LLM settings saved' })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
     setLoading(false)
   }
 
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      <h3 className="text-sm font-semibold text-gray-200">LLM Configuration</h3>
+
+      {/* Endpoint */}
       <div>
-        <h3 className="text-sm font-semibold text-gray-200 mb-4">LLM Configuration</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-400 mb-2">API Endpoint</label>
-            <input
-              type="text"
-              value={settings.llm_api_url}
-              onChange={(e) => setSettings({ ...settings, llm_api_url: e.target.value })}
-              placeholder="https://api.openai.com/v1"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-            />
-          </div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">API Endpoint</label>
+        <input
+          type="text"
+          value={settings.llm_base_url}
+          onChange={(e) => setSettings({ ...settings, llm_base_url: e.target.value })}
+          placeholder="https://api.openai.com/v1"
+          className={inputClass}
+        />
+      </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-400 mb-2">API Key</label>
-            <div className="flex gap-2">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={settings.llm_api_key}
-                onChange={(e) => setSettings({ ...settings, llm_api_key: e.target.value })}
-                placeholder="sk-..."
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-              />
-              <button
-                onClick={() => setShowKey(!showKey)}
-                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400"
-              >
-                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-400 mb-2">Model</label>
-            <div className="flex gap-2">
-              <select
-                value={settings.llm_model}
-                onChange={(e) => setSettings({ ...settings, llm_model: e.target.value })}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
-              >
-                <option value="">Select a model...</option>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={fetchModels}
-                disabled={loading}
-                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400 disabled:opacity-50"
-              >
-                <RefreshCw className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+      {/* API Key */}
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">
+          API Key
+          {apiKeySet && !settings.llm_api_key && (
+            <span className="ml-2 text-green-500 font-normal">✓ key saved</span>
+          )}
+        </label>
+        <div className="flex gap-2">
+          <input
+            type={showKey ? 'text' : 'password'}
+            value={settings.llm_api_key}
+            onChange={(e) => setSettings({ ...settings, llm_api_key: e.target.value })}
+            placeholder={apiKeySet ? '(leave blank to keep existing key)' : 'sk-…'}
+            className={`flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500`}
+          />
+          <button onClick={() => setShowKey(!showKey)} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400">
+            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
         </div>
       </div>
 
+      {/* Primary model — text input + datalist so current value always shows */}
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">Primary Model</label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            list="llm-models-list"
+            value={settings.llm_model}
+            onChange={(e) => setSettings({ ...settings, llm_model: e.target.value })}
+            placeholder="e.g. gpt-4o"
+            className={`flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500`}
+          />
+          <button
+            onClick={fetchModels}
+            disabled={loading}
+            title="Fetch available models from endpoint"
+            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </button>
+          <datalist id="llm-models-list">
+            {models.map((m) => <option key={m} value={m} />)}
+          </datalist>
+        </div>
+        {models.length > 0 && (
+          <p className="text-xs text-gray-600 mt-1">{models.length} models available — type or pick from the list</p>
+        )}
+      </div>
+
+      {/* Prefill model */}
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">
+          Prefill Model
+          <span className="ml-2 text-gray-600 font-normal">optional</span>
+        </label>
+        <input
+          type="text"
+          list="llm-models-list"
+          value={settings.llm_prefill_model}
+          onChange={(e) => setSettings({ ...settings, llm_prefill_model: e.target.value })}
+          placeholder="Faster/cheaper model for summarisation & memory tasks"
+          className={inputClass}
+        />
+        <p className="text-xs text-gray-600 mt-1">Used for background tasks like memory consolidation. Falls back to the primary model when blank.</p>
+      </div>
+
+      {/* Embedding model */}
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">
+          Embedding Model
+          <span className="ml-2 text-gray-600 font-normal">optional</span>
+        </label>
+        <input
+          type="text"
+          list="llm-models-list"
+          value={settings.embedding_model}
+          onChange={(e) => setSettings({ ...settings, embedding_model: e.target.value })}
+          placeholder="text-embedding-3-small"
+          className={inputClass}
+        />
+        <p className="text-xs text-gray-600 mt-1">Used for semantic memory search. Leave blank to use the provider default.</p>
+      </div>
+
+      {/* Actions */}
       <div className="flex gap-2">
         <button
           onClick={testConnection}
           disabled={testing || loading}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg disabled:opacity-50"
         >
-          {testStatus === 'success' && <Check className="w-4 h-4" />}
-          {testStatus === 'error' && <X className="w-4 h-4" />}
-          {!testStatus && <RefreshCw className="w-4 h-4" />}
+          {testStatus === 'success' ? <Check className="w-4 h-4" /> : testStatus === 'error' ? <X className="w-4 h-4" /> : <RefreshCw className="w-4 h-4" />}
           Test Connection
         </button>
         <button
