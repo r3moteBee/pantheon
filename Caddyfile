@@ -27,9 +27,12 @@
 		reverse_proxy localhost:8000
 	}
 
-	# Frontend (everything else)
+	# Frontend — serve the pre-built React SPA directly.
+	# try_files ensures React Router routes like /chat work on refresh.
 	handle {
-		reverse_proxy localhost:3000
+		root * /path/to/agent-harness/frontend/dist
+		try_files {path} /index.html
+		file_server
 	}
 
 	# Logging

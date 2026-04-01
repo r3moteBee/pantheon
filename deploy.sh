@@ -695,11 +695,28 @@ setup_caddy() {
 
   # Determine backend ports based on mode
   local be_port="${BACKEND_PORT:-8000}"
-  local fe_port="${FRONTEND_PORT:-3000}"
   if [[ "$MODE" == "docker" ]]; then
     # In Docker mode, nginx is on HTTP_PORT, proxy everything through it
     be_port="${HTTP_PORT:-80}"
-    fe_port="${HTTP_PORT:-80}"
+  fi
+
+  # Build the frontend handle block:
+  #   Docker: nginx serves the SPA (handles its own routing)
+  #   Local:  Caddy serves static files directly with SPA fallback
+  local frontend_handle
+  if [[ "$MODE" == "docker" ]]; then
+    local fe_port="${HTTP_PORT:-80}"
+    frontend_handle="	handle {
+		reverse_proxy localhost:${fe_port}
+	}"
+  else
+    frontend_handle="	# Serve the pre-built React SPA.
+	# try_files makes React Router routes (e.g. /chat) work on page refresh.
+	handle {
+		root * ${INSTALL_DIR}/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}"
   fi
 
   cat > "$caddy_file" <<CADDYEOF
@@ -729,10 +746,8 @@ ${domain} {
 		reverse_proxy localhost:${be_port}
 	}
 
-	# Frontend (everything else)
-	handle {
-		reverse_proxy localhost:${fe_port}
-	}
+	# Frontend
+${frontend_handle}
 
 	log {
 		output file /var/log/caddy/agent-harness.log {
