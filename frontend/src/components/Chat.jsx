@@ -137,6 +137,19 @@ export default function Chat() {
   const connectSocket = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) return
 
+    const handleClose = (code, reason) => {
+      // Unexpected socket close — reset streaming state so UI isn't stuck
+      if (useStore.getState().isStreaming) {
+        useStore.getState().setIsStreaming(false)
+        useStore.getState().setStreamingContent('')
+        useStore.getState().clearToolCalls()
+        useStore.getState().addNotification({
+          type: 'error',
+          message: `Connection closed unexpectedly (code ${code}). Try sending your message again.`,
+        })
+      }
+    }
+
     socketRef.current = createChatSocket((event) => {
       switch (event.type) {
         case 'session_start':
@@ -155,7 +168,7 @@ export default function Chat() {
             ),
           }))
           break
-        case 'done':
+        case 'done': {
           const finalContent = useStore.getState().streamingContent
           const finalToolCalls = useStore.getState().currentToolCalls
           if (finalContent || finalToolCalls.length > 0) {
@@ -170,6 +183,7 @@ export default function Chat() {
           clearToolCalls()
           setIsStreaming(false)
           break
+        }
         case 'error':
           addNotification({ type: 'error', message: event.message })
           setIsStreaming(false)
@@ -177,7 +191,7 @@ export default function Chat() {
           clearToolCalls()
           break
       }
-    })
+    }, handleClose)
   }, [])
 
   const sendMessage = useCallback(() => {

@@ -150,7 +150,7 @@ export const projectsApi = {
 }
 
 // WebSocket helper
-export function createChatSocket(onMessage) {
+export function createChatSocket(onMessage, onClose) {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = localStorage.getItem('auth_token') || ''
   const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
@@ -165,5 +165,11 @@ export function createChatSocket(onMessage) {
     }
   }
   socket.onerror = (err) => console.error('WebSocket error:', err)
+  socket.onclose = (event) => {
+    // Codes 1000 (normal) and 1001 (going away) are expected — anything else is unexpected
+    if (event.code !== 1000 && event.code !== 1001 && onClose) {
+      onClose(event.code, event.reason)
+    }
+  }
   return socket
 }
