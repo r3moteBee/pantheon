@@ -209,7 +209,7 @@ async def execute_tool(
             tier = tool_args.get("tier", "semantic")
             content = tool_args["content"]
             metadata = tool_args.get("metadata", {})
-            ref = await mgr.store(content=content, tier=tier, metadata=metadata)
+            ref = await mgr.remember(content=content, tier=tier, metadata=metadata)
             return f"Stored in {tier} memory: {content[:100]} ({ref})"
 
         elif tool_name == "recall":
