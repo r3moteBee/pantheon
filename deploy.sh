@@ -671,7 +671,7 @@ else
 
   source "$VENV_DIR/bin/activate"
   pip install --upgrade pip -q
-  pip install -r backend/requirements.txt -q
+  pip install --no-cache-dir -r backend/requirements.txt -q
   success "Python dependencies installed"
 
   # ── Frontend build ──────────────────────────────────────────────────────────

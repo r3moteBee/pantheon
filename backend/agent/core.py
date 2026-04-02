@@ -64,12 +64,20 @@ class AgentCore:
             try:
                 from memory.manager import create_memory_manager
                 mgr = create_memory_manager(project_id=self.project_id or "default")
-                results = await mgr.recall(
-                    query=user_message,
-                    tiers=["semantic", "episodic", "graph"],
-                    project_id=self.project_id or "default",
-                    limit_per_tier=5,
-                )
+                import asyncio as _asyncio
+                try:
+                    results = await _asyncio.wait_for(
+                        mgr.recall(
+                            query=user_message,
+                            tiers=["semantic", "episodic", "graph"],
+                            project_id=self.project_id or "default",
+                            limit_per_tier=5,
+                        ),
+                        timeout=8.0,
+                    )
+                except _asyncio.TimeoutError:
+                    results = None
+                    logger.warning("Pre-recall timed out, proceeding without context")
                 if results:
                     recalled_memories = results
                     logger.debug("Pre-recalled %d memories for context", len(results))

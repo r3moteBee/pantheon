@@ -70,6 +70,16 @@ async def lifespan(app: FastAPI):
         logger.info("Task scheduler started")
 
     logger.info("Agent Harness backend ready")
+    import asyncio as _asyncio
+    async def _warmup():
+        try:
+            from memory.semantic import SemanticMemory as _SM
+            _sem = _SM(project_id="default")
+            await _asyncio.to_thread(_sem._get_collection)
+            logger.info("ChromaDB warmed up successfully")
+        except Exception as _e:
+            logger.warning("ChromaDB warmup skipped: %s", _e)
+    _asyncio.create_task(_warmup())
     yield
 
     # Stop the task scheduler cleanly

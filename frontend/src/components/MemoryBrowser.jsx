@@ -22,7 +22,7 @@ function EpisodicTab() {
   }
 
   useEffect(() => {
-    loadNotes()
+    if (activeProject?.id) loadNotes()
   }, [activeProject])
 
   const filtered = notes.filter(n =>
@@ -106,7 +106,7 @@ function SemanticTab() {
   }
 
   useEffect(() => {
-    loadDocs()
+    if (activeProject?.id) loadDocs()
   }, [activeProject])
 
   const filtered = docs.filter(d =>
@@ -197,7 +197,7 @@ function GraphTab() {
   }
 
   useEffect(() => {
-    loadGraph()
+    if (activeProject?.id) loadGraph()
   }, [activeProject])
 
   const deleteNode = async (nodeId) => {
@@ -267,11 +267,11 @@ function GraphTab() {
             <div key={edge.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-gray-300">
-                  <span className="font-medium">{edge.label_a}</span>
+                  <span className="font-medium">{edge.node_a_label}</span>
                   <span className="mx-2 text-gray-500">→</span>
                   <span className="text-purple-300 font-mono text-xs">[{edge.relationship}]</span>
                   <span className="mx-2 text-gray-500">→</span>
-                  <span className="font-medium">{edge.label_b}</span>
+                  <span className="font-medium">{edge.node_b_label}</span>
                 </p>
                 <button
                   onClick={() => deleteEdge(edge.id)}
