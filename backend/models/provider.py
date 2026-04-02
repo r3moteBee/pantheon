@@ -235,10 +235,21 @@ _provider_instance: ModelProvider | None = None
 
 
 def get_provider() -> ModelProvider:
-    """Get the singleton model provider."""
+    """Get the singleton model provider, applying vault overrides over .env defaults."""
     global _provider_instance
     if _provider_instance is None:
-        _provider_instance = ModelProvider()
+        try:
+            from secrets.vault import get_vault
+            vault = get_vault()
+            _provider_instance = ModelProvider(
+                base_url=vault.get_secret("llm_base_url") or None,
+                api_key=vault.get_secret("llm_api_key") or None,
+                model=vault.get_secret("llm_model") or None,
+                embedding_model=vault.get_secret("embedding_model") or None,
+            )
+        except Exception as e:
+            logger.warning("Could not load vault overrides, falling back to .env: %s", e)
+            _provider_instance = ModelProvider()
     return _provider_instance
 
 
