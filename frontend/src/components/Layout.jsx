@@ -7,6 +7,14 @@ import {
 import { useStore } from '../store'
 import { projectsApi } from '../api/client'
 
+function VersionTag() {
+  const [version, setVersion] = useState('…')
+  useEffect(() => {
+    fetch('/api/health').then(r => r.json()).then(d => setVersion(d.version || '?')).catch(() => setVersion('?'))
+  }, [])
+  return <p className="text-xs text-gray-700 text-center">{version}</p>
+}
+
 const NAV_ITEMS = [
   { to: '/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/memory', icon: Brain, label: 'Memory' },
@@ -159,7 +167,7 @@ export default function Layout() {
             <LogOut className="w-3 h-3" />
             Sign out
           </button>
-          <p className="text-xs text-gray-700 text-center">2026-04-02-04</p>
+          <VersionTag />
         </div>
       </aside>
 

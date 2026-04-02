@@ -1,5 +1,13 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Bot, Lock, Eye, EyeOff } from 'lucide-react'
+
+function LoginVersionTag() {
+  const [version, setVersion] = useState('…')
+  useEffect(() => {
+    fetch('/api/health').then(r => r.json()).then(d => setVersion(d.version || '?')).catch(() => setVersion('?'))
+  }, [])
+  return <p className="text-center text-xs text-gray-700 mt-6">{version}</p>
+}
 
 export default function LoginPage({ onLogin }) {
   const [password, setPassword] = useState('')
@@ -82,7 +90,7 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        <p className="text-center text-xs text-gray-700 mt-6">2026-04-02-04</p>
+        <LoginVersionTag />
       </div>
     </div>
   )
