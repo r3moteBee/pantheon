@@ -15,6 +15,8 @@ async def run_autonomous_task(
     task_name: str,
     description: str,
     project_id: str = "default",
+    schedule: str = "now",
+    **kwargs,
 ) -> None:
     """Execute an autonomous agent task.
 
