@@ -1,0 +1,43 @@
+# Agent Harness — Caddy reverse proxy with automatic HTTPS
+# Replace {$DOMAIN} with your domain or set it as an env variable.
+#
+# Caddy automatically provisions and renews Let's Encrypt certificates.
+# Make sure ports 80 and 443 are open on your firewall/security group.
+
+{$DOMAIN:localhost} {
+	# API and backend routes
+	handle /api/* {
+		reverse_proxy localhost:8000
+	}
+
+	handle /docs {
+		reverse_proxy localhost:8000
+	}
+
+	handle /openapi.json {
+		reverse_proxy localhost:8000
+	}
+
+	handle /health {
+		reverse_proxy localhost:8000
+	}
+
+	# WebSocket
+	handle /ws/* {
+		reverse_proxy localhost:8000
+	}
+
+	# Frontend — serve the pre-built React SPA directly.
+	# try_files ensures React Router routes like /chat work on refresh.
+	handle {
+		root * /path/to/agent-harness/frontend/dist
+		try_files {path} /index.html
+		file_server
+	}
+
+	# Logging
+	log {
+		output file /var/log/caddy/agent-harness.log
+		format console
+	}
+}
