@@ -80,7 +80,7 @@ async def run_autonomous_task(
 
         # Notify via Telegram
         try:
-            from tgbot.bot import send_message_to_all
+            from telegram_bot.bot import send_message_to_all
             msg = f"Task '{task_name}' completed.\n\n{result[:300] if result else 'Done.'}"
             await send_message_to_all(msg)
         except Exception as tg_err:
@@ -96,7 +96,7 @@ async def run_autonomous_task(
             details=str(e),
         )
         try:
-            from tgbot.bot import send_message_to_all
+            from telegram_bot.bot import send_message_to_all
             await send_message_to_all(f"Task '{task_name}' failed: {str(e)[:200]}")
         except Exception:
             pass

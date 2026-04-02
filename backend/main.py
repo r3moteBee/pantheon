@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         logger.info("Task scheduler started")
 
     # Start the Telegram bot (if configured)
-    from tgbot.bot import start_telegram_bot, stop_telegram_bot
+    from telegram_bot.bot import start_telegram_bot, stop_telegram_bot
     await start_telegram_bot()
 
     logger.info("Agent Harness backend ready")

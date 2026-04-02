@@ -152,7 +152,7 @@ async def test_connection() -> dict[str, Any]:
 async def restart_telegram() -> dict[str, str]:
     """Restart the Telegram bot with current settings (no server restart needed)."""
     try:
-        from tgbot.bot import restart_telegram_bot
+        from telegram_bot.bot import restart_telegram_bot
         return await restart_telegram_bot()
     except Exception as e:
         logger.error(f"Telegram restart failed: {e}")
