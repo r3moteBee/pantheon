@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket } from '../api/client'
+import { createChatSocket, settingsApi } from '../api/client'
 
 function ToolCallBlock({ toolCall }) {
   const [expanded, setExpanded] = useState(false)
@@ -118,6 +118,8 @@ function Message({ msg }) {
 
 export default function Chat() {
   const [input, setInput] = useState('')
+  const [memoryRecall, setMemoryRecall] = useState(true)
+  const [recallLoading, setRecallLoading] = useState(false)
   const messagesEndRef = useRef(null)
   const socketRef = useRef(null)
   const textareaRef = useRef(null)
@@ -140,6 +142,28 @@ export default function Chat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
+
+  useEffect(() => {
+    settingsApi.get().then((res) => {
+      setMemoryRecall(res.data.memory_recall_enabled !== false)
+    }).catch(() => {})
+  }, [])
+
+  const toggleMemoryRecall = async () => {
+    const next = !memoryRecall
+    setRecallLoading(true)
+    try {
+      await settingsApi.update({ memory_recall_enabled: next })
+      setMemoryRecall(next)
+      addNotification({
+        type: 'success',
+        message: next ? 'Memory recall on' : 'Memory recall off',
+      })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+    setRecallLoading(false)
+  }
 
   const connectSocket = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) return
@@ -263,11 +287,26 @@ export default function Chat() {
         <span className="text-sm font-medium text-gray-200">
           {activeProject?.name || 'Default Project'}
         </span>
-        {sessionId && (
-          <span className="text-xs text-gray-600 font-mono ml-auto">
-            session: {sessionId.slice(0, 8)}
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-3">
+          {sessionId && (
+            <span className="text-xs text-gray-600 font-mono">
+              session: {sessionId.slice(0, 8)}
+            </span>
+          )}
+          <button
+            onClick={toggleMemoryRecall}
+            disabled={recallLoading}
+            title={memoryRecall ? 'Memory recall augmentation is ON — click to disable' : 'Memory recall augmentation is OFF — click to enable'}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
+              memoryRecall
+                ? 'bg-brand-900 text-brand-300 hover:bg-brand-800'
+                : 'bg-gray-800 text-gray-500 hover:bg-gray-700'
+            }`}
+          >
+            <Sparkles className="w-3 h-3" />
+            Recall
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
