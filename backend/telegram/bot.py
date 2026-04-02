@@ -11,11 +11,46 @@ settings = get_settings()
 
 _application: Any = None
 
+# Per-chat active project — maps telegram chat_id (int) -> project_id (str)
+_chat_projects: dict[int, str] = {}
+
+
+def _get_token() -> str:
+    """Return the Telegram bot token, preferring vault over .env."""
+    try:
+        from secrets.vault import get_vault
+        vault = get_vault()
+        token = vault.get_secret("telegram_bot_token")
+        if token:
+            return token
+    except Exception:
+        pass
+    return settings.telegram_bot_token or ""
+
+
+def _get_allowed_ids() -> list[int]:
+    """Return allowed chat IDs, preferring vault over .env."""
+    try:
+        from secrets.vault import get_vault
+        vault = get_vault()
+        raw = vault.get_secret("telegram_allowed_chat_ids")
+        if raw:
+            return [int(x.strip()) for x in raw.split(",") if x.strip()]
+    except Exception:
+        pass
+    return settings.telegram_allowed_ids
+
+
+def _active_project(chat_id: int) -> str:
+    """Return the active project for a chat, defaulting to 'default'."""
+    return _chat_projects.get(chat_id, "default")
+
 
 async def start_telegram_bot() -> None:
     """Initialize and start the Telegram bot."""
     global _application
-    if not settings.telegram_bot_token:
+    token = _get_token()
+    if not token:
         logger.info("Telegram bot token not configured, skipping.")
         return
 
@@ -29,28 +64,150 @@ async def start_telegram_bot() -> None:
             ContextTypes,
         )
 
-        app = Application.builder().token(settings.telegram_bot_token).build()
+        app = Application.builder().token(token).build()
 
+        # ── /start ──────────────────────────────────────────────────────
         async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if not _is_allowed(update):
                 return
+            project = _active_project(update.effective_chat.id)
             await update.message.reply_text(
                 "Hello! I'm your Agent Harness AI assistant.\n\n"
                 "Commands:\n"
-                "/chat <message> — Send a message to the agent\n"
                 "/project <name> — Switch active project\n"
+                "/projects — List available projects\n"
                 "/status — Get agent status\n"
                 "/files — List workspace files\n"
                 "/task <description> — Create an autonomous task\n"
-                "/memory <query> — Search memories"
+                "/memory <query> — Search memories\n\n"
+                "Or just send a message to chat with the agent.\n\n"
+                f"Active project: {project}"
             )
 
-        async def chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # ── /project ────────────────────────────────────────────────────
+        async def project_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if not _is_allowed(update):
                 return
-            message = " ".join(context.args) if context.args else ""
-            if not message:
-                await update.message.reply_text("Usage: /chat <your message>")
+            chat_id = update.effective_chat.id
+            name = " ".join(context.args).strip() if context.args else ""
+            if not name:
+                current = _active_project(chat_id)
+                await update.message.reply_text(
+                    f"Active project: {current}\n\n"
+                    "Usage: /project <name>  — switch project\n"
+                    "       /projects        — list all projects"
+                )
+                return
+            # Verify project exists
+            from api.projects import _load_projects
+            existing = list(_load_projects().values())
+            match = None
+            for p in existing:
+                if p["id"] == name or p["name"].lower() == name.lower():
+                    match = p
+                    break
+            if not match:
+                names = ", ".join(p["id"] for p in existing) if existing else "(none)"
+                await update.message.reply_text(
+                    f"Project '{name}' not found.\nAvailable: {names}"
+                )
+                return
+            _chat_projects[chat_id] = match["id"]
+            await update.message.reply_text(f"Switched to project: {match['name']} ({match['id']})")
+
+        # ── /projects ───────────────────────────────────────────────────
+        async def projects_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            from api.projects import _load_projects
+            existing = list(_load_projects().values())
+            current = _active_project(update.effective_chat.id)
+            if not existing:
+                await update.message.reply_text("No projects configured.")
+                return
+            lines = []
+            for p in existing:
+                marker = " ← active" if p["id"] == current else ""
+                lines.append(f"• {p['name']} ({p['id']}){marker}")
+            await update.message.reply_text("Projects:\n" + "\n".join(lines))
+
+        # ── /status ─────────────────────────────────────────────────────
+        async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            from tasks.scheduler import list_jobs
+            project = _active_project(update.effective_chat.id)
+            jobs = list_jobs()
+            status = f"Agent Harness Online\nProject: {project}\nScheduled tasks: {len(jobs)}"
+            if jobs:
+                for j in jobs[:5]:
+                    status += f"\n• {j['name']} (next: {j['next_run'] or 'N/A'})"
+            await update.message.reply_text(status)
+
+        # ── /files ──────────────────────────────────────────────────────
+        async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            project = _active_project(update.effective_chat.id)
+            cfg = get_settings()
+            if project and project != "default":
+                workspace = cfg.projects_dir / project / "workspace"
+            else:
+                workspace = cfg.workspace_dir
+            workspace.mkdir(parents=True, exist_ok=True)
+            files = list(workspace.glob("**/*"))[:20]
+            if not files:
+                await update.message.reply_text(f"No files in workspace ({project}).")
+                return
+            file_list = "\n".join(f"• {f.relative_to(workspace)}" for f in files if f.is_file())
+            await update.message.reply_text(f"Workspace files ({project}):\n{file_list}")
+
+        # ── /task ───────────────────────────────────────────────────────
+        async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            description = " ".join(context.args) if context.args else ""
+            if not description:
+                await update.message.reply_text("Usage: /task <description>")
+                return
+            project = _active_project(update.effective_chat.id)
+            from tasks.scheduler import schedule_agent_task
+            task_id = await schedule_agent_task(
+                name=description[:50],
+                description=description,
+                schedule="now",
+                project_id=project,
+            )
+            await update.message.reply_text(f"Task scheduled ({project})!\nID: {task_id}\n\n{description}")
+
+        # ── /memory ─────────────────────────────────────────────────────
+        async def memory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            query = " ".join(context.args) if context.args else ""
+            if not query:
+                await update.message.reply_text("Usage: /memory <search query>")
+                return
+            project = _active_project(update.effective_chat.id)
+            from memory.manager import create_memory_manager
+            manager = create_memory_manager(project_id=project)
+            results = await manager.recall(query, tiers=["semantic", "episodic"])
+            if not results:
+                await update.message.reply_text("No relevant memories found.")
+                return
+            lines = [f"Memory search ({project}): '{query}'\n"]
+            for r in results[:5]:
+                source = r.get("source", "?")
+                content = r.get("content", "")[:200]
+                lines.append(f"[{source}] {content}")
+            await update.message.reply_text("\n\n".join(lines))
+
+        # ── Plain message handler (no /chat prefix needed) ─────────────
+        async def plain_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            if not _is_allowed(update):
+                return
+            message = update.message.text
+            if not message or not message.strip():
                 return
 
             await update.message.reply_text("Thinking...")
@@ -59,95 +216,38 @@ async def start_telegram_bot() -> None:
                 from memory.manager import create_memory_manager
                 from models.provider import get_provider
 
+                chat_id = update.effective_chat.id
+                project = _active_project(chat_id)
                 provider = get_provider()
-                chat_id = str(update.effective_chat.id)
                 memory = create_memory_manager(
-                    project_id="default",
+                    project_id=project,
                     session_id=f"telegram-{chat_id}",
                     provider=provider,
                 )
                 agent = AgentCore(
                     provider=provider,
                     memory_manager=memory,
-                    project_id="default",
+                    project_id=project,
                     session_id=f"telegram-{chat_id}",
                 )
                 response = await agent.run_autonomous(message)
-                # Split long messages
-                if len(response) > 4000:
-                    for i in range(0, len(response), 4000):
-                        await update.message.reply_text(response[i:i+4000])
-                else:
-                    await update.message.reply_text(response or "No response.")
+                # Split long messages (Telegram 4096 char limit)
+                text = response or "No response."
+                for i in range(0, len(text), 4000):
+                    await update.message.reply_text(text[i:i + 4000])
             except Exception as e:
                 await update.message.reply_text(f"Error: {e}")
 
-        async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            if not _is_allowed(update):
-                return
-            from tasks.scheduler import list_jobs
-            jobs = list_jobs()
-            status = f"Agent Harness Online\n\nScheduled tasks: {len(jobs)}"
-            if jobs:
-                for j in jobs[:5]:
-                    status += f"\n• {j['name']} (next: {j['next_run'] or 'N/A'})"
-            await update.message.reply_text(status)
-
-        async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            if not _is_allowed(update):
-                return
-            from config import get_settings as gs
-            s = gs()
-            workspace = s.workspace_dir
-            files = list(workspace.glob("**/*"))[:20]
-            if not files:
-                await update.message.reply_text("No files in workspace.")
-                return
-            file_list = "\n".join(f"• {f.relative_to(workspace)}" for f in files if f.is_file())
-            await update.message.reply_text(f"Workspace files:\n{file_list}")
-
-        async def task_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            if not _is_allowed(update):
-                return
-            description = " ".join(context.args) if context.args else ""
-            if not description:
-                await update.message.reply_text("Usage: /task <description>")
-                return
-            from tasks.scheduler import schedule_agent_task
-            task_id = await schedule_agent_task(
-                name=description[:50],
-                description=description,
-                schedule="now",
-                project_id="default",
-            )
-            await update.message.reply_text(f"Task scheduled! ID: {task_id}\n\n{description}")
-
-        async def memory_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-            if not _is_allowed(update):
-                return
-            query = " ".join(context.args) if context.args else ""
-            if not query:
-                await update.message.reply_text("Usage: /memory <search query>")
-                return
-            from memory.manager import create_memory_manager
-            manager = create_memory_manager(project_id="default")
-            results = await manager.recall(query, tiers=["semantic", "episodic"])
-            if not results:
-                await update.message.reply_text("No relevant memories found.")
-                return
-            lines = [f"Memory search: '{query}'\n"]
-            for r in results[:5]:
-                source = r.get("source", "?")
-                content = r.get("content", "")[:200]
-                lines.append(f"[{source}] {content}")
-            await update.message.reply_text("\n\n".join(lines))
-
         app.add_handler(CommandHandler("start", start_cmd))
-        app.add_handler(CommandHandler("chat", chat_cmd))
+        app.add_handler(CommandHandler("project", project_cmd))
+        app.add_handler(CommandHandler("projects", projects_cmd))
+        app.add_handler(CommandHandler("chat", plain_message))  # keep /chat as alias
         app.add_handler(CommandHandler("status", status_cmd))
         app.add_handler(CommandHandler("files", files_cmd))
         app.add_handler(CommandHandler("task", task_cmd))
         app.add_handler(CommandHandler("memory", memory_cmd))
+        # Plain text messages (must be last so commands take priority)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_message))
 
         _application = app
         await app.initialize()
@@ -160,12 +260,26 @@ async def start_telegram_bot() -> None:
         logger.warning("python-telegram-bot not installed, Telegram disabled")
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {e}")
-        raise
+
+
+async def stop_telegram_bot() -> None:
+    """Gracefully stop the Telegram bot."""
+    global _application
+    if _application is None:
+        return
+    try:
+        await _application.updater.stop()
+        await _application.stop()
+        await _application.shutdown()
+        logger.info("Telegram bot stopped")
+    except Exception as e:
+        logger.warning(f"Error stopping Telegram bot: {e}")
+    _application = None
 
 
 def _is_allowed(update: Any) -> bool:
     """Check if the chat ID is in the allowed list."""
-    allowed_ids = settings.telegram_allowed_ids
+    allowed_ids = _get_allowed_ids()
     if not allowed_ids:
         return True  # No restriction if not configured
     chat_id = update.effective_chat.id if update.effective_chat else None
@@ -177,13 +291,15 @@ def _is_allowed(update: Any) -> bool:
 
 async def send_message_to_all(message: str) -> None:
     """Send a message to all allowed Telegram chat IDs."""
-    if not settings.telegram_bot_token or not settings.telegram_allowed_ids:
+    allowed_ids = _get_allowed_ids()
+    token = _get_token()
+    if not token or not allowed_ids:
         return
     if _application is None:
         logger.debug("Telegram application not initialized, skipping message")
         return
     try:
-        for chat_id in settings.telegram_allowed_ids:
+        for chat_id in allowed_ids:
             await _application.bot.send_message(
                 chat_id=chat_id,
                 text=message[:4096],

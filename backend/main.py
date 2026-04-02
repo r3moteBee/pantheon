@@ -69,6 +69,10 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         logger.info("Task scheduler started")
 
+    # Start the Telegram bot (if configured)
+    from telegram.bot import start_telegram_bot, stop_telegram_bot
+    await start_telegram_bot()
+
     logger.info("Agent Harness backend ready")
     import asyncio as _asyncio
     async def _warmup():
@@ -81,6 +85,9 @@ async def lifespan(app: FastAPI):
             logger.warning("ChromaDB warmup skipped: %s", _e)
     _asyncio.create_task(_warmup())
     yield
+
+    # Stop the Telegram bot cleanly
+    await stop_telegram_bot()
 
     # Stop the task scheduler cleanly
     if scheduler.running:
