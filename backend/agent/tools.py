@@ -273,10 +273,22 @@ async def execute_tool(
             return await _web_search(tool_args["query"])
 
         elif tool_name == "create_task":
-            return f"Task scheduled: {tool_args.get('name', 'task')} - {tool_args['description'][:100]}"
+            from tasks.scheduler import schedule_agent_task
+            task_id = await schedule_agent_task(
+                name=tool_args.get("name", "task"),
+                description=tool_args["description"],
+                schedule=tool_args.get("schedule", "now"),
+                project_id=effective_project,
+            )
+            return f"Task scheduled: {tool_args.get('name', 'task')} (id: {task_id}, schedule: {tool_args.get('schedule', 'now')})"
 
         elif tool_name == "send_telegram":
-            return f"Telegram message sent: {tool_args['message'][:100]}"
+            try:
+                from telegram.bot import send_message_to_all
+                await send_message_to_all(tool_args["message"])
+                return "Telegram message sent."
+            except Exception as e:
+                return f"Telegram send failed: {e}"
 
         else:
             return f"Unknown tool: {tool_name}"
