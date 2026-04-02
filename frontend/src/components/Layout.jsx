@@ -159,7 +159,7 @@ export default function Layout() {
             <LogOut className="w-3 h-3" />
             Sign out
           </button>
-          <p className="text-xs text-gray-700 text-center">2026-04-02-03</p>
+          <p className="text-xs text-gray-700 text-center">2026-04-02-04</p>
         </div>
       </aside>
 

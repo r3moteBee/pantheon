@@ -82,7 +82,7 @@ export default function LoginPage({ onLogin }) {
           </button>
         </form>
 
-        <p className="text-center text-xs text-gray-700 mt-6">2026-04-02-03</p>
+        <p className="text-center text-xs text-gray-700 mt-6">2026-04-02-04</p>
       </div>
     </div>
   )
