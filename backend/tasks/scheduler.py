@@ -47,11 +47,16 @@ def list_jobs() -> list[dict[str, Any]]:
     jobs = []
     for job in scheduler.get_jobs():
         next_run = job.next_run_time.isoformat() if job.next_run_time else None
+        kwargs = job.kwargs or {}
         jobs.append({
             "id": job.id,
             "name": job.name,
             "next_run": next_run,
             "trigger": str(job.trigger),
+            "schedule": kwargs.get("schedule", str(job.trigger)),
+            "description": kwargs.get("description", ""),
+            "project_id": kwargs.get("project_id", "default"),
+            "status": "scheduled" if next_run else "completed",
         })
     return jobs
 
@@ -95,6 +100,7 @@ async def schedule_agent_task(
                 "task_name": name,
                 "description": description,
                 "project_id": project_id,
+                "schedule": schedule,
             },
             replace_existing=True,
         )
@@ -111,6 +117,7 @@ async def schedule_agent_task(
                 "task_name": name,
                 "description": description,
                 "project_id": project_id,
+                "schedule": schedule,
             },
             replace_existing=True,
         )
@@ -139,6 +146,7 @@ async def schedule_agent_task(
                 "task_name": name,
                 "description": description,
                 "project_id": project_id,
+                "schedule": schedule,
             },
             replace_existing=True,
         )

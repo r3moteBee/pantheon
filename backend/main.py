@@ -62,8 +62,20 @@ async def lifespan(app: FastAPI):
         shutil.copy(default_dir / "agent.md", agent_path)
         logger.info("Initialised agent.md from bundled template → %s", agent_path)
 
+    # Start the task scheduler
+    from tasks.scheduler import get_scheduler
+    scheduler = get_scheduler()
+    if not scheduler.running:
+        scheduler.start()
+        logger.info("Task scheduler started")
+
     logger.info("Agent Harness backend ready")
     yield
+
+    # Stop the task scheduler cleanly
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("Task scheduler stopped")
 
     logger.info("Agent Harness backend shutdown complete")
 

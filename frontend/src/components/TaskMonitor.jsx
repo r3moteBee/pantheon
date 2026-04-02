@@ -48,10 +48,12 @@ function CreateTaskForm({ onTaskCreated, activeProject }) {
         onChange={(e) => setSchedule(e.target.value)}
         className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
       >
-        <option value="now">Run Now</option>
-        <option value="daily">Daily</option>
-        <option value="weekly">Weekly</option>
-        <option value="monthly">Monthly</option>
+        <option value="now">Run Now (once)</option>
+        <option value="0 9 * * *">Daily at 9am</option>
+        <option value="0 9 * * 1">Weekly (Monday 9am)</option>
+        <option value="0 9 1 * *">Monthly (1st at 9am)</option>
+        <option value="interval:60">Every Hour</option>
+        <option value="interval:360">Every 6 Hours</option>
       </select>
       <button
         onClick={createTask}
