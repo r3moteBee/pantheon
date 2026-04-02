@@ -46,12 +46,19 @@ def _active_project(chat_id: int) -> str:
     return _chat_projects.get(chat_id, "default")
 
 
-async def start_telegram_bot() -> None:
-    """Initialize and start the Telegram bot."""
+async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
+    """Initialize and start the Telegram bot.
+
+    Args:
+        raise_on_error: If True, propagate exceptions instead of logging them.
+                        Used by restart_telegram_bot() to surface errors to the UI.
+    """
     global _application
     token = _get_token()
     if not token:
         logger.info("Telegram bot token not configured, skipping.")
+        if raise_on_error:
+            raise RuntimeError("No Telegram bot token configured")
         return
 
     try:
@@ -258,8 +265,12 @@ async def start_telegram_bot() -> None:
 
     except ImportError:
         logger.warning("python-telegram-bot not installed, Telegram disabled")
+        if raise_on_error:
+            raise RuntimeError("python-telegram-bot package is not installed. Run: pip install python-telegram-bot")
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {e}")
+        if raise_on_error:
+            raise
 
 
 async def stop_telegram_bot() -> None:
@@ -279,16 +290,14 @@ async def stop_telegram_bot() -> None:
 
 async def restart_telegram_bot() -> dict[str, str]:
     """Stop and restart the Telegram bot with current settings."""
-    was_running = _application is not None
     await stop_telegram_bot()
-    await start_telegram_bot()
-    started = _application is not None
-    if started:
+    try:
+        await start_telegram_bot(raise_on_error=True)
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+    if _application is not None:
         return {"status": "ok", "message": "Telegram bot restarted successfully"}
-    elif not _get_token():
-        return {"status": "no_token", "message": "No bot token configured — bot not started"}
-    else:
-        return {"status": "error", "message": "Failed to start Telegram bot"}
+    return {"status": "error", "message": "Bot did not start (unknown reason)"}
 
 
 def _is_allowed(update: Any) -> bool:
