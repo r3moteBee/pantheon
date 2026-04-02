@@ -263,10 +263,10 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
         asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
         logger.info("Telegram bot started successfully")
 
-    except ImportError:
-        logger.warning("python-telegram-bot not installed, Telegram disabled")
+    except ImportError as exc:
+        logger.warning(f"Telegram import failed: {exc}")
         if raise_on_error:
-            raise RuntimeError("python-telegram-bot package is not installed. Run: pip install python-telegram-bot")
+            raise RuntimeError(f"Telegram import error: {exc}. Try: pip install 'python-telegram-bot[all]==21.2'")
     except Exception as e:
         logger.error(f"Failed to start Telegram bot: {e}")
         if raise_on_error:
