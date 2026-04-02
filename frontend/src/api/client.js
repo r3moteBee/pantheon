@@ -114,6 +114,7 @@ export const settingsApi = {
   listSecrets: () => api.get('/api/secrets'),
   setSecret: (key, value) => api.put(`/api/secrets/${key}`, { value }),
   deleteSecret: (key) => api.delete(`/api/secrets/${key}`),
+  restartTelegram: () => api.post('/api/settings/restart-telegram'),
 }
 
 // Tasks API

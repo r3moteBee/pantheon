@@ -148,6 +148,17 @@ async def test_connection() -> dict[str, Any]:
         return {"status": "error", "message": str(e), "base_url": provider.base_url}
 
 
+@router.post("/settings/restart-telegram")
+async def restart_telegram() -> dict[str, str]:
+    """Restart the Telegram bot with current settings (no server restart needed)."""
+    try:
+        from telegram.bot import restart_telegram_bot
+        return await restart_telegram_bot()
+    except Exception as e:
+        logger.error(f"Telegram restart failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/secrets")
 async def list_secrets() -> dict[str, Any]:
     """List secret keys (never values)."""

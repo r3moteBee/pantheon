@@ -277,6 +277,20 @@ async def stop_telegram_bot() -> None:
     _application = None
 
 
+async def restart_telegram_bot() -> dict[str, str]:
+    """Stop and restart the Telegram bot with current settings."""
+    was_running = _application is not None
+    await stop_telegram_bot()
+    await start_telegram_bot()
+    started = _application is not None
+    if started:
+        return {"status": "ok", "message": "Telegram bot restarted successfully"}
+    elif not _get_token():
+        return {"status": "no_token", "message": "No bot token configured — bot not started"}
+    else:
+        return {"status": "error", "message": "Failed to start Telegram bot"}
+
+
 def _is_allowed(update: Any) -> bool:
     """Check if the chat ID is in the allowed list."""
     allowed_ids = _get_allowed_ids()

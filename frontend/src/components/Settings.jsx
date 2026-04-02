@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle } from 'lucide-react'
+import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle, RotateCw } from 'lucide-react'
 import { useStore } from '../store'
 import { settingsApi } from '../api/client'
 
@@ -404,6 +404,7 @@ function TelegramSection() {
   const [tokenSet, setTokenSet] = useState(false)
   const [showToken, setShowToken] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [restarting, setRestarting] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
   useEffect(() => {
@@ -423,11 +424,29 @@ function TelegramSection() {
       }
       await settingsApi.update(payload)
       setBotToken('')
-      addNotification({ type: 'success', message: 'Telegram settings saved. Restart the server to connect the bot.' })
+      addNotification({ type: 'success', message: 'Telegram settings saved.' })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
     setLoading(false)
+  }
+
+  const restartBot = async () => {
+    setRestarting(true)
+    try {
+      const res = await settingsApi.restartTelegram()
+      const d = res.data || res
+      if (d.status === 'ok') {
+        addNotification({ type: 'success', message: d.message || 'Telegram bot restarted.' })
+      } else if (d.status === 'no_token') {
+        addNotification({ type: 'warning', message: d.message || 'No bot token configured.' })
+      } else {
+        addNotification({ type: 'error', message: d.message || 'Failed to restart bot.' })
+      }
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message || 'Failed to restart Telegram bot.' })
+    }
+    setRestarting(false)
   }
 
   const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
@@ -443,7 +462,7 @@ function TelegramSection() {
         Connect a Telegram bot to chat with the agent from your phone.
         Create a bot via <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">@BotFather</a> to
         get a token, then message your bot and use <a href="https://api.telegram.org" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">the Telegram API</a> to
-        find your chat ID. Requires a server restart after saving.
+        find your chat ID.
       </p>
 
       <div>
@@ -479,14 +498,24 @@ function TelegramSection() {
         <p className="text-xs text-gray-600 mt-1">Comma-separated list of Telegram chat IDs that can use the bot. Leave blank to allow all.</p>
       </div>
 
-      <button
-        onClick={save}
-        disabled={loading}
-        className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50"
-      >
-        <Save className="w-4 h-4" />
-        Save Telegram Settings
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          onClick={save}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" />
+          Save
+        </button>
+        <button
+          onClick={restartBot}
+          disabled={restarting}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg disabled:opacity-50"
+        >
+          <RotateCw className={`w-4 h-4 ${restarting ? 'animate-spin' : ''}`} />
+          {restarting ? 'Restarting…' : 'Restart Bot'}
+        </button>
+      </div>
     </div>
   )
 }
