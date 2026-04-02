@@ -474,7 +474,9 @@ function SecretsSection() {
     setLoading(true)
     try {
       const res = await settingsApi.listSecrets()
-      setSecrets(res.data.secrets || [])
+      // API returns { keys: ["key1", "key2"], count: N }
+      const keys = res.data.keys || []
+      setSecrets(keys.map((k) => ({ key: k })))
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -483,11 +485,13 @@ function SecretsSection() {
 
   const addSecret = async () => {
     if (!newKey.trim() || !newValue.trim()) return
+    // Normalize to lowercase — the backend vault lookups use lowercase keys
+    const normalizedKey = newKey.trim().toLowerCase()
     try {
-      await settingsApi.setSecret(newKey, newValue)
+      await settingsApi.setSecret(normalizedKey, newValue)
       setNewKey('')
       setNewValue('')
-      addNotification({ type: 'success', message: 'Secret saved' })
+      addNotification({ type: 'success', message: `Secret "${normalizedKey}" saved` })
       loadSecrets()
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
@@ -518,7 +522,7 @@ function SecretsSection() {
               type="text"
               value={newKey}
               onChange={(e) => setNewKey(e.target.value)}
-              placeholder="TELEGRAM_BOT_TOKEN"
+              placeholder="telegram_bot_token"
               className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
             />
           </div>
@@ -552,17 +556,7 @@ function SecretsSection() {
             <div key={secret.key} className="bg-gray-800 rounded-lg p-3 border border-gray-700 flex items-center justify-between">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-mono text-gray-300">{secret.key}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-xs text-gray-600">
-                    {showValues[secret.key] ? secret.value : '***'.repeat(4)}
-                  </span>
-                  <button
-                    onClick={() => setShowValues({ ...showValues, [secret.key]: !showValues[secret.key] })}
-                    className="text-xs text-gray-500 hover:text-gray-400"
-                  >
-                    {showValues[secret.key] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                  </button>
-                </div>
+                <span className="text-xs text-gray-600">************</span>
               </div>
               <button
                 onClick={() => deleteSecret(secret.key)}
