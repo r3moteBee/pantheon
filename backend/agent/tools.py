@@ -188,6 +188,39 @@ TOOL_SCHEMAS = [
                 "required": ["message"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "index_workspace",
+            "description": "Index workspace files into semantic memory and knowledge graph. Makes file contents searchable via recall. Supports Markdown (with YAML frontmatter), text, CSV, PDF, and code files. Can index a single file or entire directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path to a file or directory in the workspace. Empty string indexes the entire workspace.",
+                        "default": ""
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Re-index even if file hasn't changed (default: false)",
+                        "default": False
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "consolidate_memory",
+            "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
     }
 ]
 
@@ -289,6 +322,34 @@ async def execute_tool(
                 return "Telegram message sent."
             except Exception as e:
                 return f"Telegram send failed: {e}"
+
+        elif tool_name == "index_workspace":
+            path_arg = tool_args.get("path", "")
+            force = tool_args.get("force", False)
+            from memory.manager import create_memory_manager
+            mgr = create_memory_manager(project_id=effective_project)
+            base = _get_workspace_base(project_id)
+            target = (base / path_arg).resolve() if path_arg else base
+            if not str(target).startswith(str(base)):
+                return "Access denied: path outside workspace"
+            if target.is_file():
+                result = await mgr.index_workspace_file(str(target), force=force)
+            elif target.is_dir():
+                result = await mgr.index_workspace_directory(str(target), force=force)
+            else:
+                return f"Path not found: {path_arg}"
+            if result.get("skipped"):
+                return f"File {path_arg} skipped: {result.get('reason', 'unchanged')}"
+            chunks = result.get("chunks_stored", result.get("total_chunks", 0))
+            entities = result.get("entities_extracted", result.get("total_entities", 0))
+            files = result.get("files_processed", 1)
+            return f"Indexed {files} file(s): {chunks} chunks stored, {entities} entities extracted to graph."
+
+        elif tool_name == "consolidate_memory":
+            if not memory_manager:
+                return "No memory manager available."
+            result = await memory_manager.consolidate_session()
+            return result
 
         else:
             return f"Unknown tool: {tool_name}"

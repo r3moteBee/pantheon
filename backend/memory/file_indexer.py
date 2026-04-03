@@ -1,0 +1,578 @@
+"""File ingestion pipeline — extract, chunk, embed, and index workspace files.
+
+Turns passive file storage into searchable semantic memory.  Supports
+Markdown (with YAML frontmatter), plain text, CSV, and PDF.
+
+For Markdown files with YAML frontmatter (e.g., CorpusClaw vendor files),
+structured metadata is extracted and routed to the graph as well.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+import re
+import sqlite3
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ── Supported file types ─────────────────────────────────────────────────────
+
+SUPPORTED_EXTENSIONS = {
+    ".md", ".markdown", ".txt", ".text", ".csv", ".tsv",
+    ".json", ".yaml", ".yml", ".py", ".js", ".ts",
+    ".html", ".htm", ".xml", ".log",
+    ".pdf",
+}
+
+# ── Chunking defaults ────────────────────────────────────────────────────────
+
+DEFAULT_CHUNK_SIZE = 500      # tokens (~2000 chars)
+DEFAULT_CHUNK_OVERLAP = 50    # tokens (~200 chars)
+CHARS_PER_TOKEN = 4           # rough estimate
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _content_hash(content: str) -> str:
+    """SHA-256 hash of content for dedup/change detection."""
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+
+
+# ── YAML frontmatter parsing ────────────────────────────────────────────────
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
+
+
+def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split YAML frontmatter from body text.
+
+    Returns (metadata_dict, body_text).  If no frontmatter, returns ({}, text).
+    """
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return {}, text
+    try:
+        import yaml
+        meta = yaml.safe_load(match.group(1)) or {}
+        body = text[match.end():]
+        return meta, body
+    except Exception as e:
+        logger.debug("YAML frontmatter parse failed: %s", e)
+        return {}, text
+
+
+# ── Text extraction ──────────────────────────────────────────────────────────
+
+async def extract_text(file_path: Path) -> str:
+    """Extract text content from a file based on its extension."""
+    ext = file_path.suffix.lower()
+
+    if ext == ".pdf":
+        return await _extract_pdf(file_path)
+    elif ext == ".csv" or ext == ".tsv":
+        return _extract_csv(file_path)
+    else:
+        # Default: read as text
+        try:
+            return file_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            logger.warning("Failed to read %s: %s", file_path, e)
+            return ""
+
+
+async def _extract_pdf(file_path: Path) -> str:
+    """Extract text from PDF using pdfplumber (or pymupdf as fallback)."""
+    try:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(str(file_path)) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        return "\n\n".join(text_parts)
+    except ImportError:
+        pass
+
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(str(file_path))
+        text_parts = [page.get_text() for page in doc]
+        doc.close()
+        return "\n\n".join(text_parts)
+    except ImportError:
+        pass
+
+    logger.warning("No PDF library available (install pdfplumber or pymupdf)")
+    return ""
+
+
+def _extract_csv(file_path: Path) -> str:
+    """Extract CSV as readable text (headers + sample rows)."""
+    import csv
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv.reader(f)
+            rows = []
+            for i, row in enumerate(reader):
+                rows.append(" | ".join(row))
+                if i > 100:  # Cap at 100 rows for indexing
+                    rows.append(f"... ({i}+ rows total)")
+                    break
+        return "\n".join(rows)
+    except Exception as e:
+        logger.warning("CSV extraction failed for %s: %s", file_path, e)
+        return ""
+
+
+# ── Chunking ─────────────────────────────────────────────────────────────────
+
+def chunk_text(
+    text: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    respect_headings: bool = True,
+) -> list[dict[str, Any]]:
+    """Split text into overlapping chunks for embedding.
+
+    Returns list of dicts: {content, chunk_index, heading, char_start, char_end}
+
+    When respect_headings=True (default for Markdown), heading boundaries
+    are preferred split points.
+    """
+    if not text.strip():
+        return []
+
+    max_chars = chunk_size * CHARS_PER_TOKEN
+    overlap_chars = chunk_overlap * CHARS_PER_TOKEN
+
+    if respect_headings:
+        chunks = _chunk_by_headings(text, max_chars, overlap_chars)
+    else:
+        chunks = _chunk_by_paragraphs(text, max_chars, overlap_chars)
+
+    return chunks
+
+
+def _chunk_by_headings(text: str, max_chars: int, overlap_chars: int) -> list[dict]:
+    """Split on Markdown headings first, then by paragraphs within sections."""
+    # Split on heading lines (## Heading)
+    heading_pattern = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
+    sections: list[tuple[str, str]] = []  # (heading, content)
+
+    last_end = 0
+    current_heading = ""
+    for match in heading_pattern.finditer(text):
+        if last_end > 0 or match.start() > 0:
+            section_text = text[last_end:match.start()].strip()
+            if section_text:
+                sections.append((current_heading, section_text))
+        current_heading = match.group(2).strip()
+        last_end = match.end()
+
+    # Remaining text after last heading
+    remaining = text[last_end:].strip()
+    if remaining:
+        sections.append((current_heading, remaining))
+
+    # If no headings found, fall back to paragraph chunking
+    if not sections:
+        return _chunk_by_paragraphs(text, max_chars, overlap_chars)
+
+    # Now chunk each section
+    chunks = []
+    idx = 0
+    for heading, section_text in sections:
+        if len(section_text) <= max_chars:
+            chunks.append({
+                "content": section_text,
+                "chunk_index": idx,
+                "heading": heading,
+            })
+            idx += 1
+        else:
+            # Sub-chunk by paragraphs
+            sub_chunks = _chunk_by_paragraphs(section_text, max_chars, overlap_chars)
+            for sc in sub_chunks:
+                sc["heading"] = heading
+                sc["chunk_index"] = idx
+                chunks.append(sc)
+                idx += 1
+
+    return chunks
+
+
+def _chunk_by_paragraphs(text: str, max_chars: int, overlap_chars: int) -> list[dict]:
+    """Split text into chunks by paragraph boundaries with overlap."""
+    paragraphs = re.split(r"\n\s*\n", text)
+    chunks = []
+    current = ""
+    idx = 0
+
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+
+        if len(current) + len(para) + 2 > max_chars and current:
+            chunks.append({
+                "content": current.strip(),
+                "chunk_index": idx,
+                "heading": "",
+            })
+            idx += 1
+            # Keep overlap from end of previous chunk
+            if overlap_chars > 0 and len(current) > overlap_chars:
+                current = current[-overlap_chars:] + "\n\n" + para
+            else:
+                current = para
+        else:
+            current = current + "\n\n" + para if current else para
+
+    if current.strip():
+        chunks.append({
+            "content": current.strip(),
+            "chunk_index": idx,
+            "heading": "",
+        })
+
+    return chunks
+
+
+# ── Index tracking (SQLite) ──────────────────────────────────────────────────
+
+class FileIndex:
+    """Tracks which files have been indexed and their content hashes.
+
+    Prevents re-indexing unchanged files and enables incremental updates.
+    """
+
+    def __init__(self, db_path: str = "data/file_index.db"):
+        self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS indexed_files (
+                    id TEXT PRIMARY KEY,
+                    project_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    chunk_count INTEGER DEFAULT 0,
+                    indexed_at TEXT NOT NULL,
+                    file_size INTEGER DEFAULT 0,
+                    metadata TEXT DEFAULT '{}',
+                    UNIQUE(project_id, file_path)
+                )
+            """)
+            conn.commit()
+
+    def is_indexed(self, project_id: str, file_path: str, content_hash: str) -> bool:
+        """Check if a file with this hash is already indexed."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT content_hash FROM indexed_files WHERE project_id = ? AND file_path = ?",
+                (project_id, file_path)
+            ).fetchone()
+        return row is not None and row[0] == content_hash
+
+    def mark_indexed(
+        self,
+        project_id: str,
+        file_path: str,
+        content_hash: str,
+        chunk_count: int,
+        file_size: int = 0,
+        metadata: dict | None = None,
+    ) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO indexed_files (id, project_id, file_path, content_hash, chunk_count, indexed_at, file_size, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, file_path) DO UPDATE SET
+                    content_hash = excluded.content_hash,
+                    chunk_count = excluded.chunk_count,
+                    indexed_at = excluded.indexed_at,
+                    file_size = excluded.file_size,
+                    metadata = excluded.metadata
+            """, (
+                str(uuid.uuid4()), project_id, file_path, content_hash,
+                chunk_count, _now_iso(), file_size,
+                json.dumps(metadata or {}),
+            ))
+            conn.commit()
+
+    def remove_indexed(self, project_id: str, file_path: str) -> None:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "DELETE FROM indexed_files WHERE project_id = ? AND file_path = ?",
+                (project_id, file_path)
+            )
+            conn.commit()
+
+    def list_indexed(self, project_id: str) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM indexed_files WHERE project_id = ? ORDER BY indexed_at DESC",
+                (project_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── Main indexer ─────────────────────────────────────────────────────────────
+
+class FileIndexer:
+    """Indexes workspace files into semantic memory and graph.
+
+    Usage:
+        indexer = FileIndexer(memory_manager, project_id="my-project")
+        stats = await indexer.index_file(Path("/workspace/vendor_report.md"))
+        stats = await indexer.index_directory(Path("/workspace/"))
+    """
+
+    def __init__(
+        self,
+        memory_manager: Any,
+        project_id: str = "default",
+        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    ):
+        self.memory_manager = memory_manager
+        self.project_id = project_id
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.file_index = FileIndex()
+
+    async def index_file(
+        self,
+        file_path: Path,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Index a single file: extract, chunk, embed, store.
+
+        Returns stats: {file, chunks_stored, entities_extracted, skipped}
+        """
+        stats = {
+            "file": str(file_path),
+            "chunks_stored": 0,
+            "entities_extracted": 0,
+            "skipped": False,
+        }
+
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            stats["skipped"] = True
+            stats["reason"] = f"unsupported extension: {file_path.suffix}"
+            return stats
+
+        # Extract text
+        text = await extract_text(file_path)
+        if not text.strip():
+            stats["skipped"] = True
+            stats["reason"] = "empty content"
+            return stats
+
+        # Check if already indexed with same content
+        content_hash = _content_hash(text)
+        rel_path = str(file_path)
+        if not force and self.file_index.is_indexed(self.project_id, rel_path, content_hash):
+            stats["skipped"] = True
+            stats["reason"] = "unchanged"
+            return stats
+
+        # Parse frontmatter if Markdown
+        frontmatter = {}
+        body = text
+        if file_path.suffix.lower() in (".md", ".markdown"):
+            frontmatter, body = parse_frontmatter(text)
+
+        # Chunk
+        chunks = chunk_text(
+            body,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            respect_headings=file_path.suffix.lower() in (".md", ".markdown"),
+        )
+
+        # Store each chunk in semantic memory
+        for chunk in chunks:
+            try:
+                chunk_meta = {
+                    "type": "file_chunk",
+                    "source_file": file_path.name,
+                    "source_path": rel_path,
+                    "chunk_index": str(chunk["chunk_index"]),
+                    "heading": chunk.get("heading", ""),
+                    "content_hash": content_hash,
+                    "project_id": self.project_id,
+                    "indexed_at": _now_iso(),
+                }
+                # Merge frontmatter fields as metadata (flattened)
+                for k, v in frontmatter.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        chunk_meta[f"fm_{k}"] = str(v)
+                    elif isinstance(v, list):
+                        chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
+
+                await self.memory_manager.semantic.store(
+                    content=chunk["content"],
+                    metadata=chunk_meta,
+                )
+                stats["chunks_stored"] += 1
+            except Exception as e:
+                logger.warning("Failed to store chunk %d of %s: %s", chunk["chunk_index"], file_path.name, e)
+
+        # Extract frontmatter entities to graph (for structured files)
+        if frontmatter:
+            stats["entities_extracted"] = await self._index_frontmatter_to_graph(
+                frontmatter, file_path.name
+            )
+
+        # Mark as indexed
+        self.file_index.mark_indexed(
+            project_id=self.project_id,
+            file_path=rel_path,
+            content_hash=content_hash,
+            chunk_count=stats["chunks_stored"],
+            file_size=file_path.stat().st_size if file_path.exists() else 0,
+            metadata={"frontmatter_keys": list(frontmatter.keys())} if frontmatter else {},
+        )
+
+        logger.info(
+            "Indexed %s: %d chunks, %d entities",
+            file_path.name, stats["chunks_stored"], stats["entities_extracted"],
+        )
+        return stats
+
+    async def index_directory(
+        self,
+        directory: Path,
+        recursive: bool = True,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Index all supported files in a directory.
+
+        Returns aggregate stats.
+        """
+        total_stats = {
+            "files_processed": 0,
+            "files_skipped": 0,
+            "total_chunks": 0,
+            "total_entities": 0,
+            "errors": 0,
+        }
+
+        if not directory.exists() or not directory.is_dir():
+            logger.warning("Directory does not exist: %s", directory)
+            return total_stats
+
+        pattern = "**/*" if recursive else "*"
+        for file_path in sorted(directory.glob(pattern)):
+            if not file_path.is_file():
+                continue
+            if file_path.name.startswith("."):
+                continue
+            if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+
+            try:
+                result = await self.index_file(file_path, force=force)
+                if result.get("skipped"):
+                    total_stats["files_skipped"] += 1
+                else:
+                    total_stats["files_processed"] += 1
+                    total_stats["total_chunks"] += result.get("chunks_stored", 0)
+                    total_stats["total_entities"] += result.get("entities_extracted", 0)
+            except Exception as e:
+                logger.error("Failed to index %s: %s", file_path, e)
+                total_stats["errors"] += 1
+
+        logger.info(
+            "Directory indexing complete: %d files, %d chunks, %d entities, %d skipped, %d errors",
+            total_stats["files_processed"],
+            total_stats["total_chunks"],
+            total_stats["total_entities"],
+            total_stats["files_skipped"],
+            total_stats["errors"],
+        )
+        return total_stats
+
+    async def _index_frontmatter_to_graph(
+        self,
+        frontmatter: dict[str, Any],
+        filename: str,
+    ) -> int:
+        """Extract graph nodes/edges from YAML frontmatter.
+
+        Handles CorpusClaw-style vendor files with fields like:
+        vendor, product, market_segments, technologies, tags, etc.
+        """
+        entities_created = 0
+        graph = self.memory_manager.graph
+
+        fm_type = frontmatter.get("type", "")
+        vendor = frontmatter.get("vendor", "")
+        product = frontmatter.get("product", "")
+
+        # Create vendor node
+        if vendor:
+            await graph.add_node("concept", vendor, metadata={
+                "entity_type": "vendor",
+                "source_file": filename,
+                "status": str(frontmatter.get("status", "")),
+            })
+            entities_created += 1
+
+        # Create product node and link to vendor
+        if product:
+            await graph.add_node("concept", product, metadata={
+                "entity_type": "product",
+                "source_file": filename,
+                "vendor": vendor,
+            })
+            entities_created += 1
+            if vendor:
+                await graph.add_edge_by_label(vendor, product, "OFFERS")
+
+        # Market segments
+        segments = frontmatter.get("market_segments", [])
+        if isinstance(segments, list):
+            for seg in segments:
+                if isinstance(seg, str) and seg.strip():
+                    await graph.add_node("concept", seg.strip(), metadata={"entity_type": "market"})
+                    entities_created += 1
+                    target = vendor or product
+                    if target:
+                        await graph.add_edge_by_label(target, seg.strip(), "IN_SEGMENT")
+
+        # Technologies / tags
+        for field_name in ("technologies", "tags", "key_technologies"):
+            tags = frontmatter.get(field_name, [])
+            if isinstance(tags, list):
+                for tag in tags:
+                    if isinstance(tag, str) and tag.strip():
+                        await graph.add_node("concept", tag.strip(), metadata={"entity_type": "technology"})
+                        entities_created += 1
+                        target = vendor or product
+                        if target:
+                            await graph.add_edge_by_label(target, tag.strip(), "USES_TECHNOLOGY")
+
+        # Competitors
+        competitors = frontmatter.get("competitors", [])
+        if isinstance(competitors, list) and vendor:
+            for comp in competitors:
+                if isinstance(comp, str) and comp.strip():
+                    await graph.add_node("concept", comp.strip(), metadata={"entity_type": "vendor"})
+                    entities_created += 1
+                    await graph.add_edge_by_label(vendor, comp.strip(), "COMPETES_WITH")
+
+        return entities_created

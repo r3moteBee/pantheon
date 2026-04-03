@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket, settingsApi } from '../api/client'
+import { createChatSocket, settingsApi, chatApi } from '../api/client'
 
 function ToolCallBlock({ toolCall }) {
   const [expanded, setExpanded] = useState(false)
@@ -46,6 +46,29 @@ function ToolCallBlock({ toolCall }) {
   )
 }
 
+function AttachmentIcon({ filename }) {
+  const ext = (filename || '').split('.').pop().toLowerCase()
+  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']
+  const docExts = ['pdf', 'doc', 'docx', 'txt', 'md', 'csv', 'json', 'yaml', 'yml']
+  if (imageExts.includes(ext)) return <Image className="w-3.5 h-3.5 text-purple-400" />
+  if (docExts.includes(ext)) return <FileText className="w-3.5 h-3.5 text-blue-400" />
+  return <File className="w-3.5 h-3.5 text-gray-400" />
+}
+
+function AttachmentPill({ file, onRemove }) {
+  return (
+    <div className="flex items-center gap-1.5 bg-gray-700 rounded-lg px-2 py-1 text-xs text-gray-200 max-w-[200px]">
+      <AttachmentIcon filename={file.name} />
+      <span className="truncate">{file.name}</span>
+      {onRemove && (
+        <button onClick={onRemove} className="ml-auto flex-shrink-0 hover:text-red-400 transition-colors">
+          <X className="w-3 h-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 function Message({ msg }) {
   const isUser = msg.role === 'user'
   return (
@@ -68,6 +91,15 @@ function Message({ msg }) {
           <div className="mb-2">
             {msg.toolCalls.map((tc, i) => (
               <ToolCallBlock key={i} toolCall={tc} />
+            ))}
+          </div>
+        )}
+
+        {/* Attachments */}
+        {msg.attachments && msg.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-1.5">
+            {msg.attachments.map((att, i) => (
+              <AttachmentPill key={i} file={att} />
             ))}
           </div>
         )}
@@ -118,11 +150,14 @@ function Message({ msg }) {
 
 export default function Chat() {
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState([])
+  const [uploading, setUploading] = useState(false)
   const [memoryRecall, setMemoryRecall] = useState(true)
   const [recallLoading, setRecallLoading] = useState(false)
   const messagesEndRef = useRef(null)
   const socketRef = useRef(null)
   const textareaRef = useRef(null)
+  const fileInputRef = useRef(null)
 
   const messages = useStore((s) => s.messages)
   const addMessage = useStore((s) => s.addMessage)
@@ -165,11 +200,86 @@ export default function Chat() {
     setRecallLoading(false)
   }
 
+  // ── File attachment handling ────────────────────────────────────────
+
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+    setAttachments((prev) => [...prev, ...files])
+    // Reset input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeAttachment = (index) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const uploadAttachments = async (files) => {
+    if (files.length === 0) return []
+    const projectId = activeProject?.id || 'default'
+    const results = []
+    for (const file of files) {
+      try {
+        const res = await chatApi.attachFile(file, projectId)
+        results.push({
+          name: file.name,
+          path: res.data.path,
+          size: res.data.size,
+          indexed: res.data.indexing || false,
+          description: res.data.description || null,
+        })
+      } catch (err) {
+        addNotification({ type: 'error', message: `Failed to upload ${file.name}: ${err.message}` })
+      }
+    }
+    return results
+  }
+
+  // Handle paste events for images
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const pastedFiles = []
+    for (const item of items) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile()
+        if (file) pastedFiles.push(file)
+      }
+    }
+    if (pastedFiles.length > 0) {
+      e.preventDefault()
+      setAttachments((prev) => [...prev, ...pastedFiles])
+    }
+  }
+
+  // Handle drag and drop
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const files = Array.from(e.dataTransfer.files || [])
+    if (files.length > 0) {
+      setAttachments((prev) => [...prev, ...files])
+    }
+  }
+
+  // ── WebSocket ──────────────────────────────────────────────────────
+
   const connectSocket = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) return
 
     const handleClose = (code, reason) => {
-      // Unexpected socket close — reset streaming state so UI isn't stuck
       if (useStore.getState().isStreaming) {
         useStore.getState().setIsStreaming(false)
         useStore.getState().setStreamingContent('')
@@ -225,13 +335,36 @@ export default function Chat() {
     }, handleClose)
   }, [])
 
-  const sendMessage = useCallback(() => {
+  // ── Send message ───────────────────────────────────────────────────
+
+  const sendMessage = useCallback(async () => {
     const msg = input.trim()
-    if (!msg || isStreaming) return
+    if ((!msg && attachments.length === 0) || isStreaming) return
+
+    // Upload attachments first
+    let uploadedFiles = []
+    if (attachments.length > 0) {
+      setUploading(true)
+      uploadedFiles = await uploadAttachments(attachments)
+      setUploading(false)
+      setAttachments([])
+    }
+
+    // Build message with attachment context
+    let fullMessage = msg
+    if (uploadedFiles.length > 0) {
+      const fileList = uploadedFiles.map((f) => {
+        const descLine = f.description ? ` — ${f.description}` : ''
+        return `- ${f.name} (saved to workspace: ${f.path}${descLine})`
+      }).join('\n')
+      const attachmentNote = `\n\n[Attached files — uploaded to workspace/uploads/ and indexed into memory]\n${fileList}`
+      fullMessage = msg ? msg + attachmentNote : `Please review the attached files:\n${fileList}`
+    }
 
     addMessage({
       role: 'user',
-      content: msg,
+      content: msg || 'Attached files for review',
+      attachments: uploadedFiles.length > 0 ? uploadedFiles : undefined,
       timestamp: new Date().toISOString(),
     })
     setInput('')
@@ -241,25 +374,21 @@ export default function Chat() {
 
     connectSocket()
 
+    const payload = JSON.stringify({
+      message: fullMessage,
+      session_id: sessionId,
+      project_id: activeProject?.id || 'default',
+    })
+
     if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({
-        message: msg,
-        session_id: sessionId,
-        project_id: activeProject?.id || 'default',
-      }))
+      socketRef.current.send(payload)
     } else {
       const sock = socketRef.current
       if (sock) {
-        sock.onopen = () => {
-          sock.send(JSON.stringify({
-            message: msg,
-            session_id: sessionId,
-            project_id: activeProject?.id || 'default',
-          }))
-        }
+        sock.onopen = () => sock.send(payload)
       }
     }
-  }, [input, isStreaming, sessionId, activeProject])
+  }, [input, attachments, isStreaming, sessionId, activeProject])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -280,7 +409,12 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Header */}
       <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex items-center gap-3">
         <Brain className="w-4 h-4 text-brand-400" />
@@ -309,6 +443,17 @@ export default function Chat() {
         </div>
       </div>
 
+      {/* Drag overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 z-50 bg-brand-900/60 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+          <div className="bg-gray-800 border-2 border-dashed border-brand-400 rounded-2xl px-8 py-6 text-center">
+            <Paperclip className="w-8 h-8 text-brand-400 mx-auto mb-2" />
+            <p className="text-brand-300 font-medium">Drop files to attach</p>
+            <p className="text-xs text-gray-400 mt-1">Files will be uploaded and indexed into memory</p>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
         {messages.length === 0 && (
@@ -317,6 +462,7 @@ export default function Chat() {
             <h2 className="text-xl font-semibold text-gray-400 mb-2">Start a conversation</h2>
             <p className="text-sm text-gray-600 max-w-sm">
               Your agent has access to memory, files, web search, and autonomous task scheduling.
+              Attach documents with the clip icon or drag and drop.
             </p>
           </div>
         )}
@@ -361,18 +507,48 @@ export default function Chat() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Attachment preview bar */}
+      {attachments.length > 0 && (
+        <div className="px-4 py-2 bg-gray-850 border-t border-gray-800">
+          <div className="flex flex-wrap gap-2 max-w-4xl mx-auto">
+            {attachments.map((file, i) => (
+              <AttachmentPill key={i} file={file} onRemove={() => removeAttachment(i)} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Input area */}
       <div className="p-4 bg-gray-900 border-t border-gray-800">
         <div className="flex gap-2 items-end max-w-4xl mx-auto">
+          {/* Attach button */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming || uploading}
+            title="Attach file (uploaded to workspace and indexed into memory)"
+            className="flex-shrink-0 w-10 h-10 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 rounded-xl flex items-center justify-center transition-colors"
+          >
+            <Paperclip className="w-4 h-4" />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            accept="*/*"
+          />
+
           <div className="flex-1 relative">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Message the agent... (Enter to send, Shift+Enter for newline)"
+              onPaste={handlePaste}
+              placeholder={uploading ? 'Uploading files...' : 'Message the agent... (Enter to send, Shift+Enter for newline)'}
               rows={1}
-              disabled={isStreaming}
+              disabled={isStreaming || uploading}
               className="w-full resize-none bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
               style={{
                 minHeight: '48px',
@@ -395,7 +571,7 @@ export default function Chat() {
           ) : (
             <button
               onClick={sendMessage}
-              disabled={!input.trim()}
+              disabled={(!input.trim() && attachments.length === 0) || uploading}
               className="flex-shrink-0 w-10 h-10 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-colors"
             >
               <Send className="w-4 h-4" />

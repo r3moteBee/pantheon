@@ -1,12 +1,19 @@
-"""Chat API — POST /api/chat, GET /api/chat/history, WebSocket /ws/chat."""
+"""Chat API — POST /api/chat, GET /api/chat/history, WebSocket /ws/chat.
+
+Enhanced with automatic memory extraction after conversations and
+file attachment support with semantic indexing.
+"""
 from __future__ import annotations
 import asyncio
+import base64
 import json
 import logging
 import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query
+import aiofiles
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 
 from agent.core import AgentCore
@@ -17,6 +24,12 @@ from models.provider import get_provider
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
+
+# Track message counts per session for interval-based extraction
+_session_message_counts: dict[str, int] = {}
+
+# Image extensions that get vision-described
+_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
 
 
 class ChatRequest(BaseModel):
@@ -146,6 +159,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 except Exception:
                     break
 
+            # Track messages and trigger extraction if interval is set
+            extraction_interval = settings.extraction_interval
+            if extraction_interval > 0 and memory:
+                count = _session_message_counts.get(session_id, 0) + 2  # user + assistant
+                _session_message_counts[session_id] = count
+                if count >= extraction_interval:
+                    _session_message_counts[session_id] = 0
+                    # Fire-and-forget extraction
+                    asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {connection_id}")
     except Exception as e:
@@ -156,3 +179,158 @@ async def websocket_chat(websocket: WebSocket) -> None:
             pass
     finally:
         _active_connections.pop(connection_id, None)
+
+
+@router.post("/chat/attach")
+async def attach_file_to_chat(
+    file: UploadFile = File(...),
+    project_id: str = Query(default="default"),
+) -> dict[str, Any]:
+    """Upload a file as a chat attachment.
+
+    Saves to workspace/uploads/, auto-indexes into semantic memory,
+    and for images generates a text description via the prefill model.
+    """
+    filename = file.filename or "attachment"
+    filename = Path(filename).name  # Strip path components
+
+    # Determine workspace uploads directory
+    if project_id and project_id != "default":
+        base = settings.projects_dir / project_id / "workspace"
+    else:
+        base = settings.workspace_dir
+    uploads_dir = base / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_path = uploads_dir / filename
+    # Handle conflicts
+    if dest_path.exists():
+        stem = dest_path.stem
+        suffix = dest_path.suffix
+        counter = 1
+        while dest_path.exists():
+            dest_path = uploads_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+    content = await file.read()
+    async with aiofiles.open(dest_path, "wb") as f:
+        await f.write(content)
+
+    rel_path = str(dest_path.relative_to(base))
+    result: dict[str, Any] = {
+        "status": "uploaded",
+        "filename": dest_path.name,
+        "path": rel_path,
+        "size": len(content),
+        "indexing": False,
+        "description": None,
+    }
+
+    # For images: generate a text description via the prefill/vision model
+    ext = dest_path.suffix.lower()
+    if ext in _IMAGE_EXTENSIONS:
+        try:
+            description = await _describe_image(dest_path, content)
+            if description:
+                result["description"] = description
+                # Store description as semantic memory
+                memory = create_memory_manager(project_id=project_id)
+                await memory.semantic.store(
+                    content=f"Image '{dest_path.name}': {description}",
+                    metadata={
+                        "type": "image_description",
+                        "source_file": dest_path.name,
+                        "source_path": rel_path,
+                        "project_id": project_id,
+                    },
+                )
+                result["indexing"] = True
+        except Exception as e:
+            logger.warning("Image description failed for %s: %s", filename, e)
+
+    # For documents: auto-index if enabled
+    if ext not in _IMAGE_EXTENSIONS and settings.auto_index_uploads:
+        asyncio.ensure_future(_index_attachment(dest_path, project_id))
+        result["indexing"] = True
+
+    return result
+
+
+async def _describe_image(file_path: Path, content: bytes) -> str | None:
+    """Generate a text description of an image using the prefill model.
+
+    Uses base64 vision if the model supports it, otherwise returns a
+    basic file metadata description.
+    """
+    try:
+        from models.provider import get_prefill_provider
+        provider = get_prefill_provider()
+
+        b64 = base64.b64encode(content).decode("utf-8")
+        ext = file_path.suffix.lower().lstrip(".")
+        mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+
+        result = await provider.chat_complete([
+            {"role": "system", "content": (
+                "You are a visual analysis assistant. Describe this image concisely "
+                "in 1-3 sentences. Focus on the key content, any text visible, "
+                "diagrams, charts, or notable elements. Be factual and specific."
+            )},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                {"type": "text", "text": f"Describe this image ({file_path.name}):"},
+            ]},
+        ])
+        desc = (result.get("content") or "").strip()
+        if desc and len(desc) > 10:
+            logger.info("Generated description for %s: %s", file_path.name, desc[:100])
+            return desc
+    except Exception as e:
+        logger.debug("Vision description failed (model may not support images): %s", e)
+
+    # Fallback: basic metadata description
+    size_kb = len(content) / 1024
+    return f"Image file ({file_path.suffix.upper()}, {size_kb:.0f}KB)"
+
+
+async def _index_attachment(file_path: Path, project_id: str) -> None:
+    """Background task to index a chat attachment into semantic memory."""
+    try:
+        from memory.file_indexer import SUPPORTED_EXTENSIONS
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return
+
+        memory = create_memory_manager(project_id=project_id)
+        from memory.file_indexer import FileIndexer
+        indexer = FileIndexer(
+            memory_manager=memory,
+            project_id=project_id,
+            chunk_size=settings.file_chunk_size,
+            chunk_overlap=settings.file_chunk_overlap,
+        )
+        result = await indexer.index_file(file_path)
+        if not result.get("skipped"):
+            logger.info(
+                "Indexed chat attachment %s: %d chunks",
+                file_path.name, result.get("chunks_stored", 0),
+            )
+    except Exception as e:
+        logger.warning("Attachment indexing failed for %s: %s", file_path.name, e)
+
+
+async def _run_background_extraction(
+    memory_manager: Any,
+    project_id: str,
+    session_id: str,
+) -> None:
+    """Run extraction in the background without blocking chat."""
+    try:
+        stats = await memory_manager.run_extraction_on_recent(message_count=20)
+        total = sum(stats.values())
+        if total > 0:
+            logger.info(
+                "Background extraction for session %s: %s",
+                session_id[:8], stats,
+            )
+    except Exception as e:
+        logger.warning("Background extraction failed: %s", e)

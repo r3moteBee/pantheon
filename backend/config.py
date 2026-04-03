@@ -60,6 +60,18 @@ class Settings(BaseSettings):
     chroma_host: str = Field(default="localhost", env="CHROMA_HOST")
     chroma_port: int = Field(default=8001, env="CHROMA_PORT")
 
+    # Active Memory settings
+    # Auto-extraction: run LLM extraction after this many messages (0 = disabled, only on consolidation)
+    extraction_interval: int = Field(default=0, env="EXTRACTION_INTERVAL")
+    # Context budget: max tokens for recalled memories injected into system prompt
+    recall_token_budget: int = Field(default=4000, env="RECALL_TOKEN_BUDGET")
+    # File indexing: auto-index uploaded files (true/false)
+    auto_index_uploads: bool = Field(default=True, env="AUTO_INDEX_UPLOADS")
+    # File indexing: chunk size in tokens
+    file_chunk_size: int = Field(default=500, env="FILE_CHUNK_SIZE")
+    # File indexing: chunk overlap in tokens
+    file_chunk_overlap: int = Field(default=50, env="FILE_CHUNK_OVERLAP")
+
     # Paths
     data_dir: Path = Field(default=Path("/app/data"), env="DATA_DIR")
 

@@ -45,6 +45,14 @@ export const chatApi = {
     api.get('/api/chat/history', { params: { session_id: sessionId, project_id: projectId, limit } }),
   getSessions: (projectId, limit = 20) =>
     api.get('/api/chat/sessions', { params: { project_id: projectId, limit } }),
+  attachFile: (file, projectId) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/api/chat/attach', formData, {
+      params: { project_id: projectId },
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }
 
 // Memory API

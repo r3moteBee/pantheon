@@ -1,5 +1,9 @@
-"""File repository API — upload, download, list, delete workspace files."""
+"""File repository API — upload, download, list, delete workspace files.
+
+Enhanced with automatic semantic indexing of uploaded files.
+"""
 from __future__ import annotations
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -108,11 +112,20 @@ async def upload_file(
         await f.write(content)
 
     base = _get_workspace(project_id)
+    rel_path = str(dest_path.relative_to(base))
+
+    # Auto-index the uploaded file if enabled
+    indexed = False
+    if settings.auto_index_uploads:
+        asyncio.ensure_future(_index_uploaded_file(dest_path, project_id))
+        indexed = True
+
     return {
         "status": "uploaded",
         "filename": dest_path.name,
-        "path": str(dest_path.relative_to(base)),
+        "path": rel_path,
         "size": len(content),
+        "indexing": indexed,
     }
 
 
@@ -243,3 +256,82 @@ async def create_directory(
     target = _safe_path(path, project_id)
     target.mkdir(parents=True, exist_ok=True)
     return {"status": "created", "path": path}
+
+
+@router.post("/files/index")
+async def index_file_or_directory(
+    path: str = Query(default=""),
+    project_id: str = Query(default="default"),
+    force: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Manually trigger indexing of a file or directory into semantic memory."""
+    base = _get_workspace(project_id)
+    target = _safe_path(path, project_id) if path else base
+
+    try:
+        from memory.manager import create_memory_manager
+        from memory.file_indexer import FileIndexer
+        memory = create_memory_manager(project_id=project_id)
+        indexer = FileIndexer(
+            memory_manager=memory,
+            project_id=project_id,
+            chunk_size=settings.file_chunk_size,
+            chunk_overlap=settings.file_chunk_overlap,
+        )
+
+        if target.is_file():
+            result = await indexer.index_file(target, force=force)
+        elif target.is_dir():
+            result = await indexer.index_directory(target, force=force)
+        else:
+            raise HTTPException(status_code=404, detail="Path not found")
+
+        return {"status": "indexed", **result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/files/index-status")
+async def get_index_status(
+    project_id: str = Query(default="default"),
+) -> dict[str, Any]:
+    """Get the indexing status of files in the workspace."""
+    try:
+        from memory.file_indexer import FileIndex
+        file_index = FileIndex()
+        indexed = file_index.list_indexed(project_id)
+        return {
+            "project_id": project_id,
+            "indexed_files": indexed,
+            "total": len(indexed),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _index_uploaded_file(file_path: Path, project_id: str) -> None:
+    """Background task to index a newly uploaded file."""
+    try:
+        from memory.file_indexer import SUPPORTED_EXTENSIONS
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            return
+
+        from memory.manager import create_memory_manager
+        from memory.file_indexer import FileIndexer
+        memory = create_memory_manager(project_id=project_id)
+        indexer = FileIndexer(
+            memory_manager=memory,
+            project_id=project_id,
+            chunk_size=settings.file_chunk_size,
+            chunk_overlap=settings.file_chunk_overlap,
+        )
+        result = await indexer.index_file(file_path)
+        if not result.get("skipped"):
+            logger.info(
+                "Auto-indexed uploaded file %s: %d chunks",
+                file_path.name, result.get("chunks_stored", 0),
+            )
+    except Exception as e:
+        logger.warning("Auto-indexing failed for %s: %s", file_path.name, e)
