@@ -8,7 +8,7 @@ from typing import Any, AsyncGenerator
 
 import httpx
 
-from config import get_settings
+from config import get_settings, get_secret
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -25,7 +25,7 @@ class ModelProvider:
         embedding_model: str | None = None,
     ):
         self.base_url = (base_url or settings.llm_base_url).rstrip("/")
-        self.api_key = api_key or settings.llm_api_key
+        self.api_key = api_key or get_secret("llm_api_key")
         self.model = model or settings.llm_model
         self.embedding_model = embedding_model or settings.embedding_model
 
@@ -245,8 +245,13 @@ _prefill_provider_instance: ModelProvider | None = None
 _reranker_provider_instance: ModelProvider | None = None
 
 
-def _vault_or(key: str, fallback: str = "") -> str | None:
-    """Read a vault secret, returning None if empty so callers fall back to defaults."""
+def _vault_or_config(key: str) -> str | None:
+    """Read a value from vault, returning None if empty so callers fall back.
+
+    For secret fields (API keys, tokens) use ``get_secret()`` from config
+    instead — it handles the full vault → .env → default chain.
+    This helper is only for non-sensitive vault overrides (base_url, model).
+    """
     try:
         from secrets.vault import get_vault
         val = get_vault().get_secret(key)
@@ -260,10 +265,10 @@ def get_provider() -> ModelProvider:
     global _provider_instance
     if _provider_instance is None:
         _provider_instance = ModelProvider(
-            base_url=_vault_or("llm_base_url"),
-            api_key=_vault_or("llm_api_key"),
-            model=_vault_or("llm_model"),
-            embedding_model=_vault_or("embedding_model"),
+            base_url=_vault_or_config("llm_base_url"),
+            api_key=get_secret("llm_api_key") or None,
+            model=_vault_or_config("llm_model"),
+            embedding_model=_vault_or_config("embedding_model"),
         )
     return _provider_instance
 
@@ -276,16 +281,15 @@ def get_embedding_provider() -> ModelProvider:
     """
     global _embedding_provider_instance
     if _embedding_provider_instance is None:
-        # Resolve: vault → .env → primary provider fallback
         primary = get_provider()
-        emb_base = _vault_or("embedding_base_url") or settings.embedding_base_url or None
-        emb_key = _vault_or("embedding_api_key") or settings.embedding_api_key or None
-        emb_model = _vault_or("embedding_model") or settings.embedding_model or None
+        emb_base = _vault_or_config("embedding_base_url") or settings.embedding_base_url or None
+        emb_key = get_secret("embedding_api_key") or None
+        emb_model = _vault_or_config("embedding_model") or settings.embedding_model or None
 
         _embedding_provider_instance = ModelProvider(
             base_url=emb_base or primary.base_url,
             api_key=emb_key or primary.api_key,
-            model=primary.model,  # not used for embeddings, but required by init
+            model=primary.model,
             embedding_model=emb_model or primary.embedding_model,
         )
         if emb_base:
@@ -302,10 +306,10 @@ def get_prefill_provider() -> ModelProvider:
     global _prefill_provider_instance
     if _prefill_provider_instance is None:
         primary = get_provider()
-        pre_base = _vault_or("prefill_base_url") or settings.prefill_base_url or None
-        pre_key = _vault_or("prefill_api_key") or settings.prefill_api_key or None
+        pre_base = _vault_or_config("prefill_base_url") or settings.prefill_base_url or None
+        pre_key = get_secret("prefill_api_key") or None
         pre_model = (
-            _vault_or("llm_prefill_model")
+            _vault_or_config("llm_prefill_model")
             or settings.llm_prefill_model
             or primary.model
         )
@@ -328,9 +332,9 @@ def get_reranker_provider() -> ModelProvider | None:
     """
     global _reranker_provider_instance
     if _reranker_provider_instance is None:
-        rr_base = _vault_or("reranker_base_url") or settings.reranker_base_url or None
-        rr_key = _vault_or("reranker_api_key") or settings.reranker_api_key or None
-        rr_model = _vault_or("reranker_model") or settings.reranker_model or None
+        rr_base = _vault_or_config("reranker_base_url") or settings.reranker_base_url or None
+        rr_key = get_secret("reranker_api_key") or None
+        rr_model = _vault_or_config("reranker_model") or settings.reranker_model or None
 
         if not rr_base and not rr_model:
             return None  # Not configured

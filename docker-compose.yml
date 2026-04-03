@@ -12,6 +12,8 @@ services:
       - CHROMA_PORT=8001
     volumes:
       - ./data:/app/data
+    secrets:
+      - vault_master_key
     depends_on:
       - chromadb
     restart: unless-stopped
@@ -79,6 +81,10 @@ services:
 networks:
   agent-net:
     driver: bridge
+
+secrets:
+  vault_master_key:
+    file: ./secrets/vault_master_key.txt
 
 volumes:
   # ollama_data:

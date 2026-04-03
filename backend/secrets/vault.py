@@ -1,4 +1,11 @@
-"""Fernet-encrypted secrets vault backed by SQLite."""
+"""Fernet-encrypted secrets vault backed by SQLite.
+
+The vault master key is resolved in order:
+1. VAULT_MASTER_KEY environment variable
+2. Docker secret at /run/secrets/vault_master_key
+3. /etc/pantheon/vault.key file (root-owned, mode 600)
+4. Fallback to config.py default (dev mode only — logs a warning)
+"""
 from __future__ import annotations
 import base64
 import hashlib
@@ -13,22 +20,82 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from config import get_settings
-
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 # In-memory cache: {key: (value, timestamp)}
 _cache: dict[str, tuple[str, float]] = {}
 CACHE_TTL = 300  # seconds
+
+# Standard external key file locations
+_SYSTEM_KEY_FILE = Path("/etc/pantheon/vault.key")
+_DOCKER_SECRET_FILE = Path("/run/secrets/vault_master_key")
+
+
+def _resolve_master_key() -> str:
+    """Resolve the vault master key from the most secure available source.
+
+    Priority:
+      1. VAULT_MASTER_KEY env var (set by systemd EnvironmentFile, etc.)
+      2. Docker secret at /run/secrets/vault_master_key
+      3. /etc/pantheon/vault.key file (root-owned, outside user space)
+      4. Config default (dev fallback — insecure)
+    """
+    # 1. Environment variable (preferred for production)
+    env_key = os.environ.get("VAULT_MASTER_KEY", "").strip()
+    if env_key and env_key != "dev-key-change-in-production-32x":
+        logger.info("Vault master key loaded from environment variable")
+        return env_key
+
+    # 2. Docker secret (preferred for container environments)
+    if _DOCKER_SECRET_FILE.exists():
+        try:
+            key = _DOCKER_SECRET_FILE.read_text(encoding="utf-8").strip()
+            if key:
+                logger.info("Vault master key loaded from Docker secret")
+                return key
+        except Exception as e:
+            logger.error("Error reading Docker secret: %s", e)
+
+    # 3. System key file (preferred for bare-metal Linux deploys)
+    if _SYSTEM_KEY_FILE.exists():
+        try:
+            key = _SYSTEM_KEY_FILE.read_text(encoding="utf-8").strip()
+            if key:
+                logger.info("Vault master key loaded from %s", _SYSTEM_KEY_FILE)
+                return key
+        except PermissionError:
+            logger.error(
+                "Cannot read %s — check file ownership and permissions "
+                "(should be root:root 600, readable by the service user)",
+                _SYSTEM_KEY_FILE,
+            )
+        except Exception as e:
+            logger.error("Error reading %s: %s", _SYSTEM_KEY_FILE, e)
+
+    # 3. Fallback to config default (dev mode only)
+    from config import get_settings
+    settings = get_settings()
+    key = settings.vault_master_key
+    if key == "dev-key-change-in-production-32x":
+        logger.warning(
+            "⚠️  Using default dev vault key — NOT SAFE FOR PRODUCTION. "
+            "Set VAULT_MASTER_KEY env var or create %s",
+            _SYSTEM_KEY_FILE,
+        )
+    else:
+        logger.info("Vault master key loaded from config/env")
+    return key
 
 
 class SecretsVault:
     """Encrypted key-value store for sensitive configuration."""
 
     def __init__(self, db_path: str | None = None, master_key: str | None = None):
+        from config import get_settings
+        settings = get_settings()
         self.db_path = db_path or settings.vault_db_path
-        self._fernet = self._init_fernet(master_key or settings.vault_master_key)
+        resolved_key = master_key or _resolve_master_key()
+        self._fernet = self._init_fernet(resolved_key)
         self._init_db()
 
     def _init_fernet(self, master_key: str) -> Fernet:
@@ -112,6 +179,14 @@ class SecretsVault:
         with sqlite3.connect(self.db_path) as conn:
             rows = conn.execute("SELECT key FROM secrets ORDER BY key").fetchall()
         return [r[0] for r in rows]
+
+    def has_secret(self, key: str) -> bool:
+        """Check if a secret exists without decrypting."""
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM secrets WHERE key = ? LIMIT 1", (key,)
+            ).fetchone()
+        return row is not None
 
     def clear_cache(self) -> None:
         """Clear the in-memory cache."""

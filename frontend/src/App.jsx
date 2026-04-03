@@ -18,14 +18,35 @@ export default function App() {
 
   // null = checking, false = needs login, true = authenticated
   const [authState, setAuthState] = useState(null)
+  // Auth configuration from the backend
+  const [authConfig, setAuthConfig] = useState(null)
 
   const initAuth = async () => {
     try {
-      const { auth_required } = await authApi.config()
-      if (!auth_required) {
+      // Check for OIDC callback token in URL
+      const params = new URLSearchParams(window.location.search)
+      const urlToken = params.get('token')
+      const authError = params.get('auth_error')
+
+      // Clean URL params
+      if (urlToken || authError) {
+        window.history.replaceState({}, '', window.location.pathname)
+      }
+
+      if (urlToken) {
+        localStorage.setItem('auth_token', urlToken)
         setAuthState(true)
         return
       }
+
+      const config = await authApi.config()
+      setAuthConfig(config)
+
+      if (!config.auth_required) {
+        setAuthState(true)
+        return
+      }
+
       const token = localStorage.getItem('auth_token')
       if (token) {
         setAuthState(true)
@@ -33,7 +54,6 @@ export default function App() {
         setAuthState(false)
       }
     } catch {
-      // Can't reach backend yet — show login as safe fallback
       setAuthState(false)
     }
   }
@@ -41,15 +61,16 @@ export default function App() {
   useEffect(() => {
     initAuth()
 
-    // Listen for 401 responses (from the axios interceptor)
-    const handleLogout = () => setAuthState(false)
+    const handleLogout = () => {
+      localStorage.removeItem('auth_token')
+      setAuthState(false)
+    }
     window.addEventListener('auth:logout', handleLogout)
     return () => window.removeEventListener('auth:logout', handleLogout)
   }, [])
 
   const handleLogin = (token) => {
     setAuthState(true)
-    // Load projects now that we are authenticated
     projectsApi.list().then((res) => {
       const projects = res.data.projects || []
       setProjects(projects)
@@ -57,7 +78,6 @@ export default function App() {
     }).catch(console.error)
   }
 
-  // Load projects on first authenticated render
   useEffect(() => {
     if (authState === true) {
       projectsApi.list().then((res) => {
@@ -68,7 +88,6 @@ export default function App() {
     }
   }, [authState])
 
-  // Checking auth
   if (authState === null) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -77,12 +96,10 @@ export default function App() {
     )
   }
 
-  // Not authenticated
   if (authState === false) {
-    return <LoginPage onLogin={handleLogin} />
+    return <LoginPage onLogin={handleLogin} authConfig={authConfig} />
   }
 
-  // Authenticated
   return (
     <BrowserRouter>
       <Routes>

@@ -10,8 +10,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from config import get_settings
+from config import get_settings, get_secret
 from api.auth import router as auth_router, compute_token
+from auth.oidc import verify_session_token
 from api.chat import router as chat_router, websocket_chat
 from api.files import router as files_router
 from api.memory import router as memory_router
@@ -118,35 +119,59 @@ app.add_middleware(
 # ── Auth middleware ───────────────────────────────────────────────────────────
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
-    """Gate all non-public routes behind AUTH_PASSWORD when it is set."""
-    cfg = get_settings()
+    """Gate all non-public routes behind authentication.
+
+    Supports three token types:
+      1. OIDC session JWT (signed with secret_key)
+      2. Legacy password HMAC token
+      3. "no-auth" sentinel (when auth is disabled)
+    """
+    from auth.oidc import get_enabled_providers
+
+    auth_pw = get_secret("auth_password")
+    has_oidc = len(get_enabled_providers()) > 0
 
     # Auth disabled — pass everything through
-    if not cfg.auth_password:
+    if not auth_pw and not has_oidc:
         return await call_next(request)
 
     # Always allow public paths
     if request.url.path in _PUBLIC_PATHS:
         return await call_next(request)
 
-    # WebSocket connections carry the token as a query parameter because
-    # the WebSocket API does not support arbitrary headers.
+    # Also allow OIDC callback paths (they handle their own validation)
+    if request.url.path.startswith("/api/auth/oidc/"):
+        return await call_next(request)
+
+    # Extract token
     if request.url.path.startswith("/ws/"):
         token = request.query_params.get("token", "")
     else:
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
 
-    expected = compute_token(cfg.auth_password, cfg.secret_key)
-    try:
-        valid = hmac.compare_digest(token, expected)
-    except (TypeError, ValueError):
-        valid = False
-
-    if not valid:
+    if not token:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
-    return await call_next(request)
+    # Check OIDC session JWT first
+    if verify_session_token(token):
+        return await call_next(request)
+
+    # Check legacy password token
+    if auth_pw:
+        secret = get_secret("secret_key")
+        expected = compute_token(auth_pw, secret)
+        try:
+            if hmac.compare_digest(token, expected):
+                return await call_next(request)
+        except (TypeError, ValueError):
+            pass
+
+    # "no-auth" sentinel — only valid when no auth is configured
+    if token == "no-auth" and not auth_pw and not has_oidc:
+        return await call_next(request)
+
+    return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
 
 # ── API routers ───────────────────────────────────────────────────────────────

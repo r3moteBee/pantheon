@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from config import get_settings
+from config import get_settings, get_secret
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -16,16 +16,8 @@ _chat_projects: dict[int, str] = {}
 
 
 def _get_token() -> str:
-    """Return the Telegram bot token, preferring vault over .env."""
-    try:
-        from secrets.vault import get_vault
-        vault = get_vault()
-        token = vault.get_secret("telegram_bot_token")
-        if token:
-            return token
-    except Exception:
-        pass
-    return settings.telegram_bot_token or ""
+    """Return the Telegram bot token from the vault."""
+    return get_secret("telegram_bot_token")
 
 
 def _get_allowed_ids() -> list[int]:

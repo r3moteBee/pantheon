@@ -8,6 +8,7 @@
 *.pem
 *.key
 secrets.json
+secrets/vault_master_key.txt
 
 # Python
 __pycache__/

@@ -330,13 +330,14 @@ async def _web_search(query: str) -> str:
       X-Subscription-Token  for Brave
       Authorization: Bearer  for everything else
     """
+    from config import get_secret as _get_secret  # local import to avoid circular
     from secrets.vault import get_vault  # local import to avoid circular
 
     cfg = get_settings()
     vault = get_vault()
 
     search_url = (vault.get_secret("search_url") or cfg.search_url or "").rstrip("/")
-    api_key    = vault.get_secret("search_api_key") or cfg.search_api_key or ""
+    api_key    = _get_secret("search_api_key")
 
     if search_url:
         return await _configured_search(query, search_url, api_key)

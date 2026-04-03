@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config import get_settings
+from config import get_settings, get_secret
 from models.provider import get_provider, get_embedding_provider, get_prefill_provider, get_reranker_provider, reset_provider
 from secrets.vault import get_vault
 
@@ -49,22 +49,22 @@ def _get_effective_settings() -> dict[str, Any]:
     return {
         "llm_base_url": vault.get_secret("llm_base_url") or settings_config.llm_base_url,
         # Never return the key value — only whether one is saved
-        "llm_api_key_set": bool(vault.get_secret("llm_api_key") or settings_config.llm_api_key),
+        "llm_api_key_set": bool(get_secret("llm_api_key")),
         "llm_model": vault.get_secret("llm_model") or settings_config.llm_model,
         "llm_prefill_model": vault.get_secret("llm_prefill_model") or settings_config.llm_prefill_model,
         "prefill_base_url": vault.get_secret("prefill_base_url") or settings_config.prefill_base_url,
-        "prefill_api_key_set": bool(vault.get_secret("prefill_api_key") or settings_config.prefill_api_key),
+        "prefill_api_key_set": bool(get_secret("prefill_api_key")),
         "embedding_model": vault.get_secret("embedding_model") or settings_config.embedding_model,
         "embedding_base_url": vault.get_secret("embedding_base_url") or settings_config.embedding_base_url,
-        "embedding_api_key_set": bool(vault.get_secret("embedding_api_key") or settings_config.embedding_api_key),
+        "embedding_api_key_set": bool(get_secret("embedding_api_key")),
         "reranker_model": vault.get_secret("reranker_model") or settings_config.reranker_model,
         "reranker_base_url": vault.get_secret("reranker_base_url") or settings_config.reranker_base_url,
-        "reranker_api_key_set": bool(vault.get_secret("reranker_api_key") or settings_config.reranker_api_key),
+        "reranker_api_key_set": bool(get_secret("reranker_api_key")),
         "search_url": vault.get_secret("search_url") or settings_config.search_url,
-        "search_api_key_set": bool(vault.get_secret("search_api_key") or settings_config.search_api_key),
+        "search_api_key_set": bool(get_secret("search_api_key")),
         "chroma_host": settings_config.chroma_host,
         "chroma_port": settings_config.chroma_port,
-        "telegram_bot_token_set": bool(vault.get_secret("telegram_bot_token") or settings_config.telegram_bot_token),
+        "telegram_bot_token_set": bool(get_secret("telegram_bot_token")),
         "telegram_allowed_chat_ids": vault.get_secret("telegram_allowed_chat_ids") or settings_config.telegram_allowed_chat_ids,
         "app_env": settings_config.app_env,
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
@@ -136,7 +136,7 @@ async def list_models() -> dict[str, Any]:
     """Fetch available models from the configured LLM provider."""
     vault = get_vault()
     base_url = vault.get_secret("llm_base_url") or settings_config.llm_base_url
-    api_key = vault.get_secret("llm_api_key") or settings_config.llm_api_key
+    api_key = get_secret("llm_api_key")
     try:
         from models.discovery import fetch_models
         models = await fetch_models(base_url, api_key)
