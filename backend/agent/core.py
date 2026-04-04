@@ -56,21 +56,30 @@ class AgentCore:
         to actually see the images rather than just reading their filenames.
         """
         # Look for image file references in the attachment note
+        # Filenames may contain spaces (e.g. "Screenshot 2026-03-24 at 3.04.17 AM.png")
         image_paths: list[Path] = []
         pattern = re.compile(
-            r"(?:uploads/|workspace/uploads/)([^\s)]+\.(?:png|jpe?g|gif|webp|bmp))",
+            r"uploads/(.+?\.(?:png|jpe?g|gif|webp|bmp))",
             re.IGNORECASE,
         )
+
+        # Resolve workspace base once
+        if self.project_id and self.project_id != "default":
+            base = settings.projects_dir / self.project_id / "workspace"
+        else:
+            base = settings.workspace_dir
+
+        seen: set[str] = set()
         for match in pattern.finditer(message):
             filename = match.group(1)
-            # Resolve workspace base
-            if self.project_id and self.project_id != "default":
-                base = settings.projects_dir / self.project_id / "workspace"
-            else:
-                base = settings.workspace_dir
+            if filename in seen:
+                continue
+            seen.add(filename)
             candidate = base / "uploads" / filename
             if candidate.exists() and candidate.stat().st_size <= _MAX_IMAGE_SIZE:
                 image_paths.append(candidate)
+            else:
+                logger.debug("Image not found or too large: %s", candidate)
 
         if not image_paths:
             return message  # Plain text — no images found
