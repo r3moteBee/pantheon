@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     prefill_base_url: str = Field(default="", env="PREFILL_BASE_URL")
     prefill_api_key: str = Field(default="", env="PREFILL_API_KEY")
 
+    # Optional vision-capable model for image analysis.
+    # Falls back to: vision → primary → prefill (whichever succeeds first).
+    llm_vision_model: str = Field(default="", env="LLM_VISION_MODEL")
+    vision_base_url: str = Field(default="", env="VISION_BASE_URL")
+    vision_api_key: str = Field(default="", env="VISION_API_KEY")
+
     embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
     # Separate endpoint/key for embeddings (falls back to primary LLM when blank)
     embedding_base_url: str = Field(default="", env="EMBEDDING_BASE_URL")

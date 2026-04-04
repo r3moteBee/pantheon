@@ -288,7 +288,7 @@ async def _describe_image(file_path: Path, content: bytes) -> str | None:
     Tries the prefill model first (in case it supports vision), then falls
     back to the primary model.  Returns a basic metadata string on failure.
     """
-    from models.provider import get_prefill_provider, get_provider
+    from models.provider import get_vision_provider, get_provider, get_prefill_provider
 
     b64 = base64.b64encode(content).decode("utf-8")
     ext = file_path.suffix.lower().lstrip(".")
@@ -306,9 +306,15 @@ async def _describe_image(file_path: Path, content: bytes) -> str | None:
         ]},
     ]
 
-    # Try each provider in order — prefill first, then primary (which may be
-    # a vision model like Qwen2.5-VL)
-    for label, get_prov in [("prefill", get_prefill_provider), ("primary", get_provider)]:
+    # Build provider fallback chain: vision (dedicated) → primary → prefill
+    providers: list[tuple[str, Any]] = []
+    vision_prov = get_vision_provider()
+    if vision_prov:
+        providers.append(("vision", lambda: vision_prov))
+    providers.append(("primary", get_provider))
+    providers.append(("prefill", get_prefill_provider))
+
+    for label, get_prov in providers:
         try:
             provider = get_prov()
             result = await provider.chat_complete(vision_messages)
