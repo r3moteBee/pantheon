@@ -37,6 +37,8 @@ class SettingsUpdate(BaseModel):
     telegram_bot_token: str | None = None
     telegram_allowed_chat_ids: str | None = None
     memory_recall_enabled: bool | None = None
+    personality_weight: str | None = None
+    context_focus: str | None = None
 
 
 class SecretUpdate(BaseModel):
@@ -74,6 +76,8 @@ def _get_effective_settings() -> dict[str, Any]:
         "telegram_allowed_chat_ids": vault.get_secret("telegram_allowed_chat_ids") or settings_config.telegram_allowed_chat_ids,
         "app_env": settings_config.app_env,
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
+        "personality_weight": vault.get_secret("personality_weight") or settings_config.personality_weight,
+        "context_focus": vault.get_secret("context_focus") or settings_config.context_focus,
     }
 
 
@@ -136,6 +140,14 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("telegram_allowed_chat_ids", req.telegram_allowed_chat_ids)
     if req.memory_recall_enabled is not None:
         vault.set_secret("memory_recall_enabled", str(req.memory_recall_enabled).lower())
+    if req.personality_weight is not None:
+        val = req.personality_weight.lower().strip()
+        if val in ("minimal", "balanced", "strong"):
+            vault.set_secret("personality_weight", val)
+    if req.context_focus is not None:
+        val = req.context_focus.lower().strip()
+        if val in ("broad", "balanced", "focused"):
+            vault.set_secret("context_focus", val)
 
     # Reset provider so it picks up new settings
     reset_provider()

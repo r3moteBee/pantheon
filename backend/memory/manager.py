@@ -5,10 +5,13 @@ Enhanced with:
 - Context budget management (token-aware recall limits)
 - Automatic post-conversation extraction pipeline
 - Episodic semantic search support
+- Context-focus-aware recency boosting
 """
 from __future__ import annotations
 import asyncio
 import logging
+import math
+from datetime import datetime, timezone
 from typing import Any
 
 from memory.working import WorkingMemory
@@ -26,6 +29,62 @@ CHARS_PER_TOKEN = 4
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
+
+
+# ── Context focus recency boost ─────────────────────────────────────────────
+
+# Maps context_focus setting → (half-life in hours, recency weight).
+# "focused" = 1-hour half-life with 50% weight → aggressively favours last few turns
+# "balanced" = 12-hour half-life with 20% weight → mild recency boost
+# "broad" = no recency modification at all
+_CONTEXT_FOCUS_PARAMS: dict[str, tuple[float, float]] = {
+    "focused":  (1.0,  0.50),
+    "balanced": (12.0, 0.20),
+    "broad":    (0.0,  0.0),
+}
+
+
+def _apply_context_focus(
+    results: list[dict[str, Any]],
+    context_focus: str,
+) -> list[dict[str, Any]]:
+    """Re-weight and re-sort recall results based on context focus setting.
+
+    For 'focused' mode, results with recent timestamps get a strong boost,
+    pushing stale conversation fragments down. For 'broad', results are
+    returned as-is (pure relevance ordering).
+    """
+    focus = context_focus.lower().strip() if context_focus else "balanced"
+    half_life_hours, recency_weight = _CONTEXT_FOCUS_PARAMS.get(
+        focus, _CONTEXT_FOCUS_PARAMS["balanced"]
+    )
+
+    if recency_weight <= 0 or half_life_hours <= 0:
+        return results  # "broad" — no modification
+
+    now = datetime.now(timezone.utc)
+    relevance_weight = 1.0 - recency_weight
+
+    for r in results:
+        timestamp = (r.get("metadata") or {}).get("timestamp") or ""
+        if not timestamp:
+            # No timestamp — treat as moderately old (keep original score mostly)
+            recency_score = 0.3
+        else:
+            try:
+                ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                age_hours = max(0, (now - ts).total_seconds() / 3600)
+                recency_score = math.exp(-0.693 * age_hours / half_life_hours)
+            except (ValueError, TypeError):
+                recency_score = 0.3
+
+        original_score = r.get("score", 0.5)
+        r["score"] = round(original_score * relevance_weight + recency_score * recency_weight, 4)
+
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return results
 
 
 # ── Context budget defaults ──────────────────────────────────────────────────
@@ -145,6 +204,7 @@ class MemoryManager:
         tiers: list[str] | None = None,
         project_id: str | None = None,
         limit_per_tier: int = 3,
+        context_focus: str | None = None,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
 
@@ -228,6 +288,10 @@ class MemoryManager:
 
         # Graph-augmented enrichment: expand entities found in top results
         all_results = await self._graph_augment(all_results)
+
+        # Apply context-focus recency re-weighting
+        focus = context_focus or "balanced"
+        all_results = _apply_context_focus(all_results, focus)
 
         # Apply context budget: trim results to fit recall token budget
         all_results = self._apply_budget(all_results)

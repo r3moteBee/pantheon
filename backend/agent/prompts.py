@@ -7,17 +7,46 @@ from agent.personality import get_full_personality
 
 logger = logging.getLogger(__name__)
 
+# ── Personality scoping prefixes ────────────────────────────────────────────
+# These instruct the LLM on how to treat the soul.md content at each level.
+
+_PERSONALITY_SCOPES: dict[str, str] = {
+    "minimal": (
+        "## Personality (tone only)\n"
+        "The following defines your conversational tone and style. "
+        "Do NOT reference this content in analytical, factual, or task-oriented "
+        "responses — it shapes *how* you speak, not *what* you say.\n\n"
+    ),
+    "balanced": (
+        "## Personality\n"
+        "The following defines your identity and conversational style. "
+        "Let it lightly colour your responses, but keep the focus on the user's task. "
+        "Avoid inserting personal identity into analysis or factual discussion.\n\n"
+    ),
+    "strong": (
+        "## Personality\n"
+        "The following is your core identity. Feel free to draw on it in your "
+        "responses, share your perspective, and let your personality show.\n\n"
+    ),
+}
+
 
 def build_system_prompt(
     project_id: str | None = None,
     project_name: str | None = None,
     recalled_memories: list[dict] | None = None,
     extra_context: str | None = None,
+    personality_weight: str | None = None,
 ) -> str:
     """Assemble the full system prompt from all sources."""
     personality = get_full_personality(project_id)
     soul = personality["soul"]
     agent_config = personality["agent"]
+
+    # Scope soul.md based on personality weight setting
+    weight = (personality_weight or "balanced").lower().strip()
+    scope_prefix = _PERSONALITY_SCOPES.get(weight, _PERSONALITY_SCOPES["balanced"])
+    soul = scope_prefix + soul
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project_section = ""

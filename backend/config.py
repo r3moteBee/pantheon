@@ -71,6 +71,18 @@ class Settings(BaseSettings):
     extraction_interval: int = Field(default=0, env="EXTRACTION_INTERVAL")
     # Context budget: max tokens for recalled memories injected into system prompt
     recall_token_budget: int = Field(default=4000, env="RECALL_TOKEN_BUDGET")
+
+    # Conversation behaviour tuning
+    # Personality presence: how prominently soul.md identity is injected.
+    #   "minimal"  = tone only, never reference identity in analytical content
+    #   "balanced" = light personality, focus on the task (default)
+    #   "strong"   = freely express identity and values in responses
+    personality_weight: str = Field(default="balanced", env="PERSONALITY_WEIGHT")
+    # Context focus: how aggressively recent messages are favoured over older context.
+    #   "broad"    = full history weighted equally (good for brainstorming)
+    #   "balanced" = moderate recency boost (default)
+    #   "focused"  = strong recency boost, older turns compressed (good for debugging)
+    context_focus: str = Field(default="balanced", env="CONTEXT_FOCUS")
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = Field(default=True, env="AUTO_INDEX_UPLOADS")
     # File indexing: chunk size in tokens

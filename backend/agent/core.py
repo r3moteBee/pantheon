@@ -121,6 +121,12 @@ class AgentCore:
           {"type": "error", "message": "..."}
         """
         try:
+            # Load conversation behaviour settings
+            from secrets.vault import get_vault
+            _vault = get_vault()
+            _personality_weight = _vault.get_secret("personality_weight") or "balanced"
+            _context_focus = _vault.get_secret("context_focus") or "balanced"
+
             # Pre-recall relevant memories to inject into system prompt context
             recalled_memories = None
             try:
@@ -134,6 +140,7 @@ class AgentCore:
                                 tiers=["semantic", "episodic", "graph"],
                                 project_id=self.project_id or "default",
                                 limit_per_tier=5,
+                                context_focus=_context_focus,
                             ),
                             timeout=4.0,
                         )
@@ -164,6 +171,7 @@ class AgentCore:
                 project_id=self.project_id,
                 project_name=self.project_name,
                 recalled_memories=recalled_memories,
+                personality_weight=_personality_weight,
             )
 
             # Get conversation history from working memory

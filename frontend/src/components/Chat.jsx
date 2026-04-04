@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -154,6 +154,8 @@ export default function Chat() {
   const [uploading, setUploading] = useState(false)
   const [memoryRecall, setMemoryRecall] = useState(true)
   const [recallLoading, setRecallLoading] = useState(false)
+  const [personalityWeight, setPersonalityWeight] = useState('balanced')
+  const [contextFocus, setContextFocus] = useState('balanced')
   const messagesEndRef = useRef(null)
   const socketRef = useRef(null)
   const textareaRef = useRef(null)
@@ -181,6 +183,8 @@ export default function Chat() {
   useEffect(() => {
     settingsApi.get().then((res) => {
       setMemoryRecall(res.data.memory_recall_enabled !== false)
+      setPersonalityWeight(res.data.personality_weight || 'balanced')
+      setContextFocus(res.data.context_focus || 'balanced')
     }).catch(() => {})
   }, [])
 
@@ -198,6 +202,30 @@ export default function Chat() {
       addNotification({ type: 'error', message: err.message })
     }
     setRecallLoading(false)
+  }
+
+  const cyclePersonalityWeight = async () => {
+    const order = ['minimal', 'balanced', 'strong']
+    const next = order[(order.indexOf(personalityWeight) + 1) % order.length]
+    try {
+      await settingsApi.update({ personality_weight: next })
+      setPersonalityWeight(next)
+      addNotification({ type: 'success', message: `Personality: ${next}` })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+  }
+
+  const cycleContextFocus = async () => {
+    const order = ['broad', 'balanced', 'focused']
+    const next = order[(order.indexOf(contextFocus) + 1) % order.length]
+    try {
+      await settingsApi.update({ context_focus: next })
+      setContextFocus(next)
+      addNotification({ type: 'success', message: `Focus: ${next}` })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
   }
 
   // ── File attachment handling ────────────────────────────────────────
@@ -439,6 +467,34 @@ export default function Chat() {
           >
             <Sparkles className="w-3 h-3" />
             Recall
+          </button>
+          <button
+            onClick={cycleContextFocus}
+            title={`Context focus: ${contextFocus} — click to cycle (broad → balanced → focused)`}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+              contextFocus === 'focused'
+                ? 'bg-amber-900 text-amber-300 hover:bg-amber-800'
+                : contextFocus === 'broad'
+                  ? 'bg-gray-800 text-gray-500 hover:bg-gray-700'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            <Target className="w-3 h-3" />
+            {contextFocus.charAt(0).toUpperCase() + contextFocus.slice(1)}
+          </button>
+          <button
+            onClick={cyclePersonalityWeight}
+            title={`Personality: ${personalityWeight} — click to cycle (minimal → balanced → strong)`}
+            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
+              personalityWeight === 'strong'
+                ? 'bg-purple-900 text-purple-300 hover:bg-purple-800'
+                : personalityWeight === 'minimal'
+                  ? 'bg-gray-800 text-gray-500 hover:bg-gray-700'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`}
+          >
+            <UserCircle className="w-3 h-3" />
+            {personalityWeight.charAt(0).toUpperCase() + personalityWeight.slice(1)}
           </button>
         </div>
       </div>
