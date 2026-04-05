@@ -7,6 +7,7 @@ import FilesPage from './pages/FilesPage'
 import PersonalityPage from './pages/PersonalityPage'
 import SettingsPage from './pages/SettingsPage'
 import SkillsPage from './pages/SkillsPage'
+import MCPPage from './pages/MCPPage'
 import TasksPage from './pages/TasksPage'
 import ProjectsPage from './pages/ProjectsPage'
 import LoginPage from './pages/LoginPage'
@@ -93,6 +94,7 @@ export default function App() {
           <Route path="memory" element={<MemoryPage />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="skills" element={<SkillsPage />} />
+          <Route path="mcp" element={<MCPPage />} />
           <Route path="personality" element={<PersonalityPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="projects" element={<ProjectsPage />} />

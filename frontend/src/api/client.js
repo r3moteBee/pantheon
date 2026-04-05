@@ -154,6 +154,18 @@ export const settingsApi = {
   restartTelegram: () => api.post('/api/settings/restart-telegram'),
 }
 
+// MCP Connections API
+export const mcpApi = {
+  listConnections: () => api.get('/api/mcp/connections'),
+  addConnection: (name, url, apiKey, headers = {}, enabled = true) =>
+    api.post('/api/mcp/connections', { name, url, api_key: apiKey, headers, enabled }),
+  updateConnection: (name, data) => api.put(`/api/mcp/connections/${name}`, data),
+  removeConnection: (name) => api.delete(`/api/mcp/connections/${name}`),
+  testConnection: (name) => api.post(`/api/mcp/connections/${name}/test`),
+  reconnect: (name) => api.post(`/api/mcp/connections/${name}/reconnect`),
+  listTools: () => api.get('/api/mcp/tools'),
+}
+
 // Skills API
 export const skillsApi = {
   list: (projectId) =>

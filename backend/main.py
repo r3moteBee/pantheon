@@ -19,6 +19,7 @@ from api.memory import router as memory_router
 from api.personality import router as personality_router
 from api.projects import router as projects_router
 from api.settings import router as settings_router
+from api.mcp import router as mcp_router
 from api.skills import router as skills_router
 from api.tasks import router as tasks_router
 
@@ -83,6 +84,11 @@ async def lifespan(app: FastAPI):
     from skills.registry import get_skill_registry
     skill_reg = get_skill_registry()
     logger.info("Skill registry loaded: %d skills", len(skill_reg.list_all()))
+
+    # Initialize MCP connections
+    from mcp_client.manager import get_mcp_manager
+    mcp_mgr = get_mcp_manager()
+    await mcp_mgr.startup()
 
     logger.info("Pantheon backend ready")
     import asyncio as _asyncio
@@ -173,6 +179,7 @@ app.include_router(memory_router,      prefix="/api", tags=["memory"])
 app.include_router(personality_router, prefix="/api", tags=["personality"])
 app.include_router(projects_router,    prefix="/api", tags=["projects"])
 app.include_router(settings_router,    prefix="/api", tags=["settings"])
+app.include_router(mcp_router,         prefix="/api", tags=["mcp"])
 app.include_router(skills_router,      prefix="/api", tags=["skills"])
 app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
 

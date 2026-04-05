@@ -1,4 +1,9 @@
-"""Built-in tool definitions for the agent."""
+"""Built-in tool definitions for the agent.
+
+MCP integration: When external MCP servers are connected, their tools
+are appended to TOOL_SCHEMAS dynamically via get_all_tool_schemas().
+Tool calls prefixed with mcp_ are routed through the MCP manager.
+"""
 from __future__ import annotations
 import asyncio
 import json
@@ -13,6 +18,21 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def get_all_tool_schemas() -> list[dict[str, Any]]:
+    """Return built-in tools + any MCP-provided tools."""
+    schemas = list(TOOL_SCHEMAS)
+    try:
+        from mcp_client.manager import get_mcp_manager
+        mgr = get_mcp_manager()
+        mcp_schemas = mgr.get_all_tool_schemas()
+        if mcp_schemas:
+            schemas.extend(mcp_schemas)
+            logger.debug("Added %d MCP tools to agent schema", len(mcp_schemas))
+    except Exception as e:
+        logger.debug("No MCP tools available: %s", e)
+    return schemas
 
 
 # Tool schemas (OpenAI function calling format)
@@ -235,6 +255,16 @@ async def execute_tool(
     """Execute a tool call and return the result as a string."""
     try:
         effective_project = project_id or "default"
+
+        # Route MCP tool calls through the MCP manager
+        if tool_name.startswith("mcp_"):
+            try:
+                from mcp_client.manager import get_mcp_manager
+                mgr = get_mcp_manager()
+                return await mgr.execute_tool(tool_name, tool_args)
+            except Exception as e:
+                logger.error("MCP tool dispatch failed for '%s': %s", tool_name, e)
+                return f"MCP tool error: {e}"
 
         if tool_name == "remember":
             from memory.manager import create_memory_manager

@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
 from agent.prompts import build_system_prompt
-from agent.tools import TOOL_SCHEMAS, execute_tool
+from agent.tools import TOOL_SCHEMAS, execute_tool, get_all_tool_schemas
 from config import get_settings
 from models.provider import ModelProvider
 
@@ -194,6 +194,9 @@ class AgentCore:
             full_response = ""
             iterations = 0
 
+            # Resolve all available tools (built-in + MCP)
+            all_tools = get_all_tool_schemas()
+
             while iterations < MAX_TOOL_ITERATIONS:
                 iterations += 1
                 tool_calls_this_round: list[dict] = []
@@ -204,7 +207,7 @@ class AgentCore:
                     stream_error = False
                     async for chunk in self.provider.chat(
                         messages=messages,
-                        tools=TOOL_SCHEMAS,
+                        tools=all_tools,
                         stream=True,
                     ):
                         if chunk["type"] == "text_delta":
@@ -224,7 +227,7 @@ class AgentCore:
                     # Non-streaming mode
                     response = await self.provider.chat_complete(
                         messages=messages,
-                        tools=TOOL_SCHEMAS,
+                        tools=all_tools,
                     )
                     current_text = response.get("content", "")
                     tool_calls_this_round = response.get("tool_calls", [])
