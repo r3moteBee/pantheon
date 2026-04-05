@@ -201,6 +201,66 @@ async def reset_tavily_monthly() -> dict[str, str]:
     return {"status": "monthly_usage_reset"}
 
 
+# ── Direct Tavily API test (bypasses MCP entirely) ────────────────────────────
+
+@router.post("/mcp/tavily/test-direct")
+async def test_tavily_direct() -> dict[str, Any]:
+    """Test the Tavily API key directly against Tavily's REST API.
+
+    Bypasses the MCP server completely to isolate whether the issue
+    is the API key or the MCP transport layer.
+    """
+    import httpx
+
+    mgr = get_mcp_manager()
+    api_key = ""
+    for cfg in mgr._configs:
+        if "tavily" in cfg.get("name", "").lower() or "tavily" in cfg.get("url", "").lower():
+            api_key = cfg.get("api_key", "")
+            break
+
+    if not api_key:
+        return {"status": "error", "message": "No Tavily connection found with an API key"}
+
+    results: dict[str, Any] = {
+        "api_key_prefix": api_key[:8] + "...",
+    }
+
+    # Test 1: Usage endpoint (lightweight, should always work)
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.tavily.com/usage",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            results["usage_test"] = {
+                "status": resp.status_code,
+                "body": resp.json() if resp.status_code == 200 else resp.text[:300],
+            }
+    except Exception as e:
+        results["usage_test"] = {"status": "error", "message": str(e)}
+
+    # Test 2: Minimal search (costs 1 credit)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.tavily.com/search",
+                json={"query": "test", "max_results": 1},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            results["search_test"] = {
+                "status": resp.status_code,
+                "body_preview": resp.text[:500],
+            }
+    except Exception as e:
+        results["search_test"] = {"status": "error", "message": str(e)}
+
+    return results
+
+
 # ── Debug ──────────────────────────────────────────────────────────────────────
 
 @router.get("/mcp/debug/{name}")
