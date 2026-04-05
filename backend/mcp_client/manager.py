@@ -260,15 +260,85 @@ class MCPManager:
                         return client, original_name
         return None
 
+    def _is_tavily_tool(self, prefixed_name: str) -> bool:
+        """Check if a prefixed tool name belongs to a Tavily connection."""
+        for client in self._clients.values():
+            prefix = f"mcp_{client.name}_"
+            if prefixed_name.startswith(prefix):
+                # Check if this client is a Tavily connection
+                return "tavily" in client.url.lower() or "tavily" in client.name.lower()
+        return False
+
     async def execute_tool(self, prefixed_name: str, arguments: dict[str, Any]) -> str:
-        """Execute an MCP tool by its prefixed name."""
+        """Execute an MCP tool by its prefixed name.
+
+        For Tavily tools, checks credit thresholds before execution and
+        falls back to built-in web_search if limits are exceeded.
+        """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
             return f"Unknown MCP tool: {prefixed_name}"
 
         client, tool_name = resolved
+
+        # ── Tavily credit threshold check ────────────────────────────
+        if self._is_tavily_tool(prefixed_name):
+            from mcp_client.tavily_credits import get_tavily_tracker
+            tracker = get_tavily_tracker()
+            threshold_check = tracker.check_threshold()
+
+            if threshold_check["exceeded"]:
+                reason = threshold_check["reason"]
+                usage = threshold_check["usage"]
+                logger.warning(
+                    "Tavily threshold exceeded for '%s': %s",
+                    tool_name, reason,
+                )
+
+                # Only fallback for search — other tools have no equivalent
+                if "search" in tool_name.lower():
+                    fallback_query = arguments.get("query", "")
+                    if fallback_query:
+                        from agent.tools import _web_search
+                        fallback_result = await _web_search(fallback_query)
+                        return (
+                            f"[Tavily credit limit reached — {reason}. "
+                            f"Falling back to built-in web search.]\n\n"
+                            f"{fallback_result}"
+                        )
+
+                # For non-search tools, return a clear error
+                return (
+                    f"[Tavily credit limit reached — {reason}. "
+                    f"Daily: {usage['daily_used']:.0f}/{usage['daily_limit']}, "
+                    f"Monthly: {usage['monthly_used']:.0f}/{usage['monthly_limit']}. "
+                    f"This tool call was blocked to stay within budget. "
+                    f"Adjust limits in Settings → MCP or wait for the limit to reset.]"
+                )
+
+        # ── Execute the tool ─────────────────────────────────────────
         try:
-            return await client.call_tool(tool_name, arguments)
+            result = await client.call_tool(tool_name, arguments)
+
+            # Record Tavily credit usage after successful call
+            if self._is_tavily_tool(prefixed_name):
+                from mcp_client.tavily_credits import get_tavily_tracker
+                tracker = get_tavily_tracker()
+                credits = tracker.record_usage(tool_name, arguments)
+
+                # Check if we're approaching the limit (80% warning)
+                usage = tracker.get_usage()
+                for limit_type in ("daily", "monthly"):
+                    limit = usage[f"{limit_type}_limit"]
+                    used = usage[f"{limit_type}_used"]
+                    if limit > 0 and used >= limit * 0.8 and used < limit:
+                        remaining = limit - used
+                        result += (
+                            f"\n\n[Note: Tavily {limit_type} credits approaching limit — "
+                            f"{used:.0f}/{limit:.0f} used, {remaining:.0f} remaining]"
+                        )
+
+            return result
         except Exception as e:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"

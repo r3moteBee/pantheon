@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff } from 'lucide-react'
+import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw } from 'lucide-react'
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
 
@@ -185,6 +185,180 @@ function AddConnectionForm({ onAdd, onCancel }) {
   )
 }
 
+function TavilyCreditsPanel() {
+  const [usage, setUsage] = useState(null)
+  const [editing, setEditing] = useState(false)
+  const [dailyLimit, setDailyLimit] = useState('')
+  const [monthlyLimit, setMonthlyLimit] = useState('')
+  const [saving, setSaving] = useState(false)
+  const addNotification = useStore((s) => s.addNotification)
+
+  const loadUsage = async () => {
+    try {
+      const res = await mcpApi.getTavilyUsage()
+      setUsage(res.data)
+      setDailyLimit(String(res.data.daily_limit || 0))
+      setMonthlyLimit(String(res.data.monthly_limit || 0))
+    } catch {
+      // Tavily not configured — that's fine
+    }
+  }
+
+  useEffect(() => {
+    loadUsage()
+  }, [])
+
+  if (!usage) return null
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await mcpApi.setTavilyThresholds(
+        parseInt(dailyLimit) || 0,
+        parseInt(monthlyLimit) || 0,
+      )
+      addNotification({ type: 'success', message: 'Tavily thresholds updated' })
+      setEditing(false)
+      await loadUsage()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+    setSaving(false)
+  }
+
+  const handleReset = async (period) => {
+    try {
+      if (period === 'daily') await mcpApi.resetTavilyDaily()
+      else await mcpApi.resetTavilyMonthly()
+      addNotification({ type: 'success', message: `Tavily ${period} usage reset` })
+      await loadUsage()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+  }
+
+  const dailyPct = usage.daily_limit > 0 ? Math.min(100, (usage.daily_used / usage.daily_limit) * 100) : 0
+  const monthlyPct = usage.monthly_limit > 0 ? Math.min(100, (usage.monthly_used / usage.monthly_limit) * 100) : 0
+
+  const barColor = (pct) => {
+    if (pct >= 90) return 'bg-red-500'
+    if (pct >= 70) return 'bg-amber-500'
+    return 'bg-emerald-500'
+  }
+
+  return (
+    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-medium text-white flex items-center gap-2">
+          <Gauge className="w-4 h-4 text-amber-400" /> Tavily API Credits
+        </h2>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditing(!editing)}
+            className="text-[10px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition-colors"
+          >
+            {editing ? 'Cancel' : 'Set Limits'}
+          </button>
+          <button
+            onClick={loadUsage}
+            className="text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {/* Daily usage */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">Daily ({usage.date})</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-gray-300">
+                {usage.daily_used.toFixed(0)}{usage.daily_limit > 0 ? ` / ${usage.daily_limit}` : ''}
+              </span>
+              {usage.daily_used > 0 && (
+                <button onClick={() => handleReset('daily')} title="Reset daily" className="text-gray-600 hover:text-gray-400">
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {usage.daily_limit > 0 ? (
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full transition-all ${barColor(dailyPct)}`} style={{ width: `${dailyPct}%` }} />
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-600">No daily limit set</p>
+          )}
+        </div>
+
+        {/* Monthly usage */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">Monthly ({usage.month})</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-gray-300">
+                {usage.monthly_used.toFixed(0)}{usage.monthly_limit > 0 ? ` / ${usage.monthly_limit}` : ''}
+              </span>
+              {usage.monthly_used > 0 && (
+                <button onClick={() => handleReset('monthly')} title="Reset monthly" className="text-gray-600 hover:text-gray-400">
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {usage.monthly_limit > 0 ? (
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full transition-all ${barColor(monthlyPct)}`} style={{ width: `${monthlyPct}%` }} />
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-600">No monthly limit set</p>
+          )}
+        </div>
+      </div>
+
+      {/* Credit cost reference */}
+      <p className="text-[10px] text-gray-600 mt-2">
+        Search: 1-2 credits · Extract: 1-2 per 5 URLs · Map: 1 per 5-10 URLs · Crawl: map + extract combined.
+        When limits are reached, search falls back to built-in web search automatically.
+      </p>
+
+      {editing && (
+        <div className="mt-3 pt-3 border-t border-gray-700 flex items-end gap-3">
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Daily limit (0 = unlimited)</label>
+            <input
+              type="number"
+              min="0"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Monthly limit (0 = unlimited)</label>
+            <input
+              type="number"
+              min="0"
+              value={monthlyLimit}
+              onChange={(e) => setMonthlyLimit(e.target.value)}
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function MCPConnections() {
   const [connections, setConnections] = useState([])
   const [allTools, setAllTools] = useState([])
@@ -284,6 +458,8 @@ export default function MCPConnections() {
           Connect to external MCP servers to give the agent access to additional tools.
           Tools discovered from connected servers are automatically available to the agent alongside built-in tools.
         </p>
+
+        <TavilyCreditsPanel />
 
         {showAdd && (
           <div className="mb-4">

@@ -164,6 +164,12 @@ export const mcpApi = {
   testConnection: (name) => api.post(`/api/mcp/connections/${name}/test`),
   reconnect: (name) => api.post(`/api/mcp/connections/${name}/reconnect`),
   listTools: () => api.get('/api/mcp/tools'),
+  // Tavily credit management
+  getTavilyUsage: () => api.get('/api/mcp/tavily/usage'),
+  setTavilyThresholds: (dailyLimit, monthlyLimit) =>
+    api.put('/api/mcp/tavily/thresholds', { daily_limit: dailyLimit, monthly_limit: monthlyLimit }),
+  resetTavilyDaily: () => api.post('/api/mcp/tavily/reset-daily'),
+  resetTavilyMonthly: () => api.post('/api/mcp/tavily/reset-monthly'),
 }
 
 // Skills API

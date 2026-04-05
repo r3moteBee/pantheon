@@ -28,6 +28,11 @@ class UpdateConnectionRequest(BaseModel):
     enabled: bool | None = None
 
 
+class TavilyThresholdRequest(BaseModel):
+    daily_limit: int | None = None
+    monthly_limit: int | None = None
+
+
 # ── List connections ─────────────────────────────────────────────────────────
 
 @router.get("/mcp/connections")
@@ -118,3 +123,46 @@ async def list_mcp_tools() -> dict[str, Any]:
     mgr = get_mcp_manager()
     tools = mgr.get_discovered_tools()
     return {"tools": tools, "count": len(tools)}
+
+
+# ── Tavily credit management ────────────────────────────────────────────────
+
+@router.get("/mcp/tavily/usage")
+async def get_tavily_usage() -> dict[str, Any]:
+    """Get Tavily API credit usage and thresholds."""
+    from mcp_client.tavily_credits import get_tavily_tracker
+    tracker = get_tavily_tracker()
+    usage = tracker.get_usage()
+    thresholds = tracker.get_thresholds()
+    return {**usage, **thresholds}
+
+
+@router.put("/mcp/tavily/thresholds")
+async def set_tavily_thresholds(req: TavilyThresholdRequest) -> dict[str, Any]:
+    """Set Tavily daily and/or monthly credit thresholds. Set to 0 for unlimited."""
+    from mcp_client.tavily_credits import get_tavily_tracker
+    tracker = get_tavily_tracker()
+    result = tracker.set_thresholds(
+        daily_limit=req.daily_limit,
+        monthly_limit=req.monthly_limit,
+    )
+    logger.info("Tavily thresholds updated: %s", result)
+    return {"status": "updated", **result}
+
+
+@router.post("/mcp/tavily/reset-daily")
+async def reset_tavily_daily() -> dict[str, str]:
+    """Reset today's Tavily credit usage counter."""
+    from mcp_client.tavily_credits import get_tavily_tracker
+    tracker = get_tavily_tracker()
+    tracker.reset_daily()
+    return {"status": "daily_usage_reset"}
+
+
+@router.post("/mcp/tavily/reset-monthly")
+async def reset_tavily_monthly() -> dict[str, str]:
+    """Reset this month's Tavily credit usage counter."""
+    from mcp_client.tavily_credits import get_tavily_tracker
+    tracker = get_tavily_tracker()
+    tracker.reset_monthly()
+    return {"status": "monthly_usage_reset"}
