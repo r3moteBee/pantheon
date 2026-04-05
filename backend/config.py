@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
     llm_prefill_model: str = Field(default="", env="LLM_PREFILL_MODEL")
     prefill_base_url: str = Field(default="", env="PREFILL_BASE_URL")
+
+    # Optional vision-capable model for image analysis.
+    # Falls back to: vision → primary → prefill (whichever succeeds first).
+    llm_vision_model: str = Field(default="", env="LLM_VISION_MODEL")
+    vision_base_url: str = Field(default="", env="VISION_BASE_URL")
+
     embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
     embedding_base_url: str = Field(default="", env="EMBEDDING_BASE_URL")
     reranker_model: str = Field(default="", env="RERANKER_MODEL")
@@ -34,6 +40,7 @@ class Settings(BaseSettings):
     prefill_api_key: str = Field(default="", env="PREFILL_API_KEY")
     embedding_api_key: str = Field(default="", env="EMBEDDING_API_KEY")
     reranker_api_key: str = Field(default="", env="RERANKER_API_KEY")
+    vision_api_key: str = Field(default="", env="VISION_API_KEY")
     search_api_key: str = Field(default="", env="SEARCH_API_KEY")
     telegram_bot_token: str = Field(default="", env="TELEGRAM_BOT_TOKEN")
     secret_key: str = Field(default="dev-secret-key-change-in-production", env="SECRET_KEY")
@@ -46,7 +53,7 @@ class Settings(BaseSettings):
     telegram_allowed_chat_ids: str = Field(default="", env="TELEGRAM_ALLOWED_CHAT_IDS")
     app_env: str = Field(default="development", env="APP_ENV")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
-    cors_origins: str = Field(default="http://localhost:3000,http://localhost:5173,http://localhost:80", env="CORS_ORIGINS")
+    cors_origins: str = Field(default="http://localhost:8000,http://localhost:5173,http://localhost:80", env="CORS_ORIGINS")
 
     # Search
     search_url: str = Field(default="", env="SEARCH_URL")
@@ -60,6 +67,18 @@ class Settings(BaseSettings):
     extraction_interval: int = Field(default=0, env="EXTRACTION_INTERVAL")
     # Context budget: max tokens for recalled memories injected into system prompt
     recall_token_budget: int = Field(default=4000, env="RECALL_TOKEN_BUDGET")
+
+    # Conversation behaviour tuning
+    # Personality presence: how prominently soul.md identity is injected.
+    #   "minimal"  = tone only, never reference identity in analytical content
+    #   "balanced" = light personality, focus on the task (default)
+    #   "strong"   = freely express identity and values in responses
+    personality_weight: str = Field(default="balanced", env="PERSONALITY_WEIGHT")
+    # Context focus: how aggressively recent messages are favoured over older context.
+    #   "broad"    = full history weighted equally (good for brainstorming)
+    #   "balanced" = moderate recency boost (default)
+    #   "focused"  = strong recency boost, older turns compressed (good for debugging)
+    context_focus: str = Field(default="balanced", env="CONTEXT_FOCUS")
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = Field(default=True, env="AUTO_INDEX_UPLOADS")
     # File indexing: chunk size in tokens

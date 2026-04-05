@@ -8,7 +8,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from config import get_settings, get_secret
 from api.auth import router as auth_router, compute_token
@@ -40,6 +41,9 @@ _PUBLIC_PATHS = {
     "/api/auth/login",
     "/api/auth/config",
 }
+
+# Resolve frontend dist directory (used by auth middleware and SPA serving)
+_FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -143,7 +147,14 @@ async def auth_middleware(request: Request, call_next):
     if request.url.path.startswith("/api/auth/oidc/"):
         return await call_next(request)
 
-    # Extract token
+    # Allow frontend static assets and SPA routes through (auth is
+    # enforced by the API endpoints themselves, not the static shell).
+    path = request.url.path
+    if _FRONTEND_DIR.is_dir() and not path.startswith(("/api/", "/ws/")):
+        return await call_next(request)
+
+    # WebSocket connections carry the token as a query parameter because
+    # the WebSocket API does not support arbitrary headers.
     if request.url.path.startswith("/ws/"):
         token = request.query_params.get("token", "")
     else:
@@ -196,6 +207,29 @@ async def health_check():
     return {"status": "ok", "version": app.version}
 
 
-@app.get("/")
-async def root():
-    return {"message": "Pantheon API", "docs": "/docs"}
+# ── SPA static file serving (local mode) ──────────────────────────────────────
+# When a frontend/dist directory exists next to the backend, serve it so that
+# local-mode deployments work on a single port without a separate static server.
+if _FRONTEND_DIR.is_dir():
+    # Serve static assets (JS, CSS, images) at /assets
+    _assets_dir = _FRONTEND_DIR / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
+
+    @app.get("/")
+    async def serve_spa_root():
+        return FileResponse(str(_FRONTEND_DIR / "index.html"))
+
+    # Catch-all: any path not matched by API routes serves the SPA shell
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Try to serve a real file first (e.g. favicon.ico, manifest.json)
+        file_path = _FRONTEND_DIR / full_path
+        if file_path.is_file() and _FRONTEND_DIR in file_path.resolve().parents:
+            return FileResponse(str(file_path))
+        # Otherwise return index.html for client-side routing
+        return FileResponse(str(_FRONTEND_DIR / "index.html"))
+else:
+    @app.get("/")
+    async def root():
+        return {"message": "Pantheon API", "docs": "/docs"}

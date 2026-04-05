@@ -1,9 +1,12 @@
 """Core agent loop with tool dispatch and streaming."""
 from __future__ import annotations
 import asyncio
+import base64
 import json
 import logging
+import re
 import uuid
+from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
@@ -16,6 +19,11 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 MAX_TOOL_ITERATIONS = 50
+
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+# Max image size to inline as base64 (5 MB)
+_MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 
 class AgentCore:
@@ -36,9 +44,63 @@ class AgentCore:
         self.memory_manager = memory_manager
         self.working_memory: list[dict[str, str]] = []
 
-    def _add_working_message(self, role: str, content: str) -> None:
+    def _add_working_message(self, role: str, content: Any) -> None:
         """Add message to working memory."""
         self.working_memory.append({"role": role, "content": content})
+
+    def _build_user_content(self, message: str) -> str | list[dict]:
+        """Build multimodal content blocks if the message references image attachments.
+
+        If image files are found in workspace/uploads/, they're inlined as
+        base64 image_url blocks alongside the text — enabling vision models
+        to actually see the images rather than just reading their filenames.
+        """
+        # Look for image file references in the attachment note
+        # Filenames may contain spaces (e.g. "Screenshot 2026-03-24 at 3.04.17 AM.png")
+        image_paths: list[Path] = []
+        pattern = re.compile(
+            r"uploads/(.+?\.(?:png|jpe?g|gif|webp|bmp))",
+            re.IGNORECASE,
+        )
+
+        # Resolve workspace base once
+        if self.project_id and self.project_id != "default":
+            base = settings.projects_dir / self.project_id / "workspace"
+        else:
+            base = settings.workspace_dir
+
+        seen: set[str] = set()
+        for match in pattern.finditer(message):
+            filename = match.group(1)
+            if filename in seen:
+                continue
+            seen.add(filename)
+            candidate = base / "uploads" / filename
+            if candidate.exists() and candidate.stat().st_size <= _MAX_IMAGE_SIZE:
+                image_paths.append(candidate)
+            else:
+                logger.debug("Image not found or too large: %s", candidate)
+
+        if not image_paths:
+            return message  # Plain text — no images found
+
+        # Build multimodal content array
+        content_blocks: list[dict] = [{"type": "text", "text": message}]
+        for img_path in image_paths:
+            try:
+                raw = img_path.read_bytes()
+                b64 = base64.b64encode(raw).decode("utf-8")
+                ext = img_path.suffix.lower().lstrip(".")
+                mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+                content_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                })
+                logger.info("Inlined image for vision: %s (%d KB)", img_path.name, len(raw) // 1024)
+            except Exception as e:
+                logger.warning("Failed to inline image %s: %s", img_path.name, e)
+
+        return content_blocks
 
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
@@ -59,6 +121,12 @@ class AgentCore:
           {"type": "error", "message": "..."}
         """
         try:
+            # Load conversation behaviour settings
+            from secrets.vault import get_vault
+            _vault = get_vault()
+            _personality_weight = _vault.get_secret("personality_weight") or "balanced"
+            _context_focus = _vault.get_secret("context_focus") or "balanced"
+
             # Pre-recall relevant memories to inject into system prompt context
             recalled_memories = None
             try:
@@ -72,6 +140,7 @@ class AgentCore:
                                 tiers=["semantic", "episodic", "graph"],
                                 project_id=self.project_id or "default",
                                 limit_per_tier=5,
+                                context_focus=_context_focus,
                             ),
                             timeout=4.0,
                         )
@@ -102,17 +171,19 @@ class AgentCore:
                 project_id=self.project_id,
                 project_name=self.project_name,
                 recalled_memories=recalled_memories,
+                personality_weight=_personality_weight,
             )
 
             # Get conversation history from working memory
             history = self._get_working_messages()
 
-            # Add current user message
+            # Add current user message — inline images for vision models
+            user_content = self._build_user_content(user_message)
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
-            messages.append({"role": "user", "content": user_message})
+            messages.append({"role": "user", "content": user_content})
 
-            # Add to working memory
+            # Store plain text version in working memory (not base64 blobs)
             self._add_working_message("user", user_message)
 
             full_response = ""
@@ -125,6 +196,7 @@ class AgentCore:
 
                 if stream:
                     # Streaming mode
+                    stream_error = False
                     async for chunk in self.provider.chat(
                         messages=messages,
                         tools=TOOL_SCHEMAS,
@@ -136,8 +208,13 @@ class AgentCore:
                         elif chunk["type"] == "tool_call":
                             tool_calls_this_round.append(chunk)
                             yield chunk
+                        elif chunk["type"] == "error":
+                            yield chunk
+                            stream_error = True
                         elif chunk["type"] == "done":
                             pass
+                    if stream_error:
+                        break
                 else:
                     # Non-streaming mode
                     response = await self.provider.chat_complete(

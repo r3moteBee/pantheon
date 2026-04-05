@@ -95,6 +95,18 @@ async def list_notes(
     return {"notes": notes, "count": len(notes)}
 
 
+@router.get("/memory/episodic/messages")
+async def list_messages(
+    project_id: str = Query(default="default"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List recent episodic messages across all sessions."""
+    from memory.episodic import EpisodicMemory
+    ep = EpisodicMemory()
+    messages = await ep.get_recent_messages(project_id=project_id, limit=limit)
+    return {"messages": messages, "count": len(messages)}
+
+
 @router.put("/memory/episodic/notes/{note_id}")
 async def update_note(note_id: str, req: UpdateNoteRequest) -> dict[str, str]:
     """Update an episodic memory note."""

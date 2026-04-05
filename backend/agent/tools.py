@@ -278,6 +278,32 @@ async def execute_tool(
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
             if not safe_path.exists():
                 return f"File not found: {tool_args['path']}"
+
+            suffix = safe_path.suffix.lower()
+
+            # PDF — extract text with pdfplumber
+            if suffix == ".pdf":
+                try:
+                    import pdfplumber
+                    pages = []
+                    with pdfplumber.open(safe_path) as pdf:
+                        for i, page in enumerate(pdf.pages, 1):
+                            text = page.extract_text() or ""
+                            if text.strip():
+                                pages.append(f"--- Page {i} ---\n{text}")
+                    if pages:
+                        return "\n\n".join(pages)
+                    return f"[PDF has {len(pdf.pages)} page(s) but no extractable text — may be scanned/image-based]"
+                except Exception as e:
+                    return f"Error reading PDF: {e}"
+
+            # Binary file types — return metadata instead of garbled content
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp",
+                          ".mp3", ".mp4", ".wav", ".zip", ".tar", ".gz",
+                          ".exe", ".dll", ".so", ".bin", ".dat"}:
+                size = safe_path.stat().st_size
+                return f"[Binary file: {safe_path.name}, {size:,} bytes — use a specialized tool to process this file type]"
+
             return safe_path.read_text(encoding="utf-8", errors="replace")
 
         elif tool_name == "write_file":

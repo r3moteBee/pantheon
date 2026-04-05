@@ -214,7 +214,7 @@ class ModelProvider:
 
         except Exception as e:
             logger.error(f"Chat complete error: {e}", exc_info=True)
-            return {"content": f"Error: {e}", "tool_calls": []}
+            raise
 
     async def embed(self, text: str) -> list[float]:
         """Get embedding for text."""
@@ -242,6 +242,7 @@ class ModelProvider:
 _provider_instance: ModelProvider | None = None
 _embedding_provider_instance: ModelProvider | None = None
 _prefill_provider_instance: ModelProvider | None = None
+_vision_provider_instance: ModelProvider | None = None
 _reranker_provider_instance: ModelProvider | None = None
 
 
@@ -325,6 +326,35 @@ def get_prefill_provider() -> ModelProvider:
     return _prefill_provider_instance
 
 
+def get_vision_provider() -> ModelProvider | None:
+    """Get the singleton vision provider for image analysis.
+
+    Returns None when no dedicated vision model is configured, signalling
+    callers to fall back to the primary provider.
+    """
+    global _vision_provider_instance
+    if _vision_provider_instance is None:
+        vis_base = _vault_or("vision_base_url") or settings.vision_base_url or None
+        vis_key = _vault_or("vision_api_key") or settings.vision_api_key or None
+        vis_model = _vault_or("llm_vision_model") or settings.llm_vision_model or None
+
+        if not vis_model and not vis_base:
+            return None  # Not configured — callers should use fallback chain
+
+        primary = get_provider()
+        _vision_provider_instance = ModelProvider(
+            base_url=vis_base or primary.base_url,
+            api_key=vis_key or primary.api_key,
+            model=vis_model or primary.model,
+            embedding_model=primary.embedding_model,
+        )
+        if vis_base:
+            logger.info("Vision provider configured at %s (model: %s)", vis_base, vis_model)
+        else:
+            logger.info("Vision provider using primary endpoint (model: %s)", vis_model)
+    return _vision_provider_instance
+
+
 def get_reranker_provider() -> ModelProvider | None:
     """Get the singleton reranker provider.
 
@@ -353,8 +383,9 @@ def get_reranker_provider() -> ModelProvider | None:
 
 def reset_provider() -> None:
     """Reset all provider singletons (call after settings change)."""
-    global _provider_instance, _embedding_provider_instance, _prefill_provider_instance, _reranker_provider_instance
+    global _provider_instance, _embedding_provider_instance, _prefill_provider_instance, _vision_provider_instance, _reranker_provider_instance
     _provider_instance = None
     _embedding_provider_instance = None
     _prefill_provider_instance = None
+    _vision_provider_instance = None
     _reranker_provider_instance = None

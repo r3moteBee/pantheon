@@ -37,16 +37,20 @@ BACKEND_PID=$!
 echo "$BACKEND_PID" >> "$DIR/.pids"
 success "Backend started (PID ${BACKEND_PID}) — logs: $DIR/backend.log"
 
-info "Starting frontend on port ${FRONTEND_PORT}..."
-python3 -m http.server "$FRONTEND_PORT" --directory "$DIR/frontend/dist" >> "$DIR/frontend.log" 2>&1 &
-FRONTEND_PID=$!
-echo "$FRONTEND_PID" >> "$DIR/.pids"
-success "Frontend started (PID ${FRONTEND_PID}) — logs: $DIR/frontend.log"
+# The backend serves frontend static files directly when frontend/dist exists,
+# so a separate static server is no longer required.  We still support starting
+# one on FRONTEND_PORT for backward compatibility (set PANTHEON_DUAL_PORT=1).
+if [[ "${PANTHEON_DUAL_PORT:-0}" == "1" ]]; then
+  info "Starting frontend on port ${FRONTEND_PORT} (dual-port mode)..."
+  python3 -m http.server "$FRONTEND_PORT" --directory "$DIR/frontend/dist" >> "$DIR/frontend.log" 2>&1 &
+  FRONTEND_PID=$!
+  echo "$FRONTEND_PID" >> "$DIR/.pids"
+  success "Frontend started (PID ${FRONTEND_PID}) — logs: $DIR/frontend.log"
+fi
 
 echo ""
 echo -e "${BOLD}${GREEN}Pantheon is running!${RESET}"
-echo -e "  Web UI   → http://localhost:${FRONTEND_PORT}"
-echo -e "  API      → http://localhost:${BACKEND_PORT}"
+echo -e "  Web UI   → http://localhost:${BACKEND_PORT}"
 echo -e "  API Docs → http://localhost:${BACKEND_PORT}/docs"
 echo -e "  Stop     → $DIR/stop.sh"
 echo ""

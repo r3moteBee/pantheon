@@ -36,23 +36,35 @@ class SemanticMemory:
         self._embedding_fn = embedding_fn
         self._client = None
         self._collection = None
-        self._chroma_host = "localhost"
-        self._chroma_port = 8000
+
+        # Read connection config from settings
+        from config import get_settings
+        cfg = get_settings()
+        self._chroma_host = cfg.chroma_host.strip() if cfg.chroma_host else ""
+        self._chroma_port = cfg.chroma_port
 
     def _get_client(self):
         if self._client is None:
-            try:
-                import chromadb
-                self._client = chromadb.HttpClient(
-                    host=self._chroma_host,
-                    port=self._chroma_port,
-                )
-                logger.debug(f"Connected to ChromaDB at {self._chroma_host}:{self._chroma_port}")
-            except Exception as e:
-                logger.warning(f"ChromaDB HTTP connection failed: {e}. Falling back to local persistent client.")
-                import chromadb
-                chroma_path = f"data/chroma/{self.project_id}"
+            import chromadb
+            if self._chroma_host:
+                try:
+                    self._client = chromadb.HttpClient(
+                        host=self._chroma_host,
+                        port=self._chroma_port,
+                    )
+                    # Verify the connection actually works
+                    self._client.heartbeat()
+                    logger.debug(f"Connected to ChromaDB at {self._chroma_host}:{self._chroma_port}")
+                except Exception as e:
+                    logger.warning(f"ChromaDB HTTP connection failed: {e}. Falling back to local persistent client.")
+                    self._client = None
+
+            if self._client is None:
+                from config import get_settings
+                data_dir = get_settings().data_dir or "data"
+                chroma_path = f"{data_dir}/chroma/{self.project_id}"
                 self._client = chromadb.PersistentClient(path=chroma_path)
+                logger.debug(f"Using local ChromaDB at {chroma_path}")
         return self._client
 
     def _get_collection(self):

@@ -11,6 +11,9 @@ function LLMSection() {
     llm_prefill_model: '',
     prefill_base_url: '',
     prefill_api_key: '',
+    llm_vision_model: '',
+    vision_base_url: '',
+    vision_api_key: '',
     embedding_model: '',
     embedding_base_url: '',
     embedding_api_key: '',
@@ -20,11 +23,13 @@ function LLMSection() {
   })
   const [apiKeySet, setApiKeySet] = useState(false)
   const [prefillKeySet, setPrefillKeySet] = useState(false)
+  const [visionKeySet, setVisionKeySet] = useState(false)
   const [embeddingKeySet, setEmbeddingKeySet] = useState(false)
   const [rerankerKeySet, setRerankerKeySet] = useState(false)
   const [models, setModels] = useState([])
   const [showKey, setShowKey] = useState(false)
   const [showPrefillOverride, setShowPrefillOverride] = useState(false)
+  const [showVisionOverride, setShowVisionOverride] = useState(false)
   const [showEmbeddingOverride, setShowEmbeddingOverride] = useState(false)
   const [showRerankerOverride, setShowRerankerOverride] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -46,6 +51,9 @@ function LLMSection() {
         llm_prefill_model: d.llm_prefill_model || '',
         prefill_base_url:  d.prefill_base_url  || '',
         prefill_api_key:   '',
+        llm_vision_model:  d.llm_vision_model  || '',
+        vision_base_url:   d.vision_base_url   || '',
+        vision_api_key:    '',
         embedding_model:   d.embedding_model   || '',
         embedding_base_url: d.embedding_base_url || '',
         embedding_api_key: '',
@@ -55,10 +63,12 @@ function LLMSection() {
       })
       setApiKeySet(d.llm_api_key_set || false)
       setPrefillKeySet(d.prefill_api_key_set || false)
+      setVisionKeySet(d.vision_api_key_set || false)
       setEmbeddingKeySet(d.embedding_api_key_set || false)
       setRerankerKeySet(d.reranker_api_key_set || false)
       // Auto-expand override sections if they have values
       if (d.prefill_base_url) setShowPrefillOverride(true)
+      if (d.vision_base_url || d.llm_vision_model) setShowVisionOverride(true)
       if (d.embedding_base_url) setShowEmbeddingOverride(true)
       if (d.reranker_base_url || d.reranker_model) setShowRerankerOverride(true)
     } catch (err) {
@@ -114,6 +124,8 @@ function LLMSection() {
         llm_model:         settings.llm_model,
         llm_prefill_model: settings.llm_prefill_model,
         prefill_base_url:  settings.prefill_base_url,
+        llm_vision_model:  settings.llm_vision_model,
+        vision_base_url:   settings.vision_base_url,
         embedding_model:   settings.embedding_model,
         embedding_base_url: settings.embedding_base_url,
         reranker_model:    settings.reranker_model,
@@ -121,10 +133,11 @@ function LLMSection() {
       }
       if (settings.llm_api_key) { payload.llm_api_key = settings.llm_api_key; setApiKeySet(true) }
       if (settings.prefill_api_key) { payload.prefill_api_key = settings.prefill_api_key; setPrefillKeySet(true) }
+      if (settings.vision_api_key) { payload.vision_api_key = settings.vision_api_key; setVisionKeySet(true) }
       if (settings.embedding_api_key) { payload.embedding_api_key = settings.embedding_api_key; setEmbeddingKeySet(true) }
       if (settings.reranker_api_key) { payload.reranker_api_key = settings.reranker_api_key; setRerankerKeySet(true) }
       await settingsApi.update(payload)
-      setSettings((s) => ({ ...s, llm_api_key: '', prefill_api_key: '', embedding_api_key: '', reranker_api_key: '' }))
+      setSettings((s) => ({ ...s, llm_api_key: '', prefill_api_key: '', vision_api_key: '', embedding_api_key: '', reranker_api_key: '' }))
       addNotification({ type: 'success', message: 'LLM settings saved' })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
@@ -239,6 +252,50 @@ function LLMSection() {
               value={settings.prefill_api_key}
               onChange={(e) => setSettings({ ...settings, prefill_api_key: e.target.value })}
               placeholder={prefillKeySet ? '(key saved — blank to keep)' : 'API key (blank = use primary)'}
+              className={inputClass}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Vision model */}
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-1.5">
+          Vision Model
+          <span className="ml-2 text-gray-600 font-normal">optional</span>
+        </label>
+        <input
+          type="text"
+          list="llm-models-list"
+          value={settings.llm_vision_model}
+          onChange={(e) => setSettings({ ...settings, llm_vision_model: e.target.value })}
+          placeholder="e.g. gpt-4o, llava, qwen2.5-vl"
+          className={inputClass}
+        />
+        <p className="text-xs text-gray-600 mt-1">Dedicated model for image analysis. Falls back to primary → prefill when blank.</p>
+
+        {/* Vision provider override */}
+        <button
+          onClick={() => setShowVisionOverride(!showVisionOverride)}
+          className="flex items-center gap-1 mt-2 text-xs text-gray-500 hover:text-gray-300"
+        >
+          {showVisionOverride ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          Separate provider endpoint
+        </button>
+        {showVisionOverride && (
+          <div className="mt-2 pl-3 border-l-2 border-gray-700 space-y-2">
+            <input
+              type="text"
+              value={settings.vision_base_url}
+              onChange={(e) => setSettings({ ...settings, vision_base_url: e.target.value })}
+              placeholder="Endpoint URL (blank = use primary)"
+              className={inputClass}
+            />
+            <input
+              type="password"
+              value={settings.vision_api_key}
+              onChange={(e) => setSettings({ ...settings, vision_api_key: e.target.value })}
+              placeholder={visionKeySet ? '(key saved — blank to keep)' : 'API key (blank = use primary)'}
               className={inputClass}
             />
           </div>

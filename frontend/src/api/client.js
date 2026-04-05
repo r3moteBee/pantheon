@@ -32,7 +32,7 @@ api.interceptors.response.use(
 
 // Auth API
 export const authApi = {
-  config: () => fetch('/api/auth/config').then((r) => r.json()),
+  config: () => api.get('/api/auth/config').then((r) => r.data),
   login: (password) =>
     api.post('/api/auth/login', { password }),
 }
@@ -69,6 +69,8 @@ export const memoryApi = {
     api.delete(`/api/memory/semantic/${docId}`, { params: { project_id: projectId } }),
   listNotes: (projectId) =>
     api.get('/api/memory/episodic/notes', { params: { project_id: projectId } }),
+  listMessages: (projectId, limit = 50) =>
+    api.get('/api/memory/episodic/messages', { params: { project_id: projectId, limit } }),
   updateNote: (noteId, content) =>
     api.put(`/api/memory/episodic/notes/${noteId}`, { content }),
   deleteNote: (noteId) =>

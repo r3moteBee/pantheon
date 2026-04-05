@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import get_settings, get_secret
-from models.provider import get_provider, get_embedding_provider, get_prefill_provider, get_reranker_provider, reset_provider
+from models.provider import get_provider, get_embedding_provider, get_prefill_provider, get_vision_provider, get_reranker_provider, reset_provider
 from secrets.vault import get_vault
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,9 @@ class SettingsUpdate(BaseModel):
     llm_prefill_model: str | None = None
     prefill_base_url: str | None = None
     prefill_api_key: str | None = None
+    llm_vision_model: str | None = None
+    vision_base_url: str | None = None
+    vision_api_key: str | None = None
     embedding_model: str | None = None
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
@@ -34,6 +37,8 @@ class SettingsUpdate(BaseModel):
     telegram_bot_token: str | None = None
     telegram_allowed_chat_ids: str | None = None
     memory_recall_enabled: bool | None = None
+    personality_weight: str | None = None
+    context_focus: str | None = None
 
 
 class SecretUpdate(BaseModel):
@@ -54,6 +59,9 @@ def _get_effective_settings() -> dict[str, Any]:
         "llm_prefill_model": vault.get_secret("llm_prefill_model") or settings_config.llm_prefill_model,
         "prefill_base_url": vault.get_secret("prefill_base_url") or settings_config.prefill_base_url,
         "prefill_api_key_set": bool(get_secret("prefill_api_key")),
+        "llm_vision_model": vault.get_secret("llm_vision_model") or settings_config.llm_vision_model,
+        "vision_base_url": vault.get_secret("vision_base_url") or settings_config.vision_base_url,
+        "vision_api_key_set": bool(get_secret("vision_api_key")),
         "embedding_model": vault.get_secret("embedding_model") or settings_config.embedding_model,
         "embedding_base_url": vault.get_secret("embedding_base_url") or settings_config.embedding_base_url,
         "embedding_api_key_set": bool(get_secret("embedding_api_key")),
@@ -68,6 +76,8 @@ def _get_effective_settings() -> dict[str, Any]:
         "telegram_allowed_chat_ids": vault.get_secret("telegram_allowed_chat_ids") or settings_config.telegram_allowed_chat_ids,
         "app_env": settings_config.app_env,
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
+        "personality_weight": vault.get_secret("personality_weight") or settings_config.personality_weight,
+        "context_focus": vault.get_secret("context_focus") or settings_config.context_focus,
     }
 
 
@@ -102,6 +112,12 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("prefill_base_url", req.prefill_base_url)
     if req.prefill_api_key is not None:
         vault.set_secret("prefill_api_key", req.prefill_api_key)
+    if req.llm_vision_model is not None:
+        vault.set_secret("llm_vision_model", req.llm_vision_model)
+    if req.vision_base_url is not None:
+        vault.set_secret("vision_base_url", req.vision_base_url)
+    if req.vision_api_key is not None:
+        vault.set_secret("vision_api_key", req.vision_api_key)
     if req.embedding_model is not None:
         vault.set_secret("embedding_model", req.embedding_model)
     if req.embedding_base_url is not None:
@@ -124,6 +140,14 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("telegram_allowed_chat_ids", req.telegram_allowed_chat_ids)
     if req.memory_recall_enabled is not None:
         vault.set_secret("memory_recall_enabled", str(req.memory_recall_enabled).lower())
+    if req.personality_weight is not None:
+        val = req.personality_weight.lower().strip()
+        if val in ("minimal", "balanced", "strong"):
+            vault.set_secret("personality_weight", val)
+    if req.context_focus is not None:
+        val = req.context_focus.lower().strip()
+        if val in ("broad", "balanced", "focused"):
+            vault.set_secret("context_focus", val)
 
     # Reset provider so it picks up new settings
     reset_provider()
@@ -167,12 +191,14 @@ async def test_connection() -> dict[str, Any]:
     primary = get_provider()
     embedding = get_embedding_provider()
     prefill = get_prefill_provider()
+    vision = get_vision_provider()
     reranker = get_reranker_provider()
 
     results = await asyncio.gather(
         _test_provider("primary", primary),
         _test_provider("embedding", embedding),
         _test_provider("prefill", prefill),
+        _test_provider("vision", vision),
         _test_provider("reranker", reranker),
     )
 
@@ -213,7 +239,8 @@ async def set_secret(key: str, req: SecretUpdate) -> dict[str, str]:
     # Reset provider if it's an LLM-related secret
     if key in ("llm_base_url", "llm_api_key", "llm_model",
                 "embedding_base_url", "embedding_api_key", "embedding_model",
-                "prefill_base_url", "prefill_api_key", "llm_prefill_model"):
+                "prefill_base_url", "prefill_api_key", "llm_prefill_model",
+                "vision_base_url", "vision_api_key", "llm_vision_model"):
         reset_provider()
     return {"status": "set", "key": key}
 

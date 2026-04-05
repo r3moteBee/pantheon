@@ -5,16 +5,23 @@ import { memoryApi } from '../api/client'
 
 function EpisodicTab() {
   const [notes, setNotes] = useState([])
+  const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
+  const [view, setView] = useState('messages')
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
 
-  const loadNotes = async () => {
+  const loadData = async () => {
     setLoading(true)
+    const pid = activeProject?.id || 'default'
     try {
-      const res = await memoryApi.listNotes(activeProject?.id || 'default')
-      setNotes(res.data.notes || [])
+      const [notesRes, msgsRes] = await Promise.all([
+        memoryApi.listNotes(pid),
+        memoryApi.listMessages(pid, 50),
+      ])
+      setNotes(notesRes.data.notes || [])
+      setMessages(msgsRes.data.messages || [])
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -22,12 +29,17 @@ function EpisodicTab() {
   }
 
   useEffect(() => {
-    if (activeProject?.id) loadNotes()
+    if (activeProject?.id) loadData()
   }, [activeProject])
 
-  const filtered = notes.filter(n =>
+  const filteredNotes = notes.filter(n =>
     n.content.toLowerCase().includes(search.toLowerCase()) ||
     n.id.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const filteredMessages = messages.filter(m =>
+    m.content.toLowerCase().includes(search.toLowerCase()) ||
+    m.role.toLowerCase().includes(search.toLowerCase())
   )
 
   const deleteNote = async (noteId) => {
@@ -35,6 +47,16 @@ function EpisodicTab() {
       await memoryApi.deleteNote(noteId)
       setNotes(notes.filter(n => n.id !== noteId))
       addNotification({ type: 'success', message: 'Note deleted' })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+  }
+
+  const deleteMessage = async (messageId) => {
+    try {
+      await memoryApi.deleteMessage(messageId)
+      setMessages(messages.filter(m => m.id !== messageId))
+      addNotification({ type: 'success', message: 'Message deleted' })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -49,12 +71,12 @@ function EpisodicTab() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search notes..."
+            placeholder="Search..."
             className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
           />
         </div>
         <button
-          onClick={loadNotes}
+          onClick={loadData}
           disabled={loading}
           className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
         >
@@ -62,27 +84,79 @@ function EpisodicTab() {
         </button>
       </div>
 
-      <div className="space-y-2">
-        {filtered.map(note => (
-          <div key={note.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-500 font-mono">{note.id}</p>
-              </div>
-              <button
-                onClick={() => deleteNote(note.id)}
-                className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-sm text-gray-300 line-clamp-3">{note.content}</p>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <p className="text-center text-gray-600 py-8">No notes found</p>
-        )}
+      {/* Sub-tabs: Messages vs Notes */}
+      <div className="flex gap-1 bg-gray-800/50 rounded-lg p-0.5">
+        <button
+          onClick={() => setView('messages')}
+          className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-colors ${
+            view === 'messages' ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-300'
+          }`}
+        >
+          Messages ({messages.length})
+        </button>
+        <button
+          onClick={() => setView('notes')}
+          className={`flex-1 py-1.5 px-3 text-xs font-medium rounded-md transition-colors ${
+            view === 'notes' ? 'bg-gray-700 text-gray-100' : 'text-gray-400 hover:text-gray-300'
+          }`}
+        >
+          Notes ({notes.length})
+        </button>
       </div>
+
+      {view === 'messages' && (
+        <div className="space-y-2">
+          {filteredMessages.map(msg => (
+            <div key={msg.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
+              <div className="flex items-start justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    msg.role === 'user' ? 'bg-brand-600/20 text-brand-400' : 'bg-emerald-600/20 text-emerald-400'
+                  }`}>
+                    {msg.role}
+                  </span>
+                  <span className="text-xs text-gray-500">{msg.session_id?.slice(0, 8)}</span>
+                  <span className="text-xs text-gray-600">{msg.timestamp}</span>
+                </div>
+                <button
+                  onClick={() => deleteMessage(msg.id)}
+                  className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-sm text-gray-300 line-clamp-3">{msg.content}</p>
+            </div>
+          ))}
+          {filteredMessages.length === 0 && (
+            <p className="text-center text-gray-600 py-8">No messages stored yet</p>
+          )}
+        </div>
+      )}
+
+      {view === 'notes' && (
+        <div className="space-y-2">
+          {filteredNotes.map(note => (
+            <div key={note.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
+              <div className="flex items-start justify-between mb-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-gray-500 font-mono">{note.id}</p>
+                </div>
+                <button
+                  onClick={() => deleteNote(note.id)}
+                  className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-sm text-gray-300 line-clamp-3">{note.content}</p>
+            </div>
+          ))}
+          {filteredNotes.length === 0 && (
+            <p className="text-center text-gray-600 py-8">No notes found</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

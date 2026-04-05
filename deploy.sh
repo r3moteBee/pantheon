@@ -679,7 +679,7 @@ else
 
   cd frontend
   npm install --silent
-  VITE_API_URL="http://localhost:${BACKEND_PORT}" npm run build
+  VITE_API_URL="" npm run build
   cd "$INSTALL_DIR"
   success "Frontend built"
 
@@ -718,7 +718,7 @@ else
   fi
 
   RUNNING_MSG="Local"
-  RUNNING_URL="http://localhost:${FRONTEND_PORT}"
+  RUNNING_URL="http://localhost:${BACKEND_PORT}"
 
 fi
 

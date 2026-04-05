@@ -130,10 +130,20 @@ class EpisodicMemory:
             if len(safe_name) < 3:
                 safe_name = f"ep-{safe_name}"
 
-            try:
-                self._vector_client = chromadb.HttpClient(host="localhost", port=8000)
-            except Exception:
-                chroma_path = f"data/chroma/episodic-{self.project_id}"
+            from config import get_settings
+            cfg = get_settings()
+            chroma_host = cfg.chroma_host.strip() if cfg.chroma_host else ""
+
+            if chroma_host:
+                try:
+                    self._vector_client = chromadb.HttpClient(host=chroma_host, port=cfg.chroma_port)
+                    self._vector_client.heartbeat()
+                except Exception:
+                    self._vector_client = None
+
+            if self._vector_client is None:
+                data_dir = cfg.data_dir or "data"
+                chroma_path = f"{data_dir}/chroma/episodic-{self.project_id}"
                 self._vector_client = chromadb.PersistentClient(path=chroma_path)
 
             self._vector_collection = self._vector_client.get_or_create_collection(

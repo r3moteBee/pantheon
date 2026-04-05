@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { Bot, Lock, Eye, EyeOff, ExternalLink } from 'lucide-react'
+import { api, authApi } from '../api/client'
 
 function LoginVersionTag() {
   const [version, setVersion] = useState('…')
   useEffect(() => {
-    fetch('/api/health').then(r => r.json()).then(d => setVersion(d.version || '?')).catch(() => setVersion('?'))
+    api.get('/api/health').then(r => setVersion(r.data?.version || '?')).catch(() => setVersion('?'))
   }, [])
   return <p className="text-center text-xs text-gray-700 mt-6">{version}</p>
 }
@@ -76,21 +77,22 @@ export default function LoginPage({ onLogin, authConfig }) {
     setError('')
     setLoading(true)
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      })
-      if (!res.ok) {
+      const res = await authApi.login(password)
+      const token = res.data?.token
+      if (!token) {
         setError('Incorrect password.')
         setLoading(false)
         return
       }
-      const { token } = await res.json()
       localStorage.setItem('auth_token', token)
       onLogin(token)
-    } catch {
-      setError('Could not reach the server. Try again.')
+    } catch (err) {
+      const msg = err?.message || ''
+      if (msg.includes('Invalid password') || msg.includes('401')) {
+        setError('Incorrect password.')
+      } else {
+        setError('Could not reach the server. Try again.')
+      }
       setLoading(false)
     }
   }
