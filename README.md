@@ -662,11 +662,20 @@ Contributions are welcome! Please:
 - [ ] Multi-agent orchestration — coordinated agents with inter-agent communication
 - [ ] Role-based access control (RBAC) and multi-user auth
 - [ ] Advanced memory consolidation — automatic cross-session summarization and decay
+- [ ] **Skills system** — extensible skill library with AI-assisted editor ([design doc](docs/SKILLS_FEATURE_PLAN.md))
+  - [ ] Skill registry — load, enable/disable, and manage user-authored skills at runtime
+  - [ ] Security scanner — 3-layer pipeline (static analysis, capability analysis, AI review) with quarantine
+  - [ ] Hub import — fetch skills from Smithery (MCP), ClawHub, SkillsMP/SkillsLLM, GitHub, or local upload
+  - [ ] AI-assisted skill editor — scaffold, refine, and test skills in the browser
+  - [ ] Explicit invocation (`/skill-name`) and toggle-controlled auto-discovery (off / suggest / auto)
+  - [ ] Pantheon extensions — memory-tier integration, project context awareness, autonomous scheduling, granular permissions
+  - [ ] Skill telemetry — activation tracking, satisfaction scoring, periodic AI effectiveness reviews
+  - [ ] Skill evolution — opt-in per-skill self-improvement with version control and rollback
+  - [ ] Task-level skill policies — per-task control over skill access for autonomous execution
 
 ### Planned
 
 - [ ] Multi-modal input (images, audio, documents in chat)
 - [ ] GPU-accelerated local embeddings
 - [ ] Distributed agent deployment and horizontal scaling
-- [ ] Plugin / tool marketplace
 - [ ] Custom fine-tuning pipeline integration
