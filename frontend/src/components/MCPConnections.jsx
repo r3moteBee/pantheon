@@ -1,13 +1,256 @@
 import React, { useState, useEffect } from 'react'
-import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw } from 'lucide-react'
+import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw } from 'lucide-react'
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
 
-function ConnectionCard({ conn, onRemove, onTest, onReconnect, onToggle }) {
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+/** Detect whether a connection is a metered service with usage tracking. */
+function isMeteredConnection(conn) {
+  const name = (conn.name || '').toLowerCase()
+  const url = (conn.url || '').toLowerCase()
+  // Tavily is the first supported metered service — add others here
+  if (name.includes('tavily') || url.includes('tavily')) return 'tavily'
+  return null
+}
+
+function barColor(pct) {
+  if (pct >= 90) return 'bg-red-500'
+  if (pct >= 70) return 'bg-amber-500'
+  return 'bg-emerald-500'
+}
+
+// ── Inline Usage Panel (renders inside ConnectionCard) ─────────────────────
+
+function ConnectionUsagePanel({ serviceType }) {
+  const [usage, setUsage] = useState(null)
+  const [editing, setEditing] = useState(false)
+  const [dailyLimit, setDailyLimit] = useState('')
+  const [monthlyLimit, setMonthlyLimit] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadingUsage, setLoadingUsage] = useState(true)
+  const addNotification = useStore((s) => s.addNotification)
+
+  const loadUsage = async () => {
+    setLoadingUsage(true)
+    try {
+      if (serviceType === 'tavily') {
+        const res = await mcpApi.getTavilyUsage()
+        setUsage(res.data)
+        setDailyLimit(String(res.data?.thresholds?.daily_limit || 0))
+        setMonthlyLimit(String(res.data?.thresholds?.monthly_limit || 0))
+      }
+    } catch {
+      // Service not configured or endpoint unavailable
+    }
+    setLoadingUsage(false)
+  }
+
+  useEffect(() => { loadUsage() }, [serviceType])
+
+  if (loadingUsage) {
+    return <p className="text-[10px] text-gray-600 py-1">Loading usage data...</p>
+  }
+  if (!usage) return null
+
+  const local = usage.local || {}
+  const thresholds = usage.thresholds || {}
+  const remote = usage.remote || {}
+
+  // Remote data from Tavily API (key-level and account-level)
+  const keyData = remote.key || {}
+  const accountData = remote.account || {}
+
+  const dailyUsed = local.daily_used || 0
+  const monthlyUsed = local.monthly_used || 0
+  const dLimit = thresholds.daily_limit || 0
+  const mLimit = thresholds.monthly_limit || 0
+
+  const dailyPct = dLimit > 0 ? Math.min(100, (dailyUsed / dLimit) * 100) : 0
+  const monthlyPct = mLimit > 0 ? Math.min(100, (monthlyUsed / mLimit) * 100) : 0
+
+  // Remote account usage (if available)
+  const planUsage = accountData.current_period_usage ?? keyData.usage ?? null
+  const planLimit = accountData.plan_limit ?? keyData.limit ?? null
+  const planPct = planLimit > 0 ? Math.min(100, ((planUsage || 0) / planLimit) * 100) : 0
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      if (serviceType === 'tavily') {
+        await mcpApi.setTavilyThresholds(parseInt(dailyLimit) || 0, parseInt(monthlyLimit) || 0)
+      }
+      addNotification({ type: 'success', message: 'Thresholds updated' })
+      setEditing(false)
+      await loadUsage()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+    setSaving(false)
+  }
+
+  const handleReset = async (period) => {
+    try {
+      if (serviceType === 'tavily') {
+        if (period === 'daily') await mcpApi.resetTavilyDaily()
+        else await mcpApi.resetTavilyMonthly()
+      }
+      addNotification({ type: 'success', message: `${period} usage reset` })
+      await loadUsage()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h4 className="text-xs font-medium text-gray-400 flex items-center gap-1.5">
+          <Gauge className="w-3 h-3 text-amber-400" /> API Credit Usage
+        </h4>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setEditing(!editing)}
+            className="text-[10px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition-colors"
+          >
+            {editing ? 'Cancel' : 'Set Limits'}
+          </button>
+          <button onClick={loadUsage} className="text-gray-500 hover:text-gray-300 transition-colors">
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+
+      {/* Remote account usage (from real API) */}
+      {planUsage !== null && planLimit !== null && planLimit > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">
+              Account plan ({accountData.current_plan || keyData.plan || 'unknown'})
+            </span>
+            <span className="text-xs font-mono text-gray-300">
+              {planUsage.toLocaleString()} / {planLimit.toLocaleString()}
+            </span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-1.5">
+            <div className={`h-1.5 rounded-full transition-all ${barColor(planPct)}`} style={{ width: `${planPct}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Remote breakdown (search vs extract) */}
+      {(keyData.search_usage != null || keyData.extract_usage != null) && (
+        <div className="flex gap-4 text-[10px] text-gray-500">
+          {keyData.search_usage != null && <span>Search: {keyData.search_usage.toLocaleString()}</span>}
+          {keyData.extract_usage != null && <span>Extract: {keyData.extract_usage.toLocaleString()}</span>}
+          {keyData.crawl_usage != null && <span>Crawl: {keyData.crawl_usage.toLocaleString()}</span>}
+        </div>
+      )}
+
+      {/* Local threshold tracking */}
+      <div className="grid grid-cols-2 gap-3">
+        {/* Daily */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">Daily</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-gray-300">
+                {dailyUsed.toFixed(0)}{dLimit > 0 ? ` / ${dLimit}` : ''}
+              </span>
+              {dailyUsed > 0 && (
+                <button onClick={() => handleReset('daily')} title="Reset daily" className="text-gray-600 hover:text-gray-400">
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {dLimit > 0 ? (
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full transition-all ${barColor(dailyPct)}`} style={{ width: `${dailyPct}%` }} />
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-600">No daily limit</p>
+          )}
+        </div>
+
+        {/* Monthly */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">Monthly</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-mono text-gray-300">
+                {monthlyUsed.toFixed(0)}{mLimit > 0 ? ` / ${mLimit}` : ''}
+              </span>
+              {monthlyUsed > 0 && (
+                <button onClick={() => handleReset('monthly')} title="Reset monthly" className="text-gray-600 hover:text-gray-400">
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+              )}
+            </div>
+          </div>
+          {mLimit > 0 ? (
+            <div className="w-full bg-gray-700 rounded-full h-1.5">
+              <div className={`h-1.5 rounded-full transition-all ${barColor(monthlyPct)}`} style={{ width: `${monthlyPct}%` }} />
+            </div>
+          ) : (
+            <p className="text-[10px] text-gray-600">No monthly limit</p>
+          )}
+        </div>
+      </div>
+
+      {/* Cost reference */}
+      {serviceType === 'tavily' && (
+        <p className="text-[10px] text-gray-600">
+          Search: 1-2 credits · Extract: 1-2/5 URLs · Map: 1/5-10 URLs · Crawl: map+extract.
+          When limits hit, search falls back to built-in web search.
+        </p>
+      )}
+
+      {/* Threshold editor */}
+      {editing && (
+        <div className="pt-2 border-t border-gray-700 flex items-end gap-3">
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Daily limit (0 = unlimited)</label>
+            <input
+              type="number"
+              min="0"
+              value={dailyLimit}
+              onChange={(e) => setDailyLimit(e.target.value)}
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-gray-500 mb-1">Monthly limit (0 = unlimited)</label>
+            <input
+              type="number"
+              min="0"
+              value={monthlyLimit}
+              onChange={(e) => setMonthlyLimit(e.target.value)}
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Connection Card ────────────────────────────────────────────────────────
+
+function ConnectionCard({ conn, onRemove, onTest, onReconnect }) {
   const [expanded, setExpanded] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
-  const [tools, setTools] = useState([])
+
+  const meteredType = isMeteredConnection(conn)
 
   const handleTest = async () => {
     setTesting(true)
@@ -15,7 +258,6 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onToggle }) {
     try {
       const res = await onTest(conn.name)
       setTestResult(res)
-      if (res.tool_names) setTools(res.tool_names)
     } catch (err) {
       setTestResult({ status: 'error', message: err.message })
     }
@@ -39,6 +281,11 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onToggle }) {
             {conn.tools_count > 0 && (
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
                 {conn.tools_count} tools
+              </span>
+            )}
+            {meteredType && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-400">
+                metered
               </span>
             )}
           </div>
@@ -89,7 +336,7 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onToggle }) {
       )}
 
       {expanded && (
-        <div className="border-t border-gray-700 px-4 py-3 bg-gray-850 space-y-2">
+        <div className="border-t border-gray-700 px-4 py-3 bg-gray-850 space-y-3">
           {conn.tools_count > 0 ? (
             <div>
               <h4 className="text-xs font-medium text-gray-400 mb-1">Discovered Tools</h4>
@@ -100,11 +347,20 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onToggle }) {
           ) : (
             <p className="text-xs text-gray-500">Not connected — no tools discovered. Click the test button to connect.</p>
           )}
+
+          {/* Metered service usage — inline in the card */}
+          {meteredType && conn.connected && (
+            <div className="pt-2 border-t border-gray-700">
+              <ConnectionUsagePanel serviceType={meteredType} />
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
+
+// ── Add Connection Form ────────────────────────────────────────────────────
 
 function AddConnectionForm({ onAdd, onCancel }) {
   const [name, setName] = useState('')
@@ -185,179 +441,7 @@ function AddConnectionForm({ onAdd, onCancel }) {
   )
 }
 
-function TavilyCreditsPanel() {
-  const [usage, setUsage] = useState(null)
-  const [editing, setEditing] = useState(false)
-  const [dailyLimit, setDailyLimit] = useState('')
-  const [monthlyLimit, setMonthlyLimit] = useState('')
-  const [saving, setSaving] = useState(false)
-  const addNotification = useStore((s) => s.addNotification)
-
-  const loadUsage = async () => {
-    try {
-      const res = await mcpApi.getTavilyUsage()
-      setUsage(res.data)
-      setDailyLimit(String(res.data.daily_limit || 0))
-      setMonthlyLimit(String(res.data.monthly_limit || 0))
-    } catch {
-      // Tavily not configured — that's fine
-    }
-  }
-
-  useEffect(() => {
-    loadUsage()
-  }, [])
-
-  if (!usage) return null
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await mcpApi.setTavilyThresholds(
-        parseInt(dailyLimit) || 0,
-        parseInt(monthlyLimit) || 0,
-      )
-      addNotification({ type: 'success', message: 'Tavily thresholds updated' })
-      setEditing(false)
-      await loadUsage()
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-    setSaving(false)
-  }
-
-  const handleReset = async (period) => {
-    try {
-      if (period === 'daily') await mcpApi.resetTavilyDaily()
-      else await mcpApi.resetTavilyMonthly()
-      addNotification({ type: 'success', message: `Tavily ${period} usage reset` })
-      await loadUsage()
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-  }
-
-  const dailyPct = usage.daily_limit > 0 ? Math.min(100, (usage.daily_used / usage.daily_limit) * 100) : 0
-  const monthlyPct = usage.monthly_limit > 0 ? Math.min(100, (usage.monthly_used / usage.monthly_limit) * 100) : 0
-
-  const barColor = (pct) => {
-    if (pct >= 90) return 'bg-red-500'
-    if (pct >= 70) return 'bg-amber-500'
-    return 'bg-emerald-500'
-  }
-
-  return (
-    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 mb-6">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-medium text-white flex items-center gap-2">
-          <Gauge className="w-4 h-4 text-amber-400" /> Tavily API Credits
-        </h2>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setEditing(!editing)}
-            className="text-[10px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition-colors"
-          >
-            {editing ? 'Cancel' : 'Set Limits'}
-          </button>
-          <button
-            onClick={loadUsage}
-            className="text-gray-500 hover:text-gray-300 transition-colors"
-          >
-            <RefreshCw className="w-3 h-3" />
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        {/* Daily usage */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-gray-500">Daily ({usage.date})</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-mono text-gray-300">
-                {usage.daily_used.toFixed(0)}{usage.daily_limit > 0 ? ` / ${usage.daily_limit}` : ''}
-              </span>
-              {usage.daily_used > 0 && (
-                <button onClick={() => handleReset('daily')} title="Reset daily" className="text-gray-600 hover:text-gray-400">
-                  <RotateCcw className="w-2.5 h-2.5" />
-                </button>
-              )}
-            </div>
-          </div>
-          {usage.daily_limit > 0 ? (
-            <div className="w-full bg-gray-700 rounded-full h-1.5">
-              <div className={`h-1.5 rounded-full transition-all ${barColor(dailyPct)}`} style={{ width: `${dailyPct}%` }} />
-            </div>
-          ) : (
-            <p className="text-[10px] text-gray-600">No daily limit set</p>
-          )}
-        </div>
-
-        {/* Monthly usage */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] text-gray-500">Monthly ({usage.month})</span>
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-mono text-gray-300">
-                {usage.monthly_used.toFixed(0)}{usage.monthly_limit > 0 ? ` / ${usage.monthly_limit}` : ''}
-              </span>
-              {usage.monthly_used > 0 && (
-                <button onClick={() => handleReset('monthly')} title="Reset monthly" className="text-gray-600 hover:text-gray-400">
-                  <RotateCcw className="w-2.5 h-2.5" />
-                </button>
-              )}
-            </div>
-          </div>
-          {usage.monthly_limit > 0 ? (
-            <div className="w-full bg-gray-700 rounded-full h-1.5">
-              <div className={`h-1.5 rounded-full transition-all ${barColor(monthlyPct)}`} style={{ width: `${monthlyPct}%` }} />
-            </div>
-          ) : (
-            <p className="text-[10px] text-gray-600">No monthly limit set</p>
-          )}
-        </div>
-      </div>
-
-      {/* Credit cost reference */}
-      <p className="text-[10px] text-gray-600 mt-2">
-        Search: 1-2 credits · Extract: 1-2 per 5 URLs · Map: 1 per 5-10 URLs · Crawl: map + extract combined.
-        When limits are reached, search falls back to built-in web search automatically.
-      </p>
-
-      {editing && (
-        <div className="mt-3 pt-3 border-t border-gray-700 flex items-end gap-3">
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Daily limit (0 = unlimited)</label>
-            <input
-              type="number"
-              min="0"
-              value={dailyLimit}
-              onChange={(e) => setDailyLimit(e.target.value)}
-              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Monthly limit (0 = unlimited)</label>
-            <input
-              type="number"
-              min="0"
-              value={monthlyLimit}
-              onChange={(e) => setMonthlyLimit(e.target.value)}
-              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
+// ── Main Component ─────────────────────────────────────────────────────────
 
 export default function MCPConnections() {
   const [connections, setConnections] = useState([])
@@ -458,8 +542,6 @@ export default function MCPConnections() {
           Connect to external MCP servers to give the agent access to additional tools.
           Tools discovered from connected servers are automatically available to the agent alongside built-in tools.
         </p>
-
-        <TavilyCreditsPanel />
 
         {showAdd && (
           <div className="mb-4">

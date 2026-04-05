@@ -129,12 +129,45 @@ async def list_mcp_tools() -> dict[str, Any]:
 
 @router.get("/mcp/tavily/usage")
 async def get_tavily_usage() -> dict[str, Any]:
-    """Get Tavily API credit usage and thresholds."""
+    """Get Tavily API credit usage — combines real Tavily API data with local thresholds.
+
+    Queries https://api.tavily.com/usage for actual account/key usage,
+    then merges in local threshold settings for the fallback system.
+    """
+    import httpx
     from mcp_client.tavily_credits import get_tavily_tracker
+
     tracker = get_tavily_tracker()
-    usage = tracker.get_usage()
+    local = tracker.get_usage()
     thresholds = tracker.get_thresholds()
-    return {**usage, **thresholds}
+
+    # Try to fetch real usage from Tavily's API
+    remote: dict[str, Any] = {}
+    try:
+        mgr = get_mcp_manager()
+        # Find the Tavily connection's API key
+        api_key = ""
+        for cfg in mgr._configs:
+            if "tavily" in cfg.get("name", "").lower() or "tavily" in cfg.get("url", "").lower():
+                api_key = cfg.get("api_key", "")
+                break
+
+        if api_key:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://api.tavily.com/usage",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                remote = resp.json()
+    except Exception as e:
+        logger.debug("Could not fetch Tavily remote usage: %s", e)
+
+    return {
+        "local": local,
+        "thresholds": thresholds,
+        "remote": remote,
+    }
 
 
 @router.put("/mcp/tavily/thresholds")
