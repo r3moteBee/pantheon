@@ -199,3 +199,57 @@ async def reset_tavily_monthly() -> dict[str, str]:
     tracker = get_tavily_tracker()
     tracker.reset_monthly()
     return {"status": "monthly_usage_reset"}
+
+
+# ── Debug ──────────────────────────────────────────────────────────────────────
+
+@router.get("/mcp/debug/{name}")
+async def debug_connection(name: str) -> dict[str, Any]:
+    """Debug a connection — shows what URL/headers are actually being sent.
+
+    API keys are masked. Use the backend logs for full request/response tracing.
+    """
+    mgr = get_mcp_manager()
+    cfg = None
+    for c in mgr._configs:
+        if c["name"] == name:
+            cfg = c
+            break
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Connection '{name}' not found")
+
+    from mcp_client.client import MCPClient
+    client = MCPClient(
+        name=cfg["name"],
+        url=cfg["url"],
+        api_key=cfg.get("api_key", ""),
+        headers=cfg.get("headers", {}),
+    )
+
+    built_url = client._build_url()
+    built_headers = client._build_headers()
+
+    # Mask secrets
+    api_key = cfg.get("api_key", "")
+    mask = api_key[:6] + "***" + api_key[-4:] if len(api_key) > 10 else "***"
+    safe_url = built_url.replace(api_key, mask) if api_key else built_url
+    safe_headers = {
+        k: (v.replace(api_key, mask) if api_key and api_key in v else v)
+        for k, v in built_headers.items()
+    }
+
+    active_client = mgr._clients.get(name)
+
+    return {
+        "name": name,
+        "stored_url": cfg["url"][:50] + "..." if len(cfg["url"]) > 50 else cfg["url"],
+        "built_url": safe_url,
+        "built_headers": safe_headers,
+        "has_api_key": bool(api_key),
+        "api_key_prefix": api_key[:8] + "..." if api_key else "(none)",
+        "session_id": active_client.session_id if active_client else None,
+        "is_initialized": active_client._initialized if active_client else False,
+        "tools_count": len(active_client.tools) if active_client else 0,
+        "url_has_trailing_slash": cfg["url"].endswith("/"),
+        "url_contains_apikey_param": "tavilyApiKey" in cfg["url"],
+    }

@@ -112,6 +112,26 @@ class MCPClient:
         url = self._build_url()
         headers = self._build_headers()
 
+        # Debug logging — mask API key in URL and headers
+        safe_url = url
+        if self.api_key and self.api_key in safe_url:
+            safe_url = safe_url.replace(self.api_key, self.api_key[:6] + "***")
+        safe_headers = {
+            k: (v[:10] + "***" if k.lower() == "authorization" else v)
+            for k, v in headers.items()
+        }
+        logger.info(
+            "MCP '%s' → %s %s | headers=%s | payload.method=%s",
+            self.name, "POST", safe_url, safe_headers, method,
+        )
+        if method == "tools/call" and params:
+            logger.info(
+                "MCP '%s' tool_call detail: tool=%s args=%s",
+                self.name,
+                params.get("name", "?"),
+                json.dumps(params.get("arguments", {}), default=str)[:500],
+            )
+
         max_attempts = MAX_RETRIES if retry_on_429 else 1
 
         for attempt in range(max_attempts):
@@ -119,6 +139,25 @@ class MCPClient:
 
             async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
                 resp = await client.post(url, json=payload, headers=headers)
+
+                # Log response details
+                logger.info(
+                    "MCP '%s' ← %d %s | content-type=%s | session=%s | body=%s",
+                    self.name,
+                    resp.status_code,
+                    method,
+                    resp.headers.get("content-type", "?"),
+                    resp.headers.get("mcp-session-id", "none"),
+                    resp.text[:500] if resp.status_code != 200 or method == "tools/call" else "(ok)",
+                )
+
+                # Log redirect history if any
+                if resp.history:
+                    chain = " → ".join(
+                        f"{r.status_code} {r.headers.get('location', '?')}"
+                        for r in resp.history
+                    )
+                    logger.warning("MCP '%s' redirect chain: %s → %d (final)", self.name, chain, resp.status_code)
 
                 # Handle HTTP-level 429
                 if resp.status_code == 429 and retry_on_429 and attempt < max_attempts - 1:
