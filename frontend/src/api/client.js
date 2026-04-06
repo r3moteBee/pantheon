@@ -234,6 +234,17 @@ export const tasksApi = {
     api.get('/api/tasks/logs/all', { params: { project_id: projectId } }),
 }
 
+// Personas API
+export const personasApi = {
+  list: () => api.get('/api/personas').then((r) => r.data),
+  get: (personaId) => api.get(`/api/personas/${personaId}`).then((r) => r.data),
+  create: (data) => api.post('/api/personas', data).then((r) => r.data),
+  update: (personaId, data) => api.put(`/api/personas/${personaId}`, data).then((r) => r.data),
+  delete: (personaId) => api.delete(`/api/personas/${personaId}`).then((r) => r.data),
+  apply: (personaId, projectId) =>
+    api.post(`/api/personas/${personaId}/apply/${projectId}`).then((r) => r.data),
+}
+
 // Personality API
 export const personalityApi = {
   getSoul: (projectId) => api.get('/api/personality/soul', { params: { project_id: projectId } }),

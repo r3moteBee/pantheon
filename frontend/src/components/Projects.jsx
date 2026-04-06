@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react'
-import { Trash2, Plus, Check, RefreshCw, Calendar } from 'lucide-react'
+import { Trash2, Plus, Check, RefreshCw, Calendar, User } from 'lucide-react'
 import { useStore } from '../store'
-import { projectsApi } from '../api/client'
+import { projectsApi, personasApi } from '../api/client'
 
-function CreateProjectForm({ onProjectCreated }) {
+function CreateProjectForm({ onProjectCreated, personas }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [id, setId] = useState('')
+  const [personaId, setPersonaId] = useState('pan')
   const [loading, setLoading] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
@@ -14,10 +15,20 @@ function CreateProjectForm({ onProjectCreated }) {
     if (!name.trim()) return
     setLoading(true)
     try {
-      await projectsApi.create(name, description, id || undefined)
+      const res = await projectsApi.create(name, description, id || undefined)
+      const projectId = res.data?.id || id
+      // Apply persona if one was selected
+      if (personaId && projectId) {
+        try {
+          await personasApi.apply(personaId, projectId)
+        } catch (e) {
+          console.warn('Failed to apply persona:', e)
+        }
+      }
       setName('')
       setDescription('')
       setId('')
+      setPersonaId('pan')
       addNotification({ type: 'success', message: 'Project created' })
       onProjectCreated()
     } catch (err) {
@@ -50,6 +61,24 @@ function CreateProjectForm({ onProjectCreated }) {
         placeholder="Custom ID (optional)..."
         className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
       />
+
+      {/* Persona selector */}
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Agent Persona</label>
+        <select
+          value={personaId}
+          onChange={(e) => setPersonaId(e.target.value)}
+          className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+        >
+          <option value="">None (use global personality)</option>
+          {personas.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.icon} {p.name} — {p.tagline}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <button
         onClick={createProject}
         disabled={loading || !name.trim()}
@@ -61,8 +90,9 @@ function CreateProjectForm({ onProjectCreated }) {
   )
 }
 
-function ProjectCard({ project, isActive, onSetActive, onDelete }) {
+function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRefresh }) {
   const [deleting, setDeleting] = useState(false)
+  const [changingPersona, setChangingPersona] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
   const deleteProject = async () => {
@@ -83,6 +113,19 @@ function ProjectCard({ project, isActive, onSetActive, onDelete }) {
     setDeleting(false)
   }
 
+  const changePersona = async (newPersonaId) => {
+    if (!newPersonaId) return
+    setChangingPersona(true)
+    try {
+      await personasApi.apply(newPersonaId, project.id)
+      addNotification({ type: 'success', message: `Persona applied to ${project.name}` })
+      if (onRefresh) onRefresh()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+    setChangingPersona(false)
+  }
+
   const formatDate = (dateStr) => {
     try {
       return new Date(dateStr).toLocaleDateString()
@@ -90,6 +133,8 @@ function ProjectCard({ project, isActive, onSetActive, onDelete }) {
       return dateStr
     }
   }
+
+  const currentPersona = personas.find((p) => p.id === project.persona_id)
 
   return (
     <div
@@ -130,6 +175,26 @@ function ProjectCard({ project, isActive, onSetActive, onDelete }) {
         )}
       </div>
 
+      {/* Persona selector */}
+      <div className="mb-3">
+        <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
+          <User className="w-3 h-3" /> Persona
+        </label>
+        <select
+          value={project.persona_id || ''}
+          onChange={(e) => changePersona(e.target.value)}
+          disabled={changingPersona}
+          className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-brand-500 disabled:opacity-50"
+        >
+          <option value="">None (global personality)</option>
+          {personas.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.icon} {p.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="flex gap-2">
         {!isActive && (
           <button
@@ -154,6 +219,7 @@ function ProjectCard({ project, isActive, onSetActive, onDelete }) {
 
 export default function Projects() {
   const [loading, setLoading] = useState(false)
+  const [personas, setPersonas] = useState([])
   const projects = useStore((s) => s.projects)
   const activeProject = useStore((s) => s.activeProject)
   const setProjects = useStore((s) => s.setProjects)
@@ -172,8 +238,18 @@ export default function Projects() {
     setLoading(false)
   }
 
+  const loadPersonas = async () => {
+    try {
+      const data = await personasApi.list()
+      setPersonas(data.personas || [])
+    } catch (err) {
+      console.warn('Failed to load personas:', err)
+    }
+  }
+
   useEffect(() => {
     loadProjects()
+    loadPersonas()
   }, [])
 
   const setActive = async (project) => {
@@ -198,7 +274,7 @@ export default function Projects() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto scrollbar-thin p-6">
         <div className="max-w-4xl mx-auto space-y-6">
-          <CreateProjectForm onProjectCreated={loadProjects} />
+          <CreateProjectForm onProjectCreated={loadProjects} personas={personas} />
 
           <div>
             <h2 className="text-sm font-semibold text-gray-400 mb-4">All Projects</h2>
@@ -216,6 +292,8 @@ export default function Projects() {
                     isActive={activeProject?.id === project.id}
                     onSetActive={() => setActive(project)}
                     onDelete={loadProjects}
+                    personas={personas}
+                    onRefresh={loadProjects}
                   />
                 ))}
               </div>
