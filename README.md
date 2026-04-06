@@ -1,6 +1,6 @@
 # Pantheon
 
-Pantheon is a self-hosted, production-ready agentic AI framework with a 5-tier memory system, project isolation, autonomous task scheduling, and a polished web UI.
+Pantheon is a self-hosted, agentic AI framework with a 5-tier memory system, project isolation, autonomous task scheduling, and a polished web UI.
 
 ## Features
 
