@@ -58,6 +58,7 @@ function ConnectionUsagePanel({ serviceType }) {
   const remote = usage.remote || {}
 
   // Remote data from Tavily API (key-level and account-level)
+  // API returns: { key: { usage, limit, search_usage, ... }, account: { plan_usage, plan_limit, current_plan, ... } }
   const keyData = remote.key || {}
   const accountData = remote.account || {}
 
@@ -69,10 +70,15 @@ function ConnectionUsagePanel({ serviceType }) {
   const dailyPct = dLimit > 0 ? Math.min(100, (dailyUsed / dLimit) * 100) : 0
   const monthlyPct = mLimit > 0 ? Math.min(100, (monthlyUsed / mLimit) * 100) : 0
 
-  // Remote account usage (if available)
-  const planUsage = accountData.current_period_usage ?? keyData.usage ?? null
-  const planLimit = accountData.plan_limit ?? keyData.limit ?? null
+  // Account-level plan usage (all keys combined)
+  const planUsage = accountData.plan_usage ?? null
+  const planLimit = accountData.plan_limit ?? null
   const planPct = planLimit > 0 ? Math.min(100, ((planUsage || 0) / planLimit) * 100) : 0
+
+  // Key-level usage (just this API key)
+  const keyUsage = keyData.usage ?? null
+  const keyLimit = keyData.limit ?? null
+  const keyPct = keyLimit > 0 ? Math.min(100, ((keyUsage || 0) / keyLimit) * 100) : 0
 
   const handleSave = async () => {
     setSaving(true)
@@ -122,12 +128,12 @@ function ConnectionUsagePanel({ serviceType }) {
         </div>
       </div>
 
-      {/* Remote account usage (from real API) */}
+      {/* Account-level plan usage (all keys combined) */}
       {planUsage !== null && planLimit !== null && planLimit > 0 && (
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] text-gray-500">
-              Account plan ({accountData.current_plan || keyData.plan || 'unknown'})
+              Account ({accountData.current_plan || 'unknown'})
             </span>
             <span className="text-xs font-mono text-gray-300">
               {planUsage.toLocaleString()} / {planLimit.toLocaleString()}
@@ -136,15 +142,29 @@ function ConnectionUsagePanel({ serviceType }) {
           <div className="w-full bg-gray-700 rounded-full h-1.5">
             <div className={`h-1.5 rounded-full transition-all ${barColor(planPct)}`} style={{ width: `${planPct}%` }} />
           </div>
+          {/* Account-level breakdown by tool type */}
+          <div className="flex gap-3 mt-1 text-[10px] text-gray-600">
+            {accountData.search_usage != null && <span>Search: {accountData.search_usage}</span>}
+            {accountData.extract_usage != null && <span>Extract: {accountData.extract_usage}</span>}
+            {accountData.research_usage != null && <span>Research: {accountData.research_usage}</span>}
+            {accountData.crawl_usage != null && accountData.crawl_usage > 0 && <span>Crawl: {accountData.crawl_usage}</span>}
+            {accountData.map_usage != null && accountData.map_usage > 0 && <span>Map: {accountData.map_usage}</span>}
+          </div>
         </div>
       )}
 
-      {/* Remote breakdown (search vs extract) */}
-      {(keyData.search_usage != null || keyData.extract_usage != null) && (
-        <div className="flex gap-4 text-[10px] text-gray-500">
-          {keyData.search_usage != null && <span>Search: {keyData.search_usage.toLocaleString()}</span>}
-          {keyData.extract_usage != null && <span>Extract: {keyData.extract_usage.toLocaleString()}</span>}
-          {keyData.crawl_usage != null && <span>Crawl: {keyData.crawl_usage.toLocaleString()}</span>}
+      {/* Key-level usage (this API key only) */}
+      {keyUsage !== null && keyLimit !== null && keyLimit > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] text-gray-500">This key</span>
+            <span className="text-xs font-mono text-gray-300">
+              {keyUsage.toLocaleString()} / {keyLimit.toLocaleString()}
+            </span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-1.5">
+            <div className={`h-1.5 rounded-full transition-all ${barColor(keyPct)}`} style={{ width: `${keyPct}%` }} />
+          </div>
         </div>
       )}
 
