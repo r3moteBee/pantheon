@@ -99,6 +99,7 @@ class MCPManager:
                 "connected": cfg["name"] in self._clients,
                 "tools_count": len(self._clients[cfg["name"]].tools) if cfg["name"] in self._clients else 0,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
+                "excluded_tools": cfg.get("excluded_tools", []),
             }
             result.append(entry)
         return result
@@ -241,8 +242,16 @@ class MCPManager:
         """Get OpenAI-format tool schemas from all connected MCP servers."""
         schemas = []
         for client in self._clients.values():
-            schemas.extend(client.get_openai_tool_schemas())
+            excluded = self._get_excluded_tools(client.name)
+            schemas.extend(client.get_openai_tool_schemas(excluded_tools=excluded))
         return schemas
+
+    def _get_excluded_tools(self, connection_name: str) -> set[str]:
+        """Get the set of excluded tool names for a connection."""
+        for cfg in self._configs:
+            if cfg["name"] == connection_name:
+                return set(cfg.get("excluded_tools", []))
+        return set()
 
     def get_tool_names(self) -> list[str]:
         """Get all available MCP tool names (prefixed)."""
@@ -255,12 +264,16 @@ class MCPManager:
     def resolve_tool_call(self, prefixed_name: str) -> tuple[MCPClient, str] | None:
         """Resolve a prefixed tool name to (client, original_tool_name).
 
-        Returns None if the tool doesn't belong to any MCP connection.
+        Returns None if the tool doesn't belong to any MCP connection
+        or if the tool is excluded.
         """
         for client in self._clients.values():
             prefix = f"mcp_{client.name}_"
             if prefixed_name.startswith(prefix):
                 original_name = prefixed_name[len(prefix):]
+                excluded = self._get_excluded_tools(client.name)
+                if original_name in excluded:
+                    return None
                 # Verify the tool exists on this client
                 for tool in client.tools:
                     if tool.get("name") == original_name:
@@ -354,13 +367,16 @@ class MCPManager:
         """List all discovered tools with their connection source."""
         result = []
         for client in self._clients.values():
+            excluded = self._get_excluded_tools(client.name)
             for tool in client.tools:
+                tool_name = tool.get("name", "")
                 result.append({
                     "connection": client.name,
-                    "name": tool.get("name", ""),
-                    "prefixed_name": f"mcp_{client.name}_{tool['name']}",
+                    "name": tool_name,
+                    "prefixed_name": f"mcp_{client.name}_{tool_name}",
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("inputSchema", {}),
+                    "excluded": tool_name in excluded,
                 })
         return result
 

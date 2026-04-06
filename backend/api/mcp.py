@@ -30,6 +30,11 @@ class UpdateConnectionRequest(BaseModel):
     request_interval_ms: int | None = None
 
 
+class ToolToggleRequest(BaseModel):
+    tool_name: str
+    excluded: bool
+
+
 class TavilyThresholdRequest(BaseModel):
     daily_limit: int | None = None
     monthly_limit: int | None = None
@@ -117,6 +122,43 @@ async def reconnect(name: str) -> dict[str, Any]:
         return await mgr.reconnect(name)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── Toggle a tool on/off ────────────────────────────────────────────────
+
+@router.put("/mcp/connections/{name}/tools")
+async def toggle_tool(name: str, req: ToolToggleRequest) -> dict[str, Any]:
+    """Enable or disable a specific tool on a connection.
+
+    Disabled tools are excluded from the agent's tool list but remain
+    discoverable (shown as excluded in the tools list).
+    """
+    mgr = get_mcp_manager()
+    cfg = None
+    for c in mgr._configs:
+        if c["name"] == name:
+            cfg = c
+            break
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Connection '{name}' not found")
+
+    excluded: list[str] = cfg.get("excluded_tools", [])
+
+    if req.excluded and req.tool_name not in excluded:
+        excluded.append(req.tool_name)
+    elif not req.excluded and req.tool_name in excluded:
+        excluded.remove(req.tool_name)
+
+    cfg["excluded_tools"] = excluded
+    mgr._save_configs()
+
+    logger.info("MCP '%s' tool '%s' %s", name, req.tool_name, "excluded" if req.excluded else "enabled")
+    return {
+        "name": name,
+        "tool": req.tool_name,
+        "excluded": req.excluded,
+        "excluded_tools": excluded,
+    }
 
 
 # ── List discovered tools ───────────────────────────────────────────────────

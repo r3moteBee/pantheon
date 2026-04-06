@@ -372,15 +372,19 @@ class MCPClient:
                 "message": str(e),
             }
 
-    def get_openai_tool_schemas(self) -> list[dict[str, Any]]:
+    def get_openai_tool_schemas(self, excluded_tools: set[str] | None = None) -> list[dict[str, Any]]:
         """Convert MCP tool schemas to OpenAI function-calling format.
 
         MCP tools use `inputSchema` (JSON Schema); OpenAI uses
         `{"type": "function", "function": {"name", "description", "parameters"}}`.
         We prefix tool names with `mcp_{connection_name}_` to avoid collisions.
+        Tools in `excluded_tools` (original MCP names) are skipped.
         """
+        excluded = excluded_tools or set()
         schemas = []
         for tool in self.tools:
+            if tool.get("name", "") in excluded:
+                continue
             mcp_name = tool.get("name", "")
             # Prefix with connection name to namespace
             prefixed_name = f"mcp_{self.name}_{mcp_name}"

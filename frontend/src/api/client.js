@@ -164,6 +164,8 @@ export const mcpApi = {
   testConnection: (name) => api.post(`/api/mcp/connections/${name}/test`),
   reconnect: (name) => api.post(`/api/mcp/connections/${name}/reconnect`),
   listTools: () => api.get('/api/mcp/tools'),
+  toggleTool: (connectionName, toolName, excluded) =>
+    api.put(`/api/mcp/connections/${connectionName}/tools`, { tool_name: toolName, excluded }),
   // Tavily credit management
   getTavilyUsage: () => api.get('/api/mcp/tavily/usage'),
   setTavilyThresholds: (dailyLimit, monthlyLimit) =>

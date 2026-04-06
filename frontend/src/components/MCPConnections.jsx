@@ -245,11 +245,14 @@ function ConnectionUsagePanel({ serviceType }) {
 
 // ── Connection Card ────────────────────────────────────────────────────────
 
-function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate }) {
+function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefresh, allTools }) {
   const [expanded, setExpanded] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const addNotification = useStore((s) => s.addNotification)
+
+  // Tools belonging to this connection
+  const connTools = (allTools || []).filter((t) => t.connection === conn.name)
 
   const meteredType = isMeteredConnection(conn)
 
@@ -338,15 +341,45 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate }) {
 
       {expanded && (
         <div className="border-t border-gray-700 px-4 py-3 bg-gray-850 space-y-3">
-          {conn.tools_count > 0 ? (
+          {connTools.length > 0 ? (
             <div>
-              <h4 className="text-xs font-medium text-gray-400 mb-1">Discovered Tools</h4>
-              <p className="text-xs text-gray-500">
-                {conn.tools_count} tools available. The agent can call these tools automatically when relevant.
-              </p>
+              <h4 className="text-xs font-medium text-gray-400 mb-2">Tools</h4>
+              <div className="space-y-1.5">
+                {connTools.map((tool) => (
+                  <div key={tool.name} className="flex items-center justify-between gap-2 group">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <Zap className={`w-3 h-3 flex-shrink-0 ${tool.excluded ? 'text-gray-600' : 'text-yellow-400'}`} />
+                      <span className={`text-xs font-mono truncate ${tool.excluded ? 'text-gray-600 line-through' : 'text-yellow-300'}`}>
+                        {tool.name}
+                      </span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await mcpApi.toggleTool(conn.name, tool.name, !tool.excluded)
+                          // Refresh tools list
+                          await onRefresh()
+                        } catch (err) {
+                          addNotification({ type: 'error', message: err.message })
+                        }
+                      }}
+                      className={`relative w-7 h-4 rounded-full transition-colors flex-shrink-0 ${
+                        tool.excluded ? 'bg-gray-700' : 'bg-green-600'
+                      }`}
+                      title={tool.excluded ? `Enable ${tool.name}` : `Disable ${tool.name}`}
+                    >
+                      <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                        tool.excluded ? '' : 'translate-x-3'
+                      }`} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
+          ) : conn.connected ? (
+            <p className="text-xs text-gray-500">No tools discovered from this server.</p>
           ) : (
-            <p className="text-xs text-gray-500">Not connected — no tools discovered. Click the test button to connect.</p>
+            <p className="text-xs text-gray-500">Not connected — click the test button to connect.</p>
           )}
 
           {/* Request throttle control */}
@@ -563,7 +596,10 @@ export default function MCPConnections() {
             <h1 className="text-lg font-semibold text-white">MCP Connections</h1>
             <span className="text-xs text-gray-500">{connections.length} configured</span>
             {allTools.length > 0 && (
-              <span className="text-xs text-blue-400">{allTools.length} tools available</span>
+              <span className="text-xs text-blue-400">
+                {allTools.filter((t) => !t.excluded).length} tools active
+                {allTools.some((t) => t.excluded) && ` (${allTools.filter((t) => t.excluded).length} disabled)`}
+              </span>
             )}
           </div>
           {!showAdd && (
@@ -607,6 +643,8 @@ export default function MCPConnections() {
                 onTest={handleTest}
                 onReconnect={handleReconnect}
                 onUpdate={handleUpdate}
+                onRefresh={loadConnections}
+                allTools={allTools}
               />
             ))}
           </div>
@@ -618,7 +656,7 @@ export default function MCPConnections() {
               <Zap className="w-4 h-4 text-yellow-400" /> All Discovered Tools
             </h2>
             <div className="bg-gray-800 rounded-lg border border-gray-700 divide-y divide-gray-700">
-              {allTools.map((tool) => (
+              {allTools.filter((t) => !t.excluded).map((tool) => (
                 <div key={tool.prefixed_name} className="px-4 py-2.5 flex items-start gap-3">
                   <Zap className="w-3 h-3 text-yellow-400 mt-1 flex-shrink-0" />
                   <div className="min-w-0">
