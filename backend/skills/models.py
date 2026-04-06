@@ -133,7 +133,7 @@ class SkillManifest(BaseModel):
     triggers: list[str] = Field(default_factory=list)
     parameters: list[SkillParameter] = Field(default_factory=list)
     capabilities_required: list[str] = Field(default_factory=list)
-    dependencies: dict[str, str] = Field(default_factory=dict)
+    dependencies: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     source_hub: str | None = None
     security_scan: ScanResult | None = None
