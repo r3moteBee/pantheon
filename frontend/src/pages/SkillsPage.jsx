@@ -1,8 +1,7 @@
 import React, { useState } from 'react'
-import { Zap, ShieldCheck, Shield } from 'lucide-react'
+import { Zap, ShieldCheck } from 'lucide-react'
 import Skills from '../components/Skills'
 import SkillScanDashboard from '../components/SkillScanDashboard'
-import SecurityLog from '../components/SecurityLog'
 
 export default function SkillsPage() {
   const [tab, setTab] = useState('library')
@@ -10,7 +9,6 @@ export default function SkillsPage() {
   const tabs = [
     { id: 'library', label: 'Library', icon: Zap },
     { id: 'security', label: 'Security', icon: ShieldCheck },
-    { id: 'log', label: 'Audit Log', icon: Shield },
   ]
 
   return (
@@ -37,7 +35,6 @@ export default function SkillsPage() {
       <div className="flex-1 overflow-hidden">
         {tab === 'library' && <Skills />}
         {tab === 'security' && <SkillScanDashboard />}
-        {tab === 'log' && <SecurityLog />}
       </div>
     </div>
   )

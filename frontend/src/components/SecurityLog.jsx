@@ -89,7 +89,7 @@ function LogEntry({ entry }) {
   )
 }
 
-export default function SecurityLog() {
+export default function SecurityLog({ embedded = false }) {
   const [entries, setEntries] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -131,13 +131,13 @@ export default function SecurityLog() {
   })
 
   return (
-    <div className="h-full overflow-y-auto p-6 scrollbar-thin">
-      <div className="max-w-4xl mx-auto space-y-4">
+    <div className={`h-full overflow-y-auto scrollbar-thin ${embedded ? 'p-0' : 'p-6'}`}>
+      <div className={`space-y-4 ${embedded ? '' : 'max-w-4xl mx-auto'}`}>
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Shield className="w-5 h-5 text-brand-400" />
-            <h1 className="text-lg font-semibold text-white">Security Log</h1>
+            {!embedded && <Shield className="w-5 h-5 text-brand-400" />}
+            {!embedded && <h1 className="text-lg font-semibold text-white">Security Log</h1>}
             <span className="text-xs text-gray-500">{total} events</span>
           </div>
           <div className="flex items-center gap-2">

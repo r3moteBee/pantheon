@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle, RotateCw } from 'lucide-react'
+import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield } from 'lucide-react'
 import { useStore } from '../store'
 import { settingsApi } from '../api/client'
+import SecurityLog from './SecurityLog'
 
 function LLMSection() {
   const [settings, setSettings] = useState({
@@ -948,6 +949,23 @@ function SecretsSection() {
   )
 }
 
+function AuditLogSection() {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-4">
+        <Shield className="w-5 h-5 text-gray-400" />
+        <h2 className="text-lg font-semibold text-gray-200">Security Audit Log</h2>
+      </div>
+      <p className="text-xs text-gray-500 mb-4">
+        All security-relevant events across authentication, skills, vault, and settings.
+      </p>
+      <div className="rounded-lg border border-gray-800 overflow-hidden" style={{ height: '480px' }}>
+        <SecurityLog embedded />
+      </div>
+    </div>
+  )
+}
+
 export default function Settings() {
   return (
     <div className="flex flex-col h-full bg-gray-950">
@@ -970,6 +988,8 @@ export default function Settings() {
           <SkillSecuritySection />
           <div className="border-t border-gray-800" />
           <SecretsSection />
+          <div className="border-t border-gray-800" />
+          <AuditLogSection />
         </div>
       </div>
     </div>
