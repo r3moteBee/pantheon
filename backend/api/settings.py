@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from config import get_settings
