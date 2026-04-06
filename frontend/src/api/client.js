@@ -219,26 +219,66 @@ export const projectsApi = {
 }
 
 // WebSocket helper
+// ── Persistent chat WebSocket ──────────────────────────────────────────────
+// Kept as a module-level singleton so page navigation within the SPA doesn't
+// tear it down while the agent is still processing a long-running tool call.
+
+let _chatSocket = null
+let _pingInterval = null
+const PING_INTERVAL_MS = 15_000 // 15s keepalive
+
+function _cleanupSocket() {
+  if (_pingInterval) { clearInterval(_pingInterval); _pingInterval = null }
+  _chatSocket = null
+}
+
 export function createChatSocket(onMessage, onClose) {
+  // Reuse existing open socket
+  if (_chatSocket?.readyState === WebSocket.OPEN) {
+    // Re-bind handlers (component may have remounted after navigation)
+    _chatSocket.onmessage = (event) => {
+      try { onMessage(JSON.parse(event.data)) } catch (e) { console.error('WS parse error:', e) }
+    }
+    _chatSocket.onclose = (event) => {
+      _cleanupSocket()
+      if (event.code !== 1000 && event.code !== 1001 && onClose) onClose(event.code, event.reason)
+    }
+    return _chatSocket
+  }
+
+  // Close stale socket if any
+  if (_chatSocket) { try { _chatSocket.close() } catch {} }
+  _cleanupSocket()
+
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = localStorage.getItem('auth_token') || ''
   const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
   const wsUrl = `${proto}//${window.location.host}/ws/chat${tokenParam}`
   const socket = new WebSocket(wsUrl)
+
   socket.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      onMessage(data)
-    } catch (e) {
-      console.error('WS parse error:', e)
-    }
+    try { onMessage(JSON.parse(event.data)) } catch (e) { console.error('WS parse error:', e) }
   }
   socket.onerror = (err) => console.error('WebSocket error:', err)
   socket.onclose = (event) => {
-    // Codes 1000 (normal) and 1001 (going away) are expected — anything else is unexpected
-    if (event.code !== 1000 && event.code !== 1001 && onClose) {
-      onClose(event.code, event.reason)
-    }
+    _cleanupSocket()
+    if (event.code !== 1000 && event.code !== 1001 && onClose) onClose(event.code, event.reason)
   }
+
+  // Start keepalive pings once connected
+  socket.onopen = () => {
+    _pingInterval = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, PING_INTERVAL_MS)
+  }
+
+  _chatSocket = socket
   return socket
+}
+
+export function closeChatSocket() {
+  if (_chatSocket) { try { _chatSocket.close(1000) } catch {} }
+  _cleanupSocket()
 }

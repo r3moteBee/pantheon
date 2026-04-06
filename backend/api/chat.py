@@ -136,6 +136,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
             session_id = data.get("session_id") or str(uuid.uuid4())
             project_id = data.get("project_id", "default")
 
+            # Handle keepalive pings from the frontend
+            if data.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
             if not message:
                 await websocket.send_json({"type": "error", "message": "Empty message"})
                 continue
