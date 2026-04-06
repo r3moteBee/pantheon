@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield } from 'lucide-react'
+import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, Brain, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield, Cpu, Plug, Key } from 'lucide-react'
 import { useStore } from '../store'
 import { settingsApi } from '../api/client'
 import SecurityLog from './SecurityLog'
@@ -967,30 +967,71 @@ function AuditLogSection() {
 }
 
 export default function Settings() {
-  return (
-    <div className="flex flex-col h-full bg-gray-950">
-      {/* Header */}
-      <div className="px-6 py-4 bg-gray-900 border-b border-gray-800">
-        <h1 className="text-xl font-bold text-gray-100">Settings</h1>
-      </div>
+  const [tab, setTab] = useState('llms')
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin">
-        <div className="max-w-2xl mx-auto p-6 space-y-8">
-          <LLMSection />
-          <div className="border-t border-gray-800" />
-          <AgentBehaviorSection />
-          <div className="border-t border-gray-800" />
-          <SearchSection />
-          <div className="border-t border-gray-800" />
-          <TelegramSection />
-          <div className="border-t border-gray-800" />
-          <SkillSecuritySection />
-          <div className="border-t border-gray-800" />
-          <SecretsSection />
-          <div className="border-t border-gray-800" />
-          <AuditLogSection />
-        </div>
+  const tabs = [
+    { id: 'llms', label: 'LLMs', icon: Cpu },
+    { id: 'integrations', label: 'Integrations', icon: Plug },
+    { id: 'security', label: 'Security', icon: Shield },
+    { id: 'secrets', label: 'Secrets', icon: Key },
+  ]
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex items-center border-b border-gray-800 px-6 pt-4">
+        {tabs.map((t) => {
+          const Icon = t.icon
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+                tab === t.id
+                  ? 'border-brand-400 text-brand-300'
+                  : 'border-transparent text-gray-500 hover:text-gray-300'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+      <div className="flex-1 overflow-hidden">
+        {tab === 'llms' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-2xl mx-auto p-6 space-y-8">
+              <LLMSection />
+              <div className="border-t border-gray-800" />
+              <AgentBehaviorSection />
+            </div>
+          </div>
+        )}
+        {tab === 'integrations' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-2xl mx-auto p-6 space-y-8">
+              <SearchSection />
+              <div className="border-t border-gray-800" />
+              <TelegramSection />
+            </div>
+          </div>
+        )}
+        {tab === 'security' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-2xl mx-auto p-6 space-y-8">
+              <SkillSecuritySection />
+              <div className="border-t border-gray-800" />
+              <AuditLogSection />
+            </div>
+          </div>
+        )}
+        {tab === 'secrets' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-2xl mx-auto p-6 space-y-8">
+              <SecretsSection />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

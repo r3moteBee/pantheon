@@ -1,5 +1,5 @@
 import SettingsComponent from '../components/Settings'
 
 export default function SettingsPage() {
-  return <div className="h-full overflow-y-auto"><SettingsComponent /></div>
+  return <div className="h-full"><SettingsComponent /></div>
 }
