@@ -63,9 +63,21 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
 
 ## 6. Web search and the browser
 
-Pantheon ships with:
+### Search provider chain
+Pantheon's `web_search` tool walks a configurable chain of providers (default: **Brave → SearXNG → DuckDuckGo**). It falls through to the next provider on any of:
 
-- `web_search` — free DuckDuckGo scraping by default, or SearXNG if you installed with `--with-searxng`
+- HTTP error / network failure
+- Empty result set (HTTP 200 but zero hits)
+- Exhausted daily or monthly quota (tracked locally per provider)
+- Rate-limit cap (per-provider RPS, e.g. Brave free tier = 1 req/sec)
+
+Configure the chain in **Settings → Web Search Provider Chain**: reorder providers, set per-provider daily/monthly limits and RPS caps, add API keys, enable/disable individual providers, and watch live usage progress bars. Reset counters at the start of each billing cycle. Results are cached for 10 minutes per query so retry loops don't burn quota.
+
+When a fallthrough happens, the result is prefixed with a one-line trace like `[searched via ddg — fallthrough: brave: skipped (monthly quota 2000 reached); searxng: error (HTTPError)]` so you (and the agent) can see exactly why a provider was skipped.
+
+Pantheon also ships with:
+
+- `web_search` — free DuckDuckGo scraping by default, or SearXNG if you installed with `--with-searxng`, or Brave if you set a key
 - `web_fetch` — plain HTTP GET for static pages
 - **Browser tools** (if you installed with `--with-browser`) — Playwright-backed `browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_screenshot`. Use these for JavaScript-heavy sites, logged-in pages, or multi-step interactions. The browser session persists per project across tool calls.
 
