@@ -53,8 +53,13 @@ To recall, say *"what do you know about X"* — the agent will search across tie
 A common pattern: the agent produces a long analysis, and you want to file it. Use any of these:
 
 - **"Save your last response to `ANALYSIS/<filename>.md`"** — routes through the `save_last_response` tool, which reads the previous assistant message directly.
-- **"Add this observation as a trend in the ANALYSIS folder"** — the agent now interprets "this/that/above" as a reference to its own last message and will not ask you to paste it back.
-- For .md files, a YAML frontmatter block (title, date, tags) is added automatically.
+- **"Add this observation as a trend in the ANALYSIS folder"** — the agent interprets "this/that/above" as a reference to its own last message and will not ask you to paste it back.
+- **Control the scope and transform.** `save_last_response` accepts `history_count` and `mode`, so you can say:
+  - *"Save the last 5 messages verbatim to `notes/session.md`"*
+  - *"Summarize the last 3 messages and save to `ANALYSIS/ai-maturity-summary.md`"* (`mode=summarize`)
+  - *"Research the last observation further and save the expanded note to `research/hbm-deep-dive.md`"* (`mode=research` — runs a web search pass and asks the model to write an enriched briefing)
+  - *"Save the last response as a bulleted action-items list to `todos.md`"* (`mode=custom` with your own transform prompt)
+- For .md files, a YAML frontmatter block (title, date, tags, mode, source_messages) is added automatically.
 
 ## 6. Web search and the browser
 

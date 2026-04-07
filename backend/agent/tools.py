@@ -241,11 +241,19 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "save_last_response",
-            "description": "Save your own immediately preceding assistant message to a file in the project workspace. Use this when the user says 'save this', 'remember this observation', 'write the above to a file', or any similar instruction that refers to your last reply. Do NOT ask the user to restate the content — it is already available.",
+            "description": "Save conversation history to a file in the project workspace. By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Workspace-relative file path, e.g. 'ANALYSIS/2026-04-07-ai-maturity.md'"},
+                    "history_count": {"type": "integer", "description": "How many of the most recent messages (both user and assistant) to include as source material. 1 = just the last assistant reply (default). Use a larger number when the user references 'the last few messages' or 'the conversation so far'.", "default": 1},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["verbatim", "summarize", "research", "custom"],
+                        "description": "verbatim = save source material as-is (default for history_count=1). summarize = condense into key points. research = run web_search/recall to expand on the source material and produce a researched note. custom = apply the instructions in custom_prompt to the source material.",
+                        "default": "verbatim"
+                    },
+                    "custom_prompt": {"type": "string", "description": "Required when mode='custom'. Instructions for how to transform the source messages (e.g. 'extract action items', 'rewrite as a formal brief')."},
                     "title": {"type": "string", "description": "Optional title for YAML frontmatter (markdown only)"},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional list of tags for YAML frontmatter"},
                     "prepend_header": {"type": "boolean", "description": "If true, prepend a title+date header to the content (default true for .md files)", "default": True}
@@ -383,30 +391,100 @@ async def execute_tool(
             return "\n".join(entries) if entries else "Empty directory"
 
         elif tool_name == "save_last_response":
-            # Fall back to episodic history if the in-memory messages list has nothing
-            # (AgentCore is recreated per request, so the in-memory history may be empty
-            # even though the session has prior assistant turns).
-            if not last_assistant_text and session_id:
+            history_count = max(1, int(tool_args.get("history_count", 1)))
+            mode = (tool_args.get("mode") or "verbatim").lower()
+            custom_prompt = tool_args.get("custom_prompt", "")
+
+            # ── Gather source messages ──────────────────────────────────
+            source_msgs: list[dict[str, Any]] = []
+            if session_id:
                 try:
                     from memory.manager import create_memory_manager
                     mgr = create_memory_manager(project_id=effective_project, session_id=session_id)
-                    history = await mgr.episodic.get_history(session_id=session_id, limit=50)
-                    for row in reversed(history):
-                        if row.get("role") == "assistant" and row.get("content"):
-                            last_assistant_text = row["content"]
-                            break
+                    history = await mgr.episodic.get_history(session_id=session_id, limit=200)
+                    # history is ASC; take last N that have content
+                    filtered = [r for r in history if r.get("content")]
+                    source_msgs = filtered[-history_count:] if filtered else []
                 except Exception as e:
                     logger.warning("save_last_response episodic fallback failed: %s", e)
-            if not last_assistant_text:
+
+            # If nothing in episodic yet, fall back to the in-memory last assistant text
+            if not source_msgs and last_assistant_text:
+                source_msgs = [{"role": "assistant", "content": last_assistant_text}]
+
+            if not source_msgs:
                 return (
-                    "No previous assistant message found in the current session. "
-                    "If this is a brand-new conversation, ask the user for the content "
-                    "they want saved and then call write_file directly."
+                    "No prior messages found in the current session. "
+                    "Ask the user for the content they want saved and then call write_file directly."
                 )
+
+            # ── Build source text block ─────────────────────────────────
+            if history_count == 1 and source_msgs[-1].get("role") == "assistant":
+                source_text = source_msgs[-1]["content"]
+                source_label = "last assistant response"
+            else:
+                lines = []
+                for m in source_msgs:
+                    role = m.get("role", "?").upper()
+                    lines.append(f"[{role}]\n{m.get('content','')}")
+                source_text = "\n\n".join(lines)
+                source_label = f"last {len(source_msgs)} messages"
+
+            # ── Transform via mode ──────────────────────────────────────
+            content_body = source_text
+            try:
+                if mode == "verbatim":
+                    content_body = source_text
+                elif mode in ("summarize", "research", "custom"):
+                    from models.provider import get_provider
+                    provider = get_provider()
+                    if mode == "summarize":
+                        instr = (
+                            "Summarize the following conversation excerpt into clear, "
+                            "structured markdown notes. Preserve key facts, figures, and "
+                            "named entities. Use headers and bullet points where helpful."
+                        )
+                    elif mode == "research":
+                        # Do a quick web_search pass to enrich
+                        try:
+                            search_query = source_text[:400]
+                            enriched = await _web_search(search_query)
+                        except Exception:
+                            enriched = ""
+                        instr = (
+                            "Expand the following source material into a researched briefing. "
+                            "Integrate the additional search results below where relevant, "
+                            "cite sources inline, and produce a polished markdown note."
+                        )
+                        if enriched:
+                            source_text = source_text + "\n\n---\n\n## Additional search results\n" + enriched
+                    else:  # custom
+                        if not custom_prompt:
+                            return "mode='custom' requires a custom_prompt argument."
+                        instr = custom_prompt
+
+                    prompt_messages = [
+                        {"role": "system", "content": "You transform conversation excerpts into well-formatted markdown notes. Return only the note body — no preamble."},
+                        {"role": "user", "content": f"{instr}\n\n---\nSOURCE ({source_label}):\n\n{source_text}"},
+                    ]
+                    transformed = ""
+                    async for chunk in provider.chat(messages=prompt_messages, tools=[], stream=False):
+                        if isinstance(chunk, dict):
+                            transformed += chunk.get("content", "") or ""
+                        elif isinstance(chunk, str):
+                            transformed += chunk
+                    content_body = transformed.strip() or source_text
+                else:
+                    return f"Unknown mode: {mode}"
+            except Exception as e:
+                logger.exception("save_last_response transform failed")
+                return f"Transform failed ({mode}): {e}"
+
+            # ── Write file ──────────────────────────────────────────────
             rel = tool_args["path"]
             safe = _safe_workspace_path(rel, project_id)
             safe.parent.mkdir(parents=True, exist_ok=True)
-            content = last_assistant_text
+            content = content_body
             if safe.suffix.lower() in (".md", ".markdown") and tool_args.get("prepend_header", True):
                 from datetime import datetime
                 title = tool_args.get("title") or safe.stem.replace("-", " ").replace("_", " ").title()
@@ -415,14 +493,16 @@ async def execute_tool(
                     "---",
                     f"title: {title}",
                     f"date: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                    f"mode: {mode}",
+                    f"source_messages: {len(source_msgs)}",
                 ]
                 if tags:
                     frontmatter.append("tags: [" + ", ".join(tags) + "]")
                 frontmatter.append("source: agent_response")
                 frontmatter.append("---")
-                content = "\n".join(frontmatter) + "\n\n# " + title + "\n\n" + last_assistant_text
+                content = "\n".join(frontmatter) + "\n\n# " + title + "\n\n" + content_body
             safe.write_text(content, encoding="utf-8")
-            return f"Saved previous response ({len(last_assistant_text)} chars) to {rel}"
+            return f"Saved {source_label} ({mode}, {len(content_body)} chars) to {rel}"
 
         elif tool_name == "web_search":
             return await _web_search(tool_args["query"])
