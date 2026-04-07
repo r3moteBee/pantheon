@@ -700,6 +700,25 @@ function SearchSection() {
                   <span>skipped: {u.skipped || 0}</span>
                   {u.last_used && <span>last: {new Date(u.last_used).toLocaleString()}</span>}
                 </div>
+                {u.remote && (
+                  <div className="mt-1 px-2 py-1 rounded bg-gray-800/60 border border-gray-700/60 text-[10px] text-gray-400 space-y-0.5">
+                    <div className="text-amber-400/80 font-semibold uppercase tracking-wide">Brave-reported</div>
+                    {u.remote.month_limit != null && (
+                      <div>
+                        Month: <span className="font-mono text-gray-200">{u.remote.month_used ?? '?'} / {u.remote.month_limit}</span>
+                        {u.remote.month_remaining != null && <span> ({u.remote.month_remaining} left)</span>}
+                      </div>
+                    )}
+                    {u.remote.second_limit != null && (
+                      <div>
+                        This second: <span className="font-mono text-gray-200">{u.remote.second_remaining ?? '?'} / {u.remote.second_limit}</span> remaining
+                      </div>
+                    )}
+                    {u.remote.captured_at && (
+                      <div className="text-gray-600">captured {new Date(u.remote.captured_at).toLocaleString()}</div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )
