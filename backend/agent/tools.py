@@ -383,8 +383,26 @@ async def execute_tool(
             return "\n".join(entries) if entries else "Empty directory"
 
         elif tool_name == "save_last_response":
+            # Fall back to episodic history if the in-memory messages list has nothing
+            # (AgentCore is recreated per request, so the in-memory history may be empty
+            # even though the session has prior assistant turns).
+            if not last_assistant_text and session_id:
+                try:
+                    from memory.manager import create_memory_manager
+                    mgr = create_memory_manager(project_id=effective_project, session_id=session_id)
+                    history = await mgr.episodic.get_history(session_id=session_id, limit=50)
+                    for row in reversed(history):
+                        if row.get("role") == "assistant" and row.get("content"):
+                            last_assistant_text = row["content"]
+                            break
+                except Exception as e:
+                    logger.warning("save_last_response episodic fallback failed: %s", e)
             if not last_assistant_text:
-                return "No previous assistant message is available to save in this turn."
+                return (
+                    "No previous assistant message found in the current session. "
+                    "If this is a brand-new conversation, ask the user for the content "
+                    "they want saved and then call write_file directly."
+                )
             rel = tool_args["path"]
             safe = _safe_workspace_path(rel, project_id)
             safe.parent.mkdir(parents=True, exist_ok=True)
