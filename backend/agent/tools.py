@@ -21,8 +21,14 @@ settings = get_settings()
 
 
 def get_all_tool_schemas() -> list[dict[str, Any]]:
-    """Return built-in tools + any MCP-provided tools."""
+    """Return built-in tools + browser tools (if enabled) + any MCP-provided tools."""
     schemas = list(TOOL_SCHEMAS)
+    try:
+        from agent.browser_tools import browser_enabled, BROWSER_TOOL_SCHEMAS
+        if browser_enabled():
+            schemas.extend(BROWSER_TOOL_SCHEMAS)
+    except Exception as e:
+        logger.debug("Browser tools unavailable: %s", e)
     try:
         from mcp_client.manager import get_mcp_manager
         mgr = get_mcp_manager()
@@ -360,6 +366,12 @@ async def execute_tool(
 
         elif tool_name == "web_search":
             return await _web_search(tool_args["query"])
+
+        elif tool_name.startswith("browser_"):
+            from agent.browser_tools import browser_enabled, execute_browser_tool
+            if not browser_enabled():
+                return "Browser tools are disabled. Set BROWSER_ENABLED=true in .env and install Playwright."
+            return await execute_browser_tool(tool_name, tool_args, effective_project)
 
         elif tool_name == "create_task":
             from tasks.scheduler import schedule_agent_task

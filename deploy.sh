@@ -26,6 +26,7 @@ AGENT_NAME=""     # agent name written into soul.md — prompted if not set
 AUTH_PASSWORD=""  # web interface password — prompted if not set
 WITH_OLLAMA=false   # run demo_setup.sh --with-ollama after install
 WITH_SEARXNG=false  # run demo_setup.sh --with-searxng after install
+WITH_BROWSER=false  # run demo_setup.sh --with-browser after install
 OLLAMA_TAG="4b"     # Nemotron model tag passed to demo_setup.sh
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --auth-password) AUTH_PASSWORD="$2";  shift 2 ;;
     --with-ollama)  WITH_OLLAMA=true;  shift ;;
     --with-searxng) WITH_SEARXNG=true; shift ;;
+    --with-browser) WITH_BROWSER=true; shift ;;
     --ollama-tag)   OLLAMA_TAG="$2";   shift 2 ;;
     --yes|-y)     SKIP_CONFIRM=true;   shift ;;
     --help|-h)
@@ -72,6 +74,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --auth-password PASS     Web interface password (prompted if omitted)"
       echo "  --with-ollama        Install Ollama + Nemotron-3-Nano-4B as the default LLM"
       echo "  --with-searxng       Run a local SearXNG container as the default search backend"
+      echo "  --with-browser       Install Playwright chromium and enable agent browser tools"
       echo "  --ollama-tag TAG     Nemotron tag (4b, 4b-q8_0, 4b-bf16) — default: 4b"
       echo "  --yes, -y            Skip confirmation and model selection prompts"
       echo ""
@@ -943,11 +946,12 @@ fi
 # =============================================================================
 # ── Optional demo extras (Ollama / SearXNG) ──────────────────────────────────
 # =============================================================================
-if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" ]]; then
+if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" == "true" ]]; then
   header "Running demo_setup.sh for optional extras"
   DEMO_ARGS=()
   [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "$OLLAMA_TAG")
   [[ "$WITH_SEARXNG" == "true" ]] && DEMO_ARGS+=(--with-searxng)
+  [[ "$WITH_BROWSER" == "true" ]] && DEMO_ARGS+=(--with-browser)
 
   if [[ -x "${INSTALL_DIR}/demo_setup.sh" ]]; then
     ( cd "$INSTALL_DIR" && ./demo_setup.sh "${DEMO_ARGS[@]}" ) || warn "demo_setup.sh exited non-zero — continuing"

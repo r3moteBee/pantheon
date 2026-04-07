@@ -43,6 +43,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ── Parse arguments ────────────────────────────────────────────
 WITH_OLLAMA=false
 WITH_SEARXNG=false
+WITH_BROWSER=false
 MODEL_TAG="4b"
 EMBEDDING_MODEL="nomic-embed-text"
 SEARXNG_PORT="8888"
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-ollama)  WITH_OLLAMA=true;  shift ;;
     --with-searxng) WITH_SEARXNG=true; shift ;;
+    --with-browser) WITH_BROWSER=true; shift ;;
     --tag)          MODEL_TAG="$2";    shift 2 ;;
     --embedding)    EMBEDDING_MODEL="$2"; shift 2 ;;
     --searxng-port) SEARXNG_PORT="$2"; shift 2 ;;
@@ -62,8 +64,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Default: enable both if neither was specified
-if [[ "$WITH_OLLAMA" == "false" && "$WITH_SEARXNG" == "false" ]]; then
+# Default: enable ollama+searxng if no component flag was specified
+if [[ "$WITH_OLLAMA" == "false" && "$WITH_SEARXNG" == "false" && "$WITH_BROWSER" == "false" ]]; then
   WITH_OLLAMA=true
   WITH_SEARXNG=true
 fi
@@ -78,6 +80,7 @@ echo ""
 echo -e "  Components to install:"
 [[ "$WITH_OLLAMA" == "true" ]]  && echo -e "    ${GREEN}✓${RESET} Ollama + ${OLLAMA_MODEL}"
 [[ "$WITH_SEARXNG" == "true" ]] && echo -e "    ${GREEN}✓${RESET} SearXNG (port ${SEARXNG_PORT})"
+[[ "$WITH_BROWSER" == "true" ]] && echo -e "    ${GREEN}✓${RESET} Playwright browser (headless chromium)"
 echo ""
 
 # ── Helper: edit .env in place ─────────────────────────────────
@@ -271,6 +274,43 @@ EOF
   _env_set "SEARCH_URL" "http://localhost:${SEARXNG_PORT}"
   _env_set "SEARCH_API_KEY" ""
   success "Pantheon configured for SearXNG"
+fi
+
+# ============================================================
+# BROWSER SETUP (Playwright)
+# ============================================================
+if [[ "$WITH_BROWSER" == "true" ]]; then
+
+  echo ""
+  echo -e "${BOLD}── Browser Setup ──${RESET}"
+
+  PY_BIN=""
+  if [[ -x "${DIR}/.venv/bin/python" ]]; then
+    PY_BIN="${DIR}/.venv/bin/python"
+    info "Using venv python: ${PY_BIN}"
+  elif command -v python3 &>/dev/null; then
+    PY_BIN="$(command -v python3)"
+    info "Using system python3 (no venv found): ${PY_BIN}"
+  else
+    die "python3 not found — cannot install Playwright"
+  fi
+
+  info "Installing playwright package..."
+  "${PY_BIN}" -m pip install --quiet playwright || die "pip install playwright failed"
+
+  info "Installing chromium browser (this may take a minute)..."
+  "${PY_BIN}" -m playwright install chromium || die "playwright install chromium failed"
+
+  # On Linux, install system deps for chromium if we have sudo
+  if [[ "$(uname)" == "Linux" ]] && command -v sudo &>/dev/null; then
+    info "Installing chromium system dependencies (sudo)..."
+    sudo "${PY_BIN}" -m playwright install-deps chromium || warn "install-deps failed — headless chromium may still work"
+  fi
+
+  info "Enabling browser tools in .env..."
+  _env_set "BROWSER_ENABLED" "true"
+  _env_set "BROWSER_HEADLESS" "true"
+  success "Browser tools enabled. Agent now has browser_open/read/click/type/screenshot."
 fi
 
 # ============================================================
