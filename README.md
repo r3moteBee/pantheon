@@ -47,6 +47,21 @@ curl -fsSL .../deploy.sh | bash -s -- --mode local
 curl -fsSL .../deploy.sh | bash -s -- --mode docker
 ```
 
+### Zero-config demo extras
+
+Bundle a local LLM (Ollama + Nemotron-3-Nano-4B) and/or a self-hosted SearXNG search backend in one shot. These flags run `demo_setup.sh` after install and restart Pantheon automatically — no manual `.env` editing needed.
+
+```bash
+# Local Ollama LLM only
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama
+
+# Self-hosted SearXNG search only (requires Docker)
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-searxng
+
+# Full offline-friendly demo: Ollama + SearXNG
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama --with-searxng
+```
+
 Once installed, edit `.env` in your install directory and set your LLM credentials:
 
 ```bash
