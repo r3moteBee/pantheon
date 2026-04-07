@@ -456,12 +456,41 @@ function SearchSection() {
     setProviders(providers.filter((_, i) => i !== idx))
   }
 
+  const uniqueName = (base) => {
+    const existing = new Set(providers.map((p) => p.name))
+    if (!existing.has(base)) return base
+    // Strip any trailing -N then increment until unique
+    const root = base.replace(/-(\d+)$/, '')
+    let i = 2
+    while (existing.has(`${root}-${i}`)) i += 1
+    return `${root}-${i}`
+  }
+
   const addProvider = () => {
     setProviders([
       ...providers,
-      { name: `provider-${providers.length + 1}`, type: 'generic', url: '', api_key_vault_key: '',
+      { name: uniqueName(`provider-${providers.length + 1}`), type: 'generic', url: '', api_key_vault_key: '',
         daily_limit: 0, monthly_limit: 0, rps: 0, enabled: true },
     ])
+  }
+
+  const duplicateProvider = (idx) => {
+    const src = providers[idx]
+    const newName = uniqueName(src.name)
+    // Suffix derived from the new name (e.g. brave -> brave-2 → suffix '-2')
+    const suffix = newName.slice(src.name.replace(/-(\d+)$/, '').length) || `-${Date.now().toString().slice(-4)}`
+    const newKey = src.api_key_vault_key
+      ? `${src.api_key_vault_key.replace(/-(\d+)$/, '').replace(/_(\d+)$/, '')}${suffix.replace('-', '_')}`
+      : ''
+    const copy = {
+      ...src,
+      name: newName,
+      api_key_vault_key: newKey,
+      api_key: '',  // never copy the typed-in key value
+    }
+    const next = [...providers]
+    next.splice(idx + 1, 0, copy)
+    setProviders(next)
   }
 
   const save = async () => {
@@ -558,8 +587,9 @@ function SearchSection() {
                   enabled
                 </label>
                 <div className="flex-1" />
-                <button onClick={() => moveUp(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white">↑</button>
-                <button onClick={() => moveDown(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white">↓</button>
+                <button onClick={() => moveUp(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Move up">↑</button>
+                <button onClick={() => moveDown(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Move down">↓</button>
+                <button onClick={() => duplicateProvider(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Duplicate row">⎘</button>
                 <button onClick={() => removeProvider(idx)} className="text-xs px-2 py-1 text-red-400 hover:text-red-300">remove</button>
               </div>
 
