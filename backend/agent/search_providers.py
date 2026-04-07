@@ -159,10 +159,11 @@ class SearchProviderManager:
                 "skipped": u.get("skipped", 0),
                 "api_key_set": bool(self._get_api_key(prov)),
                 "last_used": u.get("history", [{}])[-1].get("timestamp") if u.get("history") else None,
+                "remote": u.get("remote"),
             })
         return {"providers": out, "date": today, "month": month}
 
-    def _record_call(self, name: str, ok: bool, results_count: int) -> None:
+    def _record_call(self, name: str, ok: bool, results_count: int, remote_stats: dict[str, Any] | None = None) -> None:
         today = self._today_key()
         month = self._month_key()
         u = self._provider_usage(name)
@@ -171,6 +172,8 @@ class SearchProviderManager:
             u["monthly"][month] = u["monthly"].get(month, 0) + 1
         else:
             u["errors"] = u.get("errors", 0) + 1
+        if remote_stats:
+            u["remote"] = {**remote_stats, "captured_at": datetime.now(timezone.utc).isoformat()}
         u.setdefault("history", []).append({
             "ts": datetime.now(timezone.utc).isoformat(),
             "ok": ok,
@@ -271,14 +274,14 @@ class SearchProviderManager:
             try:
                 async with self._lock:
                     await self._enforce_rps(prov)
-                result_text, count = await self._call_provider(prov, query)
+                result_text, count, remote_stats = await self._call_provider(prov, query)
             except Exception as e:
                 logger.warning("search provider %s failed: %s", name, e)
                 self._record_call(name, ok=False, results_count=0)
                 attempts.append(f"{name}: error ({type(e).__name__})")
                 continue
 
-            self._record_call(name, ok=True, results_count=count)
+            self._record_call(name, ok=True, results_count=count, remote_stats=remote_stats)
             if count == 0:
                 attempts.append(f"{name}: 0 results")
                 continue
@@ -295,17 +298,36 @@ class SearchProviderManager:
 
     # ── Provider implementations ─────────────────────────────────────────
 
-    async def _call_provider(self, prov: dict[str, Any], query: str) -> tuple[str, int]:
+    async def _call_provider(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
         ptype = (prov.get("type") or "generic").lower()
         if ptype == "brave":
             return await self._brave(prov, query)
         if ptype == "searxng":
-            return await self._searxng(prov, query)
+            text, n = await self._searxng(prov, query)
+            return text, n, None
         if ptype == "ddg":
-            return await self._ddg(query)
-        return await self._generic(prov, query)
+            text, n = await self._ddg(query)
+            return text, n, None
+        text, n = await self._generic(prov, query)
+        return text, n, None
 
-    async def _brave(self, prov: dict[str, Any], query: str) -> tuple[str, int]:
+    @staticmethod
+    def _parse_brave_window(header_value: str) -> list[int]:
+        """Brave returns comma-separated values for per-second and per-month windows.
+        Example: 'X-RateLimit-Limit: 1, 2000'  ->  [1, 2000]
+        """
+        if not header_value:
+            return []
+        out = []
+        for part in header_value.split(","):
+            part = part.strip()
+            try:
+                out.append(int(part))
+            except ValueError:
+                pass
+        return out
+
+    async def _brave(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
         api_key = self._get_api_key(prov)
         if not api_key:
             raise RuntimeError("brave api key not set")
@@ -318,8 +340,28 @@ class SearchProviderManager:
             resp = await client.get(prov["url"], params={"q": query, "count": 6}, headers=headers)
             resp.raise_for_status()
             data = resp.json()
+
+        # Capture Brave rate-limit headers as remote stats.
+        # Brave returns two windows: per-second and per-month.
+        limits    = self._parse_brave_window(resp.headers.get("X-RateLimit-Limit", ""))
+        remaining = self._parse_brave_window(resp.headers.get("X-RateLimit-Remaining", ""))
+        reset     = self._parse_brave_window(resp.headers.get("X-RateLimit-Reset", ""))
+        remote_stats: dict[str, Any] | None = None
+        if limits or remaining:
+            remote_stats = {
+                "second_limit":     limits[0]    if len(limits)    > 0 else None,
+                "second_remaining": remaining[0] if len(remaining) > 0 else None,
+                "second_reset":     reset[0]     if len(reset)     > 0 else None,
+                "month_limit":      limits[1]    if len(limits)    > 1 else None,
+                "month_remaining":  remaining[1] if len(remaining) > 1 else None,
+                "month_reset":      reset[1]     if len(reset)     > 1 else None,
+            }
+            # Derived: monthly used = limit - remaining
+            if remote_stats["month_limit"] is not None and remote_stats["month_remaining"] is not None:
+                remote_stats["month_used"] = remote_stats["month_limit"] - remote_stats["month_remaining"]
+
         results = (data.get("web") or {}).get("results", [])
-        return self._format_results(results, "description"), len(results)
+        return self._format_results(results, "description"), len(results), remote_stats
 
     async def _searxng(self, prov: dict[str, Any], query: str) -> tuple[str, int]:
         url = prov["url"].rstrip("/")
