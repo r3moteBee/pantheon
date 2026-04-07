@@ -418,6 +418,8 @@ function SearchSection() {
   const [usage, setUsage] = useState({ providers: [] })
   const [loading, setLoading] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [testQuery, setTestQuery] = useState('pantheon search test')
+  const [testResult, setTestResult] = useState(null)  // { query, providerUsed, fallthrough, body, raw }
   const addNotification = useStore((s) => s.addNotification)
 
   const load = async () => {
@@ -527,12 +529,34 @@ function SearchSection() {
 
   const test = async () => {
     setTesting(true)
+    setTestResult(null)
     try {
-      const res = await settingsApi.testSearchChain('pantheon search test')
-      addNotification({ type: 'success', message: 'Test ran — see usage rows below' })
+      const res = await settingsApi.testSearchChain(testQuery || 'pantheon search test')
+      const raw = res.data.result || ''
+      // Parse the leading "[searched via X — fallthrough: ...]" / "[cached via X]" tag
+      const tagMatch = raw.match(/^\[(searched|cached) via ([^\s\]]+)(?: — fallthrough: ([^\]]+))?\]\n?/)
+      let providerUsed = null
+      let fallthrough = []
+      let body = raw
+      if (tagMatch) {
+        providerUsed = tagMatch[2]
+        if (tagMatch[3]) fallthrough = tagMatch[3].split(';').map((s) => s.trim()).filter(Boolean)
+        body = raw.slice(tagMatch[0].length)
+      } else if (raw.startsWith('No search results')) {
+        providerUsed = 'none'
+        body = raw
+      }
+      setTestResult({ query: res.data.query, providerUsed, fallthrough, body, raw })
       setUsage(res.data.usage || { providers: [] })
+      addNotification({
+        type: providerUsed && providerUsed !== 'none' ? 'success' : 'error',
+        message: providerUsed && providerUsed !== 'none'
+          ? `Test ok — answered by ${providerUsed}`
+          : 'Test failed — no provider returned results',
+      })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
+      setTestResult({ query: testQuery, providerUsed: null, fallthrough: [], body: `Error: ${err.message}`, raw: '' })
     }
     setTesting(false)
   }
@@ -697,13 +721,63 @@ function SearchSection() {
           <Save className="w-4 h-4" />
           Save Provider Chain
         </button>
-        <button
-          onClick={test}
-          disabled={testing}
-          className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 rounded border border-gray-700 disabled:opacity-50"
-        >
-          {testing ? 'Testing…' : 'Test chain'}
-        </button>
+      </div>
+
+      {/* Test panel */}
+      <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-400 whitespace-nowrap">Test query:</label>
+          <input
+            type="text"
+            value={testQuery}
+            onChange={(e) => setTestQuery(e.target.value)}
+            placeholder="e.g. latest news on HBM supply"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+            onKeyDown={(e) => { if (e.key === 'Enter') test() }}
+          />
+          <button
+            onClick={test}
+            disabled={testing}
+            className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 rounded border border-gray-700 disabled:opacity-50"
+          >
+            {testing ? 'Testing…' : 'Run test'}
+          </button>
+        </div>
+
+        {testResult && (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-500">Answered by:</span>
+              {testResult.providerUsed && testResult.providerUsed !== 'none' ? (
+                <span className="px-2 py-0.5 rounded bg-green-900/40 border border-green-700 text-green-300 font-mono">
+                  {testResult.providerUsed}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded bg-red-900/40 border border-red-700 text-red-300 font-mono">
+                  none
+                </span>
+              )}
+            </div>
+
+            {testResult.fallthrough.length > 0 && (
+              <div className="text-xs text-gray-500">
+                <div className="mb-1">Fallthrough trace:</div>
+                <ul className="space-y-0.5 ml-2">
+                  {testResult.fallthrough.map((line, i) => (
+                    <li key={i} className="font-mono text-amber-400/80">• {line}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div>
+              <div className="text-[10px] uppercase text-gray-500 mb-1">Result body</div>
+              <pre className="text-[11px] text-gray-300 bg-black/40 border border-gray-800 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono">
+                {testResult.body || '(empty)'}
+              </pre>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
