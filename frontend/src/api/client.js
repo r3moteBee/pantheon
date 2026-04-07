@@ -155,6 +155,13 @@ export const settingsApi = {
   getSecurityLog: (limit = 200, offset = 0) =>
     api.get('/api/settings/security-log', { params: { limit, offset } }),
   clearSecurityLog: () => api.delete('/api/settings/security-log'),
+  // Web search provider chain
+  getSearchProviders: () => api.get('/api/settings/search/providers'),
+  setSearchProviders: (providers) => api.put('/api/settings/search/providers', { providers }),
+  resetSearchProvider: (name, period = 'daily') =>
+    api.post(`/api/settings/search/providers/${encodeURIComponent(name)}/reset`, null, { params: { period } }),
+  testSearchChain: (query = 'test query') =>
+    api.post('/api/settings/search/test', null, { params: { query } }),
 }
 
 // MCP Connections API

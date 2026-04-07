@@ -414,112 +414,267 @@ function LLMSection() {
 }
 
 function SearchSection() {
-  const [searchUrl, setSearchUrl] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
-  const [apiKeySet, setApiKeySet] = useState(false)
+  const [providers, setProviders] = useState([])
+  const [usage, setUsage] = useState({ providers: [] })
   const [loading, setLoading] = useState(false)
+  const [testing, setTesting] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
-  useEffect(() => {
-    settingsApi.get().then((res) => {
-      setSearchUrl(res.data.search_url || '')
-      setApiKeySet(res.data.search_api_key_set || false)
-    }).catch(() => {})
-  }, [])
+  const load = async () => {
+    try {
+      const res = await settingsApi.getSearchProviders()
+      setProviders(res.data.providers || [])
+      setUsage(res.data.usage || { providers: [] })
+    } catch (err) {
+      addNotification({ type: 'error', message: 'Failed to load search providers' })
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const updateField = (idx, field, value) => {
+    const next = [...providers]
+    next[idx] = { ...next[idx], [field]: value }
+    setProviders(next)
+  }
+
+  const moveUp = (idx) => {
+    if (idx === 0) return
+    const next = [...providers]
+    ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+    setProviders(next)
+  }
+
+  const moveDown = (idx) => {
+    if (idx === providers.length - 1) return
+    const next = [...providers]
+    ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
+    setProviders(next)
+  }
+
+  const removeProvider = (idx) => {
+    setProviders(providers.filter((_, i) => i !== idx))
+  }
+
+  const addProvider = () => {
+    setProviders([
+      ...providers,
+      { name: `provider-${providers.length + 1}`, type: 'generic', url: '', api_key_vault_key: '',
+        daily_limit: 0, monthly_limit: 0, rps: 0, enabled: true },
+    ])
+  }
 
   const save = async () => {
     setLoading(true)
     try {
-      const payload = { search_url: searchUrl }
-      if (apiKey) payload.search_api_key = apiKey
-      await settingsApi.update(payload)
-      if (apiKey) setApiKeySet(true)
-      addNotification({ type: 'success', message: 'Search settings saved' })
+      // Strip api_key field if blank to avoid clobbering vault
+      const payload = providers.map((p) => {
+        const out = { ...p, daily_limit: parseInt(p.daily_limit) || 0,
+                      monthly_limit: parseInt(p.monthly_limit) || 0,
+                      rps: parseFloat(p.rps) || 0 }
+        if (!out.api_key) delete out.api_key
+        return out
+      })
+      await settingsApi.setSearchProviders(payload)
+      addNotification({ type: 'success', message: 'Search providers saved' })
+      // Clear typed-in api_key fields, then reload
+      setProviders((prev) => prev.map((p) => ({ ...p, api_key: '' })))
+      await load()
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
     setLoading(false)
   }
 
-  const PRESETS = [
-    { label: 'SearXNG (local)',  value: 'http://localhost:8080' },
-    { label: 'Brave Search API', value: 'https://api.search.brave.com/res/v1/web/search' },
-    { label: 'DuckDuckGo (default)', value: '' },
-  ]
+  const reset = async (name, period) => {
+    try {
+      await settingsApi.resetSearchProvider(name, period)
+      await load()
+      addNotification({ type: 'success', message: `Reset ${period} usage for ${name}` })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+  }
+
+  const test = async () => {
+    setTesting(true)
+    try {
+      const res = await settingsApi.testSearchChain('pantheon search test')
+      addNotification({ type: 'success', message: 'Test ran — see usage rows below' })
+      setUsage(res.data.usage || { providers: [] })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
+    setTesting(false)
+  }
+
+  const usageFor = (name) => usage.providers?.find((u) => u.name === name) || {}
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <Search className="w-4 h-4 text-gray-400" />
-        <h3 className="text-sm font-semibold text-gray-200">Web Search</h3>
+        <h3 className="text-sm font-semibold text-gray-200">Web Search Provider Chain</h3>
       </div>
 
       <p className="text-xs text-gray-500">
-        Configure the backend the agent uses for <code className="text-gray-400">web_search</code> calls.
-        Leave blank to use DuckDuckGo (no key required).
+        Providers are tried top-to-bottom. The agent falls through to the next provider on
+        any error, empty result set, or exhausted quota / rate limit. Per-provider quotas
+        are tracked locally; reset them at the start of a new billing cycle.
       </p>
 
-      {/* Quick presets */}
+      <div className="space-y-3">
+        {providers.map((p, idx) => {
+          const u = usageFor(p.name)
+          const monthlyPct = p.monthly_limit > 0 ? Math.min(100, (u.monthly_used || 0) / p.monthly_limit * 100) : 0
+          const dailyPct = p.daily_limit > 0 ? Math.min(100, (u.daily_used || 0) / p.daily_limit * 100) : 0
+          return (
+            <div key={idx} className="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 w-6">#{idx + 1}</span>
+                <input
+                  type="text"
+                  value={p.name}
+                  onChange={(e) => updateField(idx, 'name', e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 w-32"
+                  placeholder="name"
+                />
+                <select
+                  value={p.type}
+                  onChange={(e) => updateField(idx, 'type', e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                >
+                  <option value="brave">Brave</option>
+                  <option value="searxng">SearXNG</option>
+                  <option value="ddg">DuckDuckGo</option>
+                  <option value="generic">Generic JSON</option>
+                </select>
+                <label className="flex items-center gap-1 text-xs text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={p.enabled !== false}
+                    onChange={(e) => updateField(idx, 'enabled', e.target.checked)}
+                  />
+                  enabled
+                </label>
+                <div className="flex-1" />
+                <button onClick={() => moveUp(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white">↑</button>
+                <button onClick={() => moveDown(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white">↓</button>
+                <button onClick={() => removeProvider(idx)} className="text-xs px-2 py-1 text-red-400 hover:text-red-300">remove</button>
+              </div>
+
+              {p.type !== 'ddg' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={p.url || ''}
+                    onChange={(e) => updateField(idx, 'url', e.target.value)}
+                    placeholder="URL"
+                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                  />
+                  <input
+                    type="text"
+                    value={p.api_key_vault_key || ''}
+                    onChange={(e) => updateField(idx, 'api_key_vault_key', e.target.value)}
+                    placeholder="api_key vault key (e.g. brave_api_key)"
+                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                  />
+                  <input
+                    type="password"
+                    value={p.api_key || ''}
+                    onChange={(e) => updateField(idx, 'api_key', e.target.value)}
+                    placeholder={u.api_key_set ? '(key saved — leave blank to keep)' : 'API key'}
+                    className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 col-span-2"
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Daily limit</label>
+                  <input
+                    type="number"
+                    value={p.daily_limit || 0}
+                    onChange={(e) => updateField(idx, 'daily_limit', e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Monthly limit</label>
+                  <input
+                    type="number"
+                    value={p.monthly_limit || 0}
+                    onChange={(e) => updateField(idx, 'monthly_limit', e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Req / sec</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={p.rps || 0}
+                    onChange={(e) => updateField(idx, 'rps', e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                  />
+                </div>
+              </div>
+
+              <div className="text-[11px] text-gray-400 space-y-1 pt-1">
+                <div className="flex items-center gap-2">
+                  <span className="w-16">Daily:</span>
+                  <span className="font-mono">{u.daily_used || 0}{p.daily_limit > 0 ? ` / ${p.daily_limit}` : ''}</span>
+                  {p.daily_limit > 0 && (
+                    <div className="flex-1 h-1 bg-gray-800 rounded overflow-hidden">
+                      <div className="h-full bg-brand-500" style={{ width: `${dailyPct}%` }} />
+                    </div>
+                  )}
+                  <button onClick={() => reset(p.name, 'daily')} className="text-[10px] text-gray-500 hover:text-gray-300">reset</button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-16">Monthly:</span>
+                  <span className="font-mono">{u.monthly_used || 0}{p.monthly_limit > 0 ? ` / ${p.monthly_limit}` : ''}</span>
+                  {p.monthly_limit > 0 && (
+                    <div className="flex-1 h-1 bg-gray-800 rounded overflow-hidden">
+                      <div className="h-full bg-brand-500" style={{ width: `${monthlyPct}%` }} />
+                    </div>
+                  )}
+                  <button onClick={() => reset(p.name, 'monthly')} className="text-[10px] text-gray-500 hover:text-gray-300">reset</button>
+                </div>
+                <div className="flex items-center gap-3 text-gray-500">
+                  <span>errors: {u.errors || 0}</span>
+                  <span>skipped: {u.skipped || 0}</span>
+                  {u.last_used && <span>last: {new Date(u.last_used).toLocaleString()}</span>}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
       <div className="flex flex-wrap gap-2">
-        {PRESETS.map((p) => (
-          <button
-            key={p.label}
-            onClick={() => setSearchUrl(p.value)}
-            className={`px-2 py-1 rounded text-xs border transition-colors ${
-              searchUrl === p.value
-                ? 'bg-brand-600 border-brand-500 text-white'
-                : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-white hover:border-gray-500'
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
+        <button
+          onClick={addProvider}
+          className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 rounded border border-gray-700"
+        >
+          + Add provider
+        </button>
+        <button
+          onClick={save}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" />
+          Save Provider Chain
+        </button>
+        <button
+          onClick={test}
+          disabled={testing}
+          className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-sm text-gray-200 rounded border border-gray-700 disabled:opacity-50"
+        >
+          {testing ? 'Testing…' : 'Test chain'}
+        </button>
       </div>
-
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-2">Search URL</label>
-        <input
-          type="text"
-          value={searchUrl}
-          onChange={(e) => setSearchUrl(e.target.value)}
-          placeholder="http://localhost:8080  (blank = DuckDuckGo)"
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs font-medium text-gray-400 mb-2">
-          API Key
-          {apiKeySet && !apiKey && (
-            <span className="ml-2 text-green-500 font-normal">✓ key saved</span>
-          )}
-        </label>
-        <div className="flex gap-2">
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder={apiKeySet ? '(leave blank to keep existing)' : 'Optional — required for Brave Search'}
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
-          />
-          <button
-            onClick={() => setShowKey(!showKey)}
-            className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400"
-          >
-            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
-
-      <button
-        onClick={save}
-        disabled={loading}
-        className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50"
-      >
-        <Save className="w-4 h-4" />
-        Save Search Settings
-      </button>
     </div>
   )
 }

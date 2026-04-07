@@ -303,3 +303,65 @@ async def delete_secret(key: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail="Secret not found")
     sec_log.secret_deleted(key=key)
     return {"status": "deleted", "key": key}
+
+
+# ── Web search providers ─────────────────────────────────────────────────────
+
+class SearchProviderConfig(BaseModel):
+    name: str
+    type: str  # brave | searxng | ddg | generic
+    url: str = ""
+    api_key_vault_key: str = ""
+    api_key: str | None = None  # if set, write into vault under api_key_vault_key
+    daily_limit: int = 0
+    monthly_limit: int = 0
+    rps: float = 0
+    enabled: bool = True
+
+
+class SearchProvidersUpdate(BaseModel):
+    providers: list[SearchProviderConfig]
+
+
+@router.get("/settings/search/providers")
+async def get_search_providers() -> dict[str, Any]:
+    from agent.search_providers import get_search_manager
+    mgr = get_search_manager()
+    return {
+        "providers": mgr.get_providers(),
+        "usage": mgr.get_usage(),
+    }
+
+
+@router.put("/settings/search/providers")
+async def set_search_providers(req: SearchProvidersUpdate) -> dict[str, Any]:
+    from agent.search_providers import get_search_manager
+    vault = get_vault()
+    cleaned: list[dict[str, Any]] = []
+    for p in req.providers:
+        if p.api_key and p.api_key_vault_key:
+            vault.set_secret(p.api_key_vault_key, p.api_key)
+        d = p.model_dump()
+        d.pop("api_key", None)  # never persist plaintext key in providers config
+        cleaned.append(d)
+    mgr = get_search_manager()
+    mgr.set_providers(cleaned)
+    sec_log.settings_updated(changed_keys=["search_providers"])
+    return {"providers": mgr.get_providers(), "usage": mgr.get_usage()}
+
+
+@router.post("/settings/search/providers/{name}/reset")
+async def reset_search_provider(name: str, period: str = "daily") -> dict[str, Any]:
+    from agent.search_providers import get_search_manager
+    mgr = get_search_manager()
+    mgr.reset_provider_usage(name, period=period)
+    return {"status": "reset", "provider": name, "period": period, "usage": mgr.get_usage()}
+
+
+@router.post("/settings/search/test")
+async def test_search_chain(query: str = Query("test query")) -> dict[str, Any]:
+    """Run a search through the provider chain to verify it works."""
+    from agent.search_providers import get_search_manager
+    mgr = get_search_manager()
+    result = await mgr.search(query)
+    return {"query": query, "result": result, "usage": mgr.get_usage()}

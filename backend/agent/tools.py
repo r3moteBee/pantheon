@@ -586,30 +586,18 @@ def _safe_workspace_path(rel_path: str, project_id: str | None = None) -> Path:
 
 
 async def _web_search(query: str) -> str:
+    """Run a web search via the provider chain (Brave → SearXNG → DDG by default).
+
+    Falls through to the next provider on exception, empty results, or
+    quota/rate-limit exhaustion. Per-provider quotas, rate limits, and
+    chain ordering are configured via the SearchProviderManager.
     """
-    Search the web using the configured backend, falling back to DuckDuckGo.
-
-    Supported backends (set SEARCH_URL / search_url in vault):
-      SearXNG  — http://your-searxng-host          (append /search automatically)
-      Brave    — https://api.search.brave.com/res/v1/web/search
-      Generic  — any URL that accepts ?q=<query>&format=json and returns a JSON
-                 array or {"results": [...]} with title/url/snippet fields.
-
-    SEARCH_API_KEY is sent as:
-      X-Subscription-Token  for Brave
-      Authorization: Bearer  for everything else
-    """
-    from secrets.vault import get_vault  # local import to avoid circular
-
-    cfg = get_settings()
-    vault = get_vault()
-
-    search_url = (vault.get_secret("search_url") or cfg.search_url or "").rstrip("/")
-    api_key    = vault.get_secret("search_api_key") or cfg.search_api_key or ""
-
-    if search_url:
-        return await _configured_search(query, search_url, api_key)
-    return await _ddg_search(query)
+    try:
+        from agent.search_providers import get_search_manager
+        return await get_search_manager().search(query)
+    except Exception as e:
+        logger.exception("search provider chain failed; falling back to DDG-only")
+        return await _ddg_search(query)
 
 
 async def _configured_search(query: str, base_url: str, api_key: str) -> str:
