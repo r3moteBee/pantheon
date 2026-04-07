@@ -240,6 +240,23 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "save_last_response",
+            "description": "Save your own immediately preceding assistant message to a file in the project workspace. Use this when the user says 'save this', 'remember this observation', 'write the above to a file', or any similar instruction that refers to your last reply. Do NOT ask the user to restate the content — it is already available.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Workspace-relative file path, e.g. 'ANALYSIS/2026-04-07-ai-maturity.md'"},
+                    "title": {"type": "string", "description": "Optional title for YAML frontmatter (markdown only)"},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional list of tags for YAML frontmatter"},
+                    "prepend_header": {"type": "boolean", "description": "If true, prepend a title+date header to the content (default true for .md files)", "default": True}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "consolidate_memory",
             "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
             "parameters": {
@@ -257,6 +274,7 @@ async def execute_tool(
     memory_manager: Any,
     project_id: str | None = None,
     session_id: str | None = None,
+    last_assistant_text: str = "",
 ) -> str:
     """Execute a tool call and return the result as a string."""
     try:
@@ -363,6 +381,30 @@ async def execute_tool(
                 size = item.stat().st_size if item.is_file() else 0
                 entries.append(f"[{kind}] {item.name}" + (f" ({size} bytes)" if kind == "file" else ""))
             return "\n".join(entries) if entries else "Empty directory"
+
+        elif tool_name == "save_last_response":
+            if not last_assistant_text:
+                return "No previous assistant message is available to save in this turn."
+            rel = tool_args["path"]
+            safe = _safe_workspace_path(rel, project_id)
+            safe.parent.mkdir(parents=True, exist_ok=True)
+            content = last_assistant_text
+            if safe.suffix.lower() in (".md", ".markdown") and tool_args.get("prepend_header", True):
+                from datetime import datetime
+                title = tool_args.get("title") or safe.stem.replace("-", " ").replace("_", " ").title()
+                tags = tool_args.get("tags") or []
+                frontmatter = [
+                    "---",
+                    f"title: {title}",
+                    f"date: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                ]
+                if tags:
+                    frontmatter.append("tags: [" + ", ".join(tags) + "]")
+                frontmatter.append("source: agent_response")
+                frontmatter.append("---")
+                content = "\n".join(frontmatter) + "\n\n# " + title + "\n\n" + last_assistant_text
+            safe.write_text(content, encoding="utf-8")
+            return f"Saved previous response ({len(last_assistant_text)} chars) to {rel}"
 
         elif tool_name == "web_search":
             return await _web_search(tool_args["query"])

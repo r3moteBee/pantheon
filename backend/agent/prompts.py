@@ -82,4 +82,7 @@ def build_system_prompt(
 
 ---
 
+## Self-reference conventions
+When the user says "this", "that", "the above", "that observation", "your last response", "what you just said", or similar language in a request to save, record, note, or remember, interpret it as a reference to YOUR OWN most recent assistant message. Use the `save_last_response` tool to persist it — do NOT ask the user to paste or restate the content. Only ask for clarification if the destination path or filename is truly ambiguous.
+
 Current time: {now}"""

@@ -86,7 +86,8 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
                 "/status — Get agent status\n"
                 "/files — List workspace files\n"
                 "/task <description> — Create an autonomous task\n"
-                "/memory <query> — Search memories\n\n"
+                "/memory <query> — Search memories\n"
+                "/note [text] — Save text/photo/file as a note in the project (attach media with /note caption)\n\n"
                 "Or just send a message to chat with the agent.\n\n"
                 f"Active project: {project}"
             )
@@ -209,6 +210,91 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
                 lines.append(f"[{source}] {content}")
             await update.message.reply_text("\n\n".join(lines))
 
+        # ── /note ───────────────────────────────────────────────────────
+        async def note_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            """Save the message (text, photo, document, or voice caption) as a note in the project's notes/ folder."""
+            if not _is_allowed(update):
+                return
+            from datetime import datetime
+            from pathlib import Path
+            cfg = get_settings()
+            project = _active_project(update.effective_chat.id)
+
+            # Resolve notes dir under project workspace
+            if project and project != "default":
+                notes_dir = cfg.projects_dir / project / "workspace" / "notes"
+            else:
+                notes_dir = cfg.workspace_dir / "notes"
+            notes_dir.mkdir(parents=True, exist_ok=True)
+
+            msg = update.message
+            ts = datetime.utcnow().strftime("%Y-%m-%d_%H-%M-%S")
+            text_body = (msg.caption or msg.text or "").strip()
+            # Strip the leading "/note" command if present in text
+            if text_body.startswith("/note"):
+                text_body = text_body[len("/note"):].strip()
+
+            saved: list[str] = []
+
+            # 1. Any attached file (photo, document, voice, audio, video)
+            tg_file = None
+            ext = ".bin"
+            if msg.photo:
+                tg_file = await msg.photo[-1].get_file()
+                ext = ".jpg"
+            elif msg.document:
+                tg_file = await msg.document.get_file()
+                ext = Path(msg.document.file_name or "file").suffix or ".bin"
+            elif msg.voice:
+                tg_file = await msg.voice.get_file()
+                ext = ".ogg"
+            elif msg.audio:
+                tg_file = await msg.audio.get_file()
+                ext = Path(msg.audio.file_name or "audio").suffix or ".mp3"
+            elif msg.video:
+                tg_file = await msg.video.get_file()
+                ext = ".mp4"
+
+            if tg_file is not None:
+                attach_name = f"note-{ts}{ext}"
+                attach_path = notes_dir / attach_name
+                await tg_file.download_to_drive(str(attach_path))
+                saved.append(attach_name)
+
+            # 2. Text/markdown note (always write if there is text OR no attachment)
+            if text_body or not saved:
+                note_name = f"note-{ts}.md"
+                note_path = notes_dir / note_name
+                lines = [
+                    "---",
+                    f"date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}",
+                    "source: telegram",
+                    f"chat_id: {update.effective_chat.id}",
+                ]
+                if saved:
+                    lines.append(f"attachment: {saved[0]}")
+                lines.append("---")
+                lines.append("")
+                lines.append(text_body or "(no text — see attachment)")
+                note_path.write_text("\n".join(lines), encoding="utf-8")
+                saved.insert(0, note_name)
+
+            # Index into memory so /memory and recall can find it
+            try:
+                from memory.manager import create_memory_manager
+                mgr = create_memory_manager(project_id=project)
+                await mgr.remember(
+                    content=f"[telegram note {ts}] {text_body or saved[0]}",
+                    tier="semantic",
+                    metadata={"source": "telegram_note", "files": saved},
+                )
+            except Exception as e:
+                logger.warning("Failed to index telegram note into memory: %s", e)
+
+            await msg.reply_text(
+                f"📝 Saved to {project}/notes/:\n" + "\n".join(f"• {n}" for n in saved)
+            )
+
         # ── Plain message handler (no /chat prefix needed) ─────────────
         async def plain_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if not _is_allowed(update):
@@ -253,6 +339,13 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
         app.add_handler(CommandHandler("files", files_cmd))
         app.add_handler(CommandHandler("task", task_cmd))
         app.add_handler(CommandHandler("memory", memory_cmd))
+        app.add_handler(CommandHandler("note", note_cmd))
+        # Photos/docs/voice with caption starting with /note — also route to note_cmd
+        app.add_handler(MessageHandler(
+            (filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO)
+            & filters.CaptionRegex(r"^/note"),
+            note_cmd,
+        ))
         # Plain text messages (must be last so commands take priority)
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_message))
 

@@ -266,12 +266,19 @@ class AgentCore:
                     tool_id = tc.get("id", str(uuid.uuid4()))
 
                     logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
+                    # Find the most recent assistant text for save_last_response
+                    last_assistant_text = ""
+                    for _m in reversed(messages):
+                        if _m.get("role") == "assistant" and _m.get("content"):
+                            last_assistant_text = _m["content"]
+                            break
                     result = await execute_tool(
                         tool_name=tool_name,
                         tool_args=tool_args,
                         memory_manager=self.memory_manager,
                         project_id=self.project_id,
                         session_id=self.session_id,
+                        last_assistant_text=last_assistant_text,
                     )
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id}
 
