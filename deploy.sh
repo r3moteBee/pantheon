@@ -24,6 +24,9 @@ MODE=""   # "local" or "docker" — prompted if not set
 DOMAIN=""         # domain for HTTPS via Caddy — prompted if not set
 AGENT_NAME=""     # agent name written into soul.md — prompted if not set
 AUTH_PASSWORD=""  # web interface password — prompted if not set
+WITH_OLLAMA=false   # run demo_setup.sh --with-ollama after install
+WITH_SEARXNG=false  # run demo_setup.sh --with-searxng after install
+OLLAMA_TAG="4b"     # Nemotron model tag passed to demo_setup.sh
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -49,6 +52,9 @@ while [[ $# -gt 0 ]]; do
     --domain)     DOMAIN="$2";         shift 2 ;;
     --agent-name)    AGENT_NAME="$2";     shift 2 ;;
     --auth-password) AUTH_PASSWORD="$2";  shift 2 ;;
+    --with-ollama)  WITH_OLLAMA=true;  shift ;;
+    --with-searxng) WITH_SEARXNG=true; shift ;;
+    --ollama-tag)   OLLAMA_TAG="$2";   shift 2 ;;
     --yes|-y)     SKIP_CONFIRM=true;   shift ;;
     --help|-h)
       echo "Usage: deploy.sh [options]"
@@ -64,6 +70,9 @@ while [[ $# -gt 0 ]]; do
       echo "  --domain DOMAIN      Domain name for HTTPS via Caddy (e.g. agent.example.com)"
       echo "  --agent-name NAME        Name for the agent (default: Pan)"
       echo "  --auth-password PASS     Web interface password (prompted if omitted)"
+      echo "  --with-ollama        Install Ollama + Nemotron-3-Nano-4B as the default LLM"
+      echo "  --with-searxng       Run a local SearXNG container as the default search backend"
+      echo "  --ollama-tag TAG     Nemotron tag (4b, 4b-q8_0, 4b-bf16) — default: 4b"
       echo "  --yes, -y            Skip confirmation and model selection prompts"
       echo ""
       echo "When run interactively (without --yes), the installer will:"
@@ -432,7 +441,9 @@ CURRENT_API_KEY=$(grep "^LLM_API_KEY=" .env 2>/dev/null | cut -d= -f2- || true)
 CURRENT_MODEL=$(grep "^LLM_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
 CURRENT_EMBEDDING=$(grep "^EMBEDDING_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
 
-if [[ "$SKIP_CONFIRM" == false ]]; then
+if [[ "$WITH_OLLAMA" == "true" ]]; then
+  info "--with-ollama flag set — skipping LLM provider prompts (demo_setup.sh will configure)"
+elif [[ "$SKIP_CONFIRM" == false ]]; then
   header "LLM Provider Configuration"
   echo ""
   echo "  Pantheon works with any OpenAI-compatible API endpoint."
@@ -926,6 +937,33 @@ if [[ -n "$DOMAIN" ]]; then
       sleep 1
       "$INSTALL_DIR/start.sh"
     fi
+  fi
+fi
+
+# =============================================================================
+# ── Optional demo extras (Ollama / SearXNG) ──────────────────────────────────
+# =============================================================================
+if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" ]]; then
+  header "Running demo_setup.sh for optional extras"
+  DEMO_ARGS=()
+  [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "$OLLAMA_TAG")
+  [[ "$WITH_SEARXNG" == "true" ]] && DEMO_ARGS+=(--with-searxng)
+
+  if [[ -x "${INSTALL_DIR}/demo_setup.sh" ]]; then
+    ( cd "$INSTALL_DIR" && ./demo_setup.sh "${DEMO_ARGS[@]}" ) || warn "demo_setup.sh exited non-zero — continuing"
+
+    # Restart Pantheon so it picks up the new .env configuration
+    if [[ "$MODE" == "local" ]]; then
+      info "Restarting Pantheon to pick up new configuration..."
+      "$INSTALL_DIR/stop.sh" 2>/dev/null || true
+      sleep 1
+      "$INSTALL_DIR/start.sh"
+    elif [[ "$MODE" == "docker" ]]; then
+      info "Restarting Docker stack to pick up new configuration..."
+      ( cd "$INSTALL_DIR" && docker compose restart backend ) || warn "Docker restart failed"
+    fi
+  else
+    warn "demo_setup.sh not found at ${INSTALL_DIR}/demo_setup.sh — skipping extras"
   fi
 fi
 
