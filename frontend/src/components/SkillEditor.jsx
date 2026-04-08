@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, FileText, FilePlus2, Trash2, Save, Sparkles, Wand2, Target,
   Play, Loader2, AlertCircle, CheckCircle2, Info, ChevronRight, FileCode,
+  Check, GitCompare,
 } from 'lucide-react'
 import CoreEditor from './CoreEditor'
 import { skillsApi } from '../api/client'
@@ -18,6 +19,89 @@ function severityIcon(sev) {
   if (sev === 'critical') return <AlertCircle className="w-3.5 h-3.5" />
   if (sev === 'warning') return <AlertCircle className="w-3.5 h-3.5" />
   return <Info className="w-3.5 h-3.5" />
+}
+
+// ── Line-level diff (LCS) ──────────────────────────────────────────────────
+
+function diffLines(a, b) {
+  const A = (a || '').split('\n')
+  const B = (b || '').split('\n')
+  const n = A.length, m = B.length
+  // LCS length table
+  const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1))
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      if (A[i] === B[j]) dp[i][j] = dp[i + 1][j + 1] + 1
+      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+  const out = []
+  let i = 0, j = 0
+  while (i < n && j < m) {
+    if (A[i] === B[j]) { out.push({ type: 'ctx', text: A[i] }); i++; j++ }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: 'del', text: A[i] }); i++ }
+    else { out.push({ type: 'add', text: B[j] }); j++ }
+  }
+  while (i < n) out.push({ type: 'del', text: A[i++] })
+  while (j < m) out.push({ type: 'add', text: B[j++] })
+  return out
+}
+
+function DiffModal({ title, path, before, after, onAccept, onReject }) {
+  const rows = diffLines(before, after)
+  const adds = rows.filter((r) => r.type === 'add').length
+  const dels = rows.filter((r) => r.type === 'del').length
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl max-h-[80vh] bg-gray-950 border border-gray-800 rounded-lg flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div className="flex items-center gap-2 min-w-0">
+            <GitCompare className="w-4 h-4 text-brand-400" />
+            <h3 className="text-sm font-semibold text-gray-200 truncate">{title}</h3>
+            <span className="text-[10px] text-gray-500 font-mono truncate">{path}</span>
+            <span className="text-[10px] text-green-400">+{adds}</span>
+            <span className="text-[10px] text-red-400">−{dels}</span>
+          </div>
+          <button onClick={onReject} className="p-1 text-gray-500 hover:text-gray-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto font-mono text-xs">
+          {rows.map((r, i) => (
+            <div
+              key={i}
+              className={
+                r.type === 'add'
+                  ? 'bg-green-950/40 text-green-300 px-3 py-0.5'
+                  : r.type === 'del'
+                  ? 'bg-red-950/40 text-red-300 px-3 py-0.5 line-through opacity-80'
+                  : 'text-gray-500 px-3 py-0.5'
+              }
+            >
+              <span className="inline-block w-4 select-none">
+                {r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}
+              </span>
+              <span className="whitespace-pre-wrap break-words">{r.text || ' '}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-800">
+          <button
+            onClick={onReject}
+            className="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200 flex items-center gap-1"
+          >
+            <X className="w-3 h-3" /> Reject
+          </button>
+          <button
+            onClick={onAccept}
+            className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1"
+          >
+            <Check className="w-3 h-3" /> Accept changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ── Sample message tester ──────────────────────────────────────────────────
@@ -105,7 +189,7 @@ function SkillTester({ skillName }) {
 
 // ── AI assist panel ────────────────────────────────────────────────────────
 
-function AIAssistPanel({ skillName, manifestContent, instructionsContent, onApplyInstructions, onApplyTriggers }) {
+function AIAssistPanel({ skillName, manifestContent, instructionsContent, onProposeInstructions, onProposeTriggers }) {
   const [improveBusy, setImproveBusy] = useState(false)
   const [optBusy, setOptBusy] = useState(false)
   const [goal, setGoal] = useState('')
@@ -117,7 +201,7 @@ function AIAssistPanel({ skillName, manifestContent, instructionsContent, onAppl
     setError('')
     try {
       const res = await skillsApi.improve(instructionsContent, { goal: goal || null, skillName })
-      onApplyInstructions(res.data.instructions)
+      onProposeInstructions(res.data.instructions)
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally {
@@ -187,10 +271,10 @@ function AIAssistPanel({ skillName, manifestContent, instructionsContent, onAppl
               {proposedTriggers.map((t, i) => <div key={i}>• {t}</div>)}
             </div>
             <button
-              onClick={() => { onApplyTriggers(proposedTriggers); setProposedTriggers(null) }}
+              onClick={() => { onProposeTriggers(proposedTriggers); setProposedTriggers(null) }}
               className="mt-2 w-full px-2 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
             >
-              Apply to skill.json
+              Review diff →
             </button>
           </div>
         )}
@@ -215,6 +299,8 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
   const [error, setError] = useState('')
   const [lint, setLint] = useState({ findings: [] })
   const lintTimer = useRef(null)
+  const [pendingDiff, setPendingDiff] = useState(null)  // { path, before, after, title }
+  const [showSaveAllConfirm, setShowSaveAllConfirm] = useState(false)
 
   const loadFiles = useCallback(async () => {
     setLoading(true)
@@ -303,23 +389,49 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
     }
   }
 
-  const applyImprovedInstructions = (text) => {
-    setContents((c) => ({ ...c, 'instructions.md': text }))
-    setDirty((d) => ({ ...d, 'instructions.md': true }))
-    if (activePath === 'instructions.md') setContent(text)
+  const proposeInstructions = (text) => {
+    setPendingDiff({
+      path: 'instructions.md',
+      before: contents['instructions.md'] || '',
+      after: text,
+      title: 'AI — Improve instructions',
+    })
   }
 
-  const applyProposedTriggers = (triggers) => {
+  const proposeTriggers = (triggers) => {
     let manifest = {}
     try { manifest = JSON.parse(contents['skill.json'] || '{}') } catch { return }
     manifest.triggers = triggers
     const next = JSON.stringify(manifest, null, 2)
-    setContents((c) => ({ ...c, 'skill.json': next }))
-    setDirty((d) => ({ ...d, 'skill.json': true }))
-    if (activePath === 'skill.json') setContent(next)
+    setPendingDiff({
+      path: 'skill.json',
+      before: contents['skill.json'] || '',
+      after: next,
+      title: 'AI — Optimize triggers',
+    })
   }
 
-  const dirtyCount = Object.values(dirty).filter(Boolean).length
+  const acceptPendingDiff = () => {
+    if (!pendingDiff) return
+    const { path, after } = pendingDiff
+    setContents((c) => ({ ...c, [path]: after }))
+    setDirty((d) => ({ ...d, [path]: true }))
+    if (activePath === path) setContent(after)
+    setPendingDiff(null)
+  }
+
+  const dirtyPaths = Object.keys(dirty).filter((p) => dirty[p])
+  const dirtyCount = dirtyPaths.length
+
+  const confirmSaveAll = () => {
+    if (dirtyCount === 0) return
+    if (dirtyCount === 1) {
+      // single file — no need for a confirmation step
+      saveAll()
+      return
+    }
+    setShowSaveAllConfirm(true)
+  }
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -340,14 +452,46 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           </div>
           <div className="flex items-center gap-2">
             {editable && (
-              <button
-                onClick={saveAll}
-                disabled={saving || dirtyCount === 0}
-                className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                Save all
-              </button>
+              <div className="relative">
+                <button
+                  onClick={confirmSaveAll}
+                  disabled={saving || dirtyCount === 0}
+                  className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+                >
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  Save all{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
+                </button>
+                {showSaveAllConfirm && (
+                  <div className="absolute right-0 top-full mt-1 w-64 bg-gray-900 border border-gray-800 rounded-lg shadow-2xl z-10 p-3">
+                    <div className="text-[10px] uppercase text-gray-500 mb-1.5">
+                      Save {dirtyCount} file{dirtyCount === 1 ? '' : 's'}?
+                    </div>
+                    <div className="max-h-40 overflow-y-auto space-y-0.5 mb-2">
+                      {dirtyPaths.map((p) => (
+                        <div key={p} className="text-xs text-gray-300 flex items-center gap-1.5 truncate">
+                          <span className="text-amber-400">●</span>
+                          <FileText className="w-3 h-3 text-gray-500 flex-shrink-0" />
+                          <span className="truncate font-mono">{p}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowSaveAllConfirm(false)}
+                        className="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => { setShowSaveAllConfirm(false); saveAll() }}
+                        className="flex-1 px-2 py-1 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-1"
+                      >
+                        <Check className="w-3 h-3" /> Save all
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             <button onClick={onClose} className="p-1.5 text-gray-500 hover:text-gray-200">
               <X className="w-4 h-4" />
@@ -433,8 +577,8 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
                   skillName={skillName}
                   manifestContent={contents['skill.json'] || ''}
                   instructionsContent={contents['instructions.md'] || ''}
-                  onApplyInstructions={applyImprovedInstructions}
-                  onApplyTriggers={applyProposedTriggers}
+                  onProposeInstructions={proposeInstructions}
+                  onProposeTriggers={proposeTriggers}
                 />
               </div>
             )}
@@ -447,6 +591,17 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           </div>
         </div>
       </div>
+
+      {pendingDiff && (
+        <DiffModal
+          title={pendingDiff.title}
+          path={pendingDiff.path}
+          before={pendingDiff.before}
+          after={pendingDiff.after}
+          onAccept={acceptPendingDiff}
+          onReject={() => setPendingDiff(null)}
+        />
+      )}
     </div>
   )
 }
