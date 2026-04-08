@@ -86,6 +86,13 @@ async def lifespan(app: FastAPI):
     skill_reg = get_skill_registry()
     logger.info("Skill registry loaded: %d skills", len(skill_reg.list_all()))
 
+    # Load admin-configured skill registry hubs
+    try:
+        from skills.registries_config import load_skill_registries_from_disk
+        load_skill_registries_from_disk()
+    except Exception as e:
+        logger.error("Failed to load skill registries: %s", e)
+
     # Initialize MCP connections
     from mcp_client.manager import get_mcp_manager
     mcp_mgr = get_mcp_manager()
