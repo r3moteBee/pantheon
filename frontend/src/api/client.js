@@ -216,6 +216,12 @@ export const skillsApi = {
   setDiscovery: (projectId, mode) =>
     api.put(`/api/skills/discovery/${projectId}`, null, { params: { mode } }),
 
+  // Skill registry hubs (admin)
+  listRegistries: () => api.get('/api/skills/registries'),
+  createRegistry: (payload) => api.post('/api/skills/registries', payload),
+  updateRegistry: (id, payload) => api.put(`/api/skills/registries/${id}`, payload),
+  deleteRegistry: (id) => api.delete(`/api/skills/registries/${id}`),
+
   // Import
   listHubs: () => api.get('/api/skills/hubs'),
   searchHub: (query, hub = null) =>

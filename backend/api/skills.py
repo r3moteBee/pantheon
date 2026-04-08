@@ -208,6 +208,68 @@ async def list_hubs() -> dict[str, Any]:
     return {"hubs": _list_hubs()}
 
 
+class RegistryCreate(BaseModel):
+    id: str
+    url: str
+    display_name: str | None = None
+    auth_type: str = "none"  # "none" | "bearer"
+    bearer_token: str | None = None
+
+
+class RegistryUpdate(BaseModel):
+    url: str | None = None
+    display_name: str | None = None
+    auth_type: str | None = None
+    bearer_token: str | None = None
+
+
+@router.get("/skills/registries")
+async def list_skill_registries() -> dict[str, Any]:
+    from skills.registries_config import list_registries
+    return {"registries": list_registries()}
+
+
+@router.post("/skills/registries")
+async def create_skill_registry(req: RegistryCreate) -> dict[str, Any]:
+    from skills.registries_config import add_registry
+    try:
+        return add_registry(
+            req.id, req.url,
+            display_name=req.display_name,
+            auth_type=req.auth_type,
+            bearer_token=req.bearer_token,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/skills/registries/{registry_id}")
+async def update_skill_registry(registry_id: str, req: RegistryUpdate) -> dict[str, Any]:
+    from skills.registries_config import update_registry
+    try:
+        return update_registry(
+            registry_id,
+            url=req.url,
+            display_name=req.display_name,
+            auth_type=req.auth_type,
+            bearer_token=req.bearer_token,
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/skills/registries/{registry_id}")
+async def delete_skill_registry(registry_id: str) -> dict[str, str]:
+    from skills.registries_config import remove_registry
+    try:
+        remove_registry(registry_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "removed", "id": registry_id}
+
+
 @router.post("/skills/search-hub")
 async def search_hub(
     query: str = Query(..., description="Search query"),
