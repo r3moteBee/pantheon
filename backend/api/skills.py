@@ -229,7 +229,7 @@ async def import_skill_endpoint(req: SkillImportRequest) -> dict[str, Any]:
 
     Body:
         source: URL, repo identifier, or local file path
-        hub: "smithery" | "github" | "local" | "skill_md"
+        hub: "github" | "local" | "skill_md"
         ai_review: Whether to run AI review during scan (default true)
     """
     from skills.importer import import_skill

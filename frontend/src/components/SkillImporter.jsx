@@ -10,7 +10,6 @@ import { skillsApi } from '../api/client'
 
 function HubIcon({ hub, className = 'w-4 h-4' }) {
   switch (hub) {
-    case 'smithery': return <Package className={className} />
     case 'github': return <Github className={className} />
     case 'local': return <FileArchive className={className} />
     default: return <Globe className={className} />
@@ -302,7 +301,6 @@ export default function SkillImporter({ onClose, onImportComplete }) {
                 className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 outline-none"
               >
                 <option value="">All hubs</option>
-                <option value="smithery">Smithery (MCP)</option>
                 <option value="github">GitHub</option>
               </select>
               <div className="flex-1 relative">
@@ -355,7 +353,7 @@ export default function SkillImporter({ onClose, onImportComplete }) {
             {!searchQuery && !searching && (
               <div className="text-center py-8 text-gray-600 text-xs">
                 <Search className="w-6 h-6 mx-auto mb-2 opacity-40" />
-                Search Smithery or GitHub for skills to import
+                Search GitHub for skills to import
               </div>
             )}
           </div>
