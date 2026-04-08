@@ -21,7 +21,7 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
   // Load skills once
   useEffect(() => {
     if (visible) {
-      skillsApi.list(projectId).then((res) => {
+      skillsApi.list(projectId, { enabledOnly: true }).then((res) => {
         setSkills(res.data.skills || [])
       }).catch(() => {})
     }

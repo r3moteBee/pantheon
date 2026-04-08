@@ -186,8 +186,13 @@ export const mcpApi = {
 
 // Skills API
 export const skillsApi = {
-  list: (projectId) =>
-    api.get('/api/skills', { params: { project_id: projectId } }),
+  list: (projectId, { enabledOnly = false } = {}) =>
+    api.get('/api/skills', {
+      params: {
+        project_id: projectId,
+        include_disabled: !enabledOnly,
+      },
+    }),
   get: (skillName) => api.get(`/api/skills/${skillName}`),
   toggle: (skillName, projectId, enabled, { forceEnable, overridePassword } = {}) =>
     api.put(`/api/skills/${skillName}/toggle`, {
