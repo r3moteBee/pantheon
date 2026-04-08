@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Zap, RefreshCw, ChevronDown, ChevronRight, Brain, Clock, Shield, BookOpen, ToggleLeft, ToggleRight, Trash2, AlertTriangle, ShieldCheck, ShieldAlert, ShieldX, ScanSearch, Download } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, ChevronRight, Brain, Clock, Shield, BookOpen, Trash2, AlertTriangle, ShieldCheck, ShieldAlert, ShieldX, ScanSearch, Download } from 'lucide-react'
 import { useStore } from '../store'
 import { skillsApi } from '../api/client'
 import SkillImporter from './SkillImporter'
@@ -129,7 +129,7 @@ function SkillCard({ skill, projectId, onToggle, onDelete, onScan }) {
   }
 
   return (
-    <div className={`border rounded-lg overflow-hidden ${isEnabled ? 'border-gray-700 bg-gray-800' : 'border-gray-800 bg-gray-900 opacity-60'}`}>
+    <div className={`border rounded-lg overflow-hidden transition-colors ${isEnabled ? 'border-brand-700/60 bg-gray-800' : 'border-gray-800 bg-gray-900/60 grayscale opacity-50 hover:opacity-75'}`}>
       <div className="flex items-start gap-3 p-4">
         <div className="w-8 h-8 rounded-lg bg-brand-900 flex items-center justify-center flex-shrink-0 mt-0.5">
           <Zap className="w-4 h-4 text-brand-400" />
@@ -177,17 +177,33 @@ function SkillCard({ skill, projectId, onToggle, onDelete, onScan }) {
               <ScanSearch className="w-4 h-4" />
             )}
           </button>
-          <button
-            onClick={() => onToggle(skill.name, !isEnabled)}
-            title={isEnabled ? 'Disable for this project' : 'Enable for this project'}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            {isEnabled ? (
-              <ToggleRight className="w-5 h-5 text-brand-400" />
-            ) : (
-              <ToggleLeft className="w-5 h-5" />
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-[10px] font-semibold uppercase tracking-wide ${
+                isEnabled ? 'text-brand-400' : 'text-gray-500'
+              }`}
+            >
+              {isEnabled ? 'Enabled' : 'Disabled'}
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={isEnabled}
+              onClick={() => onToggle(skill.name, !isEnabled)}
+              title={isEnabled ? 'Disable for this project' : 'Enable for this project'}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+                isEnabled
+                  ? 'bg-brand-600 border-brand-500'
+                  : 'bg-gray-700 border-gray-600 hover:bg-gray-600'
+              }`}
+            >
+              <span
+                className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                  isEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                }`}
+              />
+            </button>
+          </div>
           <button
             onClick={() => setConfirmDelete(true)}
             title="Delete skill"
