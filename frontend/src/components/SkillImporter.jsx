@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Download, Search, Globe, Github, FileArchive, Upload, X,
   Loader2, ShieldCheck, ShieldX, AlertTriangle, ExternalLink,
@@ -120,7 +120,15 @@ export default function SkillImporter({ onClose, onImportComplete }) {
   const [githubUrl, setGithubUrl] = useState('')
   const [aiReview, setAiReview] = useState(true)
   const [dragOver, setDragOver] = useState(false)
+  const [availableHubs, setAvailableHubs] = useState([])
   const fileInputRef = useRef(null)
+
+  // Load available hubs (built-in + configured registries)
+  useEffect(() => {
+    skillsApi.listHubs()
+      .then((res) => setAvailableHubs(res.data?.hubs || []))
+      .catch((e) => console.error('Failed to load hubs:', e))
+  }, [])
 
   // ── Search ─────────────────────────────────────────────────────────────
 
@@ -301,7 +309,9 @@ export default function SkillImporter({ onClose, onImportComplete }) {
                 className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 outline-none"
               >
                 <option value="">All hubs</option>
-                <option value="github">GitHub</option>
+                {availableHubs.filter(h => h.searchable).map(h => (
+                  <option key={h.id} value={h.id}>{h.name}</option>
+                ))}
               </select>
               <div className="flex-1 relative">
                 <input
