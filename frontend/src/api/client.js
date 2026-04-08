@@ -135,6 +135,11 @@ export const filesApi = {
     api.delete('/api/files', { params: { path, project_id: projectId } }),
   mkdir: (path, projectId) =>
     api.post('/api/files/mkdir', null, { params: { path, project_id: projectId } }),
+  downloadZip: (paths, projectId) =>
+    api.post('/api/files/download-zip', { paths }, {
+      params: { project_id: projectId },
+      responseType: 'blob',
+    }),
   downloadUrl: (path, projectId) => {
     const token = localStorage.getItem('auth_token')
     const tokenParam = token && token !== 'no-auth' ? `&token=${encodeURIComponent(token)}` : ''

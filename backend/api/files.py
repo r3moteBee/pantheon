@@ -9,10 +9,13 @@ import os
 from pathlib import Path
 from typing import Any
 
+import io
+import zipfile
+
 import aiofiles
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Query
 from typing import List as TList
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from config import get_settings
 
@@ -185,6 +188,56 @@ async def download_file(
         path=str(target),
         filename=target.name,
         media_type="application/octet-stream",
+    )
+
+
+@router.post("/files/download-zip")
+async def download_zip(
+    project_id: str = Query(default="default"),
+    body: dict[str, Any] = Body(...),
+) -> StreamingResponse:
+    """Bundle multiple workspace files/folders into a single zip and stream it.
+
+    Body: {"paths": ["rel/path1", "rel/path2", ...]}
+    Folders are included recursively. Paths are validated against the workspace root.
+    """
+    paths = body.get("paths") or []
+    if not isinstance(paths, list) or not paths:
+        raise HTTPException(status_code=400, detail="Missing 'paths' list")
+    if len(paths) > 1000:
+        raise HTTPException(status_code=400, detail="Too many paths (max 1000)")
+
+    base = _get_workspace(project_id)
+    buf = io.BytesIO()
+    total_bytes = 0
+    MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB safety cap
+
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in paths:
+            if not isinstance(rel, str) or not rel:
+                continue
+            target = _safe_path(rel, project_id)
+            if not target.exists():
+                continue
+            if target.is_file():
+                total_bytes += target.stat().st_size
+                if total_bytes > MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Selection exceeds 2GB limit")
+                zf.write(target, arcname=str(target.relative_to(base)))
+            elif target.is_dir():
+                for sub in target.rglob("*"):
+                    if sub.is_file():
+                        total_bytes += sub.stat().st_size
+                        if total_bytes > MAX_BYTES:
+                            raise HTTPException(status_code=413, detail="Selection exceeds 2GB limit")
+                        zf.write(sub, arcname=str(sub.relative_to(base)))
+
+    buf.seek(0)
+    zip_name = f"{project_id}-files.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
     )
 
 
