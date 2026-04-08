@@ -459,6 +459,119 @@ class GitHubAdapter(HubAdapter):
         return manifest
 
 
+# ── ClawHub Adapter ────────────────────────────────────────────────────────
+
+class ClawHubAdapter(HubAdapter):
+    """Adapter for the ClawHub OpenClaw skill registry (clawhub.ai).
+
+    Uses ClawHub's public REST API at https://clawhub.ai/api/v1.
+    Skills are downloaded as zip archives in SKILL.md format and normalized
+    via SkillMdAdapter.
+    """
+
+    BASE_URL = "https://clawhub.ai/api/v1"
+
+    @property
+    def hub_name(self) -> str:
+        return "ClawHub"
+
+    async def search(self, query: str) -> list[HubResult]:
+        import httpx
+        results: list[HubResult] = []
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.get(
+                    f"{self.BASE_URL}/search",
+                    params={"q": query, "limit": 20, "nonSuspiciousOnly": "true"},
+                )
+                if resp.status_code != 200:
+                    logger.warning("ClawHub search returned %d", resp.status_code)
+                    return results
+                for item in resp.json().get("results", []):
+                    slug = item.get("slug", "")
+                    results.append(HubResult(
+                        name=item.get("displayName") or slug,
+                        description=item.get("summary", ""),
+                        author="",
+                        url=f"https://clawhub.ai/skills/{slug}",
+                        hub="clawhub",
+                        format=SkillFormat.skill_md,
+                        tags=[],
+                        download_url=f"{self.BASE_URL}/download?slug={slug}",
+                    ))
+        except Exception as e:
+            logger.warning("ClawHub search failed: %s", e)
+        return results
+
+    async def fetch(self, identifier: str) -> Path:
+        """Fetch a ClawHub skill bundle by slug or URL.
+
+        identifier can be:
+        - A slug ("my-skill")
+        - A clawhub.ai URL (https://clawhub.ai/skills/my-skill)
+        - A direct download URL
+        """
+        import httpx
+
+        slug = identifier.strip()
+        if slug.startswith("http"):
+            # Extract slug from URL
+            if "/skills/" in slug:
+                slug = slug.split("/skills/")[-1].split("/")[0].split("?")[0]
+            elif "slug=" in slug:
+                slug = slug.split("slug=")[-1].split("&")[0]
+
+        if not slug:
+            raise ValueError("Could not determine ClawHub slug from identifier")
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix="clawhub_"))
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                resp = await client.get(
+                    f"{self.BASE_URL}/download",
+                    params={"slug": slug},
+                )
+                if resp.status_code == 410:
+                    raise ValueError(f"ClawHub skill '{slug}' has been removed")
+                if resp.status_code != 200:
+                    raise ValueError(
+                        f"ClawHub download failed with status {resp.status_code} for '{slug}'"
+                    )
+
+            zip_path = tmp_dir / "skill.zip"
+            zip_path.write_bytes(resp.content)
+            _safe_extract_zip(zip_path, tmp_dir)
+            zip_path.unlink()
+
+            # Auto-flatten single-subdir layout
+            subdirs = [d for d in tmp_dir.iterdir() if d.is_dir()]
+            if len(subdirs) == 1 and not any(f.is_file() for f in tmp_dir.iterdir()):
+                extracted = subdirs[0]
+                for item in extracted.iterdir():
+                    shutil.move(str(item), str(tmp_dir / item.name))
+                extracted.rmdir()
+
+            return tmp_dir
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+    def normalize(self, path: Path) -> SkillManifest:
+        # ClawHub skills are SKILL.md format
+        if (path / "skill.json").exists():
+            raw = json.loads((path / "skill.json").read_text(encoding="utf-8"))
+            return SkillManifest(**raw)
+        skill_md = SkillMdAdapter()
+        if skill_md._find_skill_md(path):
+            manifest = skill_md.normalize(path)
+            # Tag origin
+            if "clawhub" not in (manifest.tags or []):
+                manifest.tags = [*(manifest.tags or []), "clawhub"]
+            return manifest
+        # Fall back to GitHub-style README synthesis
+        return GitHubAdapter()._generate_from_readme(path)
+
+
 # ── Local Upload Adapter ────────────────────────────────────────────────────
 
 class LocalUploadAdapter(HubAdapter):
@@ -693,6 +806,7 @@ class GenericSkillRegistryAdapter(HubAdapter):
 _ADAPTERS: dict[str, HubAdapter] = {
     "skill_md": SkillMdAdapter(),
     "github": GitHubAdapter(),
+    "clawhub": ClawHubAdapter(),
     "local": LocalUploadAdapter(),
 }
 
@@ -705,7 +819,7 @@ def register_skill_registry(
     auth_token: str | None = None,
 ) -> None:
     """Add (or replace) a configured skill-registry-protocol adapter."""
-    if registry_id in {"skill_md", "github", "local"}:
+    if registry_id in {"skill_md", "github", "local", "clawhub"}:
         raise ValueError(f"'{registry_id}' is a reserved built-in hub id")
     _ADAPTERS[registry_id] = GenericSkillRegistryAdapter(
         registry_id, base_url,
@@ -715,7 +829,7 @@ def register_skill_registry(
 
 
 def unregister_skill_registry(registry_id: str) -> None:
-    if registry_id in {"skill_md", "github", "local"}:
+    if registry_id in {"skill_md", "github", "local", "clawhub"}:
         raise ValueError(f"Cannot unregister built-in hub: {registry_id}")
     _ADAPTERS.pop(registry_id, None)
 
@@ -760,6 +874,7 @@ def get_adapter(hub: str) -> HubAdapter:
 # Metadata for built-in hubs (not user-configurable; surfaced read-only in admin UI)
 _BUILTIN_HUB_META: dict[str, dict[str, Any]] = {
     "github":   {"name": "GitHub",          "searchable": True,  "builtin": True},
+    "clawhub":  {"name": "ClawHub",         "searchable": True,  "builtin": True},
     "skill_md": {"name": "SKILL.md Format", "searchable": False, "builtin": True},
     "local":    {"name": "Local Upload",    "searchable": False, "builtin": True},
 }
