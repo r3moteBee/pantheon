@@ -35,6 +35,41 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+# ── Safe archive extraction ────────────────────────────────────────────────
+
+def _safe_extract_zip(zip_path: Path, dest: Path) -> None:
+    """Extract a zip file into dest, rejecting path-traversal ("zip-slip")
+    and absolute-path members. Refuses symlinks entirely."""
+    dest_resolved = dest.resolve()
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            name = member.filename
+            # Reject absolute paths and drive letters
+            if name.startswith("/") or name.startswith("\\") or (len(name) > 1 and name[1] == ":"):
+                raise ValueError(f"Zip member has absolute path: {name}")
+            target = (dest / name).resolve()
+            if not str(target).startswith(str(dest_resolved) + "/") and target != dest_resolved:
+                raise ValueError(f"Zip path traversal attempt: {name}")
+            # Reject symlinks (external attribute 0xA1ED0000 on Unix)
+            mode = (member.external_attr >> 16) & 0xFFFF
+            if mode and (mode & 0xF000) == 0xA000:
+                raise ValueError(f"Zip member is a symlink (refused): {name}")
+        zf.extractall(dest)
+
+
+def _safe_extract_tar(tar_path: Path, dest: Path, mode: str = "r:*") -> None:
+    """Extract a tar file into dest, rejecting path traversal and symlinks."""
+    dest_resolved = dest.resolve()
+    with tarfile.open(tar_path, mode) as tf:
+        for member in tf.getmembers():
+            if member.issym() or member.islnk():
+                raise ValueError(f"Tar member is a link (refused): {member.name}")
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest_resolved) + "/") and target != dest_resolved:
+                raise ValueError(f"Tar path traversal attempt: {member.name}")
+        tf.extractall(dest)
+
+
 # ── Enums and Models ────────────────────────────────────────────────────────
 
 class SkillFormat(str, Enum):
@@ -278,7 +313,7 @@ class GitHubAdapter(HubAdapter):
                 resp = await client.get(
                     "https://api.github.com/search/repositories",
                     params={
-                        "q": f"{query} topic:agent-skill OR topic:llm-skill OR topic:mcp-server",
+                        "q": f"{query} topic:agent-skill OR topic:llm-skill",
                         "per_page": 15,
                         "sort": "stars",
                     },
@@ -338,8 +373,7 @@ class GitHubAdapter(HubAdapter):
             zip_path = tmp_dir / "repo.zip"
             zip_path.write_bytes(resp.content)
 
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(tmp_dir)
+            _safe_extract_zip(zip_path, tmp_dir)
             zip_path.unlink()
 
             # The zip extracts to a subdirectory like "repo-main/"
@@ -450,23 +484,11 @@ class LocalUploadAdapter(HubAdapter):
 
         try:
             if upload_path.suffix == ".zip" or upload_path.name.endswith(".zip"):
-                with zipfile.ZipFile(upload_path, "r") as zf:
-                    zf.extractall(tmp_dir)
+                _safe_extract_zip(upload_path, tmp_dir)
             elif upload_path.name.endswith((".tar.gz", ".tgz")):
-                with tarfile.open(upload_path, "r:gz") as tf:
-                    # Security: prevent path traversal in tar
-                    for member in tf.getmembers():
-                        member_path = (tmp_dir / member.name).resolve()
-                        if not str(member_path).startswith(str(tmp_dir.resolve())):
-                            raise ValueError(f"Tar path traversal attempt: {member.name}")
-                    tf.extractall(tmp_dir)
+                _safe_extract_tar(upload_path, tmp_dir, mode="r:gz")
             elif upload_path.name.endswith(".tar"):
-                with tarfile.open(upload_path, "r:") as tf:
-                    for member in tf.getmembers():
-                        member_path = (tmp_dir / member.name).resolve()
-                        if not str(member_path).startswith(str(tmp_dir.resolve())):
-                            raise ValueError(f"Tar path traversal attempt: {member.name}")
-                    tf.extractall(tmp_dir)
+                _safe_extract_tar(upload_path, tmp_dir, mode="r:")
             else:
                 raise ValueError(f"Unsupported archive format: {upload_path.name}")
 
