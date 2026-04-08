@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save } from 'lucide-react'
+import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive } from 'lucide-react'
 import { useStore } from '../store'
 import { filesApi } from '../api/client'
 import CoreEditor from './CoreEditor'
@@ -20,6 +20,8 @@ export default function FileRepository() {
   const [editContent, setEditContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [selected, setSelected] = useState(() => new Set())
+  const [zipping, setZipping] = useState(false)
 
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
@@ -33,6 +35,7 @@ export default function FileRepository() {
       const dirs  = (res.data.directories || []).map(d => ({ ...d, is_dir: true }))
       const files = (res.data.files      || []).map(f => ({ ...f, is_dir: false }))
       setItems([...dirs, ...files])
+      setSelected(new Set())
       setCurrentPath(path)
       setFileContent(null)
       setPreviewFile(null)
@@ -193,6 +196,47 @@ export default function FileRepository() {
     return filesApi.downloadUrl(path, projectId)
   }
 
+  const toggleSelect = (name) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const allSelected = items.length > 0 && selected.size === items.length
+  const someSelected = selected.size > 0 && !allSelected
+
+  const toggleSelectAll = () => {
+    if (allSelected) setSelected(new Set())
+    else setSelected(new Set(items.map((i) => i.name)))
+  }
+
+  const downloadSelectedZip = async () => {
+    if (selected.size === 0) return
+    const paths = Array.from(selected).map((name) =>
+      currentPath ? `${currentPath}/${name}` : name
+    )
+    setZipping(true)
+    try {
+      const res = await filesApi.downloadZip(paths, projectId)
+      const blob = new Blob([res.data], { type: 'application/zip' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${projectId}-files.zip`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      addNotification({ type: 'success', message: `Downloaded ${selected.size} item${selected.size > 1 ? 's' : ''} as zip` })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message || 'Zip download failed' })
+    }
+    setZipping(false)
+  }
+
   const formatSize = (bytes) => {
     if (!bytes) return ''
     if (bytes < 1024) return `${bytes} B`
@@ -263,6 +307,17 @@ export default function FileRepository() {
                 <FolderPlus className="w-4 h-4" />
                 New Folder
               </button>
+              {selected.size > 0 && (
+                <button
+                  onClick={downloadSelectedZip}
+                  disabled={zipping}
+                  className="flex items-center gap-2 px-3 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded-lg disabled:opacity-50"
+                  title="Download selected as zip"
+                >
+                  <Archive className="w-4 h-4" />
+                  {zipping ? 'Zipping…' : `Download zip (${selected.size})`}
+                </button>
+              )}
               <button
                 onClick={() => loadFiles(currentPath)}
                 disabled={loading}
@@ -355,8 +410,30 @@ export default function FileRepository() {
               </div>
             ) : (
               <div className="divide-y divide-gray-800">
+                {/* Select-all header */}
+                <div className="flex items-center gap-3 px-6 py-2 bg-gray-900/50 text-xs text-gray-500 sticky top-0 z-[1]">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => { if (el) el.indeterminate = someSelected }}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-gray-600 bg-gray-800 accent-brand-500 cursor-pointer"
+                    title="Select all"
+                  />
+                  <span>
+                    {selected.size > 0 ? `${selected.size} selected` : `${items.length} item${items.length === 1 ? '' : 's'}`}
+                  </span>
+                </div>
                 {items.map((item) => (
                   <div key={item.name} className="flex items-center gap-3 px-6 py-3 hover:bg-gray-800 transition-colors group">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(item.name)}
+                      onChange={() => toggleSelect(item.name)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded border-gray-600 bg-gray-800 accent-brand-500 cursor-pointer flex-shrink-0"
+                      title="Select"
+                    />
                     <button
                       onClick={() => item.is_dir ? openFolder(item.name) : (isTextFile(item.name) ? previewTextFile(item.name) : null)}
                       className="flex-1 flex items-center gap-3 min-w-0"
