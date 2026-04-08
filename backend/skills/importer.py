@@ -1,10 +1,14 @@
 """Skill importer — fetch, normalize, scan, and install skills from external sources.
 
 Supports multiple hub formats via pluggable adapters:
-  - Smithery (MCP tool definitions → Pantheon skills)
   - SKILL.md (SkillsMP / SkillsLLM bundles)
   - GitHub repos (auto-detect format)
   - Local upload (.tar.gz / .zip)
+
+NOTE: MCP server registries (e.g. Smithery) are intentionally NOT skill
+hubs. MCP servers are long-running processes with their own transport
+and lifecycle; they belong in the MCP connector system, not in Skills.
+See docs/mcp-registry-protocol.md.
 
 Every imported skill goes through the security scanner before installation.
 """
@@ -31,12 +35,46 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+# ── Safe archive extraction ────────────────────────────────────────────────
+
+def _safe_extract_zip(zip_path: Path, dest: Path) -> None:
+    """Extract a zip file into dest, rejecting path-traversal ("zip-slip")
+    and absolute-path members. Refuses symlinks entirely."""
+    dest_resolved = dest.resolve()
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for member in zf.infolist():
+            name = member.filename
+            # Reject absolute paths and drive letters
+            if name.startswith("/") or name.startswith("\\") or (len(name) > 1 and name[1] == ":"):
+                raise ValueError(f"Zip member has absolute path: {name}")
+            target = (dest / name).resolve()
+            if not str(target).startswith(str(dest_resolved) + "/") and target != dest_resolved:
+                raise ValueError(f"Zip path traversal attempt: {name}")
+            # Reject symlinks (external attribute 0xA1ED0000 on Unix)
+            mode = (member.external_attr >> 16) & 0xFFFF
+            if mode and (mode & 0xF000) == 0xA000:
+                raise ValueError(f"Zip member is a symlink (refused): {name}")
+        zf.extractall(dest)
+
+
+def _safe_extract_tar(tar_path: Path, dest: Path, mode: str = "r:*") -> None:
+    """Extract a tar file into dest, rejecting path traversal and symlinks."""
+    dest_resolved = dest.resolve()
+    with tarfile.open(tar_path, mode) as tf:
+        for member in tf.getmembers():
+            if member.issym() or member.islnk():
+                raise ValueError(f"Tar member is a link (refused): {member.name}")
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest_resolved) + "/") and target != dest_resolved:
+                raise ValueError(f"Tar path traversal attempt: {member.name}")
+        tf.extractall(dest)
+
+
 # ── Enums and Models ────────────────────────────────────────────────────────
 
 class SkillFormat(str, Enum):
     pantheon = "pantheon"       # Native skill.json + instructions.md
     skill_md = "skill_md"      # SKILL.md frontmatter format
-    mcp = "mcp"                # MCP tool definition
     github = "github"          # GitHub repo (auto-detect)
     unknown = "unknown"
 
@@ -103,9 +141,6 @@ class HubAdapter(ABC):
                 content = f.read_text(encoding="utf-8", errors="replace")
                 if content.startswith("---"):
                     return SkillFormat.skill_md
-        # Check for MCP tool definition
-        if (path / "mcp.json").exists() or (path / "tool.json").exists():
-            return SkillFormat.mcp
         return SkillFormat.unknown
 
     @abstractmethod
@@ -259,189 +294,6 @@ class SkillMdAdapter(HubAdapter):
         return result
 
 
-# ── Smithery MCP Adapter ───────────────────────────────────────────────────
-
-class SmitheryAdapter(HubAdapter):
-    """Adapter for Smithery MCP server registry.
-
-    Smithery publishes MCP server packages with tool definitions.
-    We convert MCP tool schemas into Pantheon skills.
-    """
-
-    SMITHERY_API = "https://registry.smithery.ai/api"
-
-    @property
-    def hub_name(self) -> str:
-        return "Smithery"
-
-    async def search(self, query: str) -> list[HubResult]:
-        """Search Smithery for MCP servers matching a query."""
-        import httpx
-
-        results: list[HubResult] = []
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{self.SMITHERY_API}/servers",
-                    params={"q": query, "limit": 20},
-                )
-                if resp.status_code != 200:
-                    logger.warning("Smithery search returned %d", resp.status_code)
-                    return results
-
-                data = resp.json()
-                servers = data if isinstance(data, list) else data.get("servers", [])
-
-                for server in servers:
-                    results.append(HubResult(
-                        name=server.get("name", server.get("qualifiedName", "")),
-                        description=server.get("description", ""),
-                        author=server.get("author", {}).get("name", "") if isinstance(server.get("author"), dict) else str(server.get("author", "")),
-                        version=server.get("version", ""),
-                        url=server.get("homepage", server.get("url", "")),
-                        hub="smithery",
-                        format=SkillFormat.mcp,
-                        tags=server.get("tags", []),
-                        download_url=server.get("qualifiedName", server.get("name", "")),
-                    ))
-        except Exception as e:
-            logger.warning("Smithery search failed: %s", e)
-
-        return results
-
-    async def fetch(self, identifier: str) -> Path:
-        """Fetch an MCP server definition from Smithery and create a skill directory."""
-        import httpx
-
-        tmp_dir = Path(tempfile.mkdtemp(prefix="smithery_"))
-
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    f"{self.SMITHERY_API}/servers/{identifier}",
-                )
-                if resp.status_code != 200:
-                    raise ValueError(f"Smithery returned {resp.status_code} for {identifier}")
-
-                server_data = resp.json()
-
-            # Write the raw MCP definition for reference
-            (tmp_dir / "mcp.json").write_text(
-                json.dumps(server_data, indent=2),
-                encoding="utf-8",
-            )
-
-            return tmp_dir
-
-        except Exception:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise
-
-    def normalize(self, path: Path) -> SkillManifest:
-        """Convert MCP server definition to Pantheon skill manifest."""
-        mcp_file = path / "mcp.json"
-        if not mcp_file.exists():
-            raise ValueError("No mcp.json found in fetched directory")
-
-        data = json.loads(mcp_file.read_text(encoding="utf-8"))
-
-        # Extract tool definitions for instructions
-        tools = data.get("tools", [])
-        tool_descriptions = []
-        parameters = []
-        capabilities = set()
-
-        for tool in tools:
-            name = tool.get("name", "unknown")
-            desc = tool.get("description", "")
-            tool_descriptions.append(f"### Tool: {name}\n{desc}")
-
-            # Extract parameters from input schema
-            schema = tool.get("inputSchema", tool.get("input_schema", {}))
-            props = schema.get("properties", {})
-            required = schema.get("required", [])
-            for param_name, param_def in props.items():
-                parameters.append({
-                    "name": f"{name}.{param_name}",
-                    "type": param_def.get("type", "string"),
-                    "required": param_name in required,
-                    "description": param_def.get("description", ""),
-                })
-
-            # Infer capabilities from tool description
-            desc_lower = (desc or "").lower()
-            if any(w in desc_lower for w in ["http", "url", "fetch", "request", "api", "web"]):
-                capabilities.add("network")
-            if any(w in desc_lower for w in ["write", "create", "save", "update", "delete"]):
-                capabilities.add("file_write")
-
-        # Build instructions from tool descriptions
-        server_name = data.get("name", data.get("qualifiedName", path.name))
-        server_desc = data.get("description", "")
-
-        instructions = f"""# {server_name}
-
-{server_desc}
-
-This skill was imported from Smithery (MCP). It provides the following capabilities:
-
-{"".join(tool_descriptions) if tool_descriptions else "No tool definitions found."}
-
-## Usage
-When the user's request matches this skill's capabilities, use the appropriate tool(s) described above to fulfill the request.
-"""
-
-        # Build manifest
-        manifest_data: dict[str, Any] = {
-            "name": self._sanitize_name(server_name),
-            "description": server_desc,
-            "version": data.get("version", ""),
-            "author": data.get("author", {}).get("name", "") if isinstance(data.get("author"), dict) else str(data.get("author", "")),
-            "license": data.get("license", ""),
-            "triggers": self._generate_triggers(server_desc, tools),
-            "parameters": parameters[:10],  # Limit to avoid bloat
-            "capabilities_required": list(capabilities),
-            "dependencies": {},
-            "tags": data.get("tags", []),
-            "source_hub": "smithery",
-        }
-
-        manifest = SkillManifest(**manifest_data)
-
-        # Write normalized files
-        (path / "skill.json").write_text(
-            json.dumps(manifest_data, indent=2),
-            encoding="utf-8",
-        )
-        (path / "instructions.md").write_text(instructions, encoding="utf-8")
-
-        logger.info("Normalized Smithery MCP '%s' → skill.json + instructions.md", manifest.name)
-        return manifest
-
-    def _sanitize_name(self, name: str) -> str:
-        """Convert a server name to a valid skill name."""
-        import re
-        # Take the last segment if it's a qualified name (e.g., "@author/server-name")
-        if "/" in name:
-            name = name.rsplit("/", 1)[-1]
-        # Replace non-alphanumeric chars with hyphens
-        name = re.sub(r"[^a-zA-Z0-9-]", "-", name).strip("-").lower()
-        return name or "unnamed-mcp-skill"
-
-    def _generate_triggers(self, description: str, tools: list) -> list[str]:
-        """Generate trigger phrases from the server description and tools."""
-        triggers = []
-        # Use tool names as triggers
-        for tool in tools:
-            name = tool.get("name", "")
-            desc = tool.get("description", "")
-            if name:
-                triggers.append(name.replace("_", " ").replace("-", " "))
-            if desc and len(desc) < 80:
-                triggers.append(desc)
-        return triggers[:15]
-
-
 # ── GitHub Adapter ──────────────────────────────────────────────────────────
 
 class GitHubAdapter(HubAdapter):
@@ -461,7 +313,7 @@ class GitHubAdapter(HubAdapter):
                 resp = await client.get(
                     "https://api.github.com/search/repositories",
                     params={
-                        "q": f"{query} topic:agent-skill OR topic:llm-skill OR topic:mcp-server",
+                        "q": f"{query} topic:agent-skill OR topic:llm-skill",
                         "per_page": 15,
                         "sort": "stars",
                     },
@@ -521,8 +373,7 @@ class GitHubAdapter(HubAdapter):
             zip_path = tmp_dir / "repo.zip"
             zip_path.write_bytes(resp.content)
 
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(tmp_dir)
+            _safe_extract_zip(zip_path, tmp_dir)
             zip_path.unlink()
 
             # The zip extracts to a subdirectory like "repo-main/"
@@ -552,12 +403,14 @@ class GitHubAdapter(HubAdapter):
         if skill_md_adapter._find_skill_md(path):
             return skill_md_adapter.normalize(path)
 
-        # Check for MCP tool definition
+        # MCP tool definitions are not supported as skills — see
+        # docs/mcp-registry-protocol.md for the MCP connector install flow.
         if (path / "mcp.json").exists() or (path / "tool.json").exists():
-            smithery = SmitheryAdapter()
-            if (path / "tool.json").exists():
-                shutil.copy(str(path / "tool.json"), str(path / "mcp.json"))
-            return smithery.normalize(path)
+            raise ValueError(
+                "This repository contains an MCP server definition. "
+                "MCP servers are not imported as skills — install them via "
+                "the MCP connector registry instead."
+            )
 
         # Fall back: generate minimal skill from README
         return self._generate_from_readme(path)
@@ -631,23 +484,11 @@ class LocalUploadAdapter(HubAdapter):
 
         try:
             if upload_path.suffix == ".zip" or upload_path.name.endswith(".zip"):
-                with zipfile.ZipFile(upload_path, "r") as zf:
-                    zf.extractall(tmp_dir)
+                _safe_extract_zip(upload_path, tmp_dir)
             elif upload_path.name.endswith((".tar.gz", ".tgz")):
-                with tarfile.open(upload_path, "r:gz") as tf:
-                    # Security: prevent path traversal in tar
-                    for member in tf.getmembers():
-                        member_path = (tmp_dir / member.name).resolve()
-                        if not str(member_path).startswith(str(tmp_dir.resolve())):
-                            raise ValueError(f"Tar path traversal attempt: {member.name}")
-                    tf.extractall(tmp_dir)
+                _safe_extract_tar(upload_path, tmp_dir, mode="r:gz")
             elif upload_path.name.endswith(".tar"):
-                with tarfile.open(upload_path, "r:") as tf:
-                    for member in tf.getmembers():
-                        member_path = (tmp_dir / member.name).resolve()
-                        if not str(member_path).startswith(str(tmp_dir.resolve())):
-                            raise ValueError(f"Tar path traversal attempt: {member.name}")
-                    tf.extractall(tmp_dir)
+                _safe_extract_tar(upload_path, tmp_dir, mode="r:")
             else:
                 raise ValueError(f"Unsupported archive format: {upload_path.name}")
 
@@ -675,8 +516,6 @@ class LocalUploadAdapter(HubAdapter):
             return SkillManifest(**raw)
         elif fmt == SkillFormat.skill_md:
             return SkillMdAdapter().normalize(path)
-        elif fmt == SkillFormat.mcp:
-            return SmitheryAdapter().normalize(path)
         else:
             # Try to generate from README or directory name
             return GitHubAdapter()._generate_from_readme(path)
@@ -686,7 +525,6 @@ class LocalUploadAdapter(HubAdapter):
 
 # Adapter registry
 _ADAPTERS: dict[str, HubAdapter] = {
-    "smithery": SmitheryAdapter(),
     "skill_md": SkillMdAdapter(),
     "github": GitHubAdapter(),
     "local": LocalUploadAdapter(),
@@ -704,7 +542,6 @@ def get_adapter(hub: str) -> HubAdapter:
 def list_hubs() -> list[dict[str, str]]:
     """List available import hubs."""
     return [
-        {"id": "smithery", "name": "Smithery (MCP)", "searchable": True},
         {"id": "github", "name": "GitHub", "searchable": True},
         {"id": "skill_md", "name": "SKILL.md Format", "searchable": False},
         {"id": "local", "name": "Local Upload", "searchable": False},

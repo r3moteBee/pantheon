@@ -864,8 +864,7 @@ All 5 core checklist items plus 5 security hardening items are implemented. The 
 **Key deliverables beyond plan:**
 1. `backend/security_log.py` — Centralized structured security audit log (`data/logs/security.log`) with typed event methods for auth, scanning, quarantine, execution, vault, and settings events
 2. Security override password flow — Vault-stored password for force-enabling skills that failed scan, with full audit logging
-3. Test skills (`shady-exfiltrator`, `web-monitor`) for scanner demonstration and validation
-4. Risk scores displayed as percentages in the frontend
+3. Risk scores displayed as percentages in the frontend
 
 **Minor gaps / items to carry forward:**
 1. Network domain enforcement at runtime (permissions.network_domains) — declared in manifest model but subprocess proxy not yet implemented
@@ -877,14 +876,41 @@ All 5 core checklist items plus 5 security hardening items are implemented. The 
 ### Phase 3: Hub Import (1-2 weeks)
 **Goal: Import skills from external hubs**
 
-- [x] Hub adapter interface + Smithery adapter ✅ `backend/skills/importer.py` — HubAdapter ABC, SmitheryAdapter with search/fetch/normalize, Smithery registry API integration
+- [x] Hub adapter interface ✅ `backend/skills/importer.py` — HubAdapter ABC with fetch/normalize/detect_format contract and pluggable `_ADAPTERS` registry
 - [x] SKILL.md format adapter (SkillsMP/SkillsLLM compatibility) ✅ SkillMdAdapter with YAML frontmatter parsing, fallback simple parser, auto-generates skill.json + instructions.md
-- [x] GitHub repo adapter ✅ GitHubAdapter with repo search (topic filtering), zip download, auto-format detection (Pantheon/SKILL.md/MCP/README fallback)
-- [x] Local upload (.tar.gz/.zip) ✅ LocalUploadAdapter with zip/tar.gz/tar extraction, path traversal protection, auto-flatten single subdirectory, format detection delegation
+- [x] GitHub repo adapter ✅ GitHubAdapter with repo search (agent-skill/llm-skill topic filter), zip download with safe extraction, auto-format detection (Pantheon/SKILL.md/README fallback)
+- [x] Local upload (.tar.gz/.zip) ✅ LocalUploadAdapter with zip/tar.gz/tar extraction, zip-slip and tar-slip protection, symlink rejection, auto-flatten single subdirectory, format detection delegation
 - [x] `SkillImporter.jsx` — Import modal with hub search ✅ Tabbed modal (Search Hubs / GitHub / Upload), drag-and-drop file upload, search result cards, AI review toggle, import result banners
 - [x] Auto-scan on import ✅ Importer orchestrator runs full scan pipeline (Layer 1-3) on every import, auto-quarantines failed scans, reloads registry after install
 - [x] Import API endpoints ✅ GET /skills/hubs, POST /skills/search-hub, POST /skills/import, POST /skills/import/upload (multipart), plus skillsApi client methods
 - [x] Frontend integration ✅ Import button in Skills Library header, modal overlay, skill list auto-refresh on import
+
+**Scope change:** Smithery / MCP adapter was removed from Phase 3. Smithery is an MCP server registry, not a skill hub — conflating the two bypassed proper MCP lifecycle management and gave false assurance from the skill scanner. MCP server discovery now lives in a separate MCP connector subsystem with its own generic registry protocol (see `docs/mcp-registry-protocol.md`).
+
+### Phase 3 Completion Assessment (2026-04-07)
+
+**Status: ✅ PHASE 3 COMPLETE**
+
+All revised Phase 3 items (minus Smithery, which moved to the MCP roadmap) are implemented, audited, and hardened.
+
+| Category | Planned | Done | Notes |
+|----------|---------|------|-------|
+| Hub adapter interface | 1 | 1 | Pluggable ABC + `_ADAPTERS` registry |
+| Format adapters | 3 | 3 | SKILL.md, GitHub, Local Upload (Smithery removed — see MCP roadmap) |
+| Frontend importer | 1 | 1 | `SkillImporter.jsx` wired into Skills library |
+| Auto-scan on import | 1 | 1 | Unified orchestrator — runs for every adapter path |
+| API routes | 1 | 4 | `/skills/hubs`, `/skills/search-hub`, `/skills/import`, `/skills/import/upload` |
+
+**Security hardening during audit:**
+1. Fixed zip-slip in `GitHubAdapter.fetch()` — previously used unchecked `ZipFile.extractall()`
+2. Fixed zip-slip in `LocalUploadAdapter.fetch()` — tar path was checked but zip was not
+3. Added symlink rejection and absolute-path rejection in both archive extractors via shared `_safe_extract_zip` / `_safe_extract_tar` helpers
+4. Dropped stale `topic:mcp-server` filter from the GitHub search query
+
+**Minor gaps / items to carry forward:**
+1. GitHub adapter only supports public repos (no PAT auth). Acceptable for v1; add if enterprise users need private-repo imports.
+2. GitHub adapter only tries `main` then `master` branches; doesn't honor repo's default branch. Low priority.
+3. Import endpoint doesn't surface AI-review progress in real time — user waits on a spinner. Could stream via SSE in Phase 5.
 
 ### Phase 4: AI-Assisted Editor (1-2 weeks)
 **Goal: Create and iterate on skills in the browser**

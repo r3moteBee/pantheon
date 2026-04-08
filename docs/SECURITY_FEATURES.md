@@ -248,7 +248,7 @@ Each line is a JSON object with at minimum:
   "ts": "2026-04-06T12:34:56.789Z",
   "event": "skill.scan_failed",
   "level": "WARNING",
-  "skill": "shady-exfiltrator",
+  "skill": "example-skill",
   "risk": 0.85,
   "findings": 12
 }
