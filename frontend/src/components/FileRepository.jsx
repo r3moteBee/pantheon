@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive } from 'lucide-react'
+import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive, Eye } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
 import { filesApi } from '../api/client'
 import CoreEditor from './CoreEditor'
@@ -20,6 +22,7 @@ export default function FileRepository() {
   const [editContent, setEditContent] = useState('')
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [livePreview, setLivePreview] = useState(false)  // preview unsaved edit buffer
   const [selected, setSelected] = useState(() => new Set())
   const [zipping, setZipping] = useState(false)
 
@@ -105,12 +108,14 @@ export default function FileRepository() {
     setEditContent(fileContent)
     setEditing(true)
     setDirty(false)
+    setLivePreview(false)
   }
 
   const cancelEditing = () => {
     if (dirty && !confirm('Discard unsaved changes?')) return
     setEditing(false)
     setDirty(false)
+    setLivePreview(false)
   }
 
   const saveFile = async () => {
@@ -497,12 +502,19 @@ export default function FileRepository() {
                   <ArrowLeft className="w-4 h-4" />
                 </button>
                 <p className="text-sm font-medium text-gray-300 truncate">{previewFile}</p>
-                <p className="text-xs text-gray-600 flex-shrink-0">{editing ? 'Editing' : 'Preview'}</p>
+                <p className="text-xs text-gray-600 flex-shrink-0">{editing ? (livePreview ? 'Previewing edits' : 'Editing') : 'Preview'}</p>
                 {dirty && <span className="text-xs text-yellow-500 flex-shrink-0">unsaved</span>}
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 {editing ? (
                   <>
+                    <button
+                      onClick={() => setLivePreview((v) => !v)}
+                      className={`p-1 rounded hover:bg-gray-800 ${livePreview ? 'text-brand-400' : 'text-gray-500 hover:text-brand-400'}`}
+                      title={livePreview ? 'Back to editor' : 'Preview unsaved changes'}
+                    >
+                      {livePreview ? <Pencil className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                     <button
                       onClick={saveFile}
                       disabled={saving}
@@ -544,23 +556,40 @@ export default function FileRepository() {
             </div>
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               {editing ? (
-                <div
-                  className="w-full h-full"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') cancelEditing()
-                  }}
-                >
-                  <CoreEditor
-                    value={editContent}
-                    filename={previewFile}
-                    height="100%"
-                    onChange={(val) => {
-                      setEditContent(val)
-                      setDirty(true)
+                livePreview ? (
+                  previewFile.toLowerCase().endsWith('.md') ? (
+                    <div className="p-6 max-w-4xl mx-auto">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        className="prose prose-invert prose-sm max-w-none"
+                      >
+                        {editContent}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <pre className="p-6 text-sm text-gray-300 whitespace-pre-wrap break-words max-w-4xl mx-auto">
+                      {editContent}
+                    </pre>
+                  )
+                ) : (
+                  <div
+                    className="w-full h-full"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') cancelEditing()
                     }}
-                    onSaveHotkey={saveFile}
-                  />
-                </div>
+                  >
+                    <CoreEditor
+                      value={editContent}
+                      filename={previewFile}
+                      height="100%"
+                      onChange={(val) => {
+                        setEditContent(val)
+                        setDirty(true)
+                      }}
+                      onSaveHotkey={saveFile}
+                    />
+                  </div>
+                )
               ) : (
                 <pre className="p-6 text-sm text-gray-300 whitespace-pre-wrap break-words max-w-4xl mx-auto">
                   {fileContent}
