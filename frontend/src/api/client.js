@@ -216,6 +216,30 @@ export const skillsApi = {
   setDiscovery: (projectId, mode) =>
     api.put(`/api/skills/discovery/${projectId}`, null, { params: { mode } }),
 
+  // AI-Assisted Editor (Phase 4)
+  createBlank: (name, description = '') =>
+    api.post('/api/skills/editor/blank', { name, description }),
+  listFiles: (skillName) =>
+    api.get(`/api/skills/editor/${skillName}/files`),
+  readFile: (skillName, path) =>
+    api.get(`/api/skills/editor/${skillName}/file`, { params: { path } }),
+  writeFile: (skillName, path, content) =>
+    api.put(`/api/skills/editor/${skillName}/file`, { content }, { params: { path } }),
+  deleteFile: (skillName, path) =>
+    api.delete(`/api/skills/editor/${skillName}/file`, { params: { path } }),
+  scaffold: (brief, { nameHint = null, materialize = false } = {}) =>
+    api.post('/api/skills/editor/scaffold', { brief, name_hint: nameHint, materialize }),
+  improve: (instructions, { goal = null, skillName = null } = {}) =>
+    api.post('/api/skills/editor/improve', { instructions, goal, skill_name: skillName }),
+  optimizeTriggers: (description, instructions, currentTriggers = []) =>
+    api.post('/api/skills/editor/optimize-triggers', {
+      description, instructions, current_triggers: currentTriggers,
+    }),
+  lint: (manifestJson, instructions) =>
+    api.post('/api/skills/editor/lint', { manifest_json: manifestJson, instructions }),
+  testSkill: (skillName, message) =>
+    api.post(`/api/skills/editor/${skillName}/test`, { message }),
+
   // Skill registry hubs (admin)
   listRegistries: () => api.get('/api/skills/registries'),
   createRegistry: (payload) => api.post('/api/skills/registries', payload),
