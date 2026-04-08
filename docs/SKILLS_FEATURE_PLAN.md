@@ -864,8 +864,7 @@ All 5 core checklist items plus 5 security hardening items are implemented. The 
 **Key deliverables beyond plan:**
 1. `backend/security_log.py` — Centralized structured security audit log (`data/logs/security.log`) with typed event methods for auth, scanning, quarantine, execution, vault, and settings events
 2. Security override password flow — Vault-stored password for force-enabling skills that failed scan, with full audit logging
-3. Test skills (`shady-exfiltrator`, `web-monitor`) for scanner demonstration and validation
-4. Risk scores displayed as percentages in the frontend
+3. Risk scores displayed as percentages in the frontend
 
 **Minor gaps / items to carry forward:**
 1. Network domain enforcement at runtime (permissions.network_domains) — declared in manifest model but subprocess proxy not yet implemented
