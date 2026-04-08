@@ -252,8 +252,8 @@ export default function FileRepository() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* File browser */}
-        <div className="flex-1 flex flex-col border-r border-gray-800">
+        {/* File browser — hidden while previewing a file so the preview/editor gets the full pane */}
+        <div className={`flex-1 flex flex-col border-r border-gray-800 ${previewFile ? 'hidden' : ''}`}>
           {/* Breadcrumb and actions */}
           <div className="px-6 py-3 bg-gray-900 border-b border-gray-800 space-y-3">
             <div className="flex items-center gap-2">
@@ -478,12 +478,26 @@ export default function FileRepository() {
           </div>
         </div>
 
-        {/* Preview / Edit pane */}
+        {/* Preview / Edit pane — full width, toggles between preview (default) and CoreEditor */}
         {previewFile && fileContent !== null && (
-          <div className="w-96 flex flex-col border-l border-gray-800 bg-gray-900">
+          <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
             <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
+                <button
+                  onClick={() => {
+                    if (dirty && !confirm('Discard unsaved changes?')) return
+                    setPreviewFile(null)
+                    setFileContent(null)
+                    setEditing(false)
+                    setDirty(false)
+                  }}
+                  className="p-1 text-gray-500 hover:text-gray-300 rounded hover:bg-gray-800 flex-shrink-0"
+                  title="Back to files"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
                 <p className="text-sm font-medium text-gray-300 truncate">{previewFile}</p>
+                <p className="text-xs text-gray-600 flex-shrink-0">{editing ? 'Editing' : 'Preview'}</p>
                 {dirty && <span className="text-xs text-yellow-500 flex-shrink-0">unsaved</span>}
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
@@ -524,17 +538,6 @@ export default function FileRepository() {
                     >
                       <Download className="w-4 h-4" />
                     </a>
-                    <button
-                      onClick={() => {
-                        setPreviewFile(null)
-                        setFileContent(null)
-                        setEditing(false)
-                        setDirty(false)
-                      }}
-                      className="p-1 text-gray-500 hover:text-gray-300"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
                   </>
                 )}
               </div>
@@ -559,7 +562,7 @@ export default function FileRepository() {
                   />
                 </div>
               ) : (
-                <pre className="p-4 text-xs text-gray-300 whitespace-pre-wrap break-words">
+                <pre className="p-6 text-sm text-gray-300 whitespace-pre-wrap break-words max-w-4xl mx-auto">
                   {fileContent}
                 </pre>
               )}
