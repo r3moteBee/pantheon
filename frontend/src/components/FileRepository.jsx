@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save } from 'lucide-react'
 import { useStore } from '../store'
 import { filesApi } from '../api/client'
+import CoreEditor from './CoreEditor'
 
 export default function FileRepository() {
   const [currentPath, setCurrentPath] = useState('')
@@ -463,38 +464,23 @@ export default function FileRepository() {
             </div>
             <div className="flex-1 overflow-y-auto scrollbar-thin">
               {editing ? (
-                <textarea
-                  value={editContent}
-                  onChange={(e) => {
-                    setEditContent(e.target.value)
-                    setDirty(true)
-                  }}
+                <div
+                  className="w-full h-full"
                   onKeyDown={(e) => {
-                    // Ctrl/Cmd+S to save
-                    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                      e.preventDefault()
-                      saveFile()
-                    }
-                    // Escape to cancel
                     if (e.key === 'Escape') cancelEditing()
-                    // Tab inserts spaces instead of moving focus
-                    if (e.key === 'Tab') {
-                      e.preventDefault()
-                      const start = e.target.selectionStart
-                      const end = e.target.selectionEnd
-                      const val = e.target.value
-                      setEditContent(val.substring(0, start) + '  ' + val.substring(end))
-                      setDirty(true)
-                      // Restore cursor after React re-renders
-                      requestAnimationFrame(() => {
-                        e.target.selectionStart = e.target.selectionEnd = start + 2
-                      })
-                    }
                   }}
-                  className="w-full h-full p-4 bg-gray-950 text-xs text-gray-300 font-mono resize-none focus:outline-none border-none"
-                  spellCheck={false}
-                  autoFocus
-                />
+                >
+                  <CoreEditor
+                    value={editContent}
+                    filename={previewFile}
+                    height="100%"
+                    onChange={(val) => {
+                      setEditContent(val)
+                      setDirty(true)
+                    }}
+                    onSaveHotkey={saveFile}
+                  />
+                </div>
               ) : (
                 <pre className="p-4 text-xs text-gray-300 whitespace-pre-wrap break-words">
                   {fileContent}
