@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Zap, RefreshCw, ChevronDown, ChevronRight, Brain, Clock, Shield, BookOpen, Trash2, AlertTriangle, ShieldCheck, ShieldAlert, ShieldX, ScanSearch, Download } from 'lucide-react'
+import { Zap, RefreshCw, ChevronDown, ChevronRight, Brain, Clock, Shield, BookOpen, Trash2, AlertTriangle, ShieldCheck, ShieldAlert, ShieldX, ScanSearch, Download, Pencil, FilePlus2 } from 'lucide-react'
 import { useStore } from '../store'
 import { skillsApi } from '../api/client'
 import SkillImporter from './SkillImporter'
+import SkillEditor, { NewSkillModal } from './SkillEditor'
 
 // ── Scan badge component ────────────────────────────────────────────────────
 
@@ -92,7 +93,7 @@ function ScanResults({ scanResult }) {
 
 // ── Skill card component ────────────────────────────────────────────────────
 
-function SkillCard({ skill, projectId, onToggle, onDelete, onScan }) {
+function SkillCard({ skill, projectId, onToggle, onDelete, onScan, onEdit }) {
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -204,6 +205,13 @@ function SkillCard({ skill, projectId, onToggle, onDelete, onScan }) {
               />
             </button>
           </div>
+          <button
+            onClick={() => onEdit && onEdit(skill.name)}
+            title="Edit skill"
+            className="text-gray-500 hover:text-brand-400 transition-colors"
+          >
+            <Pencil className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setConfirmDelete(true)}
             title="Delete skill"
@@ -386,6 +394,8 @@ export default function Skills() {
   const [reloading, setReloading] = useState(false)
   const [overrideTarget, setOverrideTarget] = useState(null) // skill name pending override
   const [showImporter, setShowImporter] = useState(false)
+  const [showNewSkill, setShowNewSkill] = useState(false)
+  const [editingSkill, setEditingSkill] = useState(null)
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
 
@@ -501,8 +511,15 @@ export default function Skills() {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowImporter(true)}
+              onClick={() => setShowNewSkill(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-600 hover:bg-brand-500 text-xs text-white font-medium transition-colors"
+            >
+              <FilePlus2 className="w-3 h-3" />
+              New
+            </button>
+            <button
+              onClick={() => setShowImporter(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 font-medium transition-colors"
             >
               <Download className="w-3 h-3" />
               Import
@@ -543,6 +560,7 @@ export default function Skills() {
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onScan={handleScan}
+                onEdit={(name) => setEditingSkill(name)}
               />
             ))}
           </div>
@@ -555,6 +573,27 @@ export default function Skills() {
           skillName={overrideTarget}
           onConfirm={handleForceEnable}
           onCancel={() => setOverrideTarget(null)}
+        />
+      )}
+
+      {/* New skill modal */}
+      {showNewSkill && (
+        <NewSkillModal
+          onClose={() => setShowNewSkill(false)}
+          onCreated={async (name) => {
+            setShowNewSkill(false)
+            await loadSkills()
+            setEditingSkill(name)
+          }}
+        />
+      )}
+
+      {/* Editor modal */}
+      {editingSkill && (
+        <SkillEditor
+          skillName={editingSkill}
+          onClose={() => setEditingSkill(null)}
+          onSaved={loadSkills}
         />
       )}
 
