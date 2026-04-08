@@ -31,7 +31,7 @@ from skills.importer import register_skill_registry, unregister_skill_registry
 logger = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
-_RESERVED = {"skill_md", "github", "local"}
+_RESERVED = {"skill_md", "github", "local", "clawhub"}
 
 
 def _config_path() -> Path:
