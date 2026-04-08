@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Save, RefreshCw, Globe, AlertCircle, CheckCircle, RotateCcw, Info, ChevronDown, BookOpen, Search } from 'lucide-react'
+import { Save, RefreshCw, Globe, AlertCircle, CheckCircle, RotateCcw, Info, ChevronDown, BookOpen, Search, Pencil, Eye } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -18,6 +18,7 @@ function extractAgentName(content) {
 
 export default function PersonalityEditor() {
   const [activeTab, setActiveTab] = useState('soul')
+  const [viewMode, setViewMode] = useState('preview')  // 'preview' | 'edit'
 
   // Project selection — null means global
   const [selectedProjectId, setSelectedProjectId] = useState(null)
@@ -348,7 +349,7 @@ export default function PersonalityEditor() {
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { setActiveTab(tab.id); setViewMode('preview') }}
             className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${
               activeTab === tab.id
                 ? 'border-brand-500 text-brand-400'
@@ -361,12 +362,34 @@ export default function PersonalityEditor() {
         ))}
       </div>
 
-      {/* Editor + Preview */}
-      <div className="flex-1 flex overflow-hidden min-h-0">
+      {/* Single full-width pane — toggles between preview and editor */}
+      <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-gray-900">
 
-        {/* Editor pane */}
-        <div className="flex-1 flex flex-col border-r border-gray-800 min-w-0">
-          <div className="flex-1 overflow-auto bg-gray-900">
+        {/* Mode header */}
+        <div className="px-4 py-2 border-b border-gray-800 flex items-center justify-between flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-gray-300">
+              {viewMode === 'edit' ? 'Editing' : 'Preview'}
+            </p>
+            <p className="text-xs text-gray-600">{activeTabDef?.file}</p>
+          </div>
+          <button
+            onClick={() => setViewMode(viewMode === 'edit' ? 'preview' : 'edit')}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-md disabled:opacity-50"
+            title={viewMode === 'edit' ? 'Back to preview' : 'Edit content'}
+          >
+            {viewMode === 'edit' ? (
+              <><Eye className="w-3.5 h-3.5" /> Preview</>
+            ) : (
+              <><Pencil className="w-3.5 h-3.5" /> Edit</>
+            )}
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-hidden min-h-0">
+          {viewMode === 'edit' ? (
             <CoreEditor
               value={currentContent}
               onChange={(val) => {
@@ -378,89 +401,81 @@ export default function PersonalityEditor() {
               editable={!loading}
               height="100%"
             />
-          </div>
-
-          {/* Action bar */}
-          <div className="px-4 py-3 bg-gray-900 border-t border-gray-800 flex items-center gap-2">
-            <button
-              onClick={loadPersonality}
-              disabled={loading || saving}
-              className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg disabled:opacity-50"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Reload
-            </button>
-
-            {/* Save as Persona button — only for soul tab with content */}
-            {activeTab === 'soul' && soulContent.trim() && (
-              <button
-                onClick={() => {
-                  setSavePersonaName(agentName || '')
-                  setSavePersonaTagline('')
-                  setShowSaveAsPersona(true)
-                }}
-                className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
-              >
-                <BookOpen className="w-4 h-4" />
-                Save as Persona
-              </button>
-            )}
-
-            {savedAt && (
-              <span className="text-xs text-gray-600 ml-1">
-                Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
-
-            <button
-              onClick={save}
-              disabled={loading || saving || !currentContent.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 ml-auto"
-            >
-              <Save className="w-4 h-4" />
-              {saving ? 'Saving…' : `Save ${projectId ? 'Project' : 'Global'}`}
-            </button>
-          </div>
+          ) : (
+            <div className="h-full overflow-y-auto scrollbar-thin p-6">
+              {loading ? (
+                <div className="flex items-center justify-center h-full">
+                  <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
+                </div>
+              ) : isEmpty ? (
+                <p className="text-sm text-gray-600 italic">No content — apply a persona or use Reset to populate, then click Edit to author it.</p>
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  className="prose prose-invert prose-sm max-w-3xl mx-auto"
+                  components={{
+                    code: ({ node, inline, className, children, ...props }) => {
+                      if (inline) {
+                        return (
+                          <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+                            {children}
+                          </code>
+                        )
+                      }
+                      return (
+                        <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
+                          <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
+                        </pre>
+                      )
+                    },
+                  }}
+                >
+                  {currentContent}
+                </ReactMarkdown>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Preview pane */}
-        <div className="w-5/12 flex-shrink-0 flex flex-col bg-gray-900">
-          <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-            <p className="text-sm font-medium text-gray-300">Preview</p>
-            <p className="text-xs text-gray-600">{activeTabDef?.file}</p>
-          </div>
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-5">
-            {loading ? (
-              <div className="flex items-center justify-center h-full">
-                <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
-              </div>
-            ) : isEmpty ? (
-              <p className="text-sm text-gray-600 italic">No content — apply a persona or use Reset to populate.</p>
-            ) : (
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                className="prose prose-invert prose-sm max-w-none"
-                components={{
-                  code: ({ node, inline, className, children, ...props }) => {
-                    if (inline) {
-                      return (
-                        <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
-                          {children}
-                        </code>
-                      )
-                    }
-                    return (
-                      <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-                        <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
-                      </pre>
-                    )
-                  },
-                }}
-              >
-                {currentContent}
-              </ReactMarkdown>
-            )}
-          </div>
+        {/* Action bar */}
+        <div className="px-4 py-3 bg-gray-900 border-t border-gray-800 flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={loadPersonality}
+            disabled={loading || saving}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Reload
+          </button>
+
+          {activeTab === 'soul' && soulContent.trim() && (
+            <button
+              onClick={() => {
+                setSavePersonaName(agentName || '')
+                setSavePersonaTagline('')
+                setShowSaveAsPersona(true)
+              }}
+              className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
+            >
+              <BookOpen className="w-4 h-4" />
+              Save as Persona
+            </button>
+          )}
+
+          {savedAt && (
+            <span className="text-xs text-gray-600 ml-1">
+              Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+
+          <button
+            onClick={save}
+            disabled={loading || saving || !currentContent.trim()}
+            className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 ml-auto"
+          >
+            <Save className="w-4 h-4" />
+            {saving ? 'Saving…' : `Save ${projectId ? 'Project' : 'Global'}`}
+          </button>
         </div>
       </div>
 
