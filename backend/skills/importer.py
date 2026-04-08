@@ -521,14 +521,232 @@ class LocalUploadAdapter(HubAdapter):
             return GitHubAdapter()._generate_from_readme(path)
 
 
+# ── Generic Skill Registry Adapter ──────────────────────────────────────────
+
+class GenericSkillRegistryAdapter(HubAdapter):
+    """Adapter for any registry that speaks the Pantheon Skill Registry Protocol.
+
+    See docs/skill-registry-protocol.md. One instance is created per
+    configured registry; multiple registries can be active at once.
+    """
+
+    DISCOVERY_PATH = "/.well-known/pantheon-skill-registry.json"
+    MAX_BUNDLE_BYTES = 5 * 1024 * 1024  # 5 MiB hard cap
+
+    def __init__(self, registry_id: str, base_url: str, *,
+                 display_name: str | None = None,
+                 auth_token: str | None = None) -> None:
+        self.registry_id = registry_id
+        self.base_url = base_url.rstrip("/")
+        self._display_name = display_name or registry_id
+        self.auth_token = auth_token
+        self._discovery: dict[str, Any] | None = None
+
+    @property
+    def hub_name(self) -> str:
+        return self._display_name
+
+    def _headers(self) -> dict[str, str]:
+        h = {"Accept": "application/json"}
+        if self.auth_token:
+            h["Authorization"] = f"Bearer {self.auth_token}"
+        return h
+
+    async def _ensure_discovery(self, client) -> dict[str, Any]:
+        if self._discovery is not None:
+            return self._discovery
+        resp = await client.get(self.base_url + self.DISCOVERY_PATH,
+                                headers=self._headers())
+        resp.raise_for_status()
+        doc = resp.json()
+        if doc.get("protocol_version") != "1.0":
+            raise ValueError(
+                f"Unsupported skill registry protocol_version: "
+                f"{doc.get('protocol_version')!r} (expected '1.0')"
+            )
+        self._discovery = doc
+        return doc
+
+    def _resolve(self, template: str, skill_id: str = "") -> str:
+        path = template.replace("{id}", skill_id)
+        if not path.startswith("http"):
+            path = self.base_url + path
+        return path
+
+    async def search(self, query: str) -> list[HubResult]:
+        import httpx
+        results: list[HubResult] = []
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                disco = await self._ensure_discovery(client)
+                search_url = self._resolve(disco["endpoints"]["search"])
+                resp = await client.get(search_url,
+                                        params={"q": query} if query else None,
+                                        headers=self._headers())
+                if resp.status_code != 200:
+                    logger.warning("%s search returned %d",
+                                   self._display_name, resp.status_code)
+                    return results
+                for entry in resp.json().get("results", []):
+                    results.append(HubResult(
+                        name=entry.get("name", entry.get("id", "")),
+                        description=entry.get("description", ""),
+                        author=entry.get("author", ""),
+                        version=entry.get("version", ""),
+                        url=entry.get("homepage", ""),
+                        hub=self.registry_id,
+                        format=SkillFormat.pantheon,
+                        tags=entry.get("tags", []),
+                        download_url=entry.get("id", ""),
+                    ))
+        except Exception as e:
+            logger.warning("%s search failed: %s", self._display_name, e)
+        return results
+
+    async def fetch(self, identifier: str) -> Path:
+        import hashlib
+        import httpx
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f"{self.registry_id}_"))
+        try:
+            async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                disco = await self._ensure_discovery(client)
+
+                # Step 1: fetch detail to get bundle metadata
+                detail_url = self._resolve(disco["endpoints"]["get"], identifier)
+                detail_resp = await client.get(detail_url, headers=self._headers())
+                detail_resp.raise_for_status()
+                detail = detail_resp.json()
+
+                bundle_meta = detail.get("bundle") or {}
+                fmt = bundle_meta.get("format", "tar.gz")
+                size = int(bundle_meta.get("size_bytes", 0))
+                expected_sha = bundle_meta.get("sha256", "")
+                if size > self.MAX_BUNDLE_BYTES:
+                    raise ValueError(
+                        f"Bundle too large: {size} > {self.MAX_BUNDLE_BYTES}"
+                    )
+                if not expected_sha:
+                    raise ValueError("Registry did not provide bundle.sha256")
+
+                # Step 2: download bundle
+                dl_url = self._resolve(disco["endpoints"]["download"], identifier)
+                dl_resp = await client.get(dl_url, headers=self._headers())
+                dl_resp.raise_for_status()
+                content = dl_resp.content
+                if len(content) > self.MAX_BUNDLE_BYTES:
+                    raise ValueError(
+                        f"Bundle download exceeded cap: {len(content)} bytes"
+                    )
+
+                # Step 3: verify sha256
+                actual_sha = hashlib.sha256(content).hexdigest()
+                if actual_sha.lower() != expected_sha.lower():
+                    raise ValueError(
+                        f"Bundle sha256 mismatch (expected {expected_sha[:16]}…, "
+                        f"got {actual_sha[:16]}…)"
+                    )
+
+                # Step 4: write to temp file with proper extension
+                if fmt == "zip":
+                    bundle_path = tmp_dir / "bundle.zip"
+                    bundle_path.write_bytes(content)
+                    _safe_extract_zip(bundle_path, tmp_dir)
+                elif fmt in ("tar.gz", "tgz"):
+                    bundle_path = tmp_dir / "bundle.tar.gz"
+                    bundle_path.write_bytes(content)
+                    _safe_extract_tar(bundle_path, tmp_dir, mode="r:gz")
+                else:
+                    raise ValueError(f"Unsupported bundle format: {fmt}")
+                bundle_path.unlink()
+
+                # Flatten if extracted into a single subdir
+                subdirs = [d for d in tmp_dir.iterdir() if d.is_dir()]
+                files = [f for f in tmp_dir.iterdir() if f.is_file()]
+                if len(subdirs) == 1 and not files:
+                    extracted = subdirs[0]
+                    for item in extracted.iterdir():
+                        shutil.move(str(item), str(tmp_dir / item.name))
+                    extracted.rmdir()
+
+                return tmp_dir
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+
+    def normalize(self, path: Path) -> SkillManifest:
+        """Bundles must contain skill.json or SKILL.md at the root."""
+        if (path / "skill.json").exists():
+            raw = json.loads((path / "skill.json").read_text(encoding="utf-8"))
+            return SkillManifest(**raw)
+        if SkillMdAdapter()._find_skill_md(path):
+            return SkillMdAdapter().normalize(path)
+        raise ValueError(
+            "Skill bundle must contain skill.json or SKILL.md at the root"
+        )
+
+
 # ── Importer Orchestrator ───────────────────────────────────────────────────
 
-# Adapter registry
+# Static built-in adapters. Configured registries are added at runtime via
+# register_skill_registry() based on pantheon.config.json or the Settings UI.
 _ADAPTERS: dict[str, HubAdapter] = {
     "skill_md": SkillMdAdapter(),
     "github": GitHubAdapter(),
     "local": LocalUploadAdapter(),
 }
+
+
+def register_skill_registry(
+    registry_id: str,
+    base_url: str,
+    *,
+    display_name: str | None = None,
+    auth_token: str | None = None,
+) -> None:
+    """Add (or replace) a configured skill-registry-protocol adapter."""
+    if registry_id in {"skill_md", "github", "local"}:
+        raise ValueError(f"'{registry_id}' is a reserved built-in hub id")
+    _ADAPTERS[registry_id] = GenericSkillRegistryAdapter(
+        registry_id, base_url,
+        display_name=display_name, auth_token=auth_token,
+    )
+    logger.info("Registered skill registry '%s' → %s", registry_id, base_url)
+
+
+def unregister_skill_registry(registry_id: str) -> None:
+    if registry_id in {"skill_md", "github", "local"}:
+        raise ValueError(f"Cannot unregister built-in hub: {registry_id}")
+    _ADAPTERS.pop(registry_id, None)
+
+
+def load_configured_registries() -> None:
+    """Load skill registries from settings.skill_registries (if present).
+
+    Each entry: {id, url, display_name?, auth: {type, token_ref?}}
+    Token references like 'vault:my_key' are resolved against the vault.
+    """
+    configured = getattr(settings, "skill_registries", None) or []
+    for entry in configured:
+        try:
+            registry_id = entry["id"]
+            url = entry["url"]
+            display_name = entry.get("display_name")
+            auth = entry.get("auth") or {}
+            token = None
+            if auth.get("type") == "bearer":
+                token_ref = auth.get("token_ref", "")
+                if token_ref.startswith("vault:"):
+                    from vault import get_secret  # local import to avoid cycle
+                    token = get_secret(token_ref[len("vault:"):])
+                else:
+                    token = auth.get("token")
+            register_skill_registry(
+                registry_id, url,
+                display_name=display_name, auth_token=token,
+            )
+        except Exception as e:
+            logger.error("Failed to load skill registry %r: %s", entry, e)
 
 
 def get_adapter(hub: str) -> HubAdapter:
@@ -540,12 +758,16 @@ def get_adapter(hub: str) -> HubAdapter:
 
 
 def list_hubs() -> list[dict[str, str]]:
-    """List available import hubs."""
-    return [
+    """List available import hubs (built-in + configured)."""
+    hubs: list[dict[str, str]] = [
         {"id": "github", "name": "GitHub", "searchable": True},
         {"id": "skill_md", "name": "SKILL.md Format", "searchable": False},
         {"id": "local", "name": "Local Upload", "searchable": False},
     ]
+    for rid, adapter in _ADAPTERS.items():
+        if isinstance(adapter, GenericSkillRegistryAdapter):
+            hubs.append({"id": rid, "name": adapter.hub_name, "searchable": True})
+    return hubs
 
 
 async def search_hubs(query: str, hub: str | None = None) -> list[HubResult]:
