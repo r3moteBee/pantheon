@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
 import { personalityApi, personasApi, projectsApi } from '../api/client'
+import CoreEditor from './CoreEditor'
 
 // Extract the first heading or "You are X" line from soul.md as the agent name
 function extractAgentName(content) {
@@ -365,18 +366,19 @@ export default function PersonalityEditor() {
 
         {/* Editor pane */}
         <div className="flex-1 flex flex-col border-r border-gray-800 min-w-0">
-          <textarea
-            value={currentContent}
-            onChange={(e) => {
-              activeTab === 'soul'
-                ? setSoulContent(e.target.value)
-                : setAgentContent(e.target.value)
-            }}
-            disabled={loading}
-            spellCheck={false}
-            className="flex-1 w-full resize-none bg-gray-800 text-gray-100 p-4 text-sm font-mono leading-relaxed focus:outline-none focus:ring-1 focus:ring-inset focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
-            placeholder={activeTabDef?.placeholder}
-          />
+          <div className="flex-1 overflow-auto bg-gray-900">
+            <CoreEditor
+              value={currentContent}
+              onChange={(val) => {
+                activeTab === 'soul'
+                  ? setSoulContent(val)
+                  : setAgentContent(val)
+              }}
+              language="markdown"
+              editable={!loading}
+              height="100%"
+            />
+          </div>
 
           {/* Action bar */}
           <div className="px-4 py-3 bg-gray-900 border-t border-gray-800 flex items-center gap-2">

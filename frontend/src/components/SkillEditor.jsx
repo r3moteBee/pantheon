@@ -3,23 +3,10 @@ import {
   X, FileText, FilePlus2, Trash2, Save, Sparkles, Wand2, Target,
   Play, Loader2, AlertCircle, CheckCircle2, Info, ChevronRight, FileCode,
 } from 'lucide-react'
-import CodeMirror from '@uiw/react-codemirror'
-import { markdown } from '@codemirror/lang-markdown'
-import { json as jsonLang } from '@codemirror/lang-json'
+import CoreEditor from './CoreEditor'
 import { skillsApi } from '../api/client'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function getExt(path) {
-  const dot = path.lastIndexOf('.')
-  return dot >= 0 ? path.slice(dot).toLowerCase() : ''
-}
-
-function langExtensionsFor(path) {
-  const ext = getExt(path)
-  if (ext === '.json') return [jsonLang()]
-  return [markdown()]
-}
 
 function severityColor(sev) {
   if (sev === 'critical') return 'text-red-400 border-red-900 bg-red-950/30'
@@ -407,18 +394,12 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
               <ChevronRight className="w-3 h-3" /> {activePath}
             </div>
             <div className="flex-1 overflow-auto">
-              <CodeMirror
+              <CoreEditor
                 value={content}
-                height="100%"
-                theme="dark"
-                extensions={langExtensionsFor(activePath)}
+                filename={activePath}
                 editable={editable}
                 onChange={handleChange}
-                basicSetup={{
-                  lineNumbers: true,
-                  highlightActiveLine: true,
-                  foldGutter: true,
-                }}
+                onSaveHotkey={saveActive}
               />
             </div>
             {/* Lint bar */}
