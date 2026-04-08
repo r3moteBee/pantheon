@@ -757,16 +757,28 @@ def get_adapter(hub: str) -> HubAdapter:
     return adapter
 
 
-def list_hubs() -> list[dict[str, str]]:
-    """List available import hubs (built-in + configured)."""
-    hubs: list[dict[str, str]] = [
-        {"id": "github", "name": "GitHub", "searchable": True},
-        {"id": "skill_md", "name": "SKILL.md Format", "searchable": False},
-        {"id": "local", "name": "Local Upload", "searchable": False},
-    ]
-    for rid, adapter in _ADAPTERS.items():
-        if isinstance(adapter, GenericSkillRegistryAdapter):
-            hubs.append({"id": rid, "name": adapter.hub_name, "searchable": True})
+# Metadata for built-in hubs (not user-configurable; surfaced read-only in admin UI)
+_BUILTIN_HUB_META: dict[str, dict[str, Any]] = {
+    "github":   {"name": "GitHub",          "searchable": True,  "builtin": True},
+    "skill_md": {"name": "SKILL.md Format", "searchable": False, "builtin": True},
+    "local":    {"name": "Local Upload",    "searchable": False, "builtin": True},
+}
+
+
+def list_hubs() -> list[dict[str, Any]]:
+    """List available import hubs (built-in + configured) uniformly."""
+    hubs: list[dict[str, Any]] = []
+    for hub_id, adapter in _ADAPTERS.items():
+        meta = _BUILTIN_HUB_META.get(hub_id)
+        if meta:
+            hubs.append({"id": hub_id, **meta})
+        else:
+            hubs.append({
+                "id": hub_id,
+                "name": getattr(adapter, "hub_name", hub_id),
+                "searchable": True,
+                "builtin": False,
+            })
     return hubs
 
 

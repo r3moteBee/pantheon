@@ -106,7 +106,22 @@ def load_skill_registries_from_disk() -> None:
 
 
 def list_registries() -> list[dict[str, Any]]:
-    return [_redact(e) for e in _read_file()]
+    """Return built-in hubs (read-only) followed by user-configured registries."""
+    from skills.importer import list_hubs
+    out: list[dict[str, Any]] = []
+    for hub in list_hubs():
+        if hub.get("builtin"):
+            out.append({
+                "id": hub["id"],
+                "url": None,
+                "display_name": hub["name"],
+                "auth": {"type": "none"},
+                "builtin": True,
+                "searchable": hub.get("searchable", False),
+            })
+    for e in _read_file():
+        out.append({**_redact(e), "builtin": False, "searchable": True})
+    return out
 
 
 def add_registry(

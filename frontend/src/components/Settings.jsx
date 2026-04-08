@@ -1375,7 +1375,7 @@ function SkillHubsSection() {
         <div className="text-xs text-gray-500">Loading…</div>
       ) : registries.length === 0 ? (
         <div className="p-4 rounded border border-dashed border-gray-800 text-xs text-gray-500 text-center">
-          No skill registry hubs configured. Built-in sources (GitHub, Local Upload) are always available.
+          No hubs available.
         </div>
       ) : (
         <div className="space-y-2">
@@ -1385,31 +1385,41 @@ function SkillHubsSection() {
                 <div className="text-sm text-gray-200 truncate">
                   {r.display_name || r.id}
                   <span className="ml-2 text-xs text-gray-600">[{r.id}]</span>
-                </div>
-                <div className="text-xs text-gray-500 truncate">{r.url}</div>
-                <div className="text-xs text-gray-600 mt-0.5">
-                  Auth: {r.auth?.type}
-                  {r.auth?.type === 'bearer' && (
-                    <span className="ml-1">{r.auth?.token_set ? '✓' : '(missing token)'}</span>
+                  {r.builtin && (
+                    <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400 uppercase">Built-in</span>
+                  )}
+                  {r.builtin && !r.searchable && (
+                    <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-500">Not searchable</span>
                   )}
                 </div>
+                {r.url && <div className="text-xs text-gray-500 truncate">{r.url}</div>}
+                {!r.builtin && (
+                  <div className="text-xs text-gray-600 mt-0.5">
+                    Auth: {r.auth?.type}
+                    {r.auth?.type === 'bearer' && (
+                      <span className="ml-1">{r.auth?.token_set ? '✓' : '(missing token)'}</span>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="flex gap-1 ml-3">
-                <button
-                  onClick={() => startEdit(r)}
-                  className="p-1.5 text-gray-400 hover:text-gray-200"
-                  title="Edit"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => remove(r.id)}
-                  className="p-1.5 text-gray-400 hover:text-red-400"
-                  title="Remove"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
+              {!r.builtin && (
+                <div className="flex gap-1 ml-3">
+                  <button
+                    onClick={() => startEdit(r)}
+                    className="p-1.5 text-gray-400 hover:text-gray-200"
+                    title="Edit"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => remove(r.id)}
+                    className="p-1.5 text-gray-400 hover:text-red-400"
+                    title="Remove"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
