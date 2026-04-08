@@ -363,6 +363,182 @@ async def import_upload(
         Path(tmp_path).unlink(missing_ok=True)
 
 
+# ── AI-Assisted Editor (Phase 4) ────────────────────────────────────────────
+
+class CreateBlankSkillRequest(BaseModel):
+    name: str
+    description: str = ""
+
+
+class WriteFileRequest(BaseModel):
+    content: str
+
+
+class ScaffoldRequest(BaseModel):
+    brief: str
+    name_hint: str | None = None
+    materialize: bool = False  # If true, write the result to disk as a new user skill
+
+
+class ImproveRequest(BaseModel):
+    instructions: str
+    goal: str | None = None
+    skill_name: str | None = None
+
+
+class OptimizeTriggersRequest(BaseModel):
+    description: str
+    instructions: str
+    current_triggers: list[str] = []
+
+
+class TestRequest(BaseModel):
+    message: str
+
+
+class LintRequest(BaseModel):
+    manifest_json: str = ""
+    instructions: str = ""
+
+
+@router.post("/skills/editor/blank")
+async def create_blank_skill_endpoint(req: CreateBlankSkillRequest) -> dict[str, Any]:
+    from skills import editor
+    try:
+        editor.create_blank_skill(req.name, req.description)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skill_registry()
+    return {"status": "created", "name": req.name}
+
+
+@router.get("/skills/editor/{skill_name}/files")
+async def list_skill_files_endpoint(skill_name: str) -> dict[str, Any]:
+    from skills import editor
+    try:
+        return editor.list_skill_files(skill_name)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/skills/editor/{skill_name}/file")
+async def read_skill_file_endpoint(
+    skill_name: str,
+    path: str = Query(..., description="Relative path inside skill directory"),
+) -> dict[str, Any]:
+    from skills import editor
+    try:
+        return editor.read_skill_file(skill_name, path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except (ValueError, PermissionError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/skills/editor/{skill_name}/file")
+async def write_skill_file_endpoint(
+    skill_name: str,
+    req: WriteFileRequest,
+    path: str = Query(..., description="Relative path inside skill directory"),
+) -> dict[str, Any]:
+    from skills import editor
+    try:
+        result = editor.write_skill_file(skill_name, path, req.content)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Reload registry so manifest/instructions edits take effect immediately
+    reload_skill_registry()
+    return result
+
+
+@router.delete("/skills/editor/{skill_name}/file")
+async def delete_skill_file_endpoint(
+    skill_name: str,
+    path: str = Query(...),
+) -> dict[str, str]:
+    from skills import editor
+    try:
+        editor.delete_skill_file(skill_name, path)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skill_registry()
+    return {"status": "deleted", "path": path}
+
+
+@router.post("/skills/editor/scaffold")
+async def scaffold_skill_endpoint(req: ScaffoldRequest) -> dict[str, Any]:
+    from skills import editor
+    try:
+        result = await editor.scaffold_skill(req.brief, name_hint=req.name_hint)
+    except Exception as e:
+        logger.error("Skill scaffold failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Scaffold failed: {e}")
+
+    if req.materialize:
+        try:
+            editor.create_blank_skill(result["name"], result["manifest"]["description"])
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail=f"Skill '{result['name']}' already exists")
+        editor.write_skill_file(
+            result["name"], "skill.json",
+            __import__("json").dumps(result["manifest"], indent=2),
+        )
+        editor.write_skill_file(result["name"], "instructions.md", result["instructions"])
+        reload_skill_registry()
+        result["materialized"] = True
+    return result
+
+
+@router.post("/skills/editor/improve")
+async def improve_instructions_endpoint(req: ImproveRequest) -> dict[str, str]:
+    from skills import editor
+    try:
+        improved = await editor.improve_instructions(
+            req.instructions, goal=req.goal, skill_name=req.skill_name,
+        )
+    except Exception as e:
+        logger.error("Improve failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Improve failed: {e}")
+    return {"instructions": improved}
+
+
+@router.post("/skills/editor/optimize-triggers")
+async def optimize_triggers_endpoint(req: OptimizeTriggersRequest) -> dict[str, Any]:
+    from skills import editor
+    try:
+        triggers = await editor.optimize_triggers(
+            req.description, req.instructions,
+            current_triggers=req.current_triggers,
+        )
+    except Exception as e:
+        logger.error("Optimize triggers failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Optimize failed: {e}")
+    return {"triggers": triggers}
+
+
+@router.post("/skills/editor/lint")
+async def lint_endpoint(req: LintRequest) -> dict[str, Any]:
+    from skills import editor
+    return editor.lint_draft(req.manifest_json, req.instructions)
+
+
+@router.post("/skills/editor/{skill_name}/test")
+async def test_skill_endpoint(skill_name: str, req: TestRequest) -> dict[str, Any]:
+    from skills import editor
+    try:
+        return editor.test_skill_against_message(skill_name, req.message)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # PARAMETERISED ROUTES (/skills/{skill_name}/...)
 # ═══════════════════════════════════════════════════════════════════════════

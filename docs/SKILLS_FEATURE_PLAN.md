@@ -915,12 +915,29 @@ All revised Phase 3 items (minus Smithery, which moved to the MCP roadmap) are i
 ### Phase 4: AI-Assisted Editor (1-2 weeks)
 **Goal: Create and iterate on skills in the browser**
 
-- [ ] `SkillEditor.jsx` — Split-pane editor with file tree
-- [ ] AI scaffold endpoint (generate skill from description)
-- [ ] AI improve endpoint (refine instructions)
-- [ ] AI trigger optimizer
-- [ ] `SkillTester.jsx` — Test skills with sample messages
-- [ ] Live security linting during editing
+- [x] `SkillEditor.jsx` — Split-pane editor with file tree ✅ Three-column layout (file tree / CodeMirror editor / AI assist + tester rail), unsaved-state tracking, multi-file dirty indicators, Save All
+- [x] AI scaffold endpoint (generate skill from description) ✅ `POST /skills/editor/scaffold` — LLM produces full SKILL bundle (manifest + instructions); `materialize=true` writes it to disk and reloads the registry
+- [x] AI improve endpoint (refine instructions) ✅ `POST /skills/editor/improve` — rewrites instructions.md with optional refinement goal
+- [x] AI trigger optimizer ✅ `POST /skills/editor/optimize-triggers` — proposes 4-8 trigger phrases based on description + instructions
+- [x] `SkillTester.jsx` — Test skills with sample messages ✅ Resolver dry-run with score breakdown (trigger / partial / name / tag / description hits)
+- [x] Live security linting during editing ✅ `POST /skills/editor/lint` — fast static checks (manifest validation, dangerous-pattern regex, AWS key detection); debounced 600ms in editor
+
+**Phase 4 Completion Assessment (2026-04-08)**
+
+All 6 plan items shipped. Backend additions:
+- `backend/skills/editor.py` — file CRUD (path-traversal safe), LLM helpers, resolver dry-run scorer, lint engine
+- 11 new endpoints under `/skills/editor/*` (blank/scaffold/files/file/improve/optimize-triggers/lint/test)
+- All file writes restricted to `data_dir/skills/` — bundled skills are surfaced read-only
+
+Frontend additions:
+- `SkillEditor.jsx` — modal editor with CodeMirror (already in deps; no Monaco bundle bloat), markdown + JSON syntax modes
+- `NewSkillModal` (exported from same file) — Blank vs AI Scaffold toggle
+- `Skills.jsx` — "New" button + per-card pencil icon to launch the editor
+
+**Items intentionally deferred to Phase 5:**
+- Live AI lint (currently the lint endpoint is regex/static only — adding LLM-based critique would slow editing)
+- Multi-file diff view / undo history beyond CodeMirror's built-in history
+- File creation/rename in tree (only edit/delete supported in this pass)
 
 ### Phase 5: Polish & Advanced (ongoing)
 - [ ] Skill versioning and rollback
