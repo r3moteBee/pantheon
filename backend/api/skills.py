@@ -38,12 +38,19 @@ class SkillToggleRequest(BaseModel):
 
 @router.get("/skills")
 async def list_skills(
-    project_id: str = Query(default=None, description="Filter skills available for this project"),
+    project_id: str = Query(default=None, description="Project context for enabled-state computation"),
+    include_disabled: bool = Query(default=True, description="If false and project_id is set, hide skills disabled for that project"),
 ) -> dict[str, Any]:
-    """List all registered skills, optionally filtered by project."""
+    """List registered skills.
+
+    By default returns ALL skills regardless of per-project disabled state so
+    the UI can render enabled/disabled toggles. Pass include_disabled=false
+    along with a project_id to filter to only the skills enabled for that
+    project (e.g. when listing skills for the resolver).
+    """
     registry = get_skill_registry()
 
-    if project_id:
+    if project_id and not include_disabled:
         skills = registry.list_for_project(project_id)
     else:
         skills = registry.list_all()
