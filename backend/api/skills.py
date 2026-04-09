@@ -401,6 +401,16 @@ class LintRequest(BaseModel):
     instructions: str = ""
 
 
+class CreateFileRequest(BaseModel):
+    path: str
+    content: str = ""
+
+
+class RenameFileRequest(BaseModel):
+    old_path: str
+    new_path: str
+
+
 @router.post("/skills/editor/blank")
 async def create_blank_skill_endpoint(req: CreateBlankSkillRequest) -> dict[str, Any]:
     from skills import editor
@@ -528,6 +538,54 @@ async def optimize_triggers_endpoint(req: OptimizeTriggersRequest) -> dict[str, 
 async def lint_endpoint(req: LintRequest) -> dict[str, Any]:
     from skills import editor
     return editor.lint_draft(req.manifest_json, req.instructions)
+
+
+@router.post("/skills/editor/ai-lint")
+async def ai_lint_endpoint(req: LintRequest) -> dict[str, Any]:
+    from skills import editor
+    try:
+        return await editor.ai_lint_draft(req.manifest_json, req.instructions)
+    except Exception as e:
+        logger.error("AI lint failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"AI lint failed: {e}")
+
+
+@router.post("/skills/editor/{skill_name}/file/new")
+async def create_skill_file_endpoint(
+    skill_name: str, req: CreateFileRequest,
+) -> dict[str, Any]:
+    from skills import editor
+    try:
+        result = editor.create_skill_file(skill_name, req.path, req.content)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skill_registry()
+    return result
+
+
+@router.post("/skills/editor/{skill_name}/file/rename")
+async def rename_skill_file_endpoint(
+    skill_name: str, req: RenameFileRequest,
+) -> dict[str, Any]:
+    from skills import editor
+    try:
+        result = editor.rename_skill_file(skill_name, req.old_path, req.new_path)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skill_registry()
+    return result
 
 
 @router.post("/skills/editor/{skill_name}/test")

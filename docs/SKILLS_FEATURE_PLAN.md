@@ -934,10 +934,10 @@ Frontend additions:
 - `NewSkillModal` (exported from same file) — Blank vs AI Scaffold toggle
 - `Skills.jsx` — "New" button + per-card pencil icon to launch the editor
 
-**Items intentionally deferred to Phase 5:**
-- Live AI lint (currently the lint endpoint is regex/static only — adding LLM-based critique would slow editing)
-- Multi-file diff view / undo history beyond CodeMirror's built-in history
-- File creation/rename in tree (only edit/delete supported in this pass)
+**Items previously deferred — now shipped (2026-04-08):**
+- ✅ **AI lint** — on-demand `POST /skills/editor/ai-lint` (LLM semantic critique). Merged into the editor lint bar via an "AI review" button; on-demand rather than per-keystroke so typing stays fast.
+- ✅ **Multi-file diff view + revert** — "Review & save" now opens a unified multi-file diff modal (collapsible per-file, +/− counts, LCS line diff) before writing. Per-file "Revert" button restores the last-saved baseline as in-session undo-to-save.
+- ✅ **File create/rename in tree** — `POST /skills/editor/{skill}/file/new` and `/file/rename` endpoints. File tree has a new-file button and hover rename/delete controls. `skill.json` and `instructions.md` remain protected from rename/delete.
 
 ### Phase 5: Polish & Advanced (ongoing)
 - [ ] Skill versioning and rollback

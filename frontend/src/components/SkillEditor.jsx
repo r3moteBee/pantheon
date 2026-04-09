@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, FileText, FilePlus2, Trash2, Save, Sparkles, Wand2, Target,
   Play, Loader2, AlertCircle, CheckCircle2, Info, ChevronRight, FileCode,
-  Check, GitCompare,
+  Check, GitCompare, Pencil, Undo2, ScanSearch,
 } from 'lucide-react'
 import CoreEditor from './CoreEditor'
 import { skillsApi } from '../api/client'
@@ -97,6 +97,92 @@ function DiffModal({ title, path, before, after, onAccept, onReject }) {
             className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1"
           >
             <Check className="w-3 h-3" /> Accept changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MultiFileDiffModal({ entries, onConfirm, onCancel, busy }) {
+  // entries: [{ path, before, after }]
+  const [expanded, setExpanded] = useState(() => new Set(entries.map((e) => e.path)))
+  const toggle = (p) => {
+    const next = new Set(expanded)
+    if (next.has(p)) next.delete(p); else next.add(p)
+    setExpanded(next)
+  }
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+      <div className="w-full max-w-4xl max-h-[85vh] bg-gray-950 border border-gray-800 rounded-lg flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div className="flex items-center gap-2">
+            <GitCompare className="w-4 h-4 text-brand-400" />
+            <h3 className="text-sm font-semibold text-gray-200">
+              Review changes — {entries.length} file{entries.length === 1 ? '' : 's'}
+            </h3>
+          </div>
+          <button onClick={onCancel} className="p-1 text-gray-500 hover:text-gray-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto">
+          {entries.map((e) => {
+            const rows = diffLines(e.before, e.after)
+            const adds = rows.filter((r) => r.type === 'add').length
+            const dels = rows.filter((r) => r.type === 'del').length
+            const open = expanded.has(e.path)
+            return (
+              <div key={e.path} className="border-b border-gray-800">
+                <button
+                  onClick={() => toggle(e.path)}
+                  className="w-full px-4 py-2 flex items-center gap-2 hover:bg-gray-900 text-left"
+                >
+                  <ChevronRight className={`w-3 h-3 text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+                  <FileText className="w-3 h-3 text-gray-500" />
+                  <span className="text-xs font-mono text-gray-300 flex-1 truncate">{e.path}</span>
+                  <span className="text-[10px] text-green-400">+{adds}</span>
+                  <span className="text-[10px] text-red-400">−{dels}</span>
+                </button>
+                {open && (
+                  <div className="font-mono text-xs bg-gray-950">
+                    {rows.map((r, i) => (
+                      <div
+                        key={i}
+                        className={
+                          r.type === 'add'
+                            ? 'bg-green-950/40 text-green-300 px-4 py-0.5'
+                            : r.type === 'del'
+                            ? 'bg-red-950/40 text-red-300 px-4 py-0.5 line-through opacity-80'
+                            : 'text-gray-500 px-4 py-0.5'
+                        }
+                      >
+                        <span className="inline-block w-4 select-none">
+                          {r.type === 'add' ? '+' : r.type === 'del' ? '−' : ' '}
+                        </span>
+                        <span className="whitespace-pre-wrap break-words">{r.text || ' '}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-gray-800">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            Save all
           </button>
         </div>
       </div>
@@ -293,14 +379,20 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
   const [activePath, setActivePath] = useState('skill.json')
   const [content, setContent] = useState('')
   const [contents, setContents] = useState({}) // unsaved content per path
+  const [baselines, setBaselines] = useState({}) // last-saved content per path (for revert + diff)
   const [dirty, setDirty] = useState({}) // path -> bool
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [lint, setLint] = useState({ findings: [] })
+  const [aiLint, setAiLint] = useState({ findings: [] })
+  const [aiLintBusy, setAiLintBusy] = useState(false)
   const lintTimer = useRef(null)
   const [pendingDiff, setPendingDiff] = useState(null)  // { path, before, after, title }
-  const [showSaveAllConfirm, setShowSaveAllConfirm] = useState(false)
+  const [showSaveAllDiff, setShowSaveAllDiff] = useState(false) // multi-file pre-save diff
+  const [showNewFile, setShowNewFile] = useState(false)
+  const [renamingPath, setRenamingPath] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
 
   const loadFiles = useCallback(async () => {
     setLoading(true)
@@ -326,6 +418,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       const res = await skillsApi.readFile(skillName, path)
       const text = res.data.content || ''
       setContents((c) => ({ ...c, [path]: text }))
+      setBaselines((b) => ({ ...b, [path]: text }))
       setContent(text)
       setActivePath(path)
     } catch (e) {
@@ -363,6 +456,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
     try {
       await skillsApi.writeFile(skillName, activePath, contents[activePath])
       setDirty((d) => ({ ...d, [activePath]: false }))
+      setBaselines((b) => ({ ...b, [activePath]: contents[activePath] }))
       if (onSaved) onSaved()
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
@@ -375,17 +469,104 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
     setSaving(true)
     setError('')
     try {
+      const savedPaths = []
       for (const path of Object.keys(dirty)) {
         if (dirty[path]) {
           await skillsApi.writeFile(skillName, path, contents[path])
+          savedPaths.push(path)
         }
       }
       setDirty({})
+      setBaselines((b) => {
+        const next = { ...b }
+        for (const p of savedPaths) next[p] = contents[p]
+        return next
+      })
       if (onSaved) onSaved()
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Revert the active file to its last-saved baseline (in-session undo-to-save)
+  const revertActive = () => {
+    const base = baselines[activePath]
+    if (base === undefined) return
+    setContents((c) => ({ ...c, [activePath]: base }))
+    setContent(base)
+    setDirty((d) => ({ ...d, [activePath]: false }))
+  }
+
+  const runAiLint = async () => {
+    setAiLintBusy(true)
+    try {
+      const res = await skillsApi.aiLint(
+        contents['skill.json'] || '',
+        contents['instructions.md'] || '',
+      )
+      setAiLint(res.data || { findings: [] })
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setAiLintBusy(false)
+    }
+  }
+
+  const createFile = async (path, initial = '') => {
+    try {
+      await skillsApi.createFile(skillName, path, initial)
+      await loadFiles()
+      setContents((c) => ({ ...c, [path]: initial }))
+      setBaselines((b) => ({ ...b, [path]: initial }))
+      setActivePath(path)
+      setContent(initial)
+      setShowNewFile(false)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    }
+  }
+
+  const renameFile = async (oldPath, newPath) => {
+    try {
+      await skillsApi.renameFile(skillName, oldPath, newPath)
+      // Migrate in-memory state
+      setContents((c) => {
+        const next = { ...c }
+        if (oldPath in next) { next[newPath] = next[oldPath]; delete next[oldPath] }
+        return next
+      })
+      setBaselines((b) => {
+        const next = { ...b }
+        if (oldPath in next) { next[newPath] = next[oldPath]; delete next[oldPath] }
+        return next
+      })
+      setDirty((d) => {
+        const next = { ...d }
+        if (oldPath in next) { next[newPath] = next[oldPath]; delete next[oldPath] }
+        return next
+      })
+      if (activePath === oldPath) setActivePath(newPath)
+      await loadFiles()
+      setRenamingPath(null)
+      setRenameValue('')
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    }
+  }
+
+  const deleteFile = async (path) => {
+    if (!confirm(`Delete ${path}?`)) return
+    try {
+      await skillsApi.deleteFile(skillName, path)
+      setContents((c) => { const n = { ...c }; delete n[path]; return n })
+      setBaselines((b) => { const n = { ...b }; delete n[path]; return n })
+      setDirty((d) => { const n = { ...d }; delete n[path]; return n })
+      if (activePath === path) setActivePath('skill.json')
+      await loadFiles()
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
     }
   }
 
@@ -425,13 +606,14 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
 
   const confirmSaveAll = () => {
     if (dirtyCount === 0) return
-    if (dirtyCount === 1) {
-      // single file — no need for a confirmation step
-      saveAll()
-      return
-    }
-    setShowSaveAllConfirm(true)
+    setShowSaveAllDiff(true)
   }
+
+  const saveAllDiffEntries = dirtyPaths.map((p) => ({
+    path: p,
+    before: baselines[p] ?? '',
+    after: contents[p] ?? '',
+  }))
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
@@ -452,46 +634,14 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           </div>
           <div className="flex items-center gap-2">
             {editable && (
-              <div className="relative">
-                <button
-                  onClick={confirmSaveAll}
-                  disabled={saving || dirtyCount === 0}
-                  className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
-                >
-                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                  Save all{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
-                </button>
-                {showSaveAllConfirm && (
-                  <div className="absolute right-0 top-full mt-1 w-64 bg-gray-900 border border-gray-800 rounded-lg shadow-2xl z-10 p-3">
-                    <div className="text-[10px] uppercase text-gray-500 mb-1.5">
-                      Save {dirtyCount} file{dirtyCount === 1 ? '' : 's'}?
-                    </div>
-                    <div className="max-h-40 overflow-y-auto space-y-0.5 mb-2">
-                      {dirtyPaths.map((p) => (
-                        <div key={p} className="text-xs text-gray-300 flex items-center gap-1.5 truncate">
-                          <span className="text-amber-400">●</span>
-                          <FileText className="w-3 h-3 text-gray-500 flex-shrink-0" />
-                          <span className="truncate font-mono">{p}</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setShowSaveAllConfirm(false)}
-                        className="flex-1 px-2 py-1 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => { setShowSaveAllConfirm(false); saveAll() }}
-                        className="flex-1 px-2 py-1 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-1"
-                      >
-                        <Check className="w-3 h-3" /> Save all
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={confirmSaveAll}
+                disabled={saving || dirtyCount === 0}
+                className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                Review & save{dirtyCount > 0 ? ` (${dirtyCount})` : ''}
+              </button>
             )}
             <button onClick={onClose} className="p-1.5 text-gray-500 hover:text-gray-200">
               <X className="w-4 h-4" />
@@ -508,27 +658,89 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
         {/* Body — three columns */}
         <div className="flex-1 flex overflow-hidden">
           {/* File tree */}
-          <div className="w-48 border-r border-gray-800 overflow-y-auto p-2 flex-shrink-0">
-            <div className="text-[10px] uppercase text-gray-600 mb-1 px-1">Files</div>
+          <div className="w-52 border-r border-gray-800 overflow-y-auto p-2 flex-shrink-0">
+            <div className="flex items-center justify-between mb-1 px-1">
+              <div className="text-[10px] uppercase text-gray-600">Files</div>
+              {editable && (
+                <button
+                  onClick={() => setShowNewFile(true)}
+                  title="New file"
+                  className="p-0.5 text-gray-500 hover:text-brand-400"
+                >
+                  <FilePlus2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
             {loading ? (
               <div className="text-xs text-gray-500 p-1">Loading…</div>
             ) : (
-              files.map((f) => (
-                <button
-                  key={f.path}
-                  onClick={() => loadFile(f.path)}
-                  className={`w-full text-left px-2 py-1 text-xs rounded flex items-center gap-1.5 truncate ${
-                    activePath === f.path
-                      ? 'bg-gray-800 text-brand-300'
-                      : 'text-gray-400 hover:bg-gray-900 hover:text-gray-200'
-                  }`}
-                  title={f.path}
-                >
-                  <FileText className="w-3 h-3 flex-shrink-0" />
-                  <span className="truncate">{f.path}</span>
-                  {dirty[f.path] && <span className="text-amber-400">●</span>}
-                </button>
-              ))
+              files.map((f) => {
+                const isActive = activePath === f.path
+                const isProtected = f.path === 'skill.json' || f.path === 'instructions.md'
+                const isRenaming = renamingPath === f.path
+                if (isRenaming) {
+                  return (
+                    <div key={f.path} className="px-1 py-1 flex items-center gap-1">
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && renameValue.trim() && renameValue !== f.path) {
+                            renameFile(f.path, renameValue.trim())
+                          } else if (e.key === 'Escape') {
+                            setRenamingPath(null)
+                          }
+                        }}
+                        onBlur={() => setRenamingPath(null)}
+                        className="flex-1 min-w-0 px-1 py-0.5 text-xs bg-gray-900 border border-brand-700 rounded text-gray-200 font-mono"
+                      />
+                    </div>
+                  )
+                }
+                return (
+                  <div
+                    key={f.path}
+                    className={`group flex items-center gap-1 rounded ${
+                      isActive ? 'bg-gray-800' : 'hover:bg-gray-900'
+                    }`}
+                  >
+                    <button
+                      onClick={() => loadFile(f.path)}
+                      className={`flex-1 min-w-0 text-left px-2 py-1 text-xs flex items-center gap-1.5 truncate ${
+                        isActive ? 'text-brand-300' : 'text-gray-400 hover:text-gray-200'
+                      }`}
+                      title={f.path}
+                    >
+                      <FileText className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate">{f.path}</span>
+                      {dirty[f.path] && <span className="text-amber-400">●</span>}
+                    </button>
+                    {editable && !isProtected && (
+                      <div className="hidden group-hover:flex items-center gap-0.5 pr-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setRenamingPath(f.path)
+                            setRenameValue(f.path)
+                          }}
+                          title="Rename"
+                          className="p-0.5 text-gray-500 hover:text-brand-400"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteFile(f.path) }}
+                          title="Delete"
+                          className="p-0.5 text-gray-500 hover:text-red-400"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })
             )}
           </div>
 
@@ -536,6 +748,16 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           <div className="flex-1 flex flex-col min-w-0">
             <div className="px-3 py-1.5 border-b border-gray-800 text-xs text-gray-500 flex items-center gap-1">
               <ChevronRight className="w-3 h-3" /> {activePath}
+              <div className="flex-1" />
+              {editable && dirty[activePath] && (
+                <button
+                  onClick={revertActive}
+                  title="Revert to last saved"
+                  className="px-1.5 py-0.5 text-[11px] rounded hover:bg-gray-800 text-gray-400 hover:text-amber-400 flex items-center gap-1"
+                >
+                  <Undo2 className="w-3 h-3" /> Revert
+                </button>
+              )}
             </div>
             <div className="flex-1 overflow-auto">
               <CoreEditor
@@ -547,13 +769,27 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
               />
             </div>
             {/* Lint bar */}
-            <div className="border-t border-gray-800 max-h-32 overflow-y-auto p-2 space-y-1">
-              {lint.findings.length === 0 ? (
+            <div className="border-t border-gray-800 max-h-40 overflow-y-auto p-2 space-y-1">
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-[10px] uppercase text-gray-600">Lint</div>
+                {editable && (
+                  <button
+                    onClick={runAiLint}
+                    disabled={aiLintBusy}
+                    title="Run semantic AI review of manifest + instructions"
+                    className="px-1.5 py-0.5 text-[11px] rounded bg-gray-900 hover:bg-gray-800 text-gray-300 flex items-center gap-1 disabled:opacity-50"
+                  >
+                    {aiLintBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <ScanSearch className="w-3 h-3" />}
+                    AI review
+                  </button>
+                )}
+              </div>
+              {lint.findings.length === 0 && aiLint.findings.length === 0 ? (
                 <div className="flex items-center gap-1.5 text-xs text-gray-500">
                   <CheckCircle2 className="w-3.5 h-3.5 text-brand-500" /> No lint issues
                 </div>
               ) : (
-                lint.findings.map((f, i) => (
+                [...lint.findings, ...aiLint.findings].map((f, i) => (
                   <div
                     key={i}
                     className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded border ${severityColor(f.severity)}`}
@@ -602,6 +838,64 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           onReject={() => setPendingDiff(null)}
         />
       )}
+
+      {showSaveAllDiff && (
+        <MultiFileDiffModal
+          entries={saveAllDiffEntries}
+          busy={saving}
+          onCancel={() => setShowSaveAllDiff(false)}
+          onConfirm={async () => { await saveAll(); setShowSaveAllDiff(false) }}
+        />
+      )}
+
+      {showNewFile && (
+        <NewFilePrompt
+          onCancel={() => setShowNewFile(false)}
+          onCreate={(p) => createFile(p, '')}
+        />
+      )}
+    </div>
+  )
+}
+
+function NewFilePrompt({ onCancel, onCreate }) {
+  const [path, setPath] = useState('')
+  return (
+    <div className="fixed inset-0 bg-black/60 z-[60] flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-gray-950 border border-gray-800 rounded-lg shadow-2xl">
+        <div className="px-4 py-3 border-b border-gray-800 text-sm font-semibold text-gray-200 flex items-center gap-2">
+          <FilePlus2 className="w-4 h-4" /> New file
+        </div>
+        <div className="p-4 space-y-3">
+          <label className="block text-[10px] uppercase text-gray-500">Path (relative)</label>
+          <input
+            autoFocus
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && path.trim()) onCreate(path.trim())
+              if (e.key === 'Escape') onCancel()
+            }}
+            placeholder="examples/usage.md"
+            className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-800 rounded text-gray-200 font-mono"
+          />
+          <div className="text-[10px] text-gray-600">
+            Allowed: .md .json .yaml .txt .py .js .ts .html .css .sh
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={onCancel} className="px-3 py-1.5 text-xs rounded bg-gray-800 hover:bg-gray-700 text-gray-200">
+              Cancel
+            </button>
+            <button
+              onClick={() => path.trim() && onCreate(path.trim())}
+              disabled={!path.trim()}
+              className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+            >
+              Create
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
