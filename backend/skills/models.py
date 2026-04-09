@@ -131,6 +131,7 @@ class SkillManifest(BaseModel):
     author: str = ""
     license: str = ""
     triggers: list[str] = Field(default_factory=list)
+    chains: list[str] = Field(default_factory=list)  # Skill names to auto-invoke alongside
     parameters: list[SkillParameter] = Field(default_factory=list)
     capabilities_required: list[str] = Field(default_factory=list)
     dependencies: dict[str, Any] = Field(default_factory=dict)

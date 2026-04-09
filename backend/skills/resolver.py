@@ -120,10 +120,30 @@ def resolve_auto(
     return results
 
 
-def build_skill_context(skill: LoadedSkill, project_id: str | None = None) -> str:
-    """Build the skill instruction block to inject into the system prompt."""
+_MAX_CHAIN_DEPTH = 2
+_MAX_CHAINED_SKILLS = 4
+
+
+def build_skill_context(
+    skill: LoadedSkill,
+    project_id: str | None = None,
+    *,
+    _visited: set[str] | None = None,
+    _depth: int = 0,
+) -> str:
+    """Build the skill instruction block to inject into the system prompt.
+
+    If the skill declares `chains: [other-skill, ...]`, the chained skills'
+    contexts are appended (1-hop by default, depth-capped at 2, deduped).
+    """
+    _visited = _visited if _visited is not None else set()
+    if skill.manifest.name in _visited:
+        return ""
+    _visited.add(skill.manifest.name)
+
+    header_prefix = "Active Skill" if _depth == 0 else f"Chained Skill (depth {_depth})"
     lines = [
-        f"## Active Skill: {skill.manifest.name}",
+        f"## {header_prefix}: {skill.manifest.name}",
         f"**Description:** {skill.manifest.description}",
         "",
     ]
@@ -157,5 +177,27 @@ def build_skill_context(skill: LoadedSkill, project_id: str | None = None) -> st
         lines.append("---")
         lines.append("")
         lines.append(skill.instructions)
+
+    # Chained skills — append their contexts (deduped, depth-capped)
+    chains = getattr(skill.manifest, "chains", None) or []
+    if chains and _depth < _MAX_CHAIN_DEPTH:
+        registry = get_skill_registry()
+        appended = 0
+        for chained_name in chains:
+            if appended >= _MAX_CHAINED_SKILLS:
+                break
+            chained = registry.get(chained_name)
+            if not chained:
+                logger.debug("Chained skill not found: %s", chained_name)
+                continue
+            sub = build_skill_context(
+                chained, project_id,
+                _visited=_visited, _depth=_depth + 1,
+            )
+            if sub:
+                lines.append("")
+                lines.append("")
+                lines.append(sub)
+                appended += 1
 
     return "\n".join(lines)

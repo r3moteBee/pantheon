@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import {
   X, FileText, FilePlus2, Trash2, Save, Sparkles, Wand2, Target,
   Play, Loader2, AlertCircle, CheckCircle2, Info, ChevronRight, FileCode,
-  Check, GitCompare, Pencil, Undo2, ScanSearch,
+  Check, GitCompare, Pencil, Undo2, ScanSearch, Download, History, Upload, RotateCcw,
 } from 'lucide-react'
 import CoreEditor from './CoreEditor'
 import { skillsApi } from '../api/client'
@@ -393,6 +393,8 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
   const [showNewFile, setShowNewFile] = useState(false)
   const [renamingPath, setRenamingPath] = useState(null)
   const [renameValue, setRenameValue] = useState('')
+  const [showVersions, setShowVersions] = useState(false)
+  const [showPublish, setShowPublish] = useState(false)
 
   const loadFiles = useCallback(async () => {
     setLoading(true)
@@ -633,6 +635,30 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
             )}
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowVersions(true)}
+              title="Version history"
+              className="px-2 py-1.5 text-xs rounded bg-gray-900 hover:bg-gray-800 text-gray-300 flex items-center gap-1"
+            >
+              <History className="w-3 h-3" /> History
+            </button>
+            <a
+              href={skillsApi.exportUrl(skillName)}
+              download={`${skillName}.tar.gz`}
+              title="Download .tar.gz"
+              className="px-2 py-1.5 text-xs rounded bg-gray-900 hover:bg-gray-800 text-gray-300 flex items-center gap-1"
+            >
+              <Download className="w-3 h-3" /> Export
+            </a>
+            {editable && (
+              <button
+                onClick={() => setShowPublish(true)}
+                title="Publish to a hub"
+                className="px-2 py-1.5 text-xs rounded bg-gray-900 hover:bg-gray-800 text-gray-300 flex items-center gap-1"
+              >
+                <Upload className="w-3 h-3" /> Publish
+              </button>
+            )}
             {editable && (
               <button
                 onClick={confirmSaveAll}
@@ -854,6 +880,217 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
           onCreate={(p) => createFile(p, '')}
         />
       )}
+
+      {showVersions && (
+        <VersionHistoryModal
+          skillName={skillName}
+          editable={editable}
+          onClose={() => setShowVersions(false)}
+          onRestored={async () => {
+            setShowVersions(false)
+            setContents({})
+            setBaselines({})
+            setDirty({})
+            await loadFiles()
+            loadFile('skill.json')
+            if (onSaved) onSaved()
+          }}
+        />
+      )}
+
+      {showPublish && (
+        <PublishModal
+          skillName={skillName}
+          onClose={() => setShowPublish(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Version history modal ─────────────────────────────────────────────────
+
+function VersionHistoryModal({ skillName, editable, onClose, onRestored }) {
+  const [versions, setVersions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState('')
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await skillsApi.listVersions(skillName)
+        setVersions(res.data.versions || [])
+      } catch (e) {
+        setError(e?.response?.data?.detail || e.message)
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [skillName])
+
+  const restore = async (v) => {
+    if (!confirm(`Restore ${skillName} to ${v.version_id}? A snapshot of the current state will be saved first.`)) return
+    setBusy(v.version_id)
+    try {
+      await skillsApi.restoreVersion(skillName, v.version_id)
+      onRestored && onRestored()
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+      <div className="w-full max-w-xl max-h-[80vh] bg-gray-950 border border-gray-800 rounded-lg flex flex-col shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+            <History className="w-4 h-4 text-brand-400" /> Version history — {skillName}
+          </h3>
+          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-3 space-y-1">
+          {loading && <div className="text-xs text-gray-500">Loading…</div>}
+          {error && <div className="text-xs text-red-400">{error}</div>}
+          {!loading && versions.length === 0 && (
+            <div className="text-xs text-gray-500">No saved versions yet. Edit and save to create snapshots.</div>
+          )}
+          {versions.map((v) => (
+            <div key={v.version_id} className="flex items-center gap-2 p-2 rounded border border-gray-800 bg-gray-900/40">
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-mono text-gray-200 truncate">{v.version_id}</div>
+                <div className="text-[10px] text-gray-500 truncate">
+                  {v.timestamp} · {v.label}
+                  {v.note ? ` — ${v.note}` : ''}
+                  {typeof v.file_count === 'number' ? ` · ${v.file_count} files` : ''}
+                </div>
+              </div>
+              {editable && (
+                <button
+                  onClick={() => restore(v)}
+                  disabled={busy === v.version_id}
+                  className="px-2 py-1 text-[11px] rounded bg-gray-800 hover:bg-gray-700 text-gray-200 flex items-center gap-1 disabled:opacity-50"
+                >
+                  {busy === v.version_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                  Restore
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Publish modal ─────────────────────────────────────────────────────────
+
+function PublishModal({ skillName, onClose }) {
+  const [registries, setRegistries] = useState([])
+  const [registryId, setRegistryId] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [result, setResult] = useState(null)
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await skillsApi.listRegistries()
+        const regs = res.data.registries || res.data || []
+        setRegistries(regs)
+        if (regs.length > 0) setRegistryId(regs[0].id)
+      } catch (e) {
+        setError(e?.response?.data?.detail || e.message)
+      }
+    })()
+  }, [])
+
+  const submit = async () => {
+    if (!registryId) return
+    setBusy(true)
+    setError('')
+    try {
+      const res = await skillsApi.publishSkill(skillName, registryId, note)
+      setResult(res.data)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-gray-950 border border-gray-800 rounded-lg shadow-2xl">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+            <Upload className="w-4 h-4 text-brand-400" /> Publish {skillName}
+          </h3>
+          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-4 space-y-3">
+          {registries.length === 0 ? (
+            <div className="text-xs text-gray-500">
+              No skill registries configured. Add one in the registries admin panel first.
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-[10px] uppercase text-gray-500 mb-1">Registry</label>
+                <select
+                  value={registryId}
+                  onChange={(e) => setRegistryId(e.target.value)}
+                  className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-800 rounded text-gray-200"
+                >
+                  {registries.map((r) => (
+                    <option key={r.id} value={r.id}>{r.display_name || r.id} — {r.url}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase text-gray-500 mb-1">Note (optional)</label>
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="What's new?"
+                  className="w-full px-2 py-1.5 text-xs bg-gray-900 border border-gray-800 rounded text-gray-200"
+                />
+              </div>
+            </>
+          )}
+
+          {error && <div className="text-xs text-red-400">{error}</div>}
+          {result && (
+            <div className="p-2 rounded border border-gray-800 bg-gray-900/60 text-xs space-y-1">
+              <div className="text-brand-400 font-semibold">
+                {result.status === 'submitted' ? 'Submitted to hub ✓' : 'Staged locally'}
+              </div>
+              {result.staged_path && (
+                <div className="text-gray-400 font-mono break-all">{result.staged_path}</div>
+              )}
+              {result.next_steps && (
+                <div className="text-gray-500">{result.next_steps}</div>
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={submit}
+            disabled={busy || !registryId}
+            className="w-full px-3 py-2 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center justify-center gap-1 disabled:opacity-50"
+          >
+            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+            Publish
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

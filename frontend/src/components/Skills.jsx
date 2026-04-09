@@ -93,7 +93,7 @@ function ScanResults({ scanResult }) {
 
 // ── Skill card component ────────────────────────────────────────────────────
 
-function SkillCard({ skill, projectId, onToggle, onDelete, onScan, onEdit }) {
+function SkillCard({ skill, projectId, stats, onToggle, onDelete, onScan, onEdit }) {
   const [expanded, setExpanded] = useState(false)
   const [details, setDetails] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -142,6 +142,14 @@ function SkillCard({ skill, projectId, onToggle, onDelete, onScan, onEdit }) {
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">bundled</span>
             )}
             <ScanBadge scanResult={skill.scan_result} />
+            {stats?.fires > 0 && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900/60 text-brand-300"
+                title={`Fired ${stats.fires} times (${stats.fires_explicit || 0} explicit, ${stats.fires_auto || 0} auto)${stats.last_fired ? ` — last ${stats.last_fired}` : ''}`}
+              >
+                {stats.fires} fire{stats.fires === 1 ? '' : 's'}
+              </span>
+            )}
             {skill.schedulable && (
               <Clock className="w-3 h-3 text-amber-400" title="Schedulable" />
             )}
@@ -390,6 +398,7 @@ function OverrideModal({ skillName, onConfirm, onCancel }) {
 
 export default function Skills() {
   const [skills, setSkills] = useState([])
+  const [analytics, setAnalytics] = useState({})
   const [loading, setLoading] = useState(true)
   const [reloading, setReloading] = useState(false)
   const [overrideTarget, setOverrideTarget] = useState(null) // skill name pending override
@@ -411,8 +420,18 @@ export default function Skills() {
     setLoading(false)
   }
 
+  const loadAnalytics = async () => {
+    try {
+      const res = await skillsApi.getAnalytics()
+      setAnalytics(res.data.stats || {})
+    } catch {
+      // Non-fatal; leave analytics empty
+    }
+  }
+
   useEffect(() => {
     loadSkills()
+    loadAnalytics()
   }, [projectId])
 
   const handleReload = async () => {
@@ -557,6 +576,7 @@ export default function Skills() {
                 key={skill.name}
                 skill={skill}
                 projectId={projectId}
+                stats={analytics[skill.name]}
                 onToggle={handleToggle}
                 onDelete={handleDelete}
                 onScan={handleScan}

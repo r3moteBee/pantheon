@@ -124,6 +124,14 @@ def write_skill_file(skill_name: str, rel_path: str, content: str) -> dict[str, 
         raise ValueError(f"Unsupported file type: {target.suffix}")
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         raise ValueError(f"Content too large (>{MAX_FILE_BYTES} bytes)")
+    # Snapshot pre-edit state for versioning/rollback (only when content actually changes)
+    try:
+        from skills.versioning import snapshot_skill
+        existing = target.read_text("utf-8") if target.is_file() else None
+        if existing != content:
+            snapshot_skill(skill_name, label="edit", note=f"before write {rel_path}")
+    except Exception as e:
+        logger.warning("pre-write snapshot failed: %s", e)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, "utf-8")
     return {"path": rel_path, "size": target.stat().st_size}
@@ -143,6 +151,11 @@ def create_skill_file(skill_name: str, rel_path: str, content: str = "") -> dict
         raise FileExistsError(f"File already exists: {rel_path}")
     if len(content.encode("utf-8")) > MAX_FILE_BYTES:
         raise ValueError(f"Content too large (>{MAX_FILE_BYTES} bytes)")
+    try:
+        from skills.versioning import snapshot_skill
+        snapshot_skill(skill_name, label="create", note=f"before create {rel_path}")
+    except Exception as e:
+        logger.warning("pre-create snapshot failed: %s", e)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, "utf-8")
     return {"path": rel_path, "size": target.stat().st_size}
@@ -163,6 +176,11 @@ def rename_skill_file(skill_name: str, rel_path: str, new_rel_path: str) -> dict
         raise FileExistsError(f"File already exists: {new_rel_path}")
     if dst.suffix.lower() not in TEXT_EXTS:
         raise ValueError(f"Unsupported file type: {dst.suffix}")
+    try:
+        from skills.versioning import snapshot_skill
+        snapshot_skill(skill_name, label="rename", note=f"{rel_path} -> {new_rel_path}")
+    except Exception as e:
+        logger.warning("pre-rename snapshot failed: %s", e)
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
     return {"old_path": rel_path, "path": new_rel_path, "size": dst.stat().st_size}
@@ -176,6 +194,11 @@ def delete_skill_file(skill_name: str, rel_path: str) -> None:
     if target.name in ("skill.json", "instructions.md"):
         raise PermissionError(f"{target.name} cannot be deleted")
     if target.is_file():
+        try:
+            from skills.versioning import snapshot_skill
+            snapshot_skill(skill_name, label="delete", note=f"before delete {rel_path}")
+        except Exception as e:
+            logger.warning("pre-delete snapshot failed: %s", e)
         target.unlink()
 
 
