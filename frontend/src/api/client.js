@@ -242,6 +242,12 @@ export const skillsApi = {
     }),
   lint: (manifestJson, instructions) =>
     api.post('/api/skills/editor/lint', { manifest_json: manifestJson, instructions }),
+  aiLint: (manifestJson, instructions) =>
+    api.post('/api/skills/editor/ai-lint', { manifest_json: manifestJson, instructions }),
+  createFile: (skillName, path, content = '') =>
+    api.post(`/api/skills/editor/${skillName}/file/new`, { path, content }),
+  renameFile: (skillName, oldPath, newPath) =>
+    api.post(`/api/skills/editor/${skillName}/file/rename`, { old_path: oldPath, new_path: newPath }),
   testSkill: (skillName, message) =>
     api.post(`/api/skills/editor/${skillName}/test`, { message }),
 
