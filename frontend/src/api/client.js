@@ -248,6 +248,22 @@ export const skillsApi = {
     api.post(`/api/skills/editor/${skillName}/file/new`, { path, content }),
   renameFile: (skillName, oldPath, newPath) =>
     api.post(`/api/skills/editor/${skillName}/file/rename`, { old_path: oldPath, new_path: newPath }),
+
+  // Phase 5: versioning, sharing, analytics, publishing
+  listVersions: (skillName) =>
+    api.get(`/api/skills/editor/${skillName}/versions`),
+  listVersionFiles: (skillName, versionId) =>
+    api.get(`/api/skills/editor/${skillName}/versions/${versionId}/files`),
+  readVersionFile: (skillName, versionId, path) =>
+    api.get(`/api/skills/editor/${skillName}/versions/${versionId}/file`, { params: { path } }),
+  restoreVersion: (skillName, versionId) =>
+    api.post(`/api/skills/editor/${skillName}/versions/${versionId}/restore`),
+  exportUrl: (skillName) => `/api/skills/editor/${skillName}/export`,
+  getAnalytics: () => api.get('/api/skills/analytics'),
+  resetAnalytics: (skill = null) =>
+    api.post('/api/skills/analytics/reset', null, { params: skill ? { skill } : {} }),
+  publishSkill: (skillName, registryId, note = '') =>
+    api.post(`/api/skills/editor/${skillName}/publish`, { registry_id: registryId, note }),
   testSkill: (skillName, message) =>
     api.post(`/api/skills/editor/${skillName}/test`, { message }),
 

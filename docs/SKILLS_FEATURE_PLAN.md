@@ -940,11 +940,11 @@ Frontend additions:
 - ✅ **File create/rename in tree** — `POST /skills/editor/{skill}/file/new` and `/file/rename` endpoints. File tree has a new-file button and hover rename/delete controls. `skill.json` and `instructions.md` remain protected from rename/delete.
 
 ### Phase 5: Polish & Advanced (ongoing)
-- [ ] Skill versioning and rollback
-- [ ] Skill sharing (export as .tar.gz with manifest)
-- [ ] Usage analytics (which skills fire, how often, success rate)
-- [ ] Skill chaining (one skill can invoke another)
-- [ ] Community hub contribution (publish back to registries)
+- [x] Skill versioning and rollback ✅ Shipped 2026-04-08 — `backend/skills/versioning.py` snapshots the skill dir to `data_dir/skills/.versions/{skill}/{stamp}_{label}/` on every create/write/rename/delete via the editor (cap: 20 versions/skill, oldest pruned). Restore is non-destructive — it snapshots current state as `pre_restore` first, then copies the selected version back. Endpoints: `GET /skills/editor/{skill}/versions`, `/versions/{id}/files`, `/versions/{id}/file`, `POST /versions/{id}/restore`. UI: History button in editor header opens a version list with inline Restore.
+- [x] Skill sharing (export as .tar.gz with manifest) ✅ Shipped 2026-04-08 — `backend/skills/exporter.py` tars the skill directory (excluding `.versions/`, `__pycache__`, `.DS_Store`). `GET /skills/editor/{skill}/export` streams the archive with an `attachment` Content-Disposition. UI: Export button in editor header triggers a direct download.
+- [x] Usage analytics ✅ Shipped 2026-04-08 — `backend/skills/analytics.py` keeps per-skill counters (fires total / explicit / auto / suggestions, last_fired, last_suggested) in `data_dir/skill_analytics.json`. Incremented on the chat-WS path when a skill is activated (`/skill-name` explicit or auto-resolved) or suggested. Endpoints: `GET /skills/analytics`, `POST /skills/analytics/reset`. UI: fire-count badge on each skill card in the Skills page (tooltip shows explicit/auto breakdown).
+- [x] Skill chaining ✅ Shipped 2026-04-08 — new top-level `chains: list[str]` field on `SkillManifest`. When `build_skill_context` runs for a skill that declares chains, chained skills' contexts are recursively appended (max depth 2, max 4 chained per level, deduped via visited-set so cycles are safe). A chained skill's section is labelled `## Chained Skill (depth N): <name>` in the prompt.
+- [x] Community hub contribution ✅ Shipped 2026-04-08 — `backend/skills/publisher.py` validates the skill (scanner must have passed, bundled skills blocked), packages it via the exporter, and POSTs to `{registry_url}/skills/submit` as multipart with a bearer token from the vault (`skill_registry:{id}`). If the registry doesn't accept live submissions (non-2xx or network error), the archive is staged under `data_dir/skill_submissions/{registry_id}/{skill}-{stamp}.tar.gz` and the response returns the staged path plus manual-upload instructions — never silently dropped. Endpoint: `POST /skills/editor/{skill}/publish`. UI: Publish button in editor header opens a modal to pick a configured registry and submit.
 
 ---
 

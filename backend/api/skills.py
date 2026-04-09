@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import get_settings
@@ -411,6 +412,11 @@ class RenameFileRequest(BaseModel):
     new_path: str
 
 
+class PublishRequest(BaseModel):
+    registry_id: str
+    note: str = ""
+
+
 @router.post("/skills/editor/blank")
 async def create_blank_skill_endpoint(req: CreateBlankSkillRequest) -> dict[str, Any]:
     from skills import editor
@@ -595,6 +601,23 @@ async def test_skill_endpoint(skill_name: str, req: TestRequest) -> dict[str, An
         return editor.test_skill_against_message(skill_name, req.message)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# ── Analytics (literal — must come before /skills/{skill_name}) ────────────
+
+@router.get("/skills/analytics")
+async def skills_analytics_literal() -> dict[str, Any]:
+    from skills import analytics
+    return {"stats": analytics.get_all_stats()}
+
+
+@router.post("/skills/analytics/reset")
+async def reset_skills_analytics_literal(
+    skill: str | None = Query(default=None),
+) -> dict[str, Any]:
+    from skills import analytics
+    analytics.reset_stats(skill)
+    return {"status": "reset", "skill": skill}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -856,3 +879,96 @@ async def unquarantine_skill(skill_name: str) -> dict[str, Any]:
         return {"skill": skill_name, "restored": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 5: Versioning, Sharing, Analytics, Publishing
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── Versioning ─────────────────────────────────────────────────────────────
+
+@router.get("/skills/editor/{skill_name}/versions")
+async def list_skill_versions_endpoint(skill_name: str) -> dict[str, Any]:
+    from skills import versioning
+    return {"skill": skill_name, "versions": versioning.list_versions(skill_name)}
+
+
+@router.get("/skills/editor/{skill_name}/versions/{version_id}/files")
+async def list_skill_version_files_endpoint(
+    skill_name: str, version_id: str,
+) -> dict[str, Any]:
+    from skills import versioning
+    try:
+        return {
+            "skill": skill_name, "version_id": version_id,
+            "files": versioning.list_version_files(skill_name, version_id),
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/skills/editor/{skill_name}/versions/{version_id}/file")
+async def read_skill_version_file_endpoint(
+    skill_name: str, version_id: str, path: str = Query(...),
+) -> dict[str, Any]:
+    from skills import versioning
+    try:
+        content = versioning.read_version_file(skill_name, version_id, path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": path, "content": content}
+
+
+@router.post("/skills/editor/{skill_name}/versions/{version_id}/restore")
+async def restore_skill_version_endpoint(
+    skill_name: str, version_id: str,
+) -> dict[str, Any]:
+    from skills import versioning
+    try:
+        result = versioning.restore_version(skill_name, version_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reload_skill_registry()
+    return {"status": "restored", **result}
+
+
+# ── Export (tar.gz download) ───────────────────────────────────────────────
+
+@router.get("/skills/editor/{skill_name}/export")
+async def export_skill_endpoint(skill_name: str) -> Response:
+    from skills.exporter import export_skill_targz
+    try:
+        data = export_skill_targz(skill_name)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=data,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f'attachment; filename="{skill_name}.tar.gz"'},
+    )
+
+
+# ── Hub contribution ───────────────────────────────────────────────────────
+
+@router.post("/skills/editor/{skill_name}/publish")
+async def publish_skill_endpoint(
+    skill_name: str, req: PublishRequest,
+) -> dict[str, Any]:
+    from skills.publisher import publish_skill
+    try:
+        return await publish_skill(skill_name, req.registry_id, note=req.note)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Publish failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Publish failed: {e}")

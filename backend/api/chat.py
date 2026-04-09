@@ -168,6 +168,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     active_skill_name = explicit_skill
                     skill_context = build_skill_context(skill, project_id=project_id)
                     message = remaining_message or message
+                    try:
+                        from skills import analytics as _sa
+                        _sa.record_fire(explicit_skill, source="explicit")
+                    except Exception:
+                        pass
                     await websocket.send_json({
                         "type": "skill_active",
                         "skill": explicit_skill,
@@ -195,6 +200,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         if discovery_mode == "auto":
                             active_skill_name = skill.name
                             skill_context = build_skill_context(skill, project_id=project_id)
+                            try:
+                                from skills import analytics as _sa
+                                _sa.record_fire(skill.name, source="auto")
+                            except Exception:
+                                pass
                             await websocket.send_json({
                                 "type": "skill_active",
                                 "skill": skill.name,
@@ -203,6 +213,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
                             })
                         else:
                             # suggest mode — notify but don't activate
+                            try:
+                                from skills import analytics as _sa
+                                _sa.record_suggestion(skill.name)
+                            except Exception:
+                                pass
                             await websocket.send_json({
                                 "type": "skill_suggestion",
                                 "skill": skill.name,
