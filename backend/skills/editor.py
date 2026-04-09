@@ -364,7 +364,6 @@ def test_skill_against_message(skill_name: str, message: str) -> dict[str, Any]:
     """Run the skill resolver against a sample user message and return whether
     this skill would have been selected, plus the score breakdown."""
     from skills.registry import get_skill_registry
-    from skills.resolver import score_skill_for_message
 
     registry = get_skill_registry()
     skill = registry.get(skill_name) if hasattr(registry, "get") else None
@@ -376,9 +375,10 @@ def test_skill_against_message(skill_name: str, message: str) -> dict[str, Any]:
         raise FileNotFoundError(f"Skill not found in registry: {skill_name}")
 
     try:
+        from skills.resolver import score_skill_for_message
         score, breakdown = score_skill_for_message(skill, message)
-    except Exception as e:
-        # Resolver helper may not exist by that name — fall back to a tiny inline scorer
+    except Exception:
+        # score_skill_for_message may not exist — fall back to inline scorer
         score, breakdown = _fallback_score(skill, message)
 
     return {
@@ -400,12 +400,13 @@ def _fallback_score(skill, message: str) -> tuple[float, dict[str, Any]]:
     score = 0.0
     hits: dict[str, Any] = {"trigger": [], "partial_trigger": [], "name": False,
                             "tag": [], "description_overlap": []}
-    name = (getattr(skill, "name", "") or "").lower()
+    manifest = getattr(skill, "manifest", skill)
+    name = (getattr(manifest, "name", "") or getattr(skill, "name", "") or "").lower()
     if name and name in msg:
         score += 2.0
         hits["name"] = True
 
-    for trig in (getattr(skill, "triggers", None) or []):
+    for trig in (getattr(skill, "triggers", None) or getattr(manifest, "triggers", None) or []):
         t = trig.lower().strip()
         if not t:
             continue
@@ -419,12 +420,12 @@ def _fallback_score(skill, message: str) -> tuple[float, dict[str, Any]]:
                 score += 1.5
                 hits["partial_trigger"].append(trig)
 
-    for tag in (getattr(skill, "tags", None) or []):
+    for tag in (getattr(skill, "tags", None) or getattr(manifest, "tags", None) or []):
         if tag.lower() in msg:
             score += 1.0
             hits["tag"].append(tag)
 
-    desc_words = set(re.findall(r"\w{4,}", (getattr(skill, "description", "") or "").lower()))
+    desc_words = set(re.findall(r"\w{4,}", (getattr(manifest, "description", "") or "").lower()))
     msg_words = set(re.findall(r"\w{4,}", msg))
     overlap = desc_words & msg_words
     if overlap:
