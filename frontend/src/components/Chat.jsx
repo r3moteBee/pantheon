@@ -6,22 +6,44 @@ import { useStore } from '../store'
 import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 
-// Parse workspace:// path from show_file result markdown
+// Parse workspace:// path from show_file result
 function parseShowFileResult(result) {
   if (!result) return null
-  // Match ![caption](workspace://path) or [caption](workspace://path)
-  const match = result.match(/!?\[([^\]]*)\]\(workspace:\/\/([^)]+)\)/)
-  if (!match) return null
-  return { caption: match[1], path: decodeURIComponent(match[2]) }
+  // Match [DISPLAY:workspace://path] format
+  const displayMatch = result.match(/\[DISPLAY:workspace:\/\/([^\]]+)\]/)
+  if (displayMatch) {
+    const path = decodeURIComponent(displayMatch[1])
+    const name = path.split('/').pop()
+    return { caption: name, path }
+  }
+  // Legacy: match ![caption](workspace://path) or [caption](workspace://path)
+  const mdMatch = result.match(/!?\[([^\]]*)\]\(workspace:\/\/([^)]+)\)/)
+  if (mdMatch) return { caption: mdMatch[1], path: decodeURIComponent(mdMatch[2]) }
+  return null
 }
 
 function FilePreview({ filePath, caption }) {
   const projectId = useStore((s) => s.activeProject?.id || 'default')
   const url = filesApi.viewUrl(filePath, projectId)
   const ext = (filePath || '').split('.').pop().toLowerCase()
-  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+  const imgExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+  const textExts = ['md', 'markdown', 'txt', 'csv', 'json', 'yaml', 'yml']
 
-  if (imageExts.includes(ext)) {
+  const [textContent, setTextContent] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  // Fetch text content for text-based files
+  useEffect(() => {
+    if (textExts.includes(ext)) {
+      setLoading(true)
+      fetch(url)
+        .then(r => r.ok ? r.text() : Promise.reject('fetch failed'))
+        .then(text => { setTextContent(text); setLoading(false) })
+        .catch(() => { setTextContent(null); setLoading(false) })
+    }
+  }, [url, ext])
+
+  if (imgExts.includes(ext)) {
     return (
       <div className="my-2">
         <img src={url} alt={caption || filePath} className="rounded-lg max-w-full max-h-96 border border-gray-700" />
@@ -35,6 +57,40 @@ function FilePreview({ filePath, caption }) {
         <iframe src={url} title={caption || filePath} className="w-full bg-white" style={{ height: '500px' }} />
         <div className="bg-gray-800 px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2">
           <FileText className="w-3 h-3" /> {caption || filePath}
+        </div>
+      </div>
+    )
+  }
+  if (ext === 'html' || ext === 'htm') {
+    return (
+      <div className="my-2 rounded-lg overflow-hidden border border-gray-700">
+        <iframe src={url} title={caption || filePath} sandbox="allow-scripts allow-same-origin" className="w-full bg-white" style={{ height: '400px' }} />
+        <div className="bg-gray-800 px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2">
+          <FileText className="w-3 h-3" /> {caption || filePath}
+        </div>
+      </div>
+    )
+  }
+  if (textExts.includes(ext)) {
+    return (
+      <div className="my-2 rounded-lg overflow-hidden border border-gray-700">
+        <div className="bg-gray-800 px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2 border-b border-gray-700">
+          <FileText className="w-3 h-3" /> {caption || filePath}
+        </div>
+        <div className="bg-gray-900 px-4 py-3 max-h-96 overflow-y-auto">
+          {loading ? (
+            <div className="text-gray-500 text-sm">Loading...</div>
+          ) : textContent !== null ? (
+            (ext === 'md' || ext === 'markdown') ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-invert prose-sm max-w-none">
+                {textContent}
+              </ReactMarkdown>
+            ) : (
+              <pre className="text-gray-300 text-xs whitespace-pre-wrap break-words font-mono">{textContent}</pre>
+            )
+          ) : (
+            <div className="text-red-400 text-sm">Failed to load file</div>
+          )}
         </div>
       </div>
     )

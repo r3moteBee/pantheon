@@ -266,7 +266,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "show_file",
-            "description": "Display a file (image, PDF, or other viewable file) inline in the chat. Use this instead of read_file when the user asks to 'show', 'display', or 'view' a file — especially for images and PDFs where text extraction isn't what they want. Returns markdown that the chat UI renders as an embedded preview.",
+            "description": "Display a file inline in the chat UI. Supports images (png/jpg/gif/svg/webp), PDFs, HTML, markdown, and text files. Use this instead of read_file when the user asks to 'show', 'display', or 'view' a file. The file will be rendered as a visual preview in the chat. IMPORTANT: Only call this ONCE per file — a single successful call displays the file. Never retry or call again for the same file.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -358,14 +358,17 @@ async def execute_tool(
             rel_path = tool_args["path"]
             caption = tool_args.get("caption", "")
             suffix = safe_path.suffix.lower()
-            # URL-encode the path so spaces/special chars don't break markdown parsing
             from urllib.parse import quote
             encoded_path = quote(rel_path, safe="/")
-            # Return markdown with workspace:// protocol the chat UI knows how to render
-            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".pdf"}:
-                return f"![{caption or safe_path.name}](workspace://{encoded_path})"
-            else:
-                return f"[{caption or safe_path.name}](workspace://{encoded_path})"
+            # Return structured result: display directive for frontend + clear success for LLM
+            # The [DISPLAY:...] tag is parsed by the frontend to render a preview.
+            # IMPORTANT: Do NOT call show_file again for this file — it is already displayed.
+            size_kb = safe_path.stat().st_size / 1024
+            return (
+                f"[DISPLAY:workspace://{encoded_path}]\n"
+                f"Successfully displayed {safe_path.name} ({size_kb:.0f}KB) inline in the chat. "
+                f"The user can now see the file. Do not call show_file again for this file."
+            )
 
         elif tool_name == "read_file":
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
