@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive, Eye } from 'lucide-react'
+import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive, Eye, Image, FileText, Code2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -175,6 +175,29 @@ export default function FileRepository() {
     return exts.some(ext => name.toLowerCase().endsWith(ext))
   }
 
+  const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico']
+  const isImageFile = (name) => IMAGE_EXTS.some(ext => name.toLowerCase().endsWith(ext))
+  const isPdfFile = (name) => name.toLowerCase().endsWith('.pdf')
+  const isSvgFile = (name) => name.toLowerCase().endsWith('.svg')
+  const isHtmlFile = (name) => /\.(html|htm)$/i.test(name)
+  const isViewableFile = (name) => isImageFile(name) || isPdfFile(name) || isSvgFile(name) || isHtmlFile(name)
+
+  const [viewFile, setViewFile] = useState(null)       // filename being viewed (non-text)
+  const [htmlSource, setHtmlSource] = useState(false)   // toggle for HTML: false=source, true=preview
+
+  const openViewer = (name) => {
+    setViewFile(name)
+    setPreviewFile(null)
+    setFileContent(null)
+    setEditing(false)
+    setHtmlSource(false)
+  }
+
+  const getViewUrl = (name) => {
+    const path = currentPath ? `${currentPath}/${name}` : name
+    return filesApi.viewUrl(path, projectId)
+  }
+
   // Drag-and-drop handlers
   const handleDragOver = useCallback((e) => {
     e.preventDefault()
@@ -257,8 +280,8 @@ export default function FileRepository() {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* File browser — hidden while previewing a file so the preview/editor gets the full pane */}
-        <div className={`flex-1 flex flex-col border-r border-gray-800 ${previewFile ? 'hidden' : ''}`}>
+        {/* File browser — hidden while previewing/viewing a file so the preview/editor gets the full pane */}
+        <div className={`flex-1 flex flex-col border-r border-gray-800 ${previewFile || viewFile ? 'hidden' : ''}`}>
           {/* Breadcrumb and actions */}
           <div className="px-6 py-3 bg-gray-900 border-b border-gray-800 space-y-3">
             <div className="flex items-center gap-2">
@@ -440,11 +463,21 @@ export default function FileRepository() {
                       title="Select"
                     />
                     <button
-                      onClick={() => item.is_dir ? openFolder(item.name) : (isTextFile(item.name) ? previewTextFile(item.name) : null)}
+                      onClick={() => {
+                        if (item.is_dir) openFolder(item.name)
+                        else if (isViewableFile(item.name)) openViewer(item.name)
+                        else if (isTextFile(item.name)) previewTextFile(item.name)
+                      }}
                       className="flex-1 flex items-center gap-3 min-w-0"
                     >
                       {item.is_dir ? (
                         <Folder className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                      ) : isImageFile(item.name) || isSvgFile(item.name) ? (
+                        <Image className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                      ) : isPdfFile(item.name) ? (
+                        <FileText className="w-4 h-4 text-red-400 flex-shrink-0" />
+                      ) : isHtmlFile(item.name) ? (
+                        <Code2 className="w-4 h-4 text-orange-400 flex-shrink-0" />
                       ) : (
                         <File className="w-4 h-4 text-gray-400 flex-shrink-0" />
                       )}
@@ -598,7 +631,145 @@ export default function FileRepository() {
             </div>
           </div>
         )}
+        {/* Viewer pane — for images, PDF, SVG, HTML */}
+        {viewFile && (
+          <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+            {/* Viewer header */}
+            <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <button
+                  onClick={() => setViewFile(null)}
+                  className="p-1 text-gray-500 hover:text-gray-300 rounded hover:bg-gray-800 flex-shrink-0"
+                  title="Back to files"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <p className="text-sm font-medium text-gray-300 truncate">{viewFile}</p>
+                {isHtmlFile(viewFile) && (
+                  <span className="text-xs text-gray-600">
+                    {htmlSource ? 'Live preview' : 'Source'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {/* HTML: toggle source vs live preview */}
+                {isHtmlFile(viewFile) && (
+                  <button
+                    onClick={() => setHtmlSource(!htmlSource)}
+                    className="flex items-center gap-1.5 px-2 py-1 text-xs text-gray-400 hover:text-gray-200 rounded hover:bg-gray-800"
+                    title={htmlSource ? 'View source' : 'Preview in browser'}
+                  >
+                    {htmlSource ? <><Code2 className="w-3.5 h-3.5" /> Source</> : <><Eye className="w-3.5 h-3.5" /> Preview</>}
+                  </button>
+                )}
+                {/* Edit button for HTML/SVG (they're also text files) */}
+                {(isHtmlFile(viewFile) || isSvgFile(viewFile)) && (
+                  <button
+                    onClick={() => {
+                      previewTextFile(viewFile)
+                      setViewFile(null)
+                      startEditing()
+                    }}
+                    className="p-1 text-gray-500 hover:text-brand-400 rounded hover:bg-gray-800"
+                    title="Edit source"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+                <a
+                  href={getDownloadUrl(viewFile)}
+                  download
+                  className="p-1 text-gray-500 hover:text-green-400 rounded hover:bg-gray-800"
+                  title="Download"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
+              </div>
+            </div>
+
+            {/* Viewer content */}
+            <div className="flex-1 overflow-auto min-h-0 bg-gray-950">
+              {isImageFile(viewFile) && (
+                <div className="flex items-center justify-center h-full p-6">
+                  <img
+                    src={getViewUrl(viewFile)}
+                    alt={viewFile}
+                    className="max-w-full max-h-full object-contain rounded"
+                  />
+                </div>
+              )}
+
+              {isSvgFile(viewFile) && (
+                <div className="flex items-center justify-center h-full p-6">
+                  <img
+                    src={getViewUrl(viewFile)}
+                    alt={viewFile}
+                    className="max-w-full max-h-full object-contain rounded"
+                  />
+                </div>
+              )}
+
+              {isPdfFile(viewFile) && (
+                <embed
+                  src={getViewUrl(viewFile)}
+                  type="application/pdf"
+                  className="w-full h-full"
+                />
+              )}
+
+              {isHtmlFile(viewFile) && (
+                htmlSource ? (
+                  <iframe
+                    src={getViewUrl(viewFile)}
+                    title={viewFile}
+                    sandbox="allow-scripts allow-same-origin"
+                    className="w-full h-full bg-white"
+                  />
+                ) : (
+                  <HtmlSourceViewer
+                    filename={viewFile}
+                    path={currentPath ? `${currentPath}/${viewFile}` : viewFile}
+                    projectId={projectId}
+                  />
+                )
+              )}
+            </div>
+          </div>
+        )}
       </div>
+    </div>
+  )
+}
+
+function HtmlSourceViewer({ filename, path, projectId }) {
+  const [content, setContent] = React.useState('')
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    setLoading(true)
+    filesApi.read(path, projectId)
+      .then((res) => setContent(res.data.content || ''))
+      .catch(() => setContent('// Failed to load file'))
+      .finally(() => setLoading(false))
+  }, [path, projectId])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="w-full h-full">
+      <CoreEditor
+        value={content}
+        language="javascript"
+        filename={filename}
+        editable={false}
+        height="100%"
+      />
     </div>
   )
 }
