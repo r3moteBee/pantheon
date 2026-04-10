@@ -1,4 +1,4 @@
-"""Projects API — create, list, switch, delete project namespaces."""
+"""Projects API — create, list, switch, delete, export/import project namespaces."""
 from __future__ import annotations
 import json
 import logging
@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import get_settings
@@ -153,3 +154,144 @@ async def delete_project(project_id: str) -> dict[str, str]:
     _save_projects(projects)
     logger.info(f"Project deleted: {project_id}")
     return {"status": "deleted", "project_id": project_id}
+
+
+# ── Export / Import ──────────────────────────────────────────────────────────
+
+
+class ExportRequest(BaseModel):
+    components: list[str] | None = None  # None = all
+
+
+@router.post("/projects/{project_id}/export")
+async def export_project_endpoint(
+    project_id: str,
+    req: ExportRequest | None = None,
+) -> Response:
+    """Export a project as a .zip archive with selectable components.
+
+    Components: "metadata", "memory", "files", "tasks". Omit for all.
+    """
+    from api.project_export import export_project
+
+    components = req.components if req else None
+    try:
+        archive = export_project(project_id, components=components)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    filename = f"pantheon-{project_id}-export.zip"
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/projects/{project_id}/export/preview")
+async def export_preview(
+    project_id: str,
+    req: ExportRequest | None = None,
+) -> dict[str, Any]:
+    """Preview what would be exported without creating the archive."""
+    from api.project_export import (
+        _collect_metadata,
+        _collect_episodic,
+        _collect_graph,
+        _collect_semantic,
+        _collect_tasks,
+    )
+
+    components = req.components if req else ["metadata", "memory", "files", "tasks"]
+    meta = _collect_metadata(project_id)
+    if not meta and project_id != "default":
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    preview: dict[str, Any] = {"project_id": project_id, "components": {}}
+
+    if "metadata" in components:
+        preview["components"]["metadata"] = {"name": meta.get("name", project_id)}
+
+    if "memory" in components:
+        episodic = _collect_episodic(project_id)
+        graph = _collect_graph(project_id)
+        try:
+            from memory.semantic import SemanticMemory
+            sem = SemanticMemory(project_id=project_id)
+            sem_count = sem._get_collection().count()
+        except Exception:
+            sem_count = 0
+
+        preview["components"]["memory"] = {
+            "conversations": len(episodic["conversations"]),
+            "messages": len(episodic["messages"]),
+            "task_logs": len(episodic["task_logs"]),
+            "memory_notes": len(episodic["memory_notes"]),
+            "graph_nodes": len(graph["nodes"]),
+            "graph_edges": len(graph["edges"]),
+            "semantic_memories": sem_count,
+        }
+
+    if "files" in components:
+        project_dir = settings.projects_dir / project_id
+        file_count = 0
+        for subdir in ("workspace", "personality", "notes"):
+            src = project_dir / subdir
+            if src.is_dir():
+                file_count += sum(1 for _ in src.rglob("*") if _.is_file())
+        preview["components"]["files"] = {"count": file_count}
+
+    if "tasks" in components:
+        tasks = _collect_tasks(project_id)
+        preview["components"]["tasks"] = {"count": len(tasks)}
+
+    return preview
+
+
+@router.post("/projects/import")
+async def import_project_endpoint(
+    file: UploadFile = File(...),
+    target_id: str | None = Query(None, description="Override the project ID"),
+    components: str | None = Query(None, description="Comma-separated components to import"),
+    overwrite: bool = Query(False, description="Merge into existing project if it exists"),
+) -> dict[str, Any]:
+    """Import a project from a Pantheon export archive.
+
+    Runs a 3-layer security scan before importing:
+    - Layer 1: Archive structure validation
+    - Layer 2: Content safety scan
+    - Layer 3: Data integrity verification
+    """
+    from api.project_import import import_project
+
+    archive_bytes = await file.read()
+
+    comp_list = None
+    if components:
+        comp_list = [c.strip() for c in components.split(",")]
+
+    result = import_project(
+        archive_bytes,
+        target_project_id=target_id,
+        components=comp_list,
+        overwrite=overwrite,
+    )
+    status_code = 200 if result.success else 422
+    return result.model_dump()
+
+
+@router.post("/projects/import/scan")
+async def scan_import_archive(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    """Run the security scanner on an archive without importing.
+
+    Use this to preview scan results before committing to an import.
+    """
+    from api.project_import import scan_archive
+
+    archive_bytes = await file.read()
+    result = scan_archive(archive_bytes)
+    return result.model_dump()

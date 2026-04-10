@@ -339,6 +339,31 @@ export const projectsApi = {
   update: (projectId, name, description) =>
     api.put(`/api/projects/${projectId}`, { name, description }),
   delete: (projectId) => api.delete(`/api/projects/${projectId}`),
+
+  // Export / Import
+  exportProject: (projectId, components = null) =>
+    api.post(`/api/projects/${projectId}/export`, { components }, { responseType: 'blob' }),
+  exportPreview: (projectId, components = null) =>
+    api.post(`/api/projects/${projectId}/export/preview`, { components }),
+  importProject: (file, { targetId = null, components = null, overwrite = false } = {}) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const params = {}
+    if (targetId) params.target_id = targetId
+    if (components) params.components = components.join(',')
+    if (overwrite) params.overwrite = true
+    return api.post('/api/projects/import', formData, {
+      params,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
+  scanImport: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return api.post('/api/projects/import/scan', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+  },
 }
 
 // WebSocket helper

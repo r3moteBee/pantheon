@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Trash2, Plus, Check, RefreshCw, Calendar, User } from 'lucide-react'
 import { useStore } from '../store'
 import { projectsApi, personasApi } from '../api/client'
+import { ExportButton, ImportButton } from './ProjectPortability'
 
 function CreateProjectForm({ onProjectCreated, personas }) {
   const [name, setName] = useState('')
@@ -205,6 +206,7 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
             Set Active
           </button>
         )}
+        <ExportButton project={project} />
         <button
           onClick={deleteProject}
           disabled={isActive || deleting}
@@ -262,13 +264,16 @@ export default function Projects() {
       {/* Header */}
       <div className="px-6 py-4 bg-gray-900 border-b border-gray-800 flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-100">Projects</h1>
-        <button
-          onClick={loadProjects}
-          disabled={loading}
-          className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-50"
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          <ImportButton onImported={loadProjects} />
+          <button
+            onClick={loadProjects}
+            disabled={loading}
+            className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-50"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Content */}
