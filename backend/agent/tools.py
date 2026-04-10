@@ -280,6 +280,22 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "download_file",
+            "description": "Download a file from a URL and save it to the workspace. Use this when the user asks you to download, fetch, or save a file from the internet (PDFs, images, documents, data files, etc.). The file is saved to the specified path in the workspace and can then be viewed with show_file or read with read_file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL to download the file from"},
+                    "path": {"type": "string", "description": "Relative path in workspace to save the file (e.g., 'documents/report.pdf'). Directories are created automatically."},
+                    "filename": {"type": "string", "description": "Optional filename override. If omitted, derived from the URL or Content-Disposition header."}
+                },
+                "required": ["url", "path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "consolidate_memory",
             "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
             "parameters": {
@@ -369,6 +385,52 @@ async def execute_tool(
                 f"Successfully displayed {safe_path.name} ({size_kb:.0f}KB) inline in the chat. "
                 f"The user can now see the file. Do not call show_file again for this file."
             )
+
+        elif tool_name == "download_file":
+            url = tool_args.get("url", "")
+            dest_path_str = tool_args.get("path", "")
+            if not url or not dest_path_str:
+                return "Error: both 'url' and 'path' are required"
+
+            safe_path = _safe_workspace_path(dest_path_str, project_id)
+            safe_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # If path is a directory-like destination, derive filename from URL
+            filename = tool_args.get("filename")
+            if not filename and not safe_path.suffix:
+                # No extension in path — treat as directory, derive filename from URL
+                from urllib.parse import urlparse, unquote
+                url_path = urlparse(url).path
+                filename = unquote(url_path.split("/")[-1]) or "download"
+                safe_path = safe_path / filename
+
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                    resp = await client.get(url)
+                    resp.raise_for_status()
+
+                    # Try to get filename from Content-Disposition if we still need one
+                    if not safe_path.suffix:
+                        cd = resp.headers.get("content-disposition", "")
+                        if "filename=" in cd:
+                            import re as _re
+                            match = _re.search(r'filename[*]?=["\']?([^"\';]+)', cd)
+                            if match:
+                                safe_path = safe_path.parent / match.group(1).strip()
+
+                    safe_path.write_bytes(resp.content)
+                    size_kb = len(resp.content) / 1024
+                    content_type = resp.headers.get("content-type", "unknown")
+                    return (
+                        f"Downloaded {safe_path.name} ({size_kb:.1f}KB, {content_type}) "
+                        f"to {dest_path_str}. Use show_file to display it or read_file to read its contents."
+                    )
+            except httpx.HTTPStatusError as e:
+                return f"Download failed: HTTP {e.response.status_code} from {url}"
+            except httpx.RequestError as e:
+                return f"Download failed: {type(e).__name__}: {e}"
+            except Exception as e:
+                return f"Download failed: {e}"
 
         elif tool_name == "read_file":
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
