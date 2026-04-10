@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield, Cpu, Plug, Key, Globe, Library, Clock, ArrowUpDown } from 'lucide-react'
 import { useStore } from '../store'
-import { settingsApi, skillsApi, tasksApi } from '../api/client'
+import { settingsApi, skillsApi, tasksApi, projectsApi } from '../api/client'
 import SecurityLog from './SecurityLog'
 
 function LLMSection() {
@@ -1430,14 +1430,29 @@ function SkillHubsSection() {
 
 function GlobalTasksSection() {
   const [tasks, setTasks] = useState([])
+  const [projectNames, setProjectNames] = useState({}) // id -> name lookup
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState('next_run') // next_run | name | project_id
+  const [sortBy, setSortBy] = useState('next_run') // next_run | name | project_name
   const [sortDir, setSortDir] = useState('asc')
   const [expandedTask, setExpandedTask] = useState(null)
   const [logs, setLogs] = useState([])
   const [logsLoading, setLogsLoading] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
+
+  // Load project id -> name mapping
+  useEffect(() => {
+    projectsApi.list().then((res) => {
+      const map = {}
+      for (const p of res.data.projects || []) {
+        map[p.id] = p.name || p.id
+      }
+      map['default'] = 'Default'
+      setProjectNames(map)
+    }).catch(() => {})
+  }, [])
+
+  const projectName = (id) => projectNames[id] || id
 
   const loadTasks = async () => {
     setLoading(true)
@@ -1485,8 +1500,10 @@ function GlobalTasksSection() {
   const filtered = tasks.filter((t) => {
     if (!search.trim()) return true
     const q = search.toLowerCase()
+    const pName = projectName(t.project_id).toLowerCase()
     return (
       (t.name || '').toLowerCase().includes(q) ||
+      pName.includes(q) ||
       (t.project_id || '').toLowerCase().includes(q) ||
       (t.description || '').toLowerCase().includes(q)
     )
@@ -1498,6 +1515,9 @@ function GlobalTasksSection() {
       const aVal = a.next_run || ''
       const bVal = b.next_run || ''
       return aVal.localeCompare(bVal) * dir
+    }
+    if (sortBy === 'project_name') {
+      return projectName(a.project_id).localeCompare(projectName(b.project_id)) * dir
     }
     const aVal = (a[sortBy] || '').toLowerCase()
     const bVal = (b[sortBy] || '').toLowerCase()
@@ -1542,7 +1562,7 @@ function GlobalTasksSection() {
         {/* Header */}
         <div className="grid grid-cols-12 gap-2 px-4 py-2 bg-gray-850 border-b border-gray-700">
           <div className="col-span-3"><SortHeader col="name" label="Task" /></div>
-          <div className="col-span-2"><SortHeader col="project_id" label="Project" /></div>
+          <div className="col-span-2"><SortHeader col="project_name" label="Project" /></div>
           <div className="col-span-2"><SortHeader col="next_run" label="Next Run" /></div>
           <div className="col-span-2 text-xs font-semibold text-gray-400">Schedule</div>
           <div className="col-span-1 text-xs font-semibold text-gray-400">Status</div>
@@ -1569,7 +1589,7 @@ function GlobalTasksSection() {
                 }}
               >
                 <div className="col-span-3 text-sm text-gray-200 truncate">{task.name}</div>
-                <div className="col-span-2 text-xs text-gray-500 truncate font-mono">{task.project_id}</div>
+                <div className="col-span-2 text-xs text-gray-500 truncate">{projectName(task.project_id)}</div>
                 <div className="col-span-2 text-xs text-gray-500">{formatTime(task.next_run)}</div>
                 <div className="col-span-2 text-xs text-gray-500 font-mono truncate">{task.schedule}</div>
                 <div className="col-span-1">
@@ -1603,7 +1623,13 @@ function GlobalTasksSection() {
                         <p className="text-gray-600">No logs yet</p>
                       ) : (
                         logs.map((log, i) => (
-                          <div key={i} className="whitespace-pre-wrap break-words py-0.5">{log}</div>
+                          <div key={log.id || i} className="whitespace-pre-wrap break-words py-0.5">
+                            <span className="text-gray-600">{formatTime(log.timestamp)}</span>{' '}
+                            <span className={log.event === 'failed' ? 'text-red-400' : log.event === 'completed' ? 'text-emerald-400' : 'text-gray-400'}>
+                              [{log.event}]
+                            </span>{' '}
+                            {log.details || ''}
+                          </div>
                         ))
                       )}
                     </div>

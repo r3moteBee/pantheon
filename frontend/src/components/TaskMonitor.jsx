@@ -84,11 +84,11 @@ function TaskItem({ task, onRefresh }) {
     setLogsLoading(false)
   }
 
-  const cancelTask = async () => {
-    if (!confirm('Cancel this task?')) return
+  const deleteTask = async () => {
+    if (!confirm('Delete this task?')) return
     try {
       await tasksApi.cancel(task.id)
-      addNotification({ type: 'success', message: 'Task cancelled' })
+      addNotification({ type: 'success', message: 'Task deleted' })
       onRefresh()
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
@@ -162,7 +162,13 @@ function TaskItem({ task, onRefresh }) {
                 <p className="text-gray-600">No logs yet</p>
               ) : (
                 logs.map((log, i) => (
-                  <div key={i} className="whitespace-pre-wrap break-words">{log}</div>
+                  <div key={log.id || i} className="py-0.5 whitespace-pre-wrap break-words">
+                    <span className="text-gray-600">{formatTime(log.timestamp)}</span>{' '}
+                    <span className={log.event === 'failed' ? 'text-red-400' : log.event === 'completed' ? 'text-emerald-400' : 'text-gray-400'}>
+                      [{log.event}]
+                    </span>{' '}
+                    {log.details || ''}
+                  </div>
                 ))
               )}
             </div>
@@ -171,11 +177,11 @@ function TaskItem({ task, onRefresh }) {
           {/* Actions */}
           <div className="flex gap-2 pt-2">
             <button
-              onClick={cancelTask}
+              onClick={deleteTask}
               className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-red-900 hover:bg-red-800 text-red-200 text-xs rounded"
             >
-              <Square className="w-3 h-3" />
-              Cancel Task
+              <Trash2 className="w-3 h-3" />
+              Delete Task
             </button>
           </div>
         </div>
