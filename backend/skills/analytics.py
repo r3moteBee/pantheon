@@ -75,15 +75,20 @@ def record_fire(skill_name: str, *, source: str = "explicit") -> None:
         logger.warning("record_fire failed for %s: %s", skill_name, e)
 
 
-def record_suggestion(skill_name: str) -> None:
+def record_suggestion(skill_name: str, *, declined: bool = False, accepted: bool = False) -> None:
     if not skill_name:
         return
     try:
         with _LOCK:
             data = _load()
             stats = data["skills"].setdefault(skill_name, _empty_stats())
-            stats["suggestions"] = stats.get("suggestions", 0) + 1
-            stats["last_suggested"] = datetime.now(timezone.utc).isoformat()
+            if declined:
+                stats["suggestions_declined"] = stats.get("suggestions_declined", 0) + 1
+            elif accepted:
+                stats["suggestions_accepted"] = stats.get("suggestions_accepted", 0) + 1
+            else:
+                stats["suggestions"] = stats.get("suggestions", 0) + 1
+                stats["last_suggested"] = datetime.now(timezone.utc).isoformat()
             _save(data)
     except Exception as e:
         logger.warning("record_suggestion failed for %s: %s", skill_name, e)

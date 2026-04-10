@@ -62,9 +62,10 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
         return
 
     try:
-        from telegram import Update
+        from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
         from telegram.ext import (
             Application,
+            CallbackQueryHandler,
             CommandHandler,
             MessageHandler,
             filters,
@@ -295,6 +296,35 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
                 f"📝 Saved to {project}/notes/:\n" + "\n".join(f"• {n}" for n in saved)
             )
 
+        # ── Pending skill suggestions for Telegram (chat_id -> pending info) ──
+        _tg_pending_suggestions: dict[str, dict] = {}
+
+        async def _run_agent_and_reply(update, message, project, skill_context=None, active_skill_name=None):
+            """Run the agent and send the response, splitting long messages."""
+            from agent.core import AgentCore
+            from memory.manager import create_memory_manager
+            from models.provider import get_provider
+
+            chat_id = update.effective_chat.id
+            provider = get_provider()
+            memory = create_memory_manager(
+                project_id=project,
+                session_id=f"telegram-{chat_id}",
+                provider=provider,
+            )
+            agent = AgentCore(
+                provider=provider,
+                memory_manager=memory,
+                project_id=project,
+                session_id=f"telegram-{chat_id}",
+                skill_context=skill_context,
+                active_skill_name=active_skill_name,
+            )
+            response = await agent.run_autonomous(message)
+            text = response or "No response."
+            for i in range(0, len(text), 4000):
+                await update.effective_chat.send_message(text[i:i + 4000])
+
         # ── Plain message handler (no /chat prefix needed) ─────────────
         async def plain_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             if not _is_allowed(update):
@@ -303,33 +333,146 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
             if not message or not message.strip():
                 return
 
+            chat_id = update.effective_chat.id
+            project = _active_project(chat_id)
+
+            try:
+                from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
+                from skills.registry import get_skill_registry
+                from skills.models import SkillDiscoveryMode
+
+                # 1. Check for explicit /skill-name invocation
+                explicit_skill, remaining = resolve_explicit(message)
+                if explicit_skill:
+                    registry = get_skill_registry()
+                    skill = registry.get(explicit_skill)
+                    if skill:
+                        try:
+                            from skills import analytics as _sa
+                            _sa.record_fire(explicit_skill, source="explicit")
+                        except Exception:
+                            pass
+                        await update.message.reply_text(f"⚡ Using skill: /{explicit_skill}")
+                        await _run_agent_and_reply(
+                            update, remaining or message, project,
+                            skill_context=build_skill_context(skill, project_id=project),
+                            active_skill_name=explicit_skill,
+                        )
+                        return
+
+                # 2. Check for auto-discovery if enabled
+                try:
+                    from secrets.vault import get_vault as _gv
+                    _vault = _gv()
+                    discovery_mode = _vault.get_secret(f"skill_discovery_{project}") or "off"
+                except Exception:
+                    discovery_mode = "off"
+
+                if discovery_mode in ("suggest", "auto"):
+                    matches = resolve_auto(
+                        message, project_id=project,
+                        mode=SkillDiscoveryMode(discovery_mode), top_k=1,
+                    )
+                    if matches and matches[0]["score"] >= 2.0:
+                        best = matches[0]
+                        skill = best["skill"]
+                        if discovery_mode == "auto":
+                            try:
+                                from skills import analytics as _sa
+                                _sa.record_fire(skill.name, source="auto")
+                            except Exception:
+                                pass
+                            await update.message.reply_text(f"⚡ Auto-activating skill: /{skill.name}")
+                            await _run_agent_and_reply(
+                                update, message, project,
+                                skill_context=build_skill_context(skill, project_id=project),
+                                active_skill_name=skill.name,
+                            )
+                            return
+                        else:
+                            # suggest mode — show inline keyboard
+                            import uuid as _uuid
+                            suggestion_id = str(_uuid.uuid4())[:8]
+                            _tg_pending_suggestions[suggestion_id] = {
+                                "message": message,
+                                "project": project,
+                                "skill": skill.name,
+                            }
+                            try:
+                                from skills import analytics as _sa
+                                _sa.record_suggestion(skill.name)
+                            except Exception:
+                                pass
+                            keyboard = InlineKeyboardMarkup([
+                                [
+                                    InlineKeyboardButton("✅ Use skill", callback_data=f"skill_yes:{suggestion_id}"),
+                                    InlineKeyboardButton("❌ Skip", callback_data=f"skill_no:{suggestion_id}"),
+                                ]
+                            ])
+                            await update.message.reply_text(
+                                f"🪄 Skill suggested: **/{skill.name}**\n{skill.manifest.description}",
+                                reply_markup=keyboard,
+                                parse_mode="Markdown",
+                            )
+                            return
+            except ImportError:
+                pass  # Skills module not available — fall through to normal agent
+            except Exception as e:
+                logger.warning("Telegram skill resolution failed: %s", e)
+
+            # Default: run agent without skill
             await update.message.reply_text("Thinking...")
             try:
-                from agent.core import AgentCore
-                from memory.manager import create_memory_manager
-                from models.provider import get_provider
-
-                chat_id = update.effective_chat.id
-                project = _active_project(chat_id)
-                provider = get_provider()
-                memory = create_memory_manager(
-                    project_id=project,
-                    session_id=f"telegram-{chat_id}",
-                    provider=provider,
-                )
-                agent = AgentCore(
-                    provider=provider,
-                    memory_manager=memory,
-                    project_id=project,
-                    session_id=f"telegram-{chat_id}",
-                )
-                response = await agent.run_autonomous(message)
-                # Split long messages (Telegram 4096 char limit)
-                text = response or "No response."
-                for i in range(0, len(text), 4000):
-                    await update.message.reply_text(text[i:i + 4000])
+                await _run_agent_and_reply(update, message, project)
             except Exception as e:
                 await update.message.reply_text(f"Error: {e}")
+
+        # ── Callback query handler for skill accept/decline ──────────
+        async def skill_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            query = update.callback_query
+            await query.answer()
+            data = query.data or ""
+            if not data.startswith("skill_"):
+                return
+
+            action, _, suggestion_id = data.partition(":")
+            pending = _tg_pending_suggestions.pop(suggestion_id, None)
+            if not pending:
+                await query.edit_message_text("Suggestion expired.")
+                return
+
+            message = pending["message"]
+            project = pending["project"]
+            skill_name = pending["skill"]
+
+            if action == "skill_yes":
+                try:
+                    from skills.resolver import build_skill_context
+                    from skills.registry import get_skill_registry
+                    from skills import analytics as _sa
+
+                    registry = get_skill_registry()
+                    skill = registry.get(skill_name)
+                    _sa.record_suggestion(skill_name, accepted=True)
+                    await query.edit_message_text(f"⚡ Using skill: /{skill_name}")
+                    await _run_agent_and_reply(
+                        update, message, project,
+                        skill_context=build_skill_context(skill, project_id=project) if skill else None,
+                        active_skill_name=skill_name,
+                    )
+                except Exception as e:
+                    await query.edit_message_text(f"Error activating skill: {e}")
+            else:
+                try:
+                    from skills import analytics as _sa
+                    _sa.record_suggestion(skill_name, declined=True)
+                except Exception:
+                    pass
+                await query.edit_message_text("Skipped skill. Thinking...")
+                try:
+                    await _run_agent_and_reply(update, message, project)
+                except Exception as e:
+                    await update.effective_chat.send_message(f"Error: {e}")
 
         app.add_handler(CommandHandler("start", start_cmd))
         app.add_handler(CommandHandler("project", project_cmd))
@@ -340,6 +483,7 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
         app.add_handler(CommandHandler("task", task_cmd))
         app.add_handler(CommandHandler("memory", memory_cmd))
         app.add_handler(CommandHandler("note", note_cmd))
+        app.add_handler(CallbackQueryHandler(skill_callback, pattern=r"^skill_(yes|no):"))
         # Photos/docs/voice with caption starting with /note — also route to note_cmd
         app.add_handler(MessageHandler(
             (filters.PHOTO | filters.Document.ALL | filters.VOICE | filters.AUDIO | filters.VIDEO)

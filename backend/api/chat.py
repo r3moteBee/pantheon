@@ -57,6 +57,9 @@ class HistoryRequest(BaseModel):
 # Active WebSocket connections
 _active_connections: dict[str, WebSocket] = {}
 
+# Pending skill suggestions awaiting user accept/decline
+_pending_suggestions: dict[str, dict] = {}
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
@@ -141,6 +144,149 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "pong"})
                 continue
 
+            # ── Skill accept / decline from interactive suggestion ───
+            if data.get("type") == "skill_accept":
+                suggestion_id = data.get("suggestion_id")
+                pending = _pending_suggestions.pop(suggestion_id, None)
+                if not pending:
+                    await websocket.send_json({"type": "error", "message": "Suggestion expired or not found"})
+                    continue
+                # Re-use the original message, session, and project but now with skill context
+                message = pending["message"]
+                session_id = pending["session_id"]
+                project_id = pending["project_id"]
+                skill_name = pending["skill"]
+                registry = get_skill_registry()
+                skill = registry.get(skill_name)
+                skill_context = build_skill_context(skill, project_id=project_id) if skill else None
+                active_skill_name = skill_name if skill else None
+                try:
+                    from skills import analytics as _sa
+                    _sa.record_fire(skill_name, source="suggest_accepted")
+                except Exception:
+                    pass
+                await websocket.send_json({"type": "session_start", "session_id": session_id})
+                if skill:
+                    await websocket.send_json({
+                        "type": "skill_active",
+                        "skill": skill_name,
+                        "description": skill.manifest.description,
+                    })
+
+                provider = get_provider()
+                memory = create_memory_manager(
+                    project_id=project_id, session_id=session_id, provider=provider,
+                )
+                # Jump straight to agent run with skill context
+                agent = AgentCore(
+                    provider=provider,
+                    memory_manager=memory,
+                    project_id=project_id,
+                    session_id=session_id,
+                    skill_context=skill_context,
+                    active_skill_name=active_skill_name,
+                )
+
+                try:
+                    await memory.episodic.save_message(
+                        session_id=session_id, project_id=project_id,
+                        role="user", content=message,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to save user message to episodic: %s", e)
+
+                full_response = ""
+                async for event in agent.chat(message, stream=True):
+                    try:
+                        await websocket.send_json(event)
+                    except Exception:
+                        break
+                    if event.get("type") == "done":
+                        full_response = event.get("full_response", "")
+
+                if full_response:
+                    try:
+                        await memory.episodic.save_message(
+                            session_id=session_id, project_id=project_id,
+                            role="assistant", content=full_response,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to save assistant message to episodic: %s", e)
+
+                extraction_interval = settings.extraction_interval
+                if extraction_interval > 0 and memory:
+                    count = _session_message_counts.get(session_id, 0) + 2
+                    _session_message_counts[session_id] = count
+                    if count >= extraction_interval:
+                        _session_message_counts[session_id] = 0
+                        asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+                continue
+
+            if data.get("type") == "skill_decline":
+                suggestion_id = data.get("suggestion_id")
+                pending = _pending_suggestions.pop(suggestion_id, None)
+                if not pending:
+                    await websocket.send_json({"type": "error", "message": "Suggestion expired or not found"})
+                    continue
+                # Run the original message WITHOUT skill context
+                message = pending["message"]
+                session_id = pending["session_id"]
+                project_id = pending["project_id"]
+                skill_context = None
+                active_skill_name = None
+                try:
+                    from skills import analytics as _sa
+                    _sa.record_suggestion(pending["skill"], declined=True)
+                except Exception:
+                    pass
+                await websocket.send_json({"type": "session_start", "session_id": session_id})
+
+                provider = get_provider()
+                memory = create_memory_manager(
+                    project_id=project_id, session_id=session_id, provider=provider,
+                )
+                agent = AgentCore(
+                    provider=provider,
+                    memory_manager=memory,
+                    project_id=project_id,
+                    session_id=session_id,
+                )
+
+                try:
+                    await memory.episodic.save_message(
+                        session_id=session_id, project_id=project_id,
+                        role="user", content=message,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to save user message to episodic: %s", e)
+
+                full_response = ""
+                async for event in agent.chat(message, stream=True):
+                    try:
+                        await websocket.send_json(event)
+                    except Exception:
+                        break
+                    if event.get("type") == "done":
+                        full_response = event.get("full_response", "")
+
+                if full_response:
+                    try:
+                        await memory.episodic.save_message(
+                            session_id=session_id, project_id=project_id,
+                            role="assistant", content=full_response,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to save assistant message to episodic: %s", e)
+
+                extraction_interval = settings.extraction_interval
+                if extraction_interval > 0 and memory:
+                    count = _session_message_counts.get(session_id, 0) + 2
+                    _session_message_counts[session_id] = count
+                    if count >= extraction_interval:
+                        _session_message_counts[session_id] = 0
+                        asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+                continue
+
             if not message:
                 await websocket.send_json({"type": "error", "message": "Empty message"})
                 continue
@@ -212,7 +358,14 @@ async def websocket_chat(websocket: WebSocket) -> None:
                                 "auto": True,
                             })
                         else:
-                            # suggest mode — notify but don't activate
+                            # suggest mode — pause and wait for accept/decline
+                            suggestion_id = str(uuid.uuid4())
+                            _pending_suggestions[suggestion_id] = {
+                                "message": message,
+                                "session_id": session_id,
+                                "project_id": project_id,
+                                "skill": skill.name,
+                            }
                             try:
                                 from skills import analytics as _sa
                                 _sa.record_suggestion(skill.name)
@@ -224,7 +377,10 @@ async def websocket_chat(websocket: WebSocket) -> None:
                                 "description": skill.manifest.description,
                                 "score": best["score"],
                                 "reason": best["reason"],
+                                "suggestion_id": suggestion_id,
                             })
+                            # Don't run agent yet — wait for skill_accept or skill_decline
+                            continue
 
             agent = AgentCore(
                 provider=provider,

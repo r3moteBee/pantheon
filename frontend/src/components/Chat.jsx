@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2 } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -161,6 +161,7 @@ export default function Chat() {
   const [showSkillPicker, setShowSkillPicker] = useState(false)
   const [skillQuery, setSkillQuery] = useState('')
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
+  const [pendingSuggestion, setPendingSuggestion] = useState(null)
   const messagesEndRef = useRef(null)
   const socketRef = useRef(null)
   const textareaRef = useRef(null)
@@ -351,9 +352,12 @@ export default function Chat() {
           setActiveSkillBadge(event.skill)
           break
         case 'skill_suggestion':
-          addNotification({
-            type: 'info',
-            message: `Skill suggestion: /${event.skill} — ${event.description}`,
+          setIsStreaming(false)
+          setPendingSuggestion({
+            skill: event.skill,
+            description: event.description,
+            reason: event.reason,
+            suggestionId: event.suggestion_id,
           })
           break
         case 'text_delta':
@@ -468,6 +472,42 @@ export default function Chat() {
     setStreamingContent('')
     clearToolCalls()
   }
+
+  const handleSkillAccept = useCallback(() => {
+    if (!pendingSuggestion) return
+    setIsStreaming(true)
+    setStreamingContent('')
+    clearToolCalls()
+    connectSocket()
+    const payload = JSON.stringify({
+      type: 'skill_accept',
+      suggestion_id: pendingSuggestion.suggestionId,
+    })
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(payload)
+    } else if (socketRef.current) {
+      socketRef.current.onopen = () => socketRef.current.send(payload)
+    }
+    setPendingSuggestion(null)
+  }, [pendingSuggestion, connectSocket])
+
+  const handleSkillDecline = useCallback(() => {
+    if (!pendingSuggestion) return
+    setIsStreaming(true)
+    setStreamingContent('')
+    clearToolCalls()
+    connectSocket()
+    const payload = JSON.stringify({
+      type: 'skill_decline',
+      suggestion_id: pendingSuggestion.suggestionId,
+    })
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(payload)
+    } else if (socketRef.current) {
+      socketRef.current.onopen = () => socketRef.current.send(payload)
+    }
+    setPendingSuggestion(null)
+  }, [pendingSuggestion, connectSocket])
 
   return (
     <div
@@ -613,6 +653,43 @@ export default function Chat() {
             </div>
           </div>
         )}
+        {/* Skill suggestion prompt */}
+        {pendingSuggestion && !isStreaming && (
+          <div className="flex justify-start mb-4">
+            <div className="max-w-3xl w-full">
+              <div className="border border-amber-700/50 bg-amber-950/40 rounded-2xl px-4 py-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <Wand2 className="w-4 h-4 text-amber-400" />
+                  <span className="text-sm font-medium text-amber-300">Skill suggested</span>
+                </div>
+                <p className="text-sm text-gray-200 mb-1">
+                  <span className="font-mono text-amber-300">/{pendingSuggestion.skill}</span>
+                  {' — '}{pendingSuggestion.description}
+                </p>
+                {pendingSuggestion.reason && (
+                  <p className="text-xs text-gray-500 mb-3">Matched: {pendingSuggestion.reason}</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleSkillAccept}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-700 hover:bg-amber-600 text-white transition-colors"
+                  >
+                    <Check className="w-3 h-3" />
+                    Use skill
+                  </button>
+                  <button
+                    onClick={handleSkillDecline}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+                  >
+                    <XCircle className="w-3 h-3" />
+                    Skip
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
