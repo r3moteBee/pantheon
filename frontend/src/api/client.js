@@ -294,6 +294,7 @@ export const skillsApi = {
 // Tasks API
 export const tasksApi = {
   list: (projectId) => api.get('/api/tasks', { params: { project_id: projectId } }),
+  listAll: () => api.get('/api/tasks/all'),
   create: (name, description, schedule, projectId) =>
     api.post('/api/tasks', { name, description, schedule, project_id: projectId }),
   cancel: (taskId) => api.delete(`/api/tasks/${taskId}`),
