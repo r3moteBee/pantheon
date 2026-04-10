@@ -96,7 +96,7 @@ done
 echo -e "${BOLD}"
 echo "  ╔═══════════════════════════════════════════╗"
 echo "  ║        Pantheon  Installer           ║"
-echo "  ║  Self-hosted AI Agent Framework 2026-04-01 ║"
+echo "  ║  Self-hosted AI Agent Framework 2026-04-10 ║"
 echo "  ╚═══════════════════════════════════════════╝"
 echo -e "${RESET}"
 
@@ -286,6 +286,26 @@ else  # local mode
       apk)    $SUDO apk add build-base python3-dev ;;
     esac
     success "Build dependencies installed"
+  fi
+
+  # ── Install optional system libraries for PDF/image processing ─────────────
+  # poppler-utils: enables pdf2image fallback for scanned PDF OCR
+  # PyMuPDF installs from prebuilt wheels and doesn't need system deps
+  info "Checking optional system libraries..."
+  if ! command -v pdftoppm &>/dev/null; then
+    info "Installing poppler-utils (PDF page rendering)..."
+    case "$PKG_MANAGER" in
+      brew)   brew install poppler ;;
+      apt)    $SUDO apt-get install -y poppler-utils ;;
+      dnf)    $SUDO dnf install -y poppler-utils ;;
+      yum)    $SUDO yum install -y poppler-utils ;;
+      pacman) $SUDO pacman -S --noconfirm poppler ;;
+      apk)    $SUDO apk add poppler-utils ;;
+      *)      warn "Could not install poppler-utils — scanned PDF fallback rendering will be unavailable" ;;
+    esac
+    success "poppler-utils installed"
+  else
+    success "poppler-utils already available"
   fi
 fi
 
@@ -995,4 +1015,9 @@ else
 fi
 echo ""
 echo -e "  ${YELLOW}Next step:${RESET} Open Settings in the UI and configure your LLM provider."
+echo ""
+echo -e "  ${CYAN}Optional extras:${RESET}"
+echo -e "    ${BOLD}Browser tools${RESET}  →  ./demo_setup.sh --with-browser  (Playwright + headless Chromium)"
+echo -e "    ${BOLD}Local LLM${RESET}      →  ./demo_setup.sh --with-ollama   (Ollama + Nemotron)"
+echo -e "    ${BOLD}Private search${RESET} →  ./demo_setup.sh --with-searxng  (SearXNG search engine)"
 echo ""
