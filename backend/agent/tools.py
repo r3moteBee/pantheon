@@ -343,19 +343,37 @@ async def execute_tool(
 
             suffix = safe_path.suffix.lower()
 
-            # PDF — extract text with pdfplumber
+            # PDF — extract text with pdfplumber, vision OCR fallback for scanned pages
             if suffix == ".pdf":
                 try:
                     import pdfplumber
                     pages = []
+                    blank_page_nums = []
                     with pdfplumber.open(safe_path) as pdf:
-                        for i, page in enumerate(pdf.pages, 1):
-                            text = page.extract_text() or ""
-                            if text.strip():
-                                pages.append(f"--- Page {i} ---\n{text}")
+                        total_pages = len(pdf.pages)
+                        for i, page in enumerate(pdf.pages):
+                            text = (page.extract_text() or "").strip()
+                            if text:
+                                pages.append(f"--- Page {i + 1} ---\n{text}")
+                            else:
+                                blank_page_nums.append(i)
+
+                    # Vision OCR for scanned/image-based pages
+                    if blank_page_nums:
+                        try:
+                            from memory.file_indexer import _ocr_pdf_pages
+                            ocr_results = await _ocr_pdf_pages(safe_path, blank_page_nums)
+                            for pn, desc in sorted(ocr_results.items()):
+                                pages.append(f"--- Page {pn + 1} (OCR) ---\n{desc}")
+                        except Exception as ocr_err:
+                            for pn in blank_page_nums:
+                                pages.append(f"--- Page {pn + 1} ---\n[Scanned/image page — vision OCR unavailable: {ocr_err}]")
+
                     if pages:
+                        # Sort by page number for correct order
+                        pages.sort(key=lambda p: int(p.split("Page ")[1].split(" ")[0].split("---")[0]))
                         return "\n\n".join(pages)
-                    return f"[PDF has {len(pdf.pages)} page(s) but no extractable text — may be scanned/image-based]"
+                    return f"[PDF has {total_pages} page(s) but no extractable text and OCR failed]"
                 except Exception as e:
                     return f"Error reading PDF: {e}"
 

@@ -94,30 +94,152 @@ async def extract_text(file_path: Path) -> str:
 
 
 async def _extract_pdf(file_path: Path) -> str:
-    """Extract text from PDF using pdfplumber (or pymupdf as fallback)."""
+    """Extract text from PDF, falling back to vision OCR for scanned pages.
+
+    Pipeline:
+    1. Extract text via pdfplumber (or pymupdf).
+    2. Any page that yields no text is rendered to an image and sent through
+       the vision model for OCR-style description.
+    3. Results are stitched together page-by-page.
+    """
+    page_texts: list[tuple[int, str | None]] = []  # (page_num, text_or_None)
+
+    # ── Phase 1: text extraction ────────────────────────────────────────
+    extracted = False
     try:
         import pdfplumber
-        text_parts = []
         with pdfplumber.open(str(file_path)) as pdf:
-            for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text_parts.append(page_text)
-        return "\n\n".join(text_parts)
+            for i, page in enumerate(pdf.pages):
+                text = (page.extract_text() or "").strip()
+                page_texts.append((i, text if text else None))
+        extracted = True
     except ImportError:
         pass
 
+    if not extracted:
+        try:
+            import fitz  # pymupdf
+            doc = fitz.open(str(file_path))
+            for i, page in enumerate(doc):
+                text = (page.get_text() or "").strip()
+                page_texts.append((i, text if text else None))
+            doc.close()
+            extracted = True
+        except ImportError:
+            pass
+
+    if not extracted:
+        logger.warning("No PDF library available (install pdfplumber or pymupdf)")
+        return ""
+
+    # ── Phase 2: vision OCR for pages with no text ──────────────────────
+    blank_pages = [i for i, t in page_texts if t is None]
+    if blank_pages:
+        vision_results = await _ocr_pdf_pages(file_path, blank_pages)
+        for page_num, desc in vision_results.items():
+            # Replace the None entry
+            for idx, (pn, _) in enumerate(page_texts):
+                if pn == page_num:
+                    page_texts[idx] = (pn, desc)
+                    break
+
+    # ── Assemble ────────────────────────────────────────────────────────
+    parts = []
+    for page_num, text in page_texts:
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)
+
+
+async def _ocr_pdf_pages(file_path: Path, page_numbers: list[int]) -> dict[int, str]:
+    """Render specific PDF pages to images and describe via vision model.
+
+    Returns {page_number: description} for pages that got a description.
+    """
+    results: dict[int, str] = {}
+
+    # Try pymupdf first (built-in rendering, no external deps)
+    page_images = _render_pages_pymupdf(file_path, page_numbers)
+
+    if page_images is None:
+        # Fallback: pdf2image (requires poppler)
+        page_images = _render_pages_pdf2image(file_path, page_numbers)
+
+    if not page_images:
+        logger.warning("Cannot render PDF pages to images (install pymupdf or pdf2image+poppler)")
+        return results
+
+    for page_num, img_bytes in page_images.items():
+        try:
+            fake_path = Path(f"{file_path.stem}_page{page_num + 1}.png")
+            desc = await describe_image(
+                fake_path,
+                content=img_bytes,
+                detail_prompt=(
+                    f"This is page {page_num + 1} of a PDF document '{file_path.name}'. "
+                    "Extract and transcribe ALL text visible on this page. "
+                    "Include headings, paragraphs, table contents, form fields, "
+                    "captions, and any other text. Preserve the logical reading order. "
+                    "If there are diagrams or images, briefly describe them."
+                ),
+            )
+            if desc and len(desc) > 10:
+                results[page_num] = f"[Page {page_num + 1} — OCR]\n{desc}"
+                logger.info("Vision OCR page %d of %s: %s", page_num + 1, file_path.name, desc[:80])
+        except Exception as e:
+            logger.warning("Vision OCR failed for page %d of %s: %s", page_num + 1, file_path.name, e)
+
+    return results
+
+
+def _render_pages_pymupdf(file_path: Path, page_numbers: list[int]) -> dict[int, bytes] | None:
+    """Render PDF pages to PNG bytes using pymupdf (fitz)."""
     try:
-        import fitz  # pymupdf
-        doc = fitz.open(str(file_path))
-        text_parts = [page.get_text() for page in doc]
-        doc.close()
-        return "\n\n".join(text_parts)
+        import fitz
     except ImportError:
-        pass
+        return None
 
-    logger.warning("No PDF library available (install pdfplumber or pymupdf)")
-    return ""
+    images: dict[int, bytes] = {}
+    try:
+        doc = fitz.open(str(file_path))
+        for page_num in page_numbers:
+            if page_num >= len(doc):
+                continue
+            page = doc[page_num]
+            # Render at 2x for better OCR quality
+            pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0))
+            images[page_num] = pix.tobytes("png")
+        doc.close()
+    except Exception as e:
+        logger.warning("pymupdf rendering failed: %s", e)
+    return images if images else None
+
+
+def _render_pages_pdf2image(file_path: Path, page_numbers: list[int]) -> dict[int, bytes] | None:
+    """Render PDF pages to PNG bytes using pdf2image (requires poppler)."""
+    try:
+        from pdf2image import convert_from_path
+        import io
+    except ImportError:
+        return None
+
+    images: dict[int, bytes] = {}
+    try:
+        for page_num in page_numbers:
+            # pdf2image uses 1-based page numbers
+            pil_images = convert_from_path(
+                str(file_path),
+                first_page=page_num + 1,
+                last_page=page_num + 1,
+                dpi=200,
+            )
+            if pil_images:
+                buf = io.BytesIO()
+                pil_images[0].save(buf, format="PNG")
+                images[page_num] = buf.getvalue()
+    except Exception as e:
+        logger.warning("pdf2image rendering failed: %s", e)
+    return images if images else None
 
 
 def _extract_csv(file_path: Path) -> str:
