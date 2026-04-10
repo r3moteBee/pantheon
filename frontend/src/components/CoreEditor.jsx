@@ -15,6 +15,7 @@
  */
 import React, { useMemo, useCallback } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
+import { EditorView } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { json as jsonLang } from '@codemirror/lang-json'
 import { python } from '@codemirror/lang-python'
@@ -60,7 +61,10 @@ export default function CoreEditor({
 }) {
   const resolvedLang = language || detectLanguage(filename)
 
-  const extensions = useMemo(() => extensionsFor(resolvedLang), [resolvedLang])
+  const extensions = useMemo(
+    () => [EditorView.lineWrapping, ...extensionsFor(resolvedLang)],
+    [resolvedLang],
+  )
   const handleChange = useCallback((val) => { onChange?.(val) }, [onChange])
 
   const handleKeyDown = useCallback((e) => {
@@ -71,10 +75,15 @@ export default function CoreEditor({
   }, [onSaveHotkey])
 
   return (
-    <div className={className} onKeyDown={handleKeyDown} style={{ height }}>
+    <div
+      className={className}
+      onKeyDown={handleKeyDown}
+      style={{ height, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+    >
       <CodeMirror
         value={value ?? ''}
-        height={height}
+        height="100%"
+        style={{ flex: 1, overflow: 'auto' }}
         theme="dark"
         editable={editable}
         extensions={extensions}
