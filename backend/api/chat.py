@@ -32,7 +32,7 @@ router = APIRouter()
 _session_message_counts: dict[str, int] = {}
 
 # Image extensions that get vision-described
-_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+from utils.vision import IMAGE_EXTENSIONS as _IMAGE_EXTENSIONS, describe_image as _describe_image
 
 
 class ChatRequest(BaseModel):
@@ -520,53 +520,7 @@ async def attach_file_to_chat(
     return result
 
 
-async def _describe_image(file_path: Path, content: bytes) -> str | None:
-    """Generate a text description of an image using a vision-capable model.
-
-    Tries the prefill model first (in case it supports vision), then falls
-    back to the primary model.  Returns a basic metadata string on failure.
-    """
-    from models.provider import get_vision_provider, get_provider, get_prefill_provider
-
-    b64 = base64.b64encode(content).decode("utf-8")
-    ext = file_path.suffix.lower().lstrip(".")
-    mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
-
-    vision_messages = [
-        {"role": "system", "content": (
-            "You are a visual analysis assistant. Describe this image concisely "
-            "in 1-3 sentences. Focus on the key content, any text visible, "
-            "diagrams, charts, or notable elements. Be factual and specific."
-        )},
-        {"role": "user", "content": [
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-            {"type": "text", "text": f"Describe this image ({file_path.name}):"},
-        ]},
-    ]
-
-    # Build provider fallback chain: vision (dedicated) → primary → prefill
-    providers: list[tuple[str, Any]] = []
-    vision_prov = get_vision_provider()
-    if vision_prov:
-        providers.append(("vision", lambda: vision_prov))
-    providers.append(("primary", get_provider))
-    providers.append(("prefill", get_prefill_provider))
-
-    for label, get_prov in providers:
-        try:
-            provider = get_prov()
-            result = await provider.chat_complete(vision_messages)
-            desc = (result.get("content") or "").strip()
-            if desc and len(desc) > 10:
-                logger.info("Generated description for %s via %s: %s", file_path.name, label, desc[:100])
-                return desc
-        except Exception as e:
-            logger.debug("Vision description via %s failed: %s", label, e)
-            continue
-
-    # Fallback: basic metadata description
-    size_kb = len(content) / 1024
-    return f"Image file ({file_path.suffix.upper()}, {size_kb:.0f}KB)"
+# _describe_image is now imported from utils.vision
 
 
 async def _index_attachment(file_path: Path, project_id: str) -> None:

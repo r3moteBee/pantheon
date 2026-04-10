@@ -1,7 +1,11 @@
 """File ingestion pipeline — extract, chunk, embed, and index workspace files.
 
 Turns passive file storage into searchable semantic memory.  Supports
-Markdown (with YAML frontmatter), plain text, CSV, and PDF.
+Markdown (with YAML frontmatter), plain text, CSV, PDF, and images.
+
+Images are described via a vision-capable LLM and the description is
+stored as a single semantic chunk, making image content retrievable
+alongside text during inference.
 
 For Markdown files with YAML frontmatter (e.g., CorpusClaw vendor files),
 structured metadata is extracted and routed to the graph as well.
@@ -22,12 +26,14 @@ logger = logging.getLogger(__name__)
 
 # ── Supported file types ─────────────────────────────────────────────────────
 
+from utils.vision import IMAGE_EXTENSIONS, describe_image
+
 SUPPORTED_EXTENSIONS = {
     ".md", ".markdown", ".txt", ".text", ".csv", ".tsv",
     ".json", ".yaml", ".yml", ".py", ".js", ".ts",
     ".html", ".htm", ".xml", ".log",
     ".pdf",
-}
+} | IMAGE_EXTENSIONS
 
 # ── Chunking defaults ────────────────────────────────────────────────────────
 
@@ -369,11 +375,19 @@ class FileIndexer:
             "skipped": False,
         }
 
-        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        ext = file_path.suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
             stats["skipped"] = True
             stats["reason"] = f"unsupported extension: {file_path.suffix}"
             return stats
 
+        rel_path = str(file_path)
+
+        # ── Image files: describe via vision model ──────────────────────
+        if ext in IMAGE_EXTENSIONS:
+            return await self._index_image(file_path, rel_path, stats, force)
+
+        # ── Text-based files ────────────────────────────────────────────
         # Extract text
         text = await extract_text(file_path)
         if not text.strip():
@@ -383,7 +397,6 @@ class FileIndexer:
 
         # Check if already indexed with same content
         content_hash = _content_hash(text)
-        rel_path = str(file_path)
         if not force and self.file_index.is_indexed(self.project_id, rel_path, content_hash):
             stats["skipped"] = True
             stats["reason"] = "unchanged"
@@ -392,7 +405,7 @@ class FileIndexer:
         # Parse frontmatter if Markdown
         frontmatter = {}
         body = text
-        if file_path.suffix.lower() in (".md", ".markdown"):
+        if ext in (".md", ".markdown"):
             frontmatter, body = parse_frontmatter(text)
 
         # Chunk
@@ -400,7 +413,7 @@ class FileIndexer:
             body,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            respect_headings=file_path.suffix.lower() in (".md", ".markdown"),
+            respect_headings=ext in (".md", ".markdown"),
         )
 
         # Store each chunk in semantic memory
@@ -505,6 +518,69 @@ class FileIndexer:
             total_stats["errors"],
         )
         return total_stats
+
+    async def _index_image(
+        self,
+        file_path: Path,
+        rel_path: str,
+        stats: dict[str, Any],
+        force: bool,
+    ) -> dict[str, Any]:
+        """Index an image file by generating a vision description.
+
+        The description is stored as a single semantic chunk with
+        type='image_description', making it searchable alongside text.
+        """
+        # Use file size as a stable content hash for images
+        file_size = file_path.stat().st_size if file_path.exists() else 0
+        content_hash = _content_hash(f"{file_path.name}:{file_size}")
+
+        if not force and self.file_index.is_indexed(self.project_id, rel_path, content_hash):
+            stats["skipped"] = True
+            stats["reason"] = "unchanged"
+            return stats
+
+        # Generate description via vision model
+        try:
+            description = await describe_image(file_path)
+        except Exception as e:
+            logger.warning("Vision description failed for %s: %s", file_path.name, e)
+            description = None
+
+        if not description or len(description) < 10:
+            # Store basic metadata even if vision fails
+            description = f"Image file: {file_path.name} ({file_size / 1024:.0f}KB)"
+
+        # Store as semantic memory
+        try:
+            await self.memory_manager.semantic.store(
+                content=f"Image '{file_path.name}': {description}",
+                metadata={
+                    "type": "image_description",
+                    "source_file": file_path.name,
+                    "source_path": rel_path,
+                    "content_hash": content_hash,
+                    "project_id": self.project_id,
+                    "indexed_at": _now_iso(),
+                    "file_size": str(file_size),
+                },
+            )
+            stats["chunks_stored"] = 1
+        except Exception as e:
+            logger.warning("Failed to store image description for %s: %s", file_path.name, e)
+
+        # Mark as indexed
+        self.file_index.mark_indexed(
+            project_id=self.project_id,
+            file_path=rel_path,
+            content_hash=content_hash,
+            chunk_count=stats["chunks_stored"],
+            file_size=file_size,
+            metadata={"image_description": description[:200]},
+        )
+
+        logger.info("Indexed image %s: %s", file_path.name, description[:80])
+        return stats
 
     async def _index_frontmatter_to_graph(
         self,
