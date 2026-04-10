@@ -72,14 +72,15 @@ function AttachmentPill({ file, onRemove }) {
 
 // Helper: resolve workspace:// paths to viewable URLs
 const isWorkspacePath = (url) => url && url.startsWith('workspace://')
-const workspaceFilePath = (url) => url.replace(/^workspace:\/\//, '')
+const workspaceFilePath = (url) => decodeURIComponent(url.replace(/^workspace:\/\//, ''))
 const imageExts = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 const pdfExt = /\.pdf$/i
 
 function useMarkdownComponents() {
   const projectId = useStore((s) => s.activeProject?.id || 'default')
   const resolveUrl = (wsPath) => {
-    const filePath = wsPath.replace(/^workspace:\/\//, '')
+    // Decode URI-encoded path from show_file tool, then let viewUrl re-encode
+    const filePath = decodeURIComponent(wsPath.replace(/^workspace:\/\//, ''))
     return filesApi.viewUrl(filePath, projectId)
   }
 

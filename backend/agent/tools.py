@@ -358,15 +358,14 @@ async def execute_tool(
             rel_path = tool_args["path"]
             caption = tool_args.get("caption", "")
             suffix = safe_path.suffix.lower()
+            # URL-encode the path so spaces/special chars don't break markdown parsing
+            from urllib.parse import quote
+            encoded_path = quote(rel_path, safe="/")
             # Return markdown with workspace:// protocol the chat UI knows how to render
-            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}:
-                return f"![{caption or safe_path.name}](workspace://{rel_path})"
-            elif suffix == ".pdf":
-                return f"![{caption or safe_path.name}](workspace://{rel_path})"
-            elif suffix in {".html", ".htm"}:
-                return f"[{caption or safe_path.name}](workspace://{rel_path})"
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".pdf"}:
+                return f"![{caption or safe_path.name}](workspace://{encoded_path})"
             else:
-                return f"[{caption or safe_path.name}](workspace://{rel_path})"
+                return f"[{caption or safe_path.name}](workspace://{encoded_path})"
 
         elif tool_name == "read_file":
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
