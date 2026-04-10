@@ -265,6 +265,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "show_file",
+            "description": "Display a file (image, PDF, or other viewable file) inline in the chat. Use this instead of read_file when the user asks to 'show', 'display', or 'view' a file — especially for images and PDFs where text extraction isn't what they want. Returns markdown that the chat UI renders as an embedded preview.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative path to the file within the workspace"},
+                    "caption": {"type": "string", "description": "Optional caption to display below the file"}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "consolidate_memory",
             "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
             "parameters": {
@@ -335,6 +350,23 @@ async def execute_tool(
             relationship = tool_args["relationship"]
             result = await graph.add_edge_by_label(label_a=node_a, label_b=node_b, relationship=relationship)
             return result
+
+        elif tool_name == "show_file":
+            safe_path = _safe_workspace_path(tool_args["path"], project_id)
+            if not safe_path.exists():
+                return f"File not found: {tool_args['path']}"
+            rel_path = tool_args["path"]
+            caption = tool_args.get("caption", "")
+            suffix = safe_path.suffix.lower()
+            # Return markdown with workspace:// protocol the chat UI knows how to render
+            if suffix in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}:
+                return f"![{caption or safe_path.name}](workspace://{rel_path})"
+            elif suffix == ".pdf":
+                return f"![{caption or safe_path.name}](workspace://{rel_path})"
+            elif suffix in {".html", ".htm"}:
+                return f"[{caption or safe_path.name}](workspace://{rel_path})"
+            else:
+                return f"[{caption or safe_path.name}](workspace://{rel_path})"
 
         elif tool_name == "read_file":
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
