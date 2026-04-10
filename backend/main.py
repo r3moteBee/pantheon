@@ -159,9 +159,12 @@ async def auth_middleware(request: Request, call_next):
     if _FRONTEND_DIR.is_dir() and not path.startswith(("/api/", "/ws/")):
         return await call_next(request)
 
-    # WebSocket connections carry the token as a query parameter because
-    # the WebSocket API does not support arbitrary headers.
-    if request.url.path.startswith("/ws/"):
+    # WebSocket and direct-URL endpoints (file view/download, used by
+    # <img src>, <embed>, etc.) carry the token as a query parameter
+    # because neither the WebSocket API nor bare HTML tags support
+    # arbitrary request headers.
+    _QUERY_TOKEN_PREFIXES = ("/ws/", "/api/files/view", "/api/files/download")
+    if request.url.path.startswith(_QUERY_TOKEN_PREFIXES):
         token = request.query_params.get("token", "")
     else:
         auth_header = request.headers.get("Authorization", "")
