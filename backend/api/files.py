@@ -204,6 +204,14 @@ _VIEW_MIME: dict[str, str] = {
     ".webp": "image/webp",
     ".bmp": "image/bmp",
     ".ico": "image/x-icon",
+    # Text-based files (served as plain text for frontend rendering)
+    ".md": "text/plain",
+    ".markdown": "text/plain",
+    ".txt": "text/plain",
+    ".csv": "text/plain",
+    ".json": "application/json",
+    ".yaml": "text/plain",
+    ".yml": "text/plain",
 }
 
 
