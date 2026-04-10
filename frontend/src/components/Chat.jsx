@@ -6,9 +6,62 @@ import { useStore } from '../store'
 import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 
+// Parse workspace:// path from show_file result markdown
+function parseShowFileResult(result) {
+  if (!result) return null
+  // Match ![caption](workspace://path) or [caption](workspace://path)
+  const match = result.match(/!?\[([^\]]*)\]\(workspace:\/\/([^)]+)\)/)
+  if (!match) return null
+  return { caption: match[1], path: decodeURIComponent(match[2]) }
+}
+
+function FilePreview({ filePath, caption }) {
+  const projectId = useStore((s) => s.activeProject?.id || 'default')
+  const url = filesApi.viewUrl(filePath, projectId)
+  const ext = (filePath || '').split('.').pop().toLowerCase()
+  const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+
+  if (imageExts.includes(ext)) {
+    return (
+      <div className="my-2">
+        <img src={url} alt={caption || filePath} className="rounded-lg max-w-full max-h-96 border border-gray-700" />
+        {caption && <div className="text-xs text-gray-400 mt-1">{caption}</div>}
+      </div>
+    )
+  }
+  if (ext === 'pdf') {
+    return (
+      <div className="my-2 rounded-lg overflow-hidden border border-gray-700">
+        <iframe src={url} title={caption || filePath} className="w-full bg-white" style={{ height: '500px' }} />
+        <div className="bg-gray-800 px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2">
+          <FileText className="w-3 h-3" /> {caption || filePath}
+        </div>
+      </div>
+    )
+  }
+  // Fallback: download link
+  return (
+    <div className="my-2">
+      <a href={url} target="_blank" rel="noopener noreferrer"
+        className="text-brand-400 hover:text-brand-300 underline inline-flex items-center gap-1 text-sm"
+      >
+        <File className="w-3.5 h-3.5" /> {caption || filePath}
+      </a>
+    </div>
+  )
+}
+
 function ToolCallBlock({ toolCall }) {
   const [expanded, setExpanded] = useState(false)
   const isContextLoad = toolCall.name === 'context_loaded'
+  const isShowFile = toolCall.name === 'show_file'
+  const showFileData = isShowFile ? parseShowFileResult(toolCall.result) : null
+
+  // show_file with a successful result: render file preview, collapse the tool block
+  if (isShowFile && showFileData) {
+    return <FilePreview filePath={showFileData.path} caption={showFileData.caption} />
+  }
+
   return (
     <div className={`my-2 border rounded-lg overflow-hidden text-xs ${isContextLoad ? 'border-brand-700' : 'border-gray-700'}`}>
       <button
