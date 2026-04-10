@@ -222,8 +222,8 @@ async def view_file(
         raise HTTPException(status_code=415, detail=f"Unsupported file type for viewing: {ext}")
     return FileResponse(
         path=str(target),
-        filename=target.name,
         media_type=mime,
+        # No filename= param → Content-Disposition: inline (renders in browser)
     )
 
 
