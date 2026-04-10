@@ -21,10 +21,19 @@ class CreateTaskRequest(BaseModel):
 async def list_tasks(
     project_id: str = Query(default="default"),
 ) -> dict[str, Any]:
-    """List all scheduled tasks."""
-    from tasks.scheduler import get_scheduler, list_jobs
-    jobs = list_jobs()
+    """List scheduled tasks for a specific project."""
+    from tasks.scheduler import list_jobs
+    all_jobs = list_jobs()
+    jobs = [j for j in all_jobs if j.get("project_id", "default") == project_id]
     return {"tasks": jobs, "count": len(jobs), "project_id": project_id}
+
+
+@router.get("/tasks/all")
+async def list_all_tasks() -> dict[str, Any]:
+    """List all scheduled tasks across all projects (for global settings view)."""
+    from tasks.scheduler import list_jobs
+    jobs = list_jobs()
+    return {"tasks": jobs, "count": len(jobs)}
 
 
 @router.post("/tasks")

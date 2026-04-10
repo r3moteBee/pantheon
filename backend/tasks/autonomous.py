@@ -61,8 +61,7 @@ async def run_autonomous_task(
         system_context = (
             f"You are running an autonomous task: '{task_name}'\n"
             f"Task ID: {task_id}\n"
-            f"Complete the task fully and save important results to memory. "
-            f"Notify via Telegram when done."
+            f"Complete the task fully and save important results to memory."
         )
 
         full_task_prompt = f"{system_context}\n\nTask:\n{description}"
@@ -78,14 +77,6 @@ async def run_autonomous_task(
         )
         logger.info(f"Autonomous task completed: {task_name}")
 
-        # Notify via Telegram
-        try:
-            from telegram_bot.bot import send_message_to_all
-            msg = f"Task '{task_name}' completed.\n\n{result[:300] if result else 'Done.'}"
-            await send_message_to_all(msg)
-        except Exception as tg_err:
-            logger.debug(f"Telegram notification skipped: {tg_err}")
-
     except Exception as e:
         logger.error(f"Autonomous task failed: {task_name}: {e}", exc_info=True)
         await episodic.log_task_event(
@@ -95,8 +86,3 @@ async def run_autonomous_task(
             task_name=task_name,
             details=str(e),
         )
-        try:
-            from telegram_bot.bot import send_message_to_all
-            await send_message_to_all(f"Task '{task_name}' failed: {str(e)[:200]}")
-        except Exception:
-            pass
