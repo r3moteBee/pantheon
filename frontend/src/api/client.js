@@ -145,6 +145,11 @@ export const filesApi = {
     const tokenParam = token && token !== 'no-auth' ? `&token=${encodeURIComponent(token)}` : ''
     return `${BASE_URL}/api/files/download?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}${tokenParam}`
   },
+  viewUrl: (path, projectId) => {
+    const token = localStorage.getItem('auth_token')
+    const tokenParam = token && token !== 'no-auth' ? `&token=${encodeURIComponent(token)}` : ''
+    return `${BASE_URL}/api/files/view?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}${tokenParam}`
+  },
 }
 
 // Settings API

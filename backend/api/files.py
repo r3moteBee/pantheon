@@ -191,6 +191,42 @@ async def download_file(
     )
 
 
+# MIME types for inline viewing
+_VIEW_MIME: dict[str, str] = {
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".pdf": "application/pdf",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+}
+
+
+@router.get("/files/view")
+async def view_file(
+    path: str = Query(...),
+    project_id: str = Query(default="default"),
+) -> FileResponse:
+    """Serve a file with its correct MIME type for inline viewing."""
+    target = _safe_path(path, project_id)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    ext = target.suffix.lower()
+    mime = _VIEW_MIME.get(ext)
+    if not mime:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type for viewing: {ext}")
+    return FileResponse(
+        path=str(target),
+        filename=target.name,
+        media_type=mime,
+    )
+
+
 @router.post("/files/download-zip")
 async def download_zip(
     project_id: str = Query(default="default"),
