@@ -1,7 +1,7 @@
 # Pantheon Multitenant Architecture
 
 **Status:** Draft
-**Date:** 2026-04-10
+**Date:** 2026-04-11
 **Branch:** `multitenant`
 
 ---
@@ -36,7 +36,7 @@ Each tenant receives a dedicated Postgres schema (e.g., `tenant_{tenant_id}`). T
 - Clean tenant deletion via `DROP SCHEMA tenant_xxx CASCADE`
 - Per-tenant tables for episodic memory, graph memory, semantic memory (pgvector), conversation history, skills, scheduled tasks, and configuration
 
-A shared `public` schema holds cross-tenant data: tenant registry, global skills, system configuration, and admin/audit logs.
+A shared `public` schema holds cross-tenant data: tenant registry, global skills, system configuration, KV store, and admin/audit logs.
 
 ### 3.2 Database Abstraction Layer
 
@@ -62,6 +62,53 @@ VectorStore (ABC)
 ```
 
 Interface methods: `store()`, `search()`, `delete()`, `list()`, `count()`. Implementations handle backend-specific details (collection naming, distance metrics, metadata filtering). The application layer passes pre-computed embedding vectors — the vector store does not call embedding models directly.
+
+### 3.4 Postgres KV Store
+
+A general-purpose key-value store built on Postgres, used for transient and semi-persistent state that doesn't fit into the structured memory tiers or configuration tables. This avoids introducing Redis or another external dependency while keeping the architecture simple.
+
+**Table: `public.kv_store`**
+
+```sql
+CREATE TABLE public.kv_store (
+    namespace   TEXT NOT NULL,       -- scoping: 'working_memory', 'service', 'session', etc.
+    key         TEXT NOT NULL,       -- lookup key
+    value       JSONB NOT NULL,      -- flexible payload
+    tenant_id   UUID,                -- null for system-level entries (e.g., service registry)
+    expires_at  TIMESTAMPTZ,         -- null = no expiration; auto-cleanup via periodic job
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (namespace, key)
+);
+
+CREATE INDEX idx_kv_tenant ON public.kv_store (tenant_id) WHERE tenant_id IS NOT NULL;
+CREATE INDEX idx_kv_expires ON public.kv_store (expires_at) WHERE expires_at IS NOT NULL;
+```
+
+**Namespaces define usage:**
+
+| Namespace | Scope | TTL | Purpose |
+|-----------|-------|-----|---------|
+| `working_memory` | Per-tenant | Conversation lifetime + grace period | Persisted working memory for crash recovery |
+| `service` | System | None (manually managed) | Service registry — endpoint resolution for all platform services |
+| `session` | Per-tenant | Session lifetime | WebSocket session state, active connection metadata |
+| `feature_flags` | System / per-tenant | None | Feature toggles (e.g., `web_browsing_enabled`) |
+| `cache` | Per-tenant or system | Short TTL | Ephemeral caches (rate limit counters, recent query results) |
+
+**Cleanup:** A periodic background job (every 5 minutes) deletes rows where `expires_at < now()`. This is a single SQL statement, not a per-row check.
+
+**Access pattern:** All KV operations go through a `KVStore` class that wraps the table:
+
+```python
+class KVStore:
+    async def get(namespace, key, tenant_id=None) -> dict | None
+    async def set(namespace, key, value, tenant_id=None, ttl_seconds=None)
+    async def delete(namespace, key, tenant_id=None)
+    async def list_keys(namespace, tenant_id=None) -> list[str]
+    async def cleanup_expired()
+```
+
+This provides a single abstraction for working memory persistence, service discovery, feature flags, and session state — all backed by the Postgres instance already in the stack.
 
 ---
 
@@ -106,7 +153,7 @@ The existing five-tier memory architecture is preserved, with scoping changes fo
 
 | Tier | Scope | Storage |
 |------|-------|---------|
-| Working Memory | Per-conversation | In-process (not persisted) |
+| Working Memory | Per-conversation | KV store (`working_memory` namespace) |
 | Episodic Memory | Per-project (owned by tenant) | Postgres (tenant schema) |
 | Semantic Memory | Per-project (owned by tenant) | pgvector (tenant schema) |
 | Graph Memory | Per-project (owned by tenant) | Postgres (tenant schema) |
@@ -115,6 +162,19 @@ The existing five-tier memory architecture is preserved, with scoping changes fo
 ### 5.2 Working Memory
 
 Working memory is scoped per-conversation. Each active conversation maintains its own working memory context. This supports concurrent conversations per tenant without state bleeding.
+
+**Persistence via KV store:**
+
+Working memory is backed by the Postgres KV store (`working_memory` namespace) to survive process restarts. The in-process working memory object is the primary read/write surface for performance — the KV store acts as a write-behind persistence layer.
+
+**Lifecycle:**
+
+1. On conversation start, check KV store for existing working memory (keyed by `{tenant_id}:{conversation_id}`). If found, restore from it — this handles crash recovery and reconnection.
+2. During conversation, working memory updates are written to the KV store periodically (e.g., after each assistant turn) and on WebSocket disconnect.
+3. On conversation end (explicit close or consolidation), working memory is flushed to the KV store one final time, then the extraction pipeline runs. After extraction completes, the KV entry is deleted.
+4. TTL is set to conversation lifetime plus a grace period (e.g., 24 hours). If a conversation is abandoned without explicit close, the cleanup job eventually removes it.
+
+**Concurrency:** Two conversations in the same project operate on independent working memory contexts. Both have full read access to the project's episodic, semantic, and graph memory. Writes to project memory (e.g., during extraction/consolidation) use database-level row locking to prevent conflicts.
 
 ### 5.3 Tenant Ownership
 
@@ -242,7 +302,7 @@ Skills executing in Firecracker microVMs can request web browsing through an API
 
 ## 8. File Storage
 
-### 7.1 Storage Backend Abstraction
+### 8.1 Storage Backend Abstraction
 
 File storage is accessed through a `StorageBackend` interface, allowing the underlying storage to be swapped without application changes.
 
@@ -254,7 +314,7 @@ StorageBackend (ABC)
 
 Interface methods: `read()`, `write()`, `delete()`, `list()`, `exists()`, `get_url()`.
 
-### 7.2 Initial Implementation: Local Filesystem
+### 8.2 Initial Implementation: Local Filesystem
 
 Per-tenant directories on the host:
 
@@ -271,7 +331,7 @@ Per-tenant directories on the host:
 
 Files are never written by constructing paths from user input. All path resolution goes through the `StorageBackend`, which validates tenant scoping and prevents traversal.
 
-### 7.3 Future: Object Storage
+### 8.3 Future: Object Storage
 
 The `ObjectStorageBackend` implementation would use Oracle Object Storage (S3-compatible API). Key mapping:
 
@@ -284,9 +344,77 @@ Migration from local filesystem to object storage would be a data migration + co
 
 ---
 
-## 9. Authentication and API Design
+## 9. Service Registry
 
-### 8.1 Authentication
+### 9.1 Overview
+
+All platform services are registered in the KV store (`service` namespace). Components resolve service endpoints through the registry rather than hardcoding hostnames or ports. This supports both single-host deployment (where everything is `localhost`) and future containerized/distributed deployment (where services have container hostnames or external URLs).
+
+### 9.2 Registry Entries
+
+Each service registers its connection details as a JSONB value:
+
+| Key | Value (example — single host) | Value (example — containerized) |
+|-----|-------------------------------|-------------------------------|
+| `service:postgres` | `{"host": "localhost", "port": 5432, "database": "pantheon"}` | `{"host": "pantheon-db", "port": 5432, "database": "pantheon"}` |
+| `service:ollama` | `{"host": "localhost", "port": 11434}` | `{"host": "ollama", "port": 11434}` |
+| `service:browser` | `{"host": "localhost", "port": 9222, "enabled": true}` | `{"host": "browser-service", "port": 9222, "enabled": true}` |
+| `service:firecracker` | `{"socket_path": "/tmp/firecracker.sock", "pool_size": 4}` | `{"host": "firecracker-mgr", "port": 8080, "pool_size": 4}` |
+
+### 9.3 Initialization
+
+On startup, the Pantheon API reads service endpoints from environment variables and writes them to the KV store. This is the single point where env vars are translated into runtime configuration — all other code reads from the registry.
+
+```python
+# Startup pseudocode
+kv.set("service", "service:postgres", {
+    "host": os.environ["PG_HOST"],
+    "port": int(os.environ.get("PG_PORT", 5432)),
+    "database": os.environ.get("PG_DATABASE", "pantheon"),
+})
+kv.set("service", "service:ollama", {
+    "host": os.environ.get("OLLAMA_HOST", "localhost"),
+    "port": int(os.environ.get("OLLAMA_PORT", 11434)),
+})
+# ... etc for each service
+```
+
+### 9.4 Runtime Resolution
+
+Components that need a service endpoint call the registry:
+
+```python
+ollama_config = await kv.get("service", "service:ollama")
+base_url = f"http://{ollama_config['host']}:{ollama_config['port']}"
+```
+
+This means moving from single-host to multi-host deployment is a `.env` change — no code changes, no config file rewrites. The registry also provides a single place to check the health/status of all services from the admin console.
+
+### 9.5 Health Checks
+
+The service registry powers a `/health` endpoint on the Pantheon API:
+
+```json
+GET /health
+{
+  "status": "healthy",
+  "services": {
+    "postgres": {"status": "connected", "latency_ms": 1},
+    "ollama": {"status": "connected", "latency_ms": 3},
+    "browser": {"status": "connected", "enabled": true},
+    "firecracker": {"status": "available", "pool_active": 2, "pool_max": 4}
+  },
+  "uptime_seconds": 84321
+}
+```
+
+Each registered service has a health check function. The `/health` endpoint iterates the registry and probes each one. This serves as both a readiness probe (for future container orchestration) and an admin monitoring tool.
+
+---
+
+## 10. Authentication and API Design
+
+### 10.1 Authentication
 
 Tenants authenticate via **API keys**. This supports:
 
@@ -299,7 +427,7 @@ Each tenant can have multiple API keys (e.g., one per device/app). Keys are stor
 
 Future consideration: OAuth2 / OIDC for SSO integrations. The API key model does not preclude adding this later.
 
-### 8.2 Secrets Management
+### 10.2 Secrets Management
 
 Tenant secrets (LLM API keys, external service credentials) are stored encrypted in the tenant's Postgres schema. The encryption key is derived from a host-level secret in the `.env` file. The current SQLite vault is replaced by this mechanism.
 
@@ -307,11 +435,10 @@ The host `.env` file is not accessible through the application. It contains only
 
 - Database connection string
 - Host encryption key for tenant secrets
-- Embedding/reranking model endpoints (Ollama)
-- Firecracker configuration
+- Service endpoints (Ollama, browser service, Firecracker) — loaded into the service registry on startup
 - Logging configuration
 
-### 8.3 API Gateway
+### 10.3 API Gateway
 
 All tenant requests flow through a shared API server that:
 
@@ -325,9 +452,9 @@ This is a middleware layer in the existing FastAPI application, not a separate s
 
 ---
 
-## 10. Administration
+## 11. Administration
 
-### 9.1 Management Console
+### 11.1 Management Console
 
 A web-based admin console for platform administration:
 
@@ -338,6 +465,7 @@ A web-based admin console for platform administration:
 
 **System monitoring:**
 - Per-tenant logging (stored in Postgres `public.audit_log` table)
+- Service registry health dashboard (live status of all registered services)
 - Embedding/reranking service health
 - Firecracker microVM pool status
 - Database metrics
@@ -351,21 +479,22 @@ A web-based admin console for platform administration:
 - Trigger re-embedding jobs
 - Monitor re-embedding progress
 
-### 9.2 Tenant Provisioning Flow
+### 11.2 Tenant Provisioning Flow
 
 1. Admin creates tenant via management console (or API).
 2. System creates Postgres schema `tenant_{id}` with all required tables.
 3. System creates tenant directory in StorageBackend (`/data/tenants/{id}/`).
-4. System generates initial API key.
-5. Admin provides API key to tenant.
+4. System initializes tenant feature flags in KV store (e.g., `web_browsing_enabled: false`).
+5. System generates initial API key.
+6. Admin provides API key to tenant.
 
 No OS-level user accounts, no `su`, no per-user Pantheon installations. All tenants run on the shared Pantheon instance with schema-level isolation.
 
 ---
 
-## 11. Logging and Observability
+## 12. Logging and Observability
 
-### 10.1 Per-Tenant Logging
+### 12.1 Per-Tenant Logging
 
 All significant events are logged to `public.audit_log` with `tenant_id`:
 
@@ -375,47 +504,48 @@ All significant events are logged to `public.audit_log` with `tenant_id`:
 - Configuration changes
 - Errors and exceptions
 
-### 10.2 Admin Visibility
+### 12.2 Admin Visibility
 
 The management console provides:
 
 - Filterable log viewer (by tenant, time range, event type, severity)
 - Aggregated metrics dashboard
+- Service registry health view
 - Alerting on error rate thresholds
 
-### 10.3 Tenant Visibility
+### 12.3 Tenant Visibility
 
 Tenants can view their own logs through the UI — limited to their schema's events. They cannot see other tenants' logs or system-level events.
 
 ---
 
-## 12. Deployment Architecture
+## 13. Deployment Architecture
 
-### 11.1 Target Environment
+### 13.1 Target Environment
 
 Oracle Cloud A1 instance (Ampere ARM):
 - 4 OCPUs / 24GB RAM (initial; scalable via Oracle A1 Flex)
 - Block volume for tenant data
 - Tailscale for inference connectivity to Mac Studio
 
-### 11.2 Services
+### 13.2 Services
 
 | Service | Type | Notes |
 |---------|------|-------|
 | Pantheon API | FastAPI application | Shared instance, all tenants |
-| PostgreSQL + pgvector | Database | Shared, schema-per-tenant |
+| PostgreSQL + pgvector | Database + KV store | Shared, schema-per-tenant + public KV |
 | Ollama | Embedding/reranking | Localhost, shared |
 | Browser Service | Playwright + Chromium | Shared pool, toggleable per tenant |
 | Firecracker | Skill execution | MicroVM pool, on-demand |
 | Nginx (optional) | Reverse proxy / TLS | Frontend routing |
 
-### 11.3 Containerization
+### 13.3 Containerization
 
-Containerization is deferred for the initial implementation. The architecture is container-ready (externalized config, shared services, no filesystem coupling in business logic) and can be containerized when operational needs require it.
+Containerization is deferred for the initial implementation. The architecture is container-ready: all service endpoints are resolved through the KV-backed service registry, configuration is externalized via env vars, and there is no filesystem coupling in business logic. Moving to containers requires only changing the service endpoint env vars — no application code changes.
 
 ---
 
-## 13. Migration and Compatibility
+## 14. Migration and Compatibility
 
 This is a new installation, not a migration from the existing single-tenant deployment. The single-tenant codebase on `main` remains unchanged.
 
@@ -423,20 +553,22 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 
 ---
 
-## 14. Summary of Key Decisions
+## 15. Summary of Key Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | Database | PostgreSQL + pgvector | Consolidates relational + vector storage; mature multitenancy |
 | Tenant isolation | Schema-per-tenant | Clean export/delete, strong isolation, simpler than DB-per-tenant |
 | Vector store | Abstracted; pgvector default | Modularity; pgvector avoids a separate service |
+| KV store | Postgres-backed (`public.kv_store`) | Working memory persistence, service registry, feature flags — no Redis dependency |
+| Service discovery | KV-backed service registry | Container-ready endpoint resolution; single env-var-to-runtime translation point |
 | Generative inference | Tenant BYO (OpenAI-compatible) | Lower operational burden; tenant flexibility |
 | Embedding/reranking | Host-provided via Ollama | Consistent vector space; included in hosting fee |
 | Skill storage | Database (global/tenant/project scope) | Security; no filesystem attack surface; supports marketplace |
 | Skill execution | Firecracker microVMs | Strong isolation for untrusted tenant code |
 | File storage | Abstracted; local filesystem initially | Defer object storage decision; interface allows future swap |
 | Authentication | API keys | Simple; supports mobile/desktop/programmatic access |
-| Working memory | Per-conversation | Supports concurrent conversations per tenant |
+| Working memory | Per-conversation, KV-persisted | Crash recovery; survives process restarts |
 | Secrets | Encrypted in Postgres | Replaces SQLite vault; centralized |
 | Logging | Per-tenant to Postgres | Admin and tenant visibility via UI |
 | Web browsing | Shared Playwright/Chromium service, toggleable | Metered capability; separate from Firecracker for performance |
@@ -444,10 +576,14 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 
 ---
 
-## 15. Open Questions
+## 16. Open Questions
 
 - **Object storage migration:** When does latency from object storage become acceptable for project files? Benchmark after initial tenant onboarding.
 - **Skill marketplace:** Should tenants be able to publish skills for other tenants to use? Deferred but the DB-backed skill model supports it.
 - **Horizontal scaling:** When tenant count exceeds single-instance capacity, how to distribute? Options: read replicas for Postgres, multiple Pantheon API instances behind a load balancer, dedicated Firecracker hosts.
 - **Rate limiting strategy:** Per-tenant limits on API calls, memory operations, skill executions, and storage. Specific thresholds TBD based on usage patterns.
 - **Tenant billing integration:** Usage metering and billing system. Out of scope for initial implementation.
+- **Encryption key rotation:** Consider envelope encryption (per-tenant data keys wrapped by host master key) to simplify key rotation without re-encrypting every secret.
+- **API versioning:** Define versioning strategy (e.g., `/api/v1/`) before mobile/desktop apps are in the field.
+- **Tenant data export format:** Define a portable JSON-based export format beyond `pg_dump` for tenant self-service export.
+- **Tenant lifecycle states:** Define what `active`, `suspended`, and `deleted` mean across all subsystems (API access, scheduled tasks, WebSocket connections, storage).
