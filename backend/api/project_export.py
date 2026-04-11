@@ -178,29 +178,18 @@ def _collect_graph(project_id: str) -> dict[str, Any]:
 
 
 def _collect_semantic(project_id: str) -> list[dict[str, Any]]:
-    """Export semantic memory documents from ChromaDB."""
+    """Export semantic memory documents from ChromaDB.
+
+    Uses multiple fetch strategies to work around ChromaDB version
+    differences (offset support, HTTP vs persistent client quirks).
+    Embeddings are skipped to keep exports small and fast.
+    """
     items = []
+    errors: list[str] = []
+
     try:
         from memory.semantic import SemanticMemory
         sem = SemanticMemory(project_id=project_id)
-
-        # Log ChromaDB client type and path for debugging
-        client = sem._get_client()
-        client_type = type(client).__name__
-        client_path = getattr(client, '_identifier', getattr(client, '_persist_directory', 'unknown'))
-        logger.info(
-            "Semantic export: client=%s, path=%s, project=%s",
-            client_type, client_path, project_id,
-        )
-
-        # List all collections to help debug mismatches
-        try:
-            all_collections = client.list_collections()
-            col_names = [c.name for c in all_collections]
-            logger.info("ChromaDB collections available: %s", col_names)
-        except Exception as e:
-            logger.warning("Could not list collections: %s", e)
-
         collection = sem._get_collection()
         total = collection.count()
         logger.info(
@@ -208,45 +197,68 @@ def _collect_semantic(project_id: str) -> list[dict[str, Any]]:
             sem.collection_name, total, project_id,
         )
         if total == 0:
+            _collect_semantic._last_errors = []  # type: ignore[attr-defined]
             return items
 
-        # Fetch in batches — first try with embeddings, fall back without
-        batch_size = 500
-        for offset in range(0, total, batch_size):
-            # Try with embeddings first; some collections may not support it
-            results = None
-            for include_list in [
-                ["documents", "metadatas", "embeddings"],
-                ["documents", "metadatas"],
-            ]:
-                try:
-                    results = collection.get(
-                        include=include_list,
-                        limit=batch_size,
-                        offset=offset,
-                    )
-                    break
-                except Exception as e:
-                    logger.debug(
-                        "Semantic get with include=%s failed: %s", include_list, e
-                    )
-                    continue
-
+        # Strategy 1: Single .get() for everything (works for most cases)
+        try:
+            logger.info("Semantic export: trying single get (limit=%d)...", total)
+            results = collection.get(
+                include=["documents", "metadatas"],
+                limit=total,
+            )
             if results and results.get("ids"):
                 for i, doc_id in enumerate(results["ids"]):
-                    entry = {"id": doc_id}
-                    if results.get("documents"):
+                    entry: dict[str, Any] = {"id": doc_id}
+                    if results.get("documents") and i < len(results["documents"]):
                         entry["document"] = results["documents"][i]
-                    if results.get("metadatas"):
+                    if results.get("metadatas") and i < len(results["metadatas"]):
                         entry["metadata"] = results["metadatas"][i]
-                    if results.get("embeddings") and results["embeddings"][i]:
-                        entry["embedding"] = results["embeddings"][i]
                     items.append(entry)
+                logger.info("Semantic export: strategy 1 got %d items", len(items))
+        except Exception as e1:
+            logger.warning("Semantic export: single get failed: %s", e1)
+            errors.append(f"strategy1: {e1}")
 
-        logger.info("Semantic export: %d documents collected", len(items))
+            # Strategy 2: Get all IDs first, then fetch by ID in batches
+            try:
+                logger.info("Semantic export: trying ID-based batch fetch...")
+                id_results = collection.get(include=[])
+                all_ids = id_results.get("ids", []) if id_results else []
+                logger.info("Semantic export: got %d IDs", len(all_ids))
+
+                batch_size = 50
+                for batch_start in range(0, len(all_ids), batch_size):
+                    batch_ids = all_ids[batch_start : batch_start + batch_size]
+                    try:
+                        batch_results = collection.get(
+                            ids=batch_ids,
+                            include=["documents", "metadatas"],
+                        )
+                        if batch_results and batch_results.get("ids"):
+                            for i, doc_id in enumerate(batch_results["ids"]):
+                                entry = {"id": doc_id}
+                                if batch_results.get("documents") and i < len(batch_results["documents"]):
+                                    entry["document"] = batch_results["documents"][i]
+                                if batch_results.get("metadatas") and i < len(batch_results["metadatas"]):
+                                    entry["metadata"] = batch_results["metadatas"][i]
+                                items.append(entry)
+                    except Exception as eb:
+                        msg = f"Batch {batch_start} failed: {eb}"
+                        logger.error("Semantic export: %s", msg)
+                        errors.append(msg)
+
+                logger.info("Semantic export: strategy 2 got %d items", len(items))
+            except Exception as e2:
+                logger.error("Semantic export: ID-based fetch also failed: %s", e2, exc_info=True)
+                errors.append(f"strategy2: {e2}")
+
+        logger.info("Semantic export: %d documents collected (%d errors)", len(items), len(errors))
     except Exception as e:
         logger.error("Failed to collect semantic data: %s", e, exc_info=True)
+        errors.append(str(e))
 
+    _collect_semantic._last_errors = errors  # type: ignore[attr-defined]
     return items
 
 
@@ -360,6 +372,12 @@ def export_project(
             zf.writestr("memory/semantic.json", semantic_json)
             manifest["checksums"]["semantic"] = _hash_bytes(semantic_json)
             manifest["stats"]["semantic_memories"] = len(semantic)
+            # Surface any errors that occurred during semantic collection
+            sem_errors = getattr(_collect_semantic, '_last_errors', [])
+            if sem_errors:
+                manifest["warnings"] = manifest.get("warnings", []) + [
+                    f"semantic: {e}" for e in sem_errors
+                ]
 
         # ── Files ────────────────────────────────────────────────────
         if "files" in components:
