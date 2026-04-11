@@ -254,6 +254,7 @@ async def export_preview(
 async def import_project_endpoint(
     file: UploadFile = File(...),
     target_id: str | None = Query(None, description="Override the project ID"),
+    target_name: str | None = Query(None, description="Override the project name"),
     components: str | None = Query(None, description="Comma-separated components to import"),
     overwrite: bool = Query(False, description="Merge into existing project if it exists"),
 ) -> dict[str, Any]:
@@ -275,6 +276,7 @@ async def import_project_endpoint(
     result = import_project(
         archive_bytes,
         target_project_id=target_id,
+        target_project_name=target_name,
         components=comp_list,
         overwrite=overwrite,
     )

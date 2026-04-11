@@ -192,6 +192,7 @@ function ImportModal({ onClose, onImported }) {
   const [scanResult, setScanResult] = useState(null)
   const [importResult, setImportResult] = useState(null)
   const [targetId, setTargetId] = useState('')
+  const [targetName, setTargetName] = useState('')
   const [overwrite, setOverwrite] = useState(false)
   const [components, setComponents] = useState({
     metadata: true,
@@ -234,6 +235,7 @@ function ImportModal({ onClose, onImported }) {
     try {
       const res = await projectsApi.importProject(file, {
         targetId: targetId || null,
+        targetName: targetName || null,
         components: selectedComponents,
         overwrite,
       })
@@ -292,7 +294,18 @@ function ImportModal({ onClose, onImported }) {
           {hasFile && !importResult?.success && (
             <div className="space-y-3">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Target Project ID (optional)</label>
+                <label className="block text-xs text-gray-400 mb-1">Project Name (optional)</label>
+                <input
+                  type="text"
+                  value={targetName}
+                  onChange={(e) => setTargetName(e.target.value)}
+                  placeholder="Leave empty to use original name"
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Project ID (optional)</label>
                 <input
                   type="text"
                   value={targetId}
