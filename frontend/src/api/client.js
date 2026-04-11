@@ -345,11 +345,12 @@ export const projectsApi = {
     api.post(`/api/projects/${projectId}/export`, { components }, { responseType: 'blob' }),
   exportPreview: (projectId, components = null) =>
     api.post(`/api/projects/${projectId}/export/preview`, { components }),
-  importProject: (file, { targetId = null, components = null, overwrite = false } = {}) => {
+  importProject: (file, { targetId = null, targetName = null, components = null, overwrite = false } = {}) => {
     const formData = new FormData()
     formData.append('file', file)
     const params = {}
     if (targetId) params.target_id = targetId
+    if (targetName) params.target_name = targetName
     if (components) params.components = components.join(',')
     if (overwrite) params.overwrite = true
     return api.post('/api/projects/import', formData, {
