@@ -179,7 +179,68 @@ Pre-built Firecracker root filesystem images with common runtimes:
 
 ---
 
-## 7. File Storage
+## 7. Web Browsing Service
+
+### 7.1 Overview
+
+Agent web browsing is provided as a shared platform service using Playwright + Chromium. This is a toggleable feature — enabled or disabled per tenant via settings — to support future metered billing.
+
+### 7.2 Architecture
+
+Web browsing runs as a dedicated service, separate from both the Pantheon API and the Firecracker skill execution environment.
+
+```
+Shared Services:
+  ├── Ollama              (embedding / reranking)
+  ├── Browser Service     (Playwright + Chromium pool)
+  └── Firecracker Pool    (skill execution)
+```
+
+**Why not inside Firecracker microVMs:**
+
+- Chromium is heavyweight (~400MB+). Bundling it into every microVM base image would bloat images and slow boot times.
+- Browser sessions are longer-lived than skill script executions. A skill runs and exits; a browsing session involves multiple navigations and waits.
+- Memory footprint differs significantly — Chromium needs substantially more RAM than a typical skill script.
+
+### 7.3 Implementation
+
+The browser service exposes an internal API that the Pantheon agent can call during conversations or skill execution:
+
+- `browse(url)` — navigate to a URL, return page content
+- `screenshot(url)` — capture a rendered screenshot
+- `extract(url, selector)` — extract specific content from a page
+- `interact(url, actions)` — fill forms, click elements, multi-step navigation
+
+Each request receives an isolated Playwright browser context (`browser.newContext()`), providing cookie, storage, and session isolation between requests and between tenants.
+
+**Connection pooling:** A pool of Chromium browser instances is maintained by the service. Contexts are created on-demand within the pool and destroyed after each request completes. The pool size is configurable by the host administrator based on available resources.
+
+### 7.4 Tenant Feature Toggle
+
+Web browsing is a gated capability controlled per tenant:
+
+- **Tenant setting:** `web_browsing_enabled` (boolean, default: `false`)
+- **Admin control:** Host administrator can enable/disable per tenant via the management console
+- **Self-service (optional):** Tenants can enable it in their settings if allowed by the admin policy
+- **API enforcement:** The middleware checks the tenant's `web_browsing_enabled` flag before routing any browse request. Disabled tenants receive a `403 Feature not enabled` response.
+
+This toggle supports future metered billing — usage (page loads, screenshots, interaction steps) is logged to the audit table per tenant, providing the data needed for usage-based pricing.
+
+### 7.5 Security
+
+- **URL allowlist/denylist:** Block requests to `localhost`, private IP ranges (`10.x`, `172.16.x`, `192.168.x`), and internal service endpoints to prevent SSRF attacks against host infrastructure.
+- **Tenant isolation:** Separate browser contexts per request. No shared cookies, storage, or session state between tenants.
+- **Request logging:** All outbound URLs are logged per tenant for audit.
+- **Resource limits:** Per-request timeout (configurable, e.g., 30 seconds). Maximum concurrent browser contexts per tenant to prevent resource exhaustion.
+- **Content restrictions:** Optional content filtering policy configurable by the host administrator.
+
+### 7.6 Integration with Skills
+
+Skills executing in Firecracker microVMs can request web browsing through an API proxy exposed to the microVM. The skill does not run Chromium directly — it calls the browser service, which enforces the tenant's feature toggle and security policies. This keeps skill execution lightweight while still enabling web-capable workflows.
+
+---
+
+## 8. File Storage
 
 ### 7.1 Storage Backend Abstraction
 
@@ -223,7 +284,7 @@ Migration from local filesystem to object storage would be a data migration + co
 
 ---
 
-## 8. Authentication and API Design
+## 9. Authentication and API Design
 
 ### 8.1 Authentication
 
@@ -264,7 +325,7 @@ This is a middleware layer in the existing FastAPI application, not a separate s
 
 ---
 
-## 9. Administration
+## 10. Administration
 
 ### 9.1 Management Console
 
@@ -302,7 +363,7 @@ No OS-level user accounts, no `su`, no per-user Pantheon installations. All tena
 
 ---
 
-## 10. Logging and Observability
+## 11. Logging and Observability
 
 ### 10.1 Per-Tenant Logging
 
@@ -328,7 +389,7 @@ Tenants can view their own logs through the UI — limited to their schema's eve
 
 ---
 
-## 11. Deployment Architecture
+## 12. Deployment Architecture
 
 ### 11.1 Target Environment
 
@@ -344,6 +405,7 @@ Oracle Cloud A1 instance (Ampere ARM):
 | Pantheon API | FastAPI application | Shared instance, all tenants |
 | PostgreSQL + pgvector | Database | Shared, schema-per-tenant |
 | Ollama | Embedding/reranking | Localhost, shared |
+| Browser Service | Playwright + Chromium | Shared pool, toggleable per tenant |
 | Firecracker | Skill execution | MicroVM pool, on-demand |
 | Nginx (optional) | Reverse proxy / TLS | Frontend routing |
 
@@ -353,7 +415,7 @@ Containerization is deferred for the initial implementation. The architecture is
 
 ---
 
-## 12. Migration and Compatibility
+## 13. Migration and Compatibility
 
 This is a new installation, not a migration from the existing single-tenant deployment. The single-tenant codebase on `main` remains unchanged.
 
@@ -361,7 +423,7 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 
 ---
 
-## 13. Summary of Key Decisions
+## 14. Summary of Key Decisions
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
@@ -377,11 +439,12 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 | Working memory | Per-conversation | Supports concurrent conversations per tenant |
 | Secrets | Encrypted in Postgres | Replaces SQLite vault; centralized |
 | Logging | Per-tenant to Postgres | Admin and tenant visibility via UI |
+| Web browsing | Shared Playwright/Chromium service, toggleable | Metered capability; separate from Firecracker for performance |
 | Containerization | Deferred (architecture is container-ready) | Avoid premature complexity |
 
 ---
 
-## 14. Open Questions
+## 15. Open Questions
 
 - **Object storage migration:** When does latency from object storage become acceptable for project files? Benchmark after initial tenant onboarding.
 - **Skill marketplace:** Should tenants be able to publish skills for other tenants to use? Deferred but the DB-backed skill model supports it.
