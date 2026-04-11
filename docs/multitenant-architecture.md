@@ -739,21 +739,32 @@ Future consideration: OAuth2 / OIDC for SSO integrations. The API key model does
 
 ### 11.2 Secrets Management
 
-Tenant secrets (LLM API keys, external service credentials) are stored encrypted in the tenant's Postgres schema. The encryption key is derived from a host-level secret in the `.env` file. The current SQLite vault is replaced by this mechanism.
+Tenant secrets (LLM API keys, external service credentials) are stored encrypted in the tenant's Postgres schema using **AES-256-GCM** symmetric encryption. This is PQC-safe — symmetric algorithms are not vulnerable to Shor's algorithm, and AES-256 retains ~128-bit effective security against Grover's algorithm, well beyond brute-force thresholds.
+
+**Encryption scheme:**
+
+- Algorithm: AES-256-GCM (authenticated encryption with associated data)
+- Key: Host master key from `.env` (32 bytes / 256 bits)
+- Per-secret random nonce (96 bits), stored alongside the ciphertext
+- AEAD tag ensures integrity — tampering is detected on decryption
+
+**Future improvement:** Migrate to envelope encryption (per-tenant data encryption keys wrapped by the host master key) to enable key rotation without re-encrypting every secret. The current schema stores ciphertext + nonce per secret, which is compatible with adding a wrapped DEK column later.
 
 The host `.env` file is not accessible through the application. It contains only host-level configuration:
 
 - Database connection string
-- Host encryption key for tenant secrets
+- Host master encryption key (AES-256)
 - Service endpoints (Ollama, browser service, Firecracker) — loaded into the service registry on startup
 - Logging configuration
 
 ### 11.3 API Gateway
 
+All API routes are versioned under `/api/v1/`. This is mandatory from day one — mobile and desktop clients will be in the field when breaking API changes are needed, and versioning enables graceful migration.
+
 All tenant requests flow through a shared API server that:
 
-1. Extracts the API key from the request header.
-2. Resolves the `tenant_id` from the key (lookup in `public.api_keys`).
+1. Extracts the API key from the request header (`Authorization: Bearer <key>`) or query parameter (WebSocket upgrade).
+2. Resolves the `tenant_id` from the key (lookup in `public.api_keys`). Rejects if key is invalid or tenant is not `active`.
 3. Constructs a `TenantContext` (schema name, decrypted credentials, feature flags).
 4. Injects the `TenantContext` into the request via FastAPI dependency injection.
 5. Enforces rate limiting per tenant.
@@ -762,6 +773,46 @@ All tenant requests flow through a shared API server that:
 **No `SET search_path` is used.** All database queries use explicit schema qualification via the `TenantContext.schema_name`. See Section 3.2 for details.
 
 This is a middleware layer in the existing FastAPI application, not a separate service.
+
+### 11.4 WebSocket Authentication
+
+WebSocket connections (used for streaming chat) authenticate during the upgrade handshake:
+
+1. Client connects to `wss://hostname/api/v1/ws/chat?token=<api_key>`.
+2. The server validates the API key and resolves the `TenantContext` before accepting the upgrade.
+3. If the key is invalid or the tenant is not `active`, the upgrade is rejected with HTTP 401.
+4. Once established, the WebSocket connection is bound to the `TenantContext` for its lifetime. No re-authentication is needed per message.
+5. Active WebSocket connections are tracked per tenant in the KV store (`session` namespace) for monitoring and forced disconnection on tenant suspension.
+
+### 11.5 Frontend Deployment Model
+
+The tenant frontend is deployed as a per-user installation in Linux user home directories on the server:
+
+```
+/home/{username}/public_html/
+  └── pantheon/          (React build — static files)
+      ├── index.html
+      ├── assets/
+      └── config.json    (API base URL, cached API key reference)
+```
+
+Tenants access their agent UI at `https://hostname/~username`. The web server (Nginx or Apache with `userdir` module) serves the static frontend from each user's `public_html` directory.
+
+**Authentication flow:**
+
+1. On first visit, the user enters their API key (provided by admin during provisioning).
+2. The frontend stores the key in an httpOnly cookie scoped to the user's path (`/~username`).
+3. Subsequent requests to the backend API include the key via the `Authorization` header.
+4. The frontend is a static build — identical for all tenants. Only the API key differentiates which tenant's data is accessed.
+
+**Why per-user home directories for the frontend:**
+
+- Simple provisioning — copy the static build into the user's `public_html` during account setup.
+- Natural URL isolation (`/~username`) without complex routing.
+- Tenants can't access each other's frontend config files (standard Unix permissions).
+- The frontend is a thin client — all logic and data live in the shared backend.
+
+**Admin console:** Served at a separate path (e.g., `https://hostname/admin/`) with its own API key authentication. Admin API keys have a role flag distinguishing them from tenant keys. The admin console is a separate static build deployed once, not per-user.
 
 ---
 
@@ -793,16 +844,70 @@ A web-based admin console for platform administration:
 - Trigger re-embedding workflows
 - Monitor re-embedding progress per tenant
 
-### 12.2 Tenant Provisioning Flow
+### 12.2 Tenant Lifecycle States
+
+Tenants have three states, stored in `public.tenants.status`:
+
+| State | API Access | WebSockets | Scheduled Jobs | Data | Transition |
+|-------|-----------|------------|----------------|------|------------|
+| **Active** | Full access | Connected | Running | Read/write | Default state after provisioning |
+| **Suspended** | Rejected (401) | Force-disconnected | Skipped | Preserved, read-only | Admin action. API keys invalidated (trivial to regenerate on reactivation). |
+| **Deleted** | Rejected (401) | Force-disconnected | Removed | Exported to zip, schema dropped after 14-day grace period | Admin or tenant-initiated. |
+
+**Suspension flow:**
+
+1. Admin sets tenant status to `suspended`.
+2. All API keys for the tenant are invalidated (marked inactive in `public.api_keys`).
+3. Active WebSocket connections are force-closed (tracked via KV `session` namespace).
+4. The scheduler skips all jobs for suspended tenants.
+5. Tenant data remains intact in the schema. No writes are permitted.
+6. On reactivation: status set to `active`, admin generates a new API key.
+
+**Deletion flow:**
+
+1. Admin (or tenant via self-service) initiates deletion.
+2. System exports the full tenant agent space — schema data (memory, skills, jobs, workflows, conversations) + StorageBackend files — into a zip archive stored in a system-managed location.
+3. Tenant status set to `deleted`. API keys invalidated. WebSockets disconnected.
+4. A deferred cleanup job is scheduled for 14 days in the future.
+5. During the 14-day grace period, the export zip is available for download by the admin (or tenant, if self-service deletion). The schema and storage directory remain until the cleanup job runs.
+6. After 14 days: `DROP SCHEMA tenant_{id} CASCADE`, remove StorageBackend directory, delete the export zip. Audit log entries in `public.audit_log` are retained for compliance.
+
+### 12.3 Tenant Provisioning Flow
 
 1. Admin creates tenant via management console (or API).
-2. System creates Postgres schema `tenant_{id}` with all required tables (memory tiers, skills, jobs, schedules, workflows, triggers, configuration).
+2. System creates Postgres schema `tenant_{id}` at the current schema version, with all required tables (memory tiers, skills, jobs, schedules, workflows, triggers, configuration).
 3. System creates tenant directory in StorageBackend (`/data/tenants/{id}/`).
-4. System initializes tenant feature flags in KV store (e.g., `web_browsing_enabled: false`).
-5. System generates initial API key.
-6. Admin provides API key to tenant.
+4. System creates Linux user account and deploys frontend to `~/public_html/pantheon/`.
+5. System initializes tenant feature flags in KV store (e.g., `web_browsing_enabled: false`).
+6. System generates initial API key.
+7. Admin provides API key to tenant.
 
-No OS-level user accounts, no `su`, no per-user Pantheon installations. All tenants run on the shared Pantheon instance with schema-level isolation.
+### 12.4 Tenant Schema Migration
+
+When a new version adds or modifies tables/columns in the tenant schema, migrations must be applied across all existing tenant schemas.
+
+**Approach: Versioned migration scripts with a schema version tracker.**
+
+A `public.schema_versions` table tracks which migration version each tenant is at:
+
+```sql
+CREATE TABLE public.schema_versions (
+    tenant_id       UUID PRIMARY KEY REFERENCES public.tenants(id),
+    schema_version  INT NOT NULL DEFAULT 1,
+    migrated_at     TIMESTAMPTZ DEFAULT now()
+);
+```
+
+Migration scripts are numbered sequentially (e.g., `001_add_triggers_table.sql`, `002_add_workflow_context_column.sql`) and stored in the codebase under `migrations/tenant/`.
+
+**Migration runner:**
+
+1. On application startup (or via admin command), the runner compares each tenant's `schema_version` against the latest available migration number.
+2. For each tenant behind the current version, it applies pending migrations in order, using the tenant's schema name to qualify all table references.
+3. After each successful migration, it increments `schema_version`.
+4. New tenants are created at the latest schema version — they get the current table definitions directly, no migration replay needed.
+
+This is the simplest approach — sequential numbered SQL files, no ORM migration framework, no dependency graph. Each migration is a plain SQL script with `{schema}` placeholders that the runner substitutes. If a migration fails for a tenant, it stops and logs the error for admin review without affecting other tenants.
 
 ---
 
@@ -855,7 +960,17 @@ Oracle Cloud A1 instance (Ampere ARM):
 | Firecracker | Skill execution | MicroVM pool, on-demand |
 | Nginx (optional) | Reverse proxy / TLS | Frontend routing |
 
-### 14.3 Containerization
+### 14.3 Connection Pooling
+
+The application uses a shared asyncpg connection pool for all tenants:
+
+- **Default `max_connections`: 10** (configurable via `.env`)
+- All tenants share the pool. Tenant isolation is at the query level (explicit schema qualification), not the connection level.
+- Connections are checked out per-request and returned immediately after the query completes.
+
+**Future: Per-tenant QoS.** As tenant count grows, a single tenant running expensive queries could starve others. To prepare for this, the connection pool interface should be abstracted behind a `ConnectionManager` class from the start. Initially this is a thin wrapper around asyncpg's pool, but the abstraction allows adding per-tenant connection limits, query prioritization, or per-tenant sub-pools later without changing call sites.
+
+### 14.4 Containerization
 
 Containerization is deferred for the initial implementation. The architecture is container-ready: all service endpoints are resolved through the KV-backed service registry, configuration is externalized via env vars, tenant context uses explicit schema qualification (no connection state dependency), and there is no filesystem coupling in business logic. Moving to containers requires only changing the service endpoint env vars — no application code changes.
 
@@ -876,6 +991,9 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 | Database | PostgreSQL + pgvector | Consolidates relational + vector storage; mature multitenancy |
 | Tenant isolation | Schema-per-tenant | Clean export/delete, strong isolation, simpler than DB-per-tenant |
 | Tenant context | Explicit `TenantContext` + schema-qualified queries | Connection-safe; no `SET search_path` race conditions |
+| Tenant lifecycle | Active / Suspended (keys invalidated) / Deleted (14-day grace + zip export) | Clean state machine; data recovery window; compliance-friendly |
+| Schema migration | Versioned SQL scripts + `public.schema_versions` tracker | Simplest approach; no ORM dependency; per-tenant version tracking |
+| API versioning | `/api/v1/` prefix from day one | Non-negotiable before mobile/desktop clients ship |
 | Vector store | Abstracted; pgvector default | Modularity; pgvector avoids a separate service |
 | KV store | Postgres-backed (`public.kv_store`) | Working memory persistence, service registry, feature flags — no Redis dependency |
 | Service discovery | KV-backed service registry | Container-ready endpoint resolution; single env-var-to-runtime translation point |
@@ -887,9 +1005,13 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 | Skill storage | Database (global/tenant/project scope) | Security; no filesystem attack surface; supports marketplace |
 | Skill execution | Firecracker microVMs | Strong isolation for untrusted tenant code |
 | File storage | Abstracted; local filesystem initially | Defer object storage decision; interface allows future swap |
-| Authentication | API keys | Simple; supports mobile/desktop/programmatic access |
+| Authentication | API keys (httpOnly cookie for web UI, header for API) | Simple; supports mobile/desktop/programmatic access |
+| WebSocket auth | API key in upgrade handshake query param | Binds TenantContext for connection lifetime |
+| Frontend | Per-user `~/public_html/pantheon/` served at `https://hostname/~username` | Simple provisioning; Unix permission isolation; static build |
+| Admin console | Separate build at `/admin/`, role-differentiated API key | Isolated from tenant UI; admin-only access |
 | Working memory | Per-conversation, KV-persisted | Crash recovery; survives process restarts |
-| Secrets | Encrypted in Postgres (tenant schema) | Replaces SQLite vault; per-tenant isolation |
+| Secrets | AES-256-GCM encrypted in tenant schema | PQC-safe symmetric encryption; replaces SQLite vault |
+| Connection pooling | Shared asyncpg pool, default `max_connections=10` | Simple start; `ConnectionManager` abstraction enables future per-tenant QoS |
 | Logging | Per-tenant to Postgres | Admin and tenant visibility via UI |
 | Web browsing | Shared Playwright/Chromium service, toggleable | Metered capability; separate from Firecracker for performance |
 | Containerization | Deferred (architecture is container-ready) | Avoid premature complexity |
@@ -903,8 +1025,6 @@ The `multitenant` branch diverges architecturally but preserves the core agent l
 - **Horizontal scaling:** When tenant count exceeds single-instance capacity, how to distribute? Options: read replicas for Postgres, multiple Pantheon API instances behind a load balancer (requires shared job dispatch), dedicated Firecracker hosts.
 - **Rate limiting strategy:** Per-tenant limits on API calls, memory operations, skill executions, and storage. Specific thresholds TBD based on usage patterns.
 - **Tenant billing integration:** Usage metering and billing system. Out of scope for initial implementation.
-- **Encryption key rotation:** Consider envelope encryption (per-tenant data keys wrapped by host master key) to simplify key rotation without re-encrypting every secret.
-- **API versioning:** Define versioning strategy (e.g., `/api/v1/`) before mobile/desktop apps are in the field.
-- **Tenant data export format:** Define a portable JSON-based export format beyond `pg_dump` for tenant self-service export.
-- **Tenant lifecycle states:** Define what `active`, `suspended`, and `deleted` mean across all subsystems (API access, scheduled tasks, WebSocket connections, storage, job execution).
+- **Envelope encryption migration:** Current scheme uses direct AES-256-GCM with host master key. Migrate to envelope encryption (per-tenant DEKs wrapped by master key) when key rotation becomes a requirement. Schema is forward-compatible.
+- **Per-tenant QoS:** `ConnectionManager` abstraction is in place. Define per-tenant connection limits and query prioritization when usage patterns emerge.
 - **Workflow builder UI:** How do tenants create and manage workflows? Visual builder, YAML definition, or natural language ("set up a workflow that...")?
