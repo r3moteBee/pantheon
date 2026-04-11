@@ -313,6 +313,11 @@ function ImportModal({ onClose, onImported }) {
                   placeholder="Leave empty to use original ID"
                   className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
                 />
+                {!overwrite && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    If the ID already exists, a new unique ID will be created automatically.
+                  </p>
+                )}
               </div>
 
               <label className="flex items-center gap-2 text-sm text-gray-300">
