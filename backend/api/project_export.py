@@ -48,12 +48,67 @@ def _collect_metadata(project_id: str) -> dict[str, Any]:
     return projects.get(project_id, {})
 
 
+def _resolve_episodic_db_path() -> str:
+    """Resolve the actual episodic DB path used at runtime.
+
+    EpisodicMemory and GraphMemory use their own default paths which may
+    differ from settings.episodic_db_path. We try the settings path first,
+    then fall back to the class default to match runtime behaviour.
+    """
+    import sqlite3
+    from pathlib import Path as _P
+
+    candidates = [
+        str(settings.episodic_db_path),       # /app/data/db/episodic.db
+        "data/episodic.db",                    # EpisodicMemory class default (relative)
+        str(settings.data_dir / "episodic.db"),  # alternate flat layout
+    ]
+    for path in candidates:
+        p = _P(path)
+        if p.exists():
+            try:
+                conn = sqlite3.connect(path)
+                conn.execute("SELECT count(*) FROM messages")
+                conn.close()
+                logger.debug("Episodic DB resolved to: %s", path)
+                return path
+            except Exception:
+                continue
+    # Fall back to settings path even if it doesn't exist yet
+    return str(settings.episodic_db_path)
+
+
+def _resolve_graph_db_path() -> str:
+    """Resolve the actual graph DB path used at runtime."""
+    import sqlite3
+    from pathlib import Path as _P
+
+    candidates = [
+        str(settings.graph_db_path),           # /app/data/db/graph.db
+        "data/graph.db",                       # GraphMemory class default (relative)
+        str(settings.data_dir / "graph.db"),   # alternate flat layout
+    ]
+    for path in candidates:
+        p = _P(path)
+        if p.exists():
+            try:
+                conn = sqlite3.connect(path)
+                conn.execute("SELECT count(*) FROM graph_nodes")
+                conn.close()
+                logger.debug("Graph DB resolved to: %s", path)
+                return path
+            except Exception:
+                continue
+    return str(settings.graph_db_path)
+
+
 def _collect_episodic(project_id: str) -> dict[str, Any]:
     """Export episodic memory rows (conversations, messages, task_logs, notes)."""
     import sqlite3
-    db_path = str(settings.episodic_db_path)
+    db_path = _resolve_episodic_db_path()
     result = {"conversations": [], "messages": [], "task_logs": [], "memory_notes": []}
 
+    logger.info("Exporting episodic memory from: %s (project=%s)", db_path, project_id)
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -79,8 +134,13 @@ def _collect_episodic(project_id: str) -> dict[str, Any]:
             result["memory_notes"].append(dict(row))
 
         conn.close()
+        logger.info(
+            "Episodic export: %d convos, %d msgs, %d logs, %d notes",
+            len(result["conversations"]), len(result["messages"]),
+            len(result["task_logs"]), len(result["memory_notes"]),
+        )
     except Exception as e:
-        logger.warning("Failed to collect episodic data: %s", e)
+        logger.warning("Failed to collect episodic data from %s: %s", db_path, e)
 
     return result
 
@@ -88,9 +148,10 @@ def _collect_episodic(project_id: str) -> dict[str, Any]:
 def _collect_graph(project_id: str) -> dict[str, Any]:
     """Export graph memory nodes and edges."""
     import sqlite3
-    db_path = str(settings.graph_db_path)
+    db_path = _resolve_graph_db_path()
     result = {"nodes": [], "edges": []}
 
+    logger.info("Exporting graph memory from: %s (project=%s)", db_path, project_id)
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -106,8 +167,12 @@ def _collect_graph(project_id: str) -> dict[str, Any]:
             result["edges"].append(dict(row))
 
         conn.close()
+        logger.info(
+            "Graph export: %d nodes, %d edges",
+            len(result["nodes"]), len(result["edges"]),
+        )
     except Exception as e:
-        logger.warning("Failed to collect graph data: %s", e)
+        logger.warning("Failed to collect graph data from %s: %s", db_path, e)
 
     return result
 

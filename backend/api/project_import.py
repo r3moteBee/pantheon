@@ -556,7 +556,10 @@ def _import_episodic(
     """Restore episodic memory data into SQLite."""
     import sqlite3
     data = json.loads(zf.read("memory/episodic.json"))
-    db_path = str(settings.episodic_db_path)
+
+    # Resolve DB path the same way the runtime does
+    from api.project_export import _resolve_episodic_db_path
+    db_path = _resolve_episodic_db_path()
 
     # Ensure tables exist
     from memory.episodic import EpisodicMemory
@@ -617,7 +620,10 @@ def _import_graph(
     """Restore graph memory data into SQLite."""
     import sqlite3
     data = json.loads(zf.read("memory/graph.json"))
-    db_path = str(settings.graph_db_path)
+
+    # Resolve DB path the same way the runtime does
+    from api.project_export import _resolve_graph_db_path
+    db_path = _resolve_graph_db_path()
 
     # Ensure tables exist
     from memory.graph import GraphMemory
