@@ -282,6 +282,89 @@ async def import_project_endpoint(
     return result.model_dump()
 
 
+@router.get("/projects/{project_id}/export/debug")
+async def export_debug(project_id: str) -> dict[str, Any]:
+    """Diagnostic endpoint — shows what the exporter sees for each data source."""
+    from api.project_export import (
+        _collect_metadata,
+        _resolve_episodic_db_path,
+        _resolve_graph_db_path,
+    )
+    from pathlib import Path as _P
+    import sqlite3
+
+    info: dict[str, Any] = {"project_id": project_id}
+
+    # Metadata
+    meta = _collect_metadata(project_id)
+    info["metadata"] = {"found": bool(meta), "name": meta.get("name", "")}
+
+    # Episodic DB
+    ep_path = _resolve_episodic_db_path()
+    info["episodic"] = {"db_path": ep_path, "exists": _P(ep_path).exists()}
+    try:
+        conn = sqlite3.connect(ep_path)
+        msg_count = conn.execute(
+            "SELECT count(*) FROM messages WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        conv_count = conn.execute(
+            "SELECT count(*) FROM conversations WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        # Also show distinct project_ids in the DB for debugging
+        pids = [r[0] for r in conn.execute(
+            "SELECT DISTINCT project_id FROM messages LIMIT 20"
+        ).fetchall()]
+        conn.close()
+        info["episodic"]["messages"] = msg_count
+        info["episodic"]["conversations"] = conv_count
+        info["episodic"]["project_ids_in_db"] = pids
+    except Exception as e:
+        info["episodic"]["error"] = str(e)
+
+    # Graph DB
+    gr_path = _resolve_graph_db_path()
+    info["graph"] = {"db_path": gr_path, "exists": _P(gr_path).exists()}
+    try:
+        conn = sqlite3.connect(gr_path)
+        node_count = conn.execute(
+            "SELECT count(*) FROM graph_nodes WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+        conn.close()
+        info["graph"]["nodes"] = node_count
+    except Exception as e:
+        info["graph"]["error"] = str(e)
+
+    # Semantic (ChromaDB)
+    try:
+        from memory.semantic import SemanticMemory
+        sem = SemanticMemory(project_id=project_id)
+        client = sem._get_client()
+        info["semantic"] = {
+            "client_type": type(client).__name__,
+            "collection_name": sem.collection_name,
+        }
+        try:
+            all_cols = client.list_collections()
+            info["semantic"]["all_collections"] = [c.name for c in all_cols]
+        except Exception:
+            info["semantic"]["all_collections"] = "list_collections() failed"
+        collection = sem._get_collection()
+        info["semantic"]["count"] = collection.count()
+    except Exception as e:
+        info["semantic"] = {"error": str(e)}
+
+    # Files
+    project_dir = settings.projects_dir / project_id
+    file_count = 0
+    for subdir in ("workspace", "personality", "notes"):
+        src = project_dir / subdir
+        if src.is_dir():
+            file_count += sum(1 for _ in src.rglob("*") if _.is_file())
+    info["files"] = {"project_dir": str(project_dir), "count": file_count}
+
+    return info
+
+
 @router.post("/projects/import/scan")
 async def scan_import_archive(
     file: UploadFile = File(...),

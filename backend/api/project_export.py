@@ -183,19 +183,55 @@ def _collect_semantic(project_id: str) -> list[dict[str, Any]]:
     try:
         from memory.semantic import SemanticMemory
         sem = SemanticMemory(project_id=project_id)
+
+        # Log ChromaDB client type and path for debugging
+        client = sem._get_client()
+        client_type = type(client).__name__
+        client_path = getattr(client, '_identifier', getattr(client, '_persist_directory', 'unknown'))
+        logger.info(
+            "Semantic export: client=%s, path=%s, project=%s",
+            client_type, client_path, project_id,
+        )
+
+        # List all collections to help debug mismatches
+        try:
+            all_collections = client.list_collections()
+            col_names = [c.name for c in all_collections]
+            logger.info("ChromaDB collections available: %s", col_names)
+        except Exception as e:
+            logger.warning("Could not list collections: %s", e)
+
         collection = sem._get_collection()
         total = collection.count()
+        logger.info(
+            "Semantic export: collection=%s, count=%d, project=%s",
+            sem.collection_name, total, project_id,
+        )
         if total == 0:
             return items
 
-        # Fetch in batches of 500
+        # Fetch in batches — first try with embeddings, fall back without
         batch_size = 500
         for offset in range(0, total, batch_size):
-            results = collection.get(
-                include=["documents", "metadatas", "embeddings"],
-                limit=batch_size,
-                offset=offset,
-            )
+            # Try with embeddings first; some collections may not support it
+            results = None
+            for include_list in [
+                ["documents", "metadatas", "embeddings"],
+                ["documents", "metadatas"],
+            ]:
+                try:
+                    results = collection.get(
+                        include=include_list,
+                        limit=batch_size,
+                        offset=offset,
+                    )
+                    break
+                except Exception as e:
+                    logger.debug(
+                        "Semantic get with include=%s failed: %s", include_list, e
+                    )
+                    continue
+
             if results and results.get("ids"):
                 for i, doc_id in enumerate(results["ids"]):
                     entry = {"id": doc_id}
@@ -203,11 +239,13 @@ def _collect_semantic(project_id: str) -> list[dict[str, Any]]:
                         entry["document"] = results["documents"][i]
                     if results.get("metadatas"):
                         entry["metadata"] = results["metadatas"][i]
-                    if results.get("embeddings"):
+                    if results.get("embeddings") and results["embeddings"][i]:
                         entry["embedding"] = results["embeddings"][i]
                     items.append(entry)
+
+        logger.info("Semantic export: %d documents collected", len(items))
     except Exception as e:
-        logger.warning("Failed to collect semantic data: %s", e)
+        logger.error("Failed to collect semantic data: %s", e, exc_info=True)
 
     return items
 
