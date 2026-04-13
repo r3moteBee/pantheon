@@ -37,6 +37,10 @@ class SettingsUpdate(BaseModel):
     search_api_key: str | None = None
     telegram_bot_token: str | None = None
     telegram_allowed_chat_ids: str | None = None
+    discord_bot_token: str | None = None
+    discord_allowed_guild_ids: str | None = None
+    discord_command_scope: str | None = None
+    messaging_default_project: str | None = None
     memory_recall_enabled: bool | None = None
     personality_weight: str | None = None
     context_focus: str | None = None
@@ -75,6 +79,10 @@ def _get_effective_settings() -> dict[str, Any]:
         "chroma_port": settings_config.chroma_port,
         "telegram_bot_token_set": bool(vault.get_secret("telegram_bot_token") or settings_config.telegram_bot_token),
         "telegram_allowed_chat_ids": vault.get_secret("telegram_allowed_chat_ids") or settings_config.telegram_allowed_chat_ids,
+        "discord_bot_token_set": bool(vault.get_secret("discord_bot_token") or settings_config.discord_bot_token),
+        "discord_allowed_guild_ids": vault.get_secret("discord_allowed_guild_ids") or getattr(settings_config, "discord_allowed_guild_ids", ""),
+        "discord_command_scope": vault.get_secret("discord_command_scope") or "guild",
+        "messaging_default_project": vault.get_secret("messaging_default_project") or "default",
         "app_env": settings_config.app_env,
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
         "personality_weight": vault.get_secret("personality_weight") or settings_config.personality_weight,
@@ -139,6 +147,16 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("telegram_bot_token", req.telegram_bot_token)
     if req.telegram_allowed_chat_ids is not None:
         vault.set_secret("telegram_allowed_chat_ids", req.telegram_allowed_chat_ids)
+    if req.discord_bot_token is not None:
+        vault.set_secret("discord_bot_token", req.discord_bot_token)
+    if req.discord_allowed_guild_ids is not None:
+        vault.set_secret("discord_allowed_guild_ids", req.discord_allowed_guild_ids)
+    if req.discord_command_scope is not None:
+        val = req.discord_command_scope.lower().strip()
+        if val in ("guild", "global"):
+            vault.set_secret("discord_command_scope", val)
+    if req.messaging_default_project is not None:
+        vault.set_secret("messaging_default_project", req.messaging_default_project)
     if req.memory_recall_enabled is not None:
         vault.set_secret("memory_recall_enabled", str(req.memory_recall_enabled).lower())
     if req.personality_weight is not None:

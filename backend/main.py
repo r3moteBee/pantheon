@@ -23,6 +23,7 @@ from api.mcp import router as mcp_router
 from api.skills import router as skills_router
 from api.tasks import router as tasks_router
 from api.personas import router as personas_router
+from api.messaging import router as messaging_router
 
 settings = get_settings()
 
@@ -77,9 +78,10 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         logger.info("Task scheduler started")
 
-    # Start the Telegram bot (if configured)
-    from telegram_bot.bot import start_telegram_bot, stop_telegram_bot
-    await start_telegram_bot()
+    # Start all configured messaging adapters (Telegram, Discord, etc.)
+    from messaging.gateway import get_messaging_gateway
+    messaging_gw = get_messaging_gateway()
+    await messaging_gw.startup()
 
     # Initialize the skill registry
     from skills.registry import get_skill_registry
@@ -111,8 +113,8 @@ async def lifespan(app: FastAPI):
     _asyncio.create_task(_warmup())
     yield
 
-    # Stop the Telegram bot cleanly
-    await stop_telegram_bot()
+    # Stop all messaging adapters cleanly
+    await messaging_gw.shutdown()
 
     # Stop the task scheduler cleanly
     if scheduler.running:
@@ -194,6 +196,7 @@ app.include_router(mcp_router,         prefix="/api", tags=["mcp"])
 app.include_router(skills_router,      prefix="/api", tags=["skills"])
 app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
 app.include_router(personas_router,    prefix="/api", tags=["personas"])
+app.include_router(messaging_router,   prefix="/api", tags=["messaging"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always

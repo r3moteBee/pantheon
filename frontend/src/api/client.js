@@ -367,6 +367,22 @@ export const projectsApi = {
   },
 }
 
+// Messaging Gateway API
+export const messagingApi = {
+  status: () => api.get('/api/messaging/status'),
+  restartAdapter: (name) => api.post(`/api/messaging/${name}/restart`),
+  getChannels: () => api.get('/api/messaging/channels'),
+  getMappings: () => api.get('/api/messaging/mappings'),
+  updateMappings: (mappings) => api.put('/api/messaging/mappings', { mappings }),
+  setMapping: (channelId, projectId) =>
+    api.put(`/api/messaging/mappings/${encodeURIComponent(channelId)}`, { project_id: projectId }),
+  removeMapping: (channelId) =>
+    api.delete(`/api/messaging/mappings/${encodeURIComponent(channelId)}`),
+  getDefaultProject: () => api.get('/api/messaging/default-project'),
+  setDefaultProject: (projectId) =>
+    api.put('/api/messaging/default-project', { project_id: projectId }),
+}
+
 // WebSocket helper
 // ── Persistent chat WebSocket ──────────────────────────────────────────────
 // Kept as a module-level singleton so page navigation within the SPA doesn't
