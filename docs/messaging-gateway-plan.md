@@ -361,10 +361,12 @@ await gateway.shutdown()
 - The `telegram_bot/` package remains as a backward-compatible shim. It re-exports `start_telegram_bot`, `stop_telegram_bot`, and `restart_telegram_bot` from the new `messaging.adapters.telegram` module so that any external references continue to work.
 - Existing `.env` variables (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_CHAT_IDS`) continue to work unchanged.
 - Vault secrets for Telegram are unchanged; Discord secrets follow the same pattern.
-- The `_chat_projects` in-memory dict (current per-chat project override) becomes a session-level override on top of the persistent `ChannelStore` mapping. If a user runs `/project foo` in a channel, that overrides only for their current session — the persistent mapping remains what the admin configured in Settings.
+- The `_chat_projects` in-memory dict is removed. The `/project` command in both Telegram and Discord now writes directly to the `ChannelStore`, persistently changing the channel→project mapping. In Discord this means `/project foo` in a channel changes it for everyone in that channel (last caller wins).
 
-## Open questions
+## Design decisions
 
-1. **Discord slash command registration** — Global commands (available in all guilds) take up to an hour to propagate. Guild-specific commands are instant. Recommend guild-specific during development, global for production. Should this be configurable?
-2. **Per-user vs per-channel project in Discord** — Telegram is 1:1 chats so chat_id ≈ user. Discord channels are shared. The plan above maps channels to projects (not users to projects). A user running `/project` gets a session override. Is this the right model?
-3. **Rate limiting** — Discord has stricter rate limits than Telegram. Should we add a message queue / retry layer in the base adapter, or handle it per-adapter?
+1. **Discord slash command registration** — Configurable via `discord_command_scope` vault setting. Defaults to `"guild"` (instant per-server registration). Can be set to `"global"` for production deployments where commands should be available across all guilds the bot joins (up to 1hr propagation delay on changes).
+
+2. **Per-channel project in Discord** — The `/project` command changes the persistent channel→project mapping for the entire channel. Any user in that channel can change it (last caller wins). This keeps the model simple and consistent — one channel, one project. Telegram works identically since chat_id ≈ channel in 1:1 conversations.
+
+3. **Rate limiting** — Handled per-adapter. `discord.py` has robust built-in rate limit handling with automatic retry and backoff. No shared queue layer needed. If a future adapter lacks this, it can implement its own queue internally.
