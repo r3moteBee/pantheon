@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="", env="TELEGRAM_BOT_TOKEN")
     telegram_allowed_chat_ids: str = Field(default="", env="TELEGRAM_ALLOWED_CHAT_IDS")
 
+    # Discord
+    discord_bot_token: str = Field(default="", env="DISCORD_BOT_TOKEN")
+    discord_allowed_guild_ids: str = Field(default="", env="DISCORD_ALLOWED_GUILD_IDS")
+
     # Application
     app_env: str = Field(default="development", env="APP_ENV")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")

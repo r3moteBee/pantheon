@@ -30,6 +30,7 @@ from api.artifacts import router as artifacts_router
 from api.conversations import router as conversations_router
 from api.jobs import router as jobs_router
 from api.llm_endpoints import router as llm_endpoints_router
+from api.messaging import router as messaging_router
 
 settings = get_settings()
 
@@ -129,9 +130,10 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         logger.info("Task scheduler started")
 
-    # Start the Telegram bot (if configured)
-    from telegram_bot.bot import start_telegram_bot, stop_telegram_bot
-    await start_telegram_bot()
+    # Start all configured messaging adapters (Telegram, Discord, etc.)
+    from messaging.gateway import get_messaging_gateway
+    messaging_gw = get_messaging_gateway()
+    await messaging_gw.startup()
 
     # Initialize the skill registry
     from skills.registry import get_skill_registry
@@ -192,8 +194,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.debug("jobs shutdown swallowed", exc_info=True)
 
-    # Stop the Telegram bot cleanly
-    await stop_telegram_bot()
+    # Stop all messaging adapters cleanly
+    await messaging_gw.shutdown()
 
     # Stop the task scheduler cleanly
     if scheduler.running:
@@ -291,6 +293,7 @@ app.include_router(artifacts_router, prefix="/api", tags=["artifacts"])
 app.include_router(conversations_router, prefix="/api", tags=["conversations"])
 app.include_router(jobs_router, prefix="/api", tags=["jobs"])
 app.include_router(llm_endpoints_router, prefix="/api", tags=["llm"])
+app.include_router(messaging_router,   prefix="/api", tags=["messaging"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always
