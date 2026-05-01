@@ -125,6 +125,42 @@ export const sourcesApi = {
   deleteGitHub: (id) => api.delete(`/api/sources/github/${id}`),
 }
 
+export const artifactsApi = {
+  list: (projectId, opts = {}) =>
+    api.get('/api/artifacts', { params: { project_id: projectId, ...opts } }),
+  folders: (projectId) =>
+    api.get('/api/artifacts/folders', { params: { project_id: projectId } }),
+  tags: (projectId) =>
+    api.get('/api/artifacts/tags', { params: { project_id: projectId } }),
+  get: (id) => api.get(`/api/artifacts/${id}`),
+  rawUrl: (id) => `/api/artifacts/${id}/raw`,
+  preview: (id) => api.get(`/api/artifacts/${id}/preview`),
+  create: ({ project_id, path, content, content_type = 'text/markdown', title, tags, source }) =>
+    api.post('/api/artifacts', { project_id, path, content, content_type, title, tags, source }),
+  upload: (file, { project_id = 'default', path, title, tags } = {}) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('project_id', project_id)
+    fd.append('path', path || file.name)
+    if (title) fd.append('title', title)
+    if (tags) fd.append('tags', JSON.stringify(tags))
+    return api.post('/api/artifacts/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  update: (id, body) => api.patch(`/api/artifacts/${id}`, body),
+  rename: (id, new_path) => api.post(`/api/artifacts/${id}/rename`, { new_path }),
+  pin: (id, pinned) => api.post(`/api/artifacts/${id}/pin`, { pinned }),
+  delete: (id) => api.delete(`/api/artifacts/${id}`),
+  restore: (id) => api.post(`/api/artifacts/${id}/restore`),
+  versions: (id) => api.get(`/api/artifacts/${id}/versions`),
+  getVersion: (id, n) => api.get(`/api/artifacts/${id}/versions/${n}`),
+  diff: (id, a, b) => api.get(`/api/artifacts/${id}/diff`, { params: { a, b } }),
+  restoreVersion: (id, n) => api.post(`/api/artifacts/${id}/versions/${n}/restore`),
+  bulkTags: (ids, tags, add = true) => api.post('/api/artifacts/bulk/tags', { ids, tags, add }),
+  bulkDelete: (ids) => api.post('/api/artifacts/bulk/delete', { ids }),
+  bulkExportUrl: () => '/api/artifacts/bulk/export',
+  exportAllUrl: (projectId) => `/api/artifacts/export-all?project_id=${encodeURIComponent(projectId)}`,
+}
+
 // Files API
 export const filesApi = {
   list: (projectId, path = '') =>
