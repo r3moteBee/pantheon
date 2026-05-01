@@ -133,10 +133,12 @@ class MemoryManager:
         embedding_fn: Any = None,
         max_working_tokens: int = 8000,
         context_budget: ContextBudget | None = None,
+        embedding_model: str | None = None,
     ):
         self.project_id = project_id
         self.session_id = session_id
         self.embedding_fn = embedding_fn
+        self.embedding_model = embedding_model
         self.context_budget = context_budget or ContextBudget()
 
         # Initialize all tiers
@@ -145,7 +147,11 @@ class MemoryManager:
             project_id=project_id,
             embedding_fn=embedding_fn,
         )
-        self.semantic = SemanticMemory(project_id=project_id, embedding_fn=embedding_fn)
+        self.semantic = SemanticMemory(
+            project_id=project_id,
+            embedding_fn=embedding_fn,
+            embedding_model=embedding_model,
+        )
         self.graph = GraphMemory(project_id=project_id)
         self.archival = ArchivalMemory(project_id=project_id)
 
@@ -156,7 +162,11 @@ class MemoryManager:
             project_id=project_id,
             embedding_fn=self.embedding_fn,
         )
-        self.semantic = SemanticMemory(project_id=project_id, embedding_fn=self.embedding_fn)
+        self.semantic = SemanticMemory(
+            project_id=project_id,
+            embedding_fn=self.embedding_fn,
+            embedding_model=self.embedding_model,
+        )
         self.graph = GraphMemory(project_id=project_id)
         self.archival = ArchivalMemory(project_id=project_id)
         logger.info(f"Memory manager switched to project: {project_id}")
@@ -646,15 +656,19 @@ def create_memory_manager(
     routed to a different endpoint/model than the primary chat LLM.
     """
     embedding_fn = None
+    embedding_model = None
     try:
         from models.provider import get_embedding_provider
         emb_provider = get_embedding_provider()
         embedding_fn = emb_provider.embed
+        embedding_model = getattr(emb_provider, "embedding_model", None)
     except Exception:
         if provider:
             embedding_fn = provider.embed
+            embedding_model = getattr(provider, "embedding_model", None)
     return MemoryManager(
         project_id=project_id,
         session_id=session_id,
         embedding_fn=embedding_fn,
+        embedding_model=embedding_model,
     )
