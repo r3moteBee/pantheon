@@ -303,6 +303,46 @@ TOOL_SCHEMAS = [
                 "properties": {}
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_execute",
+            "description": (
+                "Execute a code snippet in an isolated sandbox and return its "
+                "stdout, stderr, and exit code. Use this to test code, run "
+                "computations, validate logic, generate data, or prototype "
+                "before committing. Supports Python, Node, and Bash. The "
+                "sandbox has a default 30-second timeout and 256 MB memory "
+                "limit. Output is truncated at 1 MB. In subprocess mode the "
+                "snippet runs on the host with no filesystem isolation; use "
+                "Firecracker mode (PANTHEON_SANDBOX=firecracker) for real "
+                "isolation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["python", "node", "javascript", "bash"],
+                        "description": "Runtime for the snippet."
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "The code to execute."
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename for the script (e.g. 'analysis.py'). Defaults are language-appropriate."
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Optional timeout override (1-300 seconds, default 30)."
+                    }
+                },
+                "required": ["language", "code"]
+            }
+        }
     }
 ]
 
@@ -672,6 +712,33 @@ async def execute_tool(
                 return "No memory manager available."
             result = await memory_manager.consolidate_session()
             return result
+
+        elif tool_name == "code_execute":
+            from sandbox import get_sandbox
+            from sandbox.backend import SandboxConfig
+            language = (tool_args.get("language") or "python").lower()
+            code = tool_args.get("code") or ""
+            if not code.strip():
+                return "code_execute: empty code argument"
+            timeout = int(tool_args.get("timeout_seconds") or 30)
+            timeout = max(1, min(timeout, 300))
+            cfg = SandboxConfig(timeout_seconds=timeout)
+            result = await get_sandbox().execute_inline(
+                language=language,
+                code=code,
+                filename=tool_args.get("filename"),
+                config=cfg,
+            )
+            # Render result for the model in a stable, parseable form.
+            parts = [f"exit_code: {result.exit_code}",
+                     f"duration_ms: {result.duration_ms}"]
+            if result.timed_out:
+                parts.append("timed_out: true")
+            if result.stdout:
+                parts.append("stdout:\n" + result.stdout.rstrip())
+            if result.stderr:
+                parts.append("stderr:\n" + result.stderr.rstrip())
+            return "\n\n".join(parts) or "(no output)"
 
         else:
             return f"Unknown tool: {tool_name}"
