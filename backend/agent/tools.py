@@ -462,6 +462,81 @@ TOOL_SCHEMAS = [
                 "required": ["pr_number"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_to_artifact",
+            "description": (
+                "Save text content to a project artifact. Artifacts are durable, "
+                "versioned, searchable text or binary content (think: better than "
+                "files). Use whenever the user says 'save this', 'remember that "
+                "observation', 'write a note', etc. Auto-embedded into semantic "
+                "memory so future recall surfaces it. Path examples: "
+                "'notes/2026-04-30-ai-trends.md', 'code/calc.py', "
+                "'chats/exports/today.md'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Logical path inside the project artifact tree."},
+                    "content": {"type": "string", "description": "Full content body."},
+                    "content_type": {"type": "string", "description": "Mime-ish type. Defaults to text/markdown.", "default": "text/markdown"},
+                    "title": {"type": "string", "description": "Optional human title."},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags."}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_artifact",
+            "description": "Replace the content of an existing artifact, creating a new version. Use when the user asks to revise an existing note/file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Artifact id."},
+                    "content": {"type": "string"},
+                    "edit_summary": {"type": "string", "description": "Optional commit-message-style note."}
+                },
+                "required": ["id", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_artifact",
+            "description": "Read an artifact by id or by path. Use to surface previously saved content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "path": {"type": "string", "description": "Logical path; alternative to id."}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_artifacts",
+            "description": "List artifacts in the project, optionally filtered by tag, content_type, path prefix, or search string. Use to discover saved content before responding.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tag": {"type": "string"},
+                    "content_type": {"type": "string"},
+                    "path_prefix": {"type": "string"},
+                    "search": {"type": "string"},
+                    "limit": {"type": "integer", "default": 20}
+                },
+                "required": []
+            }
+        }
     }
 ]
 
@@ -858,6 +933,68 @@ async def execute_tool(
             if result.stderr:
                 parts.append("stderr:\n" + result.stderr.rstrip())
             return "\n\n".join(parts) or "(no output)"
+
+        elif tool_name in ("save_to_artifact", "update_artifact", "read_artifact", "list_artifacts"):
+            from artifacts.store import get_store, is_text_type
+            from artifacts import embedder as _emb
+            store = get_store()
+            if tool_name == "save_to_artifact":
+                a = store.create(
+                    project_id=effective_project,
+                    path=tool_args["path"],
+                    content=tool_args["content"],
+                    content_type=tool_args.get("content_type") or "text/markdown",
+                    title=tool_args.get("title"),
+                    tags=tool_args.get("tags"),
+                    source={"kind": "agent", "session_id": session_id or ""},
+                    edited_by=session_id or "agent",
+                )
+                _emb.schedule_embed(a["id"], effective_project)
+                return f"Saved artifact {a['path']} (id={a['id']}, v{1})"
+            if tool_name == "update_artifact":
+                aid = tool_args["id"]
+                try:
+                    a = store.update(
+                        aid,
+                        content=tool_args["content"],
+                        edit_summary=tool_args.get("edit_summary") or "Agent update",
+                        edited_by=session_id or "agent",
+                    )
+                except KeyError:
+                    return f"Artifact {aid} not found."
+                _emb.schedule_embed(a["id"], effective_project)
+                versions = store.list_versions(aid)
+                return f"Updated artifact {a['path']} (now v{len(versions)})"
+            if tool_name == "read_artifact":
+                aid = tool_args.get("id")
+                path = tool_args.get("path")
+                a = None
+                if aid:
+                    a = store.get(aid)
+                elif path:
+                    a = store.get_by_path(effective_project, path)
+                if not a:
+                    return f"Artifact not found: id={aid} path={path}"
+                if is_text_type(a["content_type"]):
+                    return f"--- {a['path']} (v{store.list_versions(a['id'])[0]['version_number']}) ---\n{a.get('content') or ''}"
+                return f"Artifact {a['path']} is binary ({a['content_type']}); fetch via /api/artifacts/{a['id']}/raw"
+            if tool_name == "list_artifacts":
+                items = store.list(
+                    project_id=effective_project,
+                    tag=tool_args.get("tag"),
+                    content_type=tool_args.get("content_type"),
+                    path_prefix=tool_args.get("path_prefix"),
+                    search=tool_args.get("search"),
+                    limit=int(tool_args.get("limit") or 20),
+                )
+                if not items:
+                    return "(no artifacts match)"
+                lines = [
+                    f"- id={i['id']} path={i['path']} type={i['content_type']} tags={i.get('tags')}"
+                    for i in items
+                ]
+                return "\n".join(lines)
+            return f"Unknown artifact tool: {tool_name}"
 
         elif tool_name.startswith("github_"):
             from api.sources import get_connection, get_default_connection, get_token, mark_used, mark_error

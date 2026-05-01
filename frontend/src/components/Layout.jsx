@@ -18,7 +18,7 @@ function VersionTag() {
 const NAV_ITEMS = [
   { to: '/chat', icon: MessageSquare, label: 'Chat' },
   { to: '/memory', icon: Brain, label: 'Memory' },
-  { to: '/files', icon: FolderOpen, label: 'Files' },
+  { to: '/artifacts', icon: FolderOpen, label: 'Artifacts' },
   { to: '/skills', icon: Zap, label: 'Skills' },
   { to: '/mcp', icon: Plug, label: 'MCP' },
   { to: '/sources', icon: Github, label: 'Sources' },

@@ -25,6 +25,7 @@ from api.tasks import router as tasks_router
 from api.personas import router as personas_router
 from api.system import router as system_router
 from api.sources import router as sources_router
+from api.artifacts import router as artifacts_router
 
 settings = get_settings()
 
@@ -198,6 +199,7 @@ app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
 app.include_router(personas_router,    prefix="/api", tags=["personas"])
 app.include_router(system_router, prefix="/api", tags=["system"])
 app.include_router(sources_router, prefix="/api", tags=["sources"])
+app.include_router(artifacts_router, prefix="/api", tags=["artifacts"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always

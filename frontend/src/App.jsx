@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import ChatPage from './pages/ChatPage'
 import MemoryPage from './pages/MemoryPage'
 import FilesPage from './pages/FilesPage'
+import ArtifactsPage from './pages/ArtifactsPage'
 import PersonalityPage from './pages/PersonalityPage'
 import SettingsPage from './pages/SettingsPage'
 import SkillsPage from './pages/SkillsPage'
@@ -93,7 +94,8 @@ export default function App() {
           <Route index element={<Navigate to="/chat" replace />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="memory" element={<MemoryPage />} />
-          <Route path="files" element={<FilesPage />} />
+          <Route path="files" element={<Navigate to="/artifacts" replace />} />
+          <Route path="artifacts" element={<ArtifactsPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="mcp" element={<MCPPage />} />
           <Route path="sources" element={<SourcesPage />} />
