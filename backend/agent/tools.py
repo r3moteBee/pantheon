@@ -343,6 +343,125 @@ TOOL_SCHEMAS = [
                 "required": ["language", "code"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_list_connections",
+            "description": "List GitHub connections (repos linked to this project). Returns connection ids, repos, and default branches. Use this to discover which repos the agent can act on.",
+            "parameters": {"type": "object", "properties": {}}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_read_file",
+            "description": "Read a file from a connected GitHub repository. Returns the file content. Use to understand existing code before making changes.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string", "description": "ID from github_list_connections. If omitted, the default connection for the active project is used."},
+                    "path": {"type": "string", "description": "Path within the repo, e.g. 'src/main.py'"},
+                    "ref": {"type": "string", "description": "Optional branch or commit sha. Defaults to the default branch."}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_list_directory",
+            "description": "List files and folders at a path in a connected GitHub repo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "path": {"type": "string", "description": "Directory path; '' for repo root.", "default": ""},
+                    "ref": {"type": "string"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_create_branch",
+            "description": "Create a new branch off the default branch (or a named base branch) in a connected GitHub repo. Use before making changes the user will review via PR.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "new_branch": {"type": "string"},
+                    "base_branch": {"type": "string", "description": "Optional base branch; defaults to repo default."}
+                },
+                "required": ["new_branch"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_write_files",
+            "description": "Atomically commit one or more files to a branch via the GitHub Trees API. Use after github_create_branch to land changes the user will review.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "branch": {"type": "string"},
+                    "message": {"type": "string", "description": "Commit message"},
+                    "files": {
+                        "type": "array",
+                        "description": "Array of {path, content}. All files commit in a single atomic commit.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"}
+                            },
+                            "required": ["path", "content"]
+                        }
+                    }
+                },
+                "required": ["branch", "message", "files"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_create_pr",
+            "description": "Open a pull request from one branch into another in a connected GitHub repo.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "head": {"type": "string", "description": "Branch with the changes"},
+                    "base": {"type": "string", "description": "Branch to merge into; defaults to repo default."},
+                    "body": {"type": "string", "description": "PR body / description"},
+                    "draft": {"type": "boolean", "default": False}
+                },
+                "required": ["title", "head"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_merge_pr",
+            "description": "Merge a previously-opened pull request. Use only when the user explicitly approves merging.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "connection_id": {"type": "string"},
+                    "pr_number": {"type": "integer"},
+                    "merge_method": {"type": "string", "enum": ["merge", "squash", "rebase"], "default": "squash"}
+                },
+                "required": ["pr_number"]
+            }
+        }
     }
 ]
 
@@ -739,6 +858,99 @@ async def execute_tool(
             if result.stderr:
                 parts.append("stderr:\n" + result.stderr.rstrip())
             return "\n\n".join(parts) or "(no output)"
+
+        elif tool_name.startswith("github_"):
+            from api.sources import get_connection, get_default_connection, get_token, mark_used, mark_error
+            from integrations.github import GitHubClient, GitHubAuthError, GitHubError, GitHubForbidden, GitHubNotFound
+            connection_id = tool_args.get("connection_id")
+            if connection_id:
+                conn_row = get_connection(connection_id)
+            else:
+                conn_row = get_default_connection(effective_project)
+            if tool_name == "github_list_connections":
+                from api.sources import _connect as _gh_connect
+                with _gh_connect() as cn:
+                    rows = cn.execute(
+                        "SELECT id, full_name, default_branch, account_login, status "
+                        "FROM github_connections WHERE project_id = ? ORDER BY created_at DESC",
+                        (effective_project,),
+                    ).fetchall()
+                items = [
+                    f"- id={r['id']} repo={r['full_name']} branch={r['default_branch']} status={r['status']}"
+                    for r in rows
+                ]
+                return "GitHub connections:\n" + ("\n".join(items) if items else "(none)")
+            if not conn_row:
+                return (
+                    "No active GitHub connection for this project. Add one in "
+                    "Settings → Sources, then retry."
+                )
+            token = get_token(conn_row["id"])
+            if not token:
+                return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Sources."
+            client = GitHubClient(token)
+            owner = conn_row["owner"]
+            repo = conn_row["repo"]
+            try:
+                if tool_name == "github_read_file":
+                    res = await client.read_file(owner, repo, tool_args["path"], ref=tool_args.get("ref"))
+                    mark_used(conn_row["id"])
+                    return f"--- {owner}/{repo}@{tool_args.get('ref') or conn_row['default_branch']}:{tool_args['path']} ---\n{res['content']}"
+                if tool_name == "github_list_directory":
+                    items = await client.list_directory(owner, repo, tool_args.get("path", ""), ref=tool_args.get("ref"))
+                    mark_used(conn_row["id"])
+                    lines = [f"{i.get('type','?')[0]} {i.get('name')} ({i.get('size','?')}b)" for i in items]
+                    return f"{owner}/{repo}:{tool_args.get('path','')}\n" + "\n".join(lines)
+                if tool_name == "github_create_branch":
+                    res = await client.create_branch(
+                        owner, repo,
+                        new_branch=tool_args["new_branch"],
+                        base_branch=tool_args.get("base_branch"),
+                    )
+                    mark_used(conn_row["id"])
+                    return f"Branch created: {tool_args['new_branch']} (sha={res.get('object',{}).get('sha','?')[:8]})"
+                if tool_name == "github_write_files":
+                    res = await client.write_files(
+                        owner, repo,
+                        branch=tool_args["branch"],
+                        files=tool_args["files"],
+                        message=tool_args["message"],
+                    )
+                    mark_used(conn_row["id"])
+                    return (
+                        f"Committed {len(res['files'])} file(s) to {res['branch']} "
+                        f"(commit={res['commit_sha'][:8]})"
+                    )
+                if tool_name == "github_create_pr":
+                    base = tool_args.get("base") or conn_row["default_branch"]
+                    pr = await client.create_pr(
+                        owner, repo,
+                        title=tool_args["title"],
+                        head=tool_args["head"],
+                        base=base,
+                        body=tool_args.get("body", ""),
+                        draft=tool_args.get("draft", False),
+                    )
+                    mark_used(conn_row["id"])
+                    return f"PR #{pr.get('number')} created: {pr.get('html_url')}"
+                if tool_name == "github_merge_pr":
+                    res = await client.merge_pr(
+                        owner, repo,
+                        pr_number=int(tool_args["pr_number"]),
+                        merge_method=tool_args.get("merge_method", "squash"),
+                    )
+                    mark_used(conn_row["id"])
+                    return f"PR #{tool_args['pr_number']} merged ({'success' if res.get('merged') else 'no-op'})"
+                return f"Unknown github tool: {tool_name}"
+            except GitHubAuthError as e:
+                mark_error(conn_row["id"], str(e))
+                return f"GitHub auth failed: {e}. Re-add the PAT in Settings → Sources."
+            except GitHubNotFound as e:
+                return f"GitHub: not found — {e}"
+            except GitHubForbidden as e:
+                return f"GitHub: forbidden — {e}"
+            except GitHubError as e:
+                return f"GitHub error: {e}"
 
         else:
             return f"Unknown tool: {tool_name}"
