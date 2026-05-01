@@ -125,6 +125,18 @@ export const sourcesApi = {
   deleteGitHub: (id) => api.delete(`/api/sources/github/${id}`),
 }
 
+export const conversationsApi = {
+  list: (projectId, limit = 50) =>
+    api.get('/api/conversations', { params: { project_id: projectId, limit } }),
+  get: (sessionId, projectId) =>
+    api.get(`/api/conversations/${sessionId}`, { params: { project_id: projectId } }),
+  resume: (sessionId, projectId) =>
+    api.post(`/api/conversations/${sessionId}/resume`, null, { params: { project_id: projectId } }),
+  delete: (sessionId) => api.delete(`/api/conversations/${sessionId}`),
+  saveAsArtifact: (sessionId, projectId, body = {}) =>
+    api.post(`/api/conversations/${sessionId}/save-as-artifact`, body, { params: { project_id: projectId } }),
+}
+
 export const artifactsApi = {
   list: (projectId, opts = {}) =>
     api.get('/api/artifacts', { params: { project_id: projectId, ...opts } }),

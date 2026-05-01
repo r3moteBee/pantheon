@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi } from '../api/client'
+import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 
 // Parse workspace:// path from show_file result
@@ -697,6 +697,39 @@ export default function Chat() {
             </span>
           )}
           <button
+            onClick={() => useStore.getState().setHistoryOpen(true)}
+            title="Recent conversations"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700"
+          >
+            <History className="w-3 h-3" /> History
+          </button>
+          <button
+            onClick={async () => {
+              if (!sessionId) return
+              try {
+                const res = await conversationsApi.saveAsArtifact(sessionId, activeProject?.id || 'default')
+                addNotification({ type: 'success', message: `Saved chat to artifact: ${res.data.path}` })
+              } catch (e) {
+                addNotification({ type: 'error', message: 'Save failed: ' + (e?.response?.data?.detail || e.message) })
+              }
+            }}
+            disabled={!sessionId}
+            title="Save this conversation as an artifact"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-50"
+          >
+            <Save className="w-3 h-3" /> Save chat
+          </button>
+          <button
+            onClick={() => {
+              useStore.getState().setSessionId(null)
+              useStore.getState().clearMessages()
+            }}
+            title="Start a new conversation"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700"
+          >
+            <Plus className="w-3 h-3" /> New
+          </button>
+          <button
             onClick={toggleMemoryRecall}
             disabled={recallLoading}
             title={memoryRecall ? 'Memory recall augmentation is ON — click to disable' : 'Memory recall augmentation is OFF — click to enable'}
@@ -970,6 +1003,95 @@ export default function Chat() {
           )}
         </div>
       </div>
+    <ChatHistoryDrawer />
+        </div>
+  )
+}
+
+function ChatHistoryDrawer() {
+  const open = useStore((s) => s.historyOpen)
+  const setOpen = useStore((s) => s.setHistoryOpen)
+  const projectId = useStore((s) => s.activeProject?.id || 'default')
+  const setSessionId = useStore((s) => s.setSessionId)
+  const setMessages = useStore((s) => s.setMessages)
+  const clearMessages = useStore((s) => s.clearMessages)
+  const [items, setItems] = React.useState([])
+  const [loading, setLoading] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!open) return
+    setLoading(true)
+    conversationsApi.list(projectId, 50)
+      .then((r) => setItems(r.data.conversations || []))
+      .finally(() => setLoading(false))
+  }, [open, projectId])
+
+  const resume = async (sessionId) => {
+    try {
+      const res = await conversationsApi.resume(sessionId, projectId)
+      const msgs = (res.data.messages || []).map((m) => ({
+        role: m.role,
+        content: m.content,
+        timestamp: m.timestamp,
+      }))
+      clearMessages()
+      setMessages(msgs)
+      setSessionId(sessionId)
+      setOpen(false)
+    } catch (e) {
+      alert('Resume failed: ' + (e?.response?.data?.detail || e.message))
+    }
+  }
+
+  const remove = async (sessionId) => {
+    if (!confirm('Delete this conversation?')) return
+    await conversationsApi.delete(sessionId)
+    setItems((xs) => xs.filter((x) => x.session_id !== sessionId))
+  }
+
+  if (!open) return null
+  return (
+    <div className="fixed inset-0 z-40 flex">
+      <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
+      <div className="ml-auto h-full w-96 bg-gray-950 border-l border-gray-800 shadow-xl overflow-y-auto z-50">
+        <div className="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+          <div className="text-sm font-semibold flex items-center gap-2">
+            <History className="w-4 h-4" /> Recent conversations
+          </div>
+          <button onClick={() => setOpen(false)} className="text-gray-400 hover:text-gray-200">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        {loading && <div className="p-4 text-xs text-gray-500">Loading…</div>}
+        {!loading && items.length === 0 && (
+          <div className="p-4 text-xs text-gray-500 italic">No prior conversations yet.</div>
+        )}
+        {items.map((c) => (
+          <div key={c.session_id} className="p-3 border-b border-gray-900 hover:bg-gray-900">
+            <div className="flex items-start justify-between gap-2">
+              <button
+                onClick={() => resume(c.session_id)}
+                className="flex-1 text-left"
+              >
+                <div className="text-xs font-medium text-gray-200 truncate">
+                  {c.title || `Chat ${c.session_id?.slice(0, 8)}`}
+                </div>
+                <div className="text-[10px] text-gray-500">
+                  {c.message_count || 0} messages · last {c.updated_at?.slice(0, 16).replace('T', ' ')}
+                </div>
+              </button>
+              <button
+                onClick={() => remove(c.session_id)}
+                className="text-gray-600 hover:text-red-400"
+                title="Delete"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
+

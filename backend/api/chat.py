@@ -60,6 +60,44 @@ _active_connections: dict[str, WebSocket] = {}
 # Pending skill suggestions awaiting user accept/decline
 _pending_suggestions: dict[str, dict] = {}
 
+async def _build_agent(
+    *,
+    provider,
+    memory_manager,
+    project_id,
+    session_id,
+    skill_context=None,
+    active_skill_name=None,
+):
+    """Pick AgentCore() vs AgentCore.from_session() based on history.
+
+    First turn: empty working_memory.
+    Resume / subsequent turns: rehydrate working_memory from messages table
+    so the agent sees the conversation so far.
+    """
+    from memory.episodic import EpisodicMemory
+    try:
+        existing = await EpisodicMemory().get_history(session_id=session_id, limit=1)
+    except Exception:
+        existing = []
+    if existing:
+        return await AgentCore.from_session(
+            provider=provider,
+            project_id=project_id,
+            session_id=session_id,
+            memory_manager=memory_manager,
+            skill_context=skill_context,
+            active_skill_name=active_skill_name,
+        )
+    return AgentCore(
+        provider=provider,
+        memory_manager=memory_manager,
+        project_id=project_id,
+        session_id=session_id,
+        skill_context=skill_context,
+        active_skill_name=active_skill_name,
+    )
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
@@ -72,7 +110,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         provider=provider,
     )
 
-    agent = AgentCore(
+    agent = await _build_agent(
         provider=provider,
         memory_manager=memory,
         project_id=req.project_id,
@@ -178,13 +216,13 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     project_id=project_id, session_id=session_id, provider=provider,
                 )
                 # Jump straight to agent run with skill context
-                agent = AgentCore(
+                agent = await _build_agent(
                     provider=provider,
                     memory_manager=memory,
                     project_id=project_id,
                     session_id=session_id,
-                    skill_context=skill_context,
-                    active_skill_name=active_skill_name,
+                                        skill_context=skill_context,
+                                        active_skill_name=active_skill_name,
                 )
 
                 try:
@@ -245,7 +283,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 memory = create_memory_manager(
                     project_id=project_id, session_id=session_id, provider=provider,
                 )
-                agent = AgentCore(
+                agent = await _build_agent(
                     provider=provider,
                     memory_manager=memory,
                     project_id=project_id,
@@ -382,14 +420,14 @@ async def websocket_chat(websocket: WebSocket) -> None:
                             # Don't run agent yet — wait for skill_accept or skill_decline
                             continue
 
-            agent = AgentCore(
-                provider=provider,
-                memory_manager=memory,
-                project_id=project_id,
-                session_id=session_id,
-                skill_context=skill_context,
-                active_skill_name=active_skill_name,
-            )
+            agent = await _build_agent(
+                    provider=provider,
+                    memory_manager=memory,
+                    project_id=project_id,
+                    session_id=session_id,
+                                skill_context=skill_context,
+                                active_skill_name=active_skill_name,
+                )
 
             # Save user message to episodic memory
             try:
