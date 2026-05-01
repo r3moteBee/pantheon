@@ -360,3 +360,59 @@ async def consolidate_session(
     manager = create_memory_manager(project_id=project_id, session_id=session_id)
     summary = await manager.consolidate_session()
     return {"status": "consolidated", "summary": summary}
+
+
+@router.post("/memory/reembed")
+async def reembed_stale_vectors(
+    project_id: str = Query(default="default"),
+) -> dict[str, Any]:
+    """Re-embed semantic-memory vectors that were embedded with a different
+    model than the one currently configured.
+
+    Useful after switching embedding model (e.g., bumping `EMBEDDING_MODEL`
+    or changing the `embedding_model` setting in the vault). Mismatched
+    vectors produce unreliable similarity scores; this brings them back in
+    line with the current model.
+    """
+    from memory.manager import create_memory_manager
+    manager = create_memory_manager(project_id=project_id)
+    if not manager.semantic._embedding_fn:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No embedding_fn configured. Configure an embedding provider "
+                "in Settings before running re-embed."
+            ),
+        )
+    result = await manager.semantic.reembed_stale()
+    return {
+        "status": "ok",
+        "project_id": project_id,
+        "current_model": manager.semantic._embedding_model,
+        **result,
+    }
+
+
+@router.get("/memory/embedding-model-stats")
+async def embedding_model_stats(
+    project_id: str = Query(default="default"),
+) -> dict[str, Any]:
+    """Report how many semantic vectors exist per embedding_model.
+
+    Useful for the Settings UI to surface "you have N stale vectors"
+    before the user runs re-embed.
+    """
+    from memory.manager import create_memory_manager
+    manager = create_memory_manager(project_id=project_id)
+    items = await manager.semantic.list_by_model(embedding_model=None)
+    counts: dict[str, int] = {}
+    for item in items:
+        md = item.get("metadata") or {}
+        model = md.get("embedding_model", "<untagged>")
+        counts[model] = counts.get(model, 0) + 1
+    return {
+        "project_id": project_id,
+        "current_model": manager.semantic._embedding_model,
+        "by_model": counts,
+        "total": sum(counts.values()),
+    }

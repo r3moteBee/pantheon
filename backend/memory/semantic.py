@@ -30,10 +30,22 @@ class SemanticMemory:
     Each project gets its own ChromaDB collection for namespace isolation.
     """
 
-    def __init__(self, project_id: str = "default", embedding_fn: Any = None):
+    def __init__(
+        self,
+        project_id: str = "default",
+        embedding_fn: Any = None,
+        embedding_model: str | None = None,
+    ):
         self.project_id = project_id
         self.collection_name = _sanitize_collection_name(f"proj-{project_id}")
         self._embedding_fn = embedding_fn
+        # Identifier for the model that produces vectors via _embedding_fn.
+        # Tagged onto every stored vector so we can detect mismatches at
+        # recall time and re-embed when the user changes embedding model.
+        self._embedding_model = embedding_model or "default"
+        # Track whether we've warned about a model mismatch this session,
+        # so the warning fires once and not on every search.
+        self._mismatch_warned = False
         self._client = None
         self._collection = None
 
@@ -92,6 +104,8 @@ class SemanticMemory:
         meta = {
             "project_id": self.project_id,
             "created_at": _now_iso(),
+            "embedding_model": self._embedding_model,
+            "embedded_at": _now_iso(),
             **(metadata or {}),
         }
         # Flatten metadata values to strings (ChromaDB requirement)
@@ -164,10 +178,33 @@ class SemanticMemory:
                         "score": round(similarity, 4),
                         "source": "semantic",
                     })
+            self._maybe_warn_model_mismatch(items)
             return sorted(items, key=lambda x: x["score"], reverse=True)
         except Exception as e:
             logger.error(f"Semantic search failed: {e}")
             return []
+
+    def _maybe_warn_model_mismatch(self, items: list[dict[str, Any]]) -> None:
+        """Log once per session if any retrieved vector was embedded with a
+        different model than the one currently configured. Mismatched vectors
+        produce unreliable similarity scores; the user should run the
+        /api/memory/reembed maintenance endpoint to fix them."""
+        if self._mismatch_warned or self._embedding_model == "default":
+            return
+        for item in items:
+            md = item.get("metadata") or {}
+            stored_model = md.get("embedding_model")
+            if stored_model and stored_model != self._embedding_model:
+                logger.warning(
+                    "Semantic recall returned vectors embedded with %r; "
+                    "current model is %r. Similarity scores against "
+                    "mismatched vectors are unreliable. POST /api/memory/reembed "
+                    "to re-embed stale vectors.",
+                    stored_model,
+                    self._embedding_model,
+                )
+                self._mismatch_warned = True
+                return
 
     async def delete(self, doc_id: str) -> bool:
         """Delete a memory by ID."""
@@ -217,3 +254,77 @@ class SemanticMemory:
             return await _asyncio.to_thread(collection.count)
         except Exception:
             return 0
+    async def list_by_model(
+        self,
+        embedding_model: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        """List stored memories filtered by embedding_model metadata.
+
+        If embedding_model is None, returns all. Used by the re-embed
+        maintenance endpoint to find stale vectors.
+        """
+        try:
+            collection = await self._get_collection_async()
+            kwargs: dict[str, Any] = {
+                "include": ["documents", "metadatas"],
+                "limit": limit,
+            }
+            if embedding_model is not None:
+                kwargs["where"] = {"embedding_model": embedding_model}
+            results = await _asyncio.to_thread(collection.get, **kwargs)
+            items: list[dict[str, Any]] = []
+            if results and results.get("ids"):
+                for i, doc_id in enumerate(results["ids"]):
+                    items.append({
+                        "id": doc_id,
+                        "content": results["documents"][i] if results.get("documents") else "",
+                        "metadata": results["metadatas"][i] if results.get("metadatas") else {},
+                    })
+            return items
+        except Exception as e:
+            logger.error(f"Failed to list semantic memories by model: {e}")
+            return []
+
+    async def reembed_stale(self) -> dict[str, int]:
+        """Re-embed every vector whose embedding_model metadata differs from
+        the currently configured model. Returns counts of scanned/re-embedded.
+        Requires self._embedding_fn to be configured.
+        """
+        if not self._embedding_fn:
+            logger.warning("reembed_stale called without an embedding_fn; nothing to do")
+            return {"scanned": 0, "reembedded": 0, "skipped_no_fn": 1}
+
+        collection = await self._get_collection_async()
+        results = await _asyncio.to_thread(
+            collection.get,
+            include=["documents", "metadatas"],
+        )
+        ids = results.get("ids") or []
+        scanned = len(ids)
+        reembedded = 0
+        for i, doc_id in enumerate(ids):
+            md = (results.get("metadatas") or [])[i] or {}
+            stored_model = md.get("embedding_model")
+            if stored_model == self._embedding_model:
+                continue
+            content = (results.get("documents") or [])[i] or ""
+            if not content:
+                continue
+            try:
+                new_emb = await self._embedding_fn(content)
+                new_md = {**md, "embedding_model": self._embedding_model, "embedded_at": _now_iso()}
+                # ChromaDB metadata values must be strings
+                new_md = {k: str(v) for k, v in new_md.items()}
+                await _asyncio.to_thread(
+                    collection.upsert,
+                    ids=[doc_id],
+                    documents=[content],
+                    metadatas=[new_md],
+                    embeddings=[new_emb],
+                )
+                reembedded += 1
+            except Exception as e:
+                logger.error(f"Re-embed failed for {doc_id}: {e}")
+        logger.info("reembed_stale: scanned=%d reembedded=%d", scanned, reembedded)
+        return {"scanned": scanned, "reembedded": reembedded}

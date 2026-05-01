@@ -41,7 +41,15 @@ Output valid JSON with these keys:
 }
 
 Rules:
-- Only extract information that would be useful in FUTURE conversations.
+- Only extract information from the USER's messages and factual content discussed.
+- DO NOT extract the AI assistant's persona, identity, personality, or
+  role-play character as entities. The assistant may adopt a character
+  or persona (Zeus, Athena, etc.) — ignore it entirely.
+- DO NOT create entities for "Assistant", "AI", the persona name, or any
+  character the assistant is playing.
+- DO NOT include facts about how the assistant responded or its
+  personality traits.
+- Focus on real-world knowledge, user statements, and substantive topics.
 - Do NOT extract pleasantries, filler, or meta-conversation about the chat itself.
 - Entity labels should be canonical (e.g., "WEKA" not "the WEKA company").
 - Confidence: 1.0 = user explicitly stated it, 0.7 = strongly implied, 0.4 = inferred.
