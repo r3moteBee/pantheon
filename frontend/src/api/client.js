@@ -113,6 +113,18 @@ export const systemApi = {
   sandboxHealth: () => api.get('/api/system/sandbox'),
 }
 
+export const sourcesApi = {
+  listGitHub: (projectId) =>
+    api.get('/api/sources/github', { params: { project_id: projectId } }),
+  listRepos: (token) =>
+    api.get('/api/sources/github/repos', { params: { token } }),
+  createGitHub: (projectId, token, repo, defaultBranch) =>
+    api.post('/api/sources/github', {
+      project_id: projectId, token, repo, default_branch: defaultBranch,
+    }),
+  deleteGitHub: (id) => api.delete(`/api/sources/github/${id}`),
+}
+
 // Files API
 export const filesApi = {
   list: (projectId, path = '') =>
