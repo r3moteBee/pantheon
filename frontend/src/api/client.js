@@ -103,6 +103,14 @@ export const memoryApi = {
     api.put('/api/memory/archival/summary', { content }, { params: { project_id: projectId } }),
   consolidate: (projectId, sessionId) =>
     api.post('/api/memory/consolidate', null, { params: { project_id: projectId, session_id: sessionId } }),
+  reembed: (projectId) =>
+    api.post('/api/memory/reembed', null, { params: { project_id: projectId } }),
+  embeddingModelStats: (projectId) =>
+    api.get('/api/memory/embedding-model-stats', { params: { project_id: projectId } }),
+}
+
+export const systemApi = {
+  sandboxHealth: () => api.get('/api/system/sandbox'),
 }
 
 // Files API
