@@ -1,0 +1,158 @@
+"""Conversations API — list, view, resume, delete, save-as-artifact."""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from memory.episodic import EpisodicMemory
+
+logger = logging.getLogger(__name__)
+router = APIRouter()
+
+
+class SaveAsArtifactRequest(BaseModel):
+    path: str | None = None
+    title: str | None = None
+    tags: list[str] | None = None
+
+
+@router.get("/conversations")
+async def list_conversations(
+    project_id: str = Query("default"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any]:
+    ep = EpisodicMemory()
+    sessions = await ep.get_sessions(project_id=project_id, limit=limit)
+    return {"conversations": sessions, "count": len(sessions)}
+
+
+@router.get("/conversations/{session_id}")
+async def get_conversation(
+    session_id: str,
+    project_id: str = Query("default"),
+    limit: int = Query(500, ge=1, le=2000),
+) -> dict[str, Any]:
+    ep = EpisodicMemory()
+    messages = await ep.get_history(session_id=session_id, limit=limit)
+    if not messages:
+        # Still return session metadata if it exists
+        with sqlite3.connect(ep.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="conversation not found")
+    return {
+        "session_id": session_id,
+        "messages": messages,
+        "count": len(messages),
+    }
+
+
+@router.post("/conversations/{session_id}/resume")
+async def resume_conversation(
+    session_id: str,
+    project_id: str = Query("default"),
+) -> dict[str, Any]:
+    """Returns the rehydrated conversation context.
+
+    The frontend uses this to load the message history into the chat
+    pane and continue the same session. AgentCore.from_session() is
+    used by the WebSocket handler when subsequent messages arrive
+    with the same session_id.
+    """
+    ep = EpisodicMemory()
+    messages = await ep.get_history(session_id=session_id, limit=500)
+    if not messages:
+        raise HTTPException(status_code=404, detail="no messages for session")
+    return {
+        "session_id": session_id,
+        "messages": messages,
+        "message_count": len(messages),
+    }
+
+
+@router.delete("/conversations/{session_id}")
+async def delete_conversation(session_id: str) -> dict[str, str]:
+    ep = EpisodicMemory()
+    with sqlite3.connect(ep.db_path) as conn:
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
+        conn.commit()
+    return {"status": "deleted", "session_id": session_id}
+
+
+@router.post("/conversations/{session_id}/save-as-artifact")
+async def save_chat_as_artifact(
+    session_id: str,
+    req: SaveAsArtifactRequest,
+    project_id: str = Query("default"),
+) -> dict[str, Any]:
+    """Render the entire conversation to markdown, save as a chat-export
+    artifact. Auto-embeds via the standard pipeline so future recall
+    can find it."""
+    ep = EpisodicMemory()
+    messages = await ep.get_history(session_id=session_id, limit=2000)
+    if not messages:
+        raise HTTPException(status_code=404, detail="no messages for session")
+
+    md = _render_chat_markdown(session_id, messages)
+    title = req.title or _auto_title_from_messages(messages, session_id)
+    path = req.path or f"chats/{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{_slug(title)}.md"
+    tags = req.tags or ["chat-export"]
+
+    from artifacts.store import get_store
+    from artifacts import embedder
+    a = get_store().create(
+        project_id=project_id,
+        path=path,
+        content=md,
+        content_type="chat-export",
+        title=title,
+        tags=tags,
+        source={"kind": "chat-export", "session_id": session_id, "message_count": len(messages)},
+        edited_by=session_id,
+    )
+    embedder.schedule_embed(a["id"], project_id, immediate=True)
+    return a
+
+
+def _render_chat_markdown(session_id: str, messages: list[dict[str, Any]]) -> str:
+    lines = [
+        f"# Chat — session {session_id}",
+        "",
+        f"_{len(messages)} messages, exported {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_",
+        "",
+    ]
+    for m in messages:
+        role = (m.get("role") or "?").upper()
+        ts = m.get("timestamp") or ""
+        content = (m.get("content") or "").strip()
+        lines.append(f"## {role}  ·  {ts}")
+        lines.append("")
+        lines.append(content)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _auto_title_from_messages(messages: list[dict[str, Any]], session_id: str) -> str:
+    for m in messages:
+        if (m.get("role") == "user") and m.get("content"):
+            first = m["content"].strip().splitlines()[0]
+            return first[:80]
+    return f"Chat {session_id[:8]}"
+
+
+_SLUG_RE = __import__("re").compile(r"[^a-z0-9]+")
+
+def _slug(s: str) -> str:
+    s = s.lower()
+    s = _SLUG_RE.sub("-", s).strip("-")
+    return s[:60] or "chat"

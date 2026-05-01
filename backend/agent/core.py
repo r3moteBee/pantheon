@@ -48,6 +48,48 @@ class AgentCore:
         self.active_skill_name = active_skill_name
         self.working_memory: list[dict[str, str]] = []
 
+    @classmethod
+    async def from_session(
+        cls,
+        *,
+        session_id: str,
+        project_id: str = "default",
+        provider,
+        memory_manager=None,
+        skill_context: str | None = None,
+        active_skill_name: str | None = None,
+        message_limit: int = 200,
+    ) -> "AgentCore":
+        """Build an AgentCore instance with working_memory pre-populated
+        from the messages table for the given session_id. Used when
+        the user resumes an old chat: instead of starting fresh, we
+        replay the literal message history into the agent's context.
+
+        Tool-call results from prior turns are NOT replayed as separate
+        protocol messages — they're folded into the assistant message
+        that triggered them. Most LLM providers accept a clean
+        [user, assistant, ...] history without tool roles on resume.
+        """
+        from memory.episodic import EpisodicMemory
+        self = cls(
+            provider=provider,
+            project_id=project_id,
+            session_id=session_id,
+            memory_manager=memory_manager,
+            skill_context=skill_context,
+            active_skill_name=active_skill_name,
+        )
+        ep = EpisodicMemory()
+        history = await ep.get_history(session_id=session_id, limit=message_limit)
+        for m in history:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if not content:
+                continue
+            if role in ("user", "assistant", "system"):
+                self.working_memory.append({"role": role, "content": content})
+        return self
+
     def _add_working_message(self, role: str, content: Any) -> None:
         """Add message to working memory."""
         self.working_memory.append({"role": role, "content": content})

@@ -9,6 +9,9 @@ export const useStore = create((set, get) => ({
   sessionId: null,
   setSessionId: (id) => set({ sessionId: id }),
 
+  historyOpen: false,
+  setHistoryOpen: (v) => set({ historyOpen: !!v }),
+
   // Chat messages (current session display)
   messages: [],
   addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
