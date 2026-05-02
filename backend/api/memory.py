@@ -416,3 +416,66 @@ async def embedding_model_stats(
         "by_model": counts,
         "total": sum(counts.values()),
     }
+
+
+@router.get("/memory/graph/full")
+async def graph_full(
+    project_id: str = Query(default="default"),
+    type: str | None = None,
+    limit: int = Query(default=500, ge=1, le=5000),
+) -> dict[str, Any]:
+    """Single-fetch dump for the visualizer. Returns nodes + edges."""
+    from memory.graph import GraphMemory
+    g = GraphMemory(project_id=project_id)
+    nodes = await g.list_nodes(node_type=type, limit=limit)
+    edges = await g.list_edges(limit=limit * 4)
+    return {"nodes": nodes, "edges": edges, "project_id": project_id}
+
+
+@router.get("/memory/graph/path")
+async def graph_path(
+    from_: str = Query(..., alias="from"),
+    to: str = Query(...),
+    project_id: str = Query(default="default"),
+) -> dict[str, Any]:
+    """Find the shortest path between two nodes by label.
+
+    Returns:
+      {
+        from, to, found: bool,
+        path:  [ {id, label, node_type, ...} ],   # nodes in order
+        edges: [ {id, source, target, relationship, weight} ],   # edges between consecutive nodes
+        hops:  int                                # len(path) - 1
+      }
+    """
+    from memory.graph import GraphMemory
+    g = GraphMemory(project_id=project_id)
+    path_nodes = await g.get_path(label_a=from_, label_b=to)
+    if not path_nodes:
+        return {"from": from_, "to": to, "found": False, "path": [],
+                "edges": [], "hops": 0}
+    # For each consecutive pair, look up the edge connecting them.
+    import sqlite3
+    edges: list[dict[str, Any]] = []
+    db = g.db_path
+    conn = sqlite3.connect(db); conn.row_factory = sqlite3.Row
+    try:
+        for a, b in zip(path_nodes, path_nodes[1:]):
+            row = conn.execute(
+                """SELECT id, node_a_id as source, node_b_id as target,
+                          relationship, weight
+                   FROM graph_edges
+                   WHERE project_id = ?
+                     AND ((node_a_id = ? AND node_b_id = ?)
+                       OR (node_a_id = ? AND node_b_id = ?))
+                   LIMIT 1""",
+                (project_id, a["id"], b["id"], b["id"], a["id"]),
+            ).fetchone()
+            if row:
+                edges.append(dict(row))
+    finally:
+        conn.close()
+    return {
+        "from": from_, "to": to, "found": True,
+        "path": path_nodes, "edges": edges, "hops": len(path_nodes) - 1,
+    }

@@ -103,6 +103,10 @@ export const memoryApi = {
     api.put('/api/memory/archival/summary', { content }, { params: { project_id: projectId } }),
   consolidate: (projectId, sessionId) =>
     api.post('/api/memory/consolidate', null, { params: { project_id: projectId, session_id: sessionId } }),
+  graphFull: (projectId, type, limit = 500) =>
+    api.get('/api/memory/graph/full', { params: { project_id: projectId, type, limit } }),
+  graphPath: (projectId, from, to) =>
+    api.get('/api/memory/graph/path', { params: { project_id: projectId, from, to } }),
   reembed: (projectId) =>
     api.post('/api/memory/reembed', null, { params: { project_id: projectId } }),
   embeddingModelStats: (projectId) =>

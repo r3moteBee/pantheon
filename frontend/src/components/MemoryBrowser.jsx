@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Search, Trash2, RefreshCw, ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useStore } from '../store'
 import { memoryApi } from '../api/client'
+import GraphView from './GraphView'
 
 function EpisodicTab() {
   const [notes, setNotes] = useState([])
@@ -652,7 +653,7 @@ function ArchivalTab() {
   )
 }
 
-export default function MemoryBrowser() {
+export default function MemoryBrowser({ embedded = false }) {
   const [activeTab, setActiveTab] = useState('episodic')
 
   const tabs = [
@@ -664,10 +665,11 @@ export default function MemoryBrowser() {
 
   return (
     <div className="flex flex-col h-full bg-gray-950">
-      {/* Header */}
-      <div className="px-6 py-4 bg-gray-900 border-b border-gray-800">
-        <h1 className="text-xl font-bold text-gray-100">Memory Browser</h1>
-      </div>
+      {!embedded && (
+        <div className="px-6 py-4 bg-gray-900 border-b border-gray-800">
+          <h1 className="text-xl font-bold text-gray-100">Memory Browser</h1>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-0 border-b border-gray-800 overflow-x-auto">
@@ -687,10 +689,10 @@ export default function MemoryBrowser() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6 scrollbar-thin">
+      <div className={"flex-1 " + (activeTab === 'graph' ? "overflow-hidden" : "overflow-y-auto p-6") + " scrollbar-thin"}>
         {activeTab === 'episodic' && <EpisodicTab />}
         {activeTab === 'semantic' && <SemanticTab />}
-        {activeTab === 'graph' && <GraphTab />}
+        {activeTab === 'graph' && <GraphView />}
         {activeTab === 'archival' && <ArchivalTab />}
       </div>
     </div>
