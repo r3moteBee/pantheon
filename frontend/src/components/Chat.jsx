@@ -357,11 +357,17 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
-  const [memoryRecall, setMemoryRecall] = useState(true)
+  // Chat settings live in the global store now so the unified ChatTabs
+  // top bar can read & toggle them across tab switches.
+  const memoryRecall = useStore((s) => s.memoryRecall)
+  const setMemoryRecall = useStore((s) => s.setMemoryRecall)
+  const personalityWeight = useStore((s) => s.personalityWeight)
+  const setPersonalityWeight = useStore((s) => s.setPersonalityWeight)
+  const contextFocus = useStore((s) => s.contextFocus)
+  const setContextFocus = useStore((s) => s.setContextFocus)
+  const skillDiscovery = useStore((s) => s.skillDiscovery)
+  const setSkillDiscovery = useStore((s) => s.setSkillDiscovery)
   const [recallLoading, setRecallLoading] = useState(false)
-  const [personalityWeight, setPersonalityWeight] = useState('balanced')
-  const [contextFocus, setContextFocus] = useState('balanced')
-  const [skillDiscovery, setSkillDiscovery] = useState('off')
   const [showSkillPicker, setShowSkillPicker] = useState(false)
   const [skillQuery, setSkillQuery] = useState('')
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
@@ -736,108 +742,6 @@ export default function Chat() {
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      {/* Header */}
-      <div className="px-4 py-3 bg-gray-900 border-b border-gray-800 flex items-center gap-3">
-        <Brain className="w-4 h-4 text-brand-400" />
-        <span className="text-sm font-medium text-gray-200">
-          {activeProject?.name || 'Default Project'}
-        </span>
-        <div className="ml-auto flex items-center gap-3">
-          {sessionId && (
-            <span className="text-xs text-gray-600 font-mono">
-              session: {sessionId.slice(0, 8)}
-            </span>
-          )}
-          <button
-            onClick={() => useStore.getState().setHistoryOpen(true)}
-            title="Recent conversations"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700"
-          >
-            <History className="w-3 h-3" /> History
-          </button>
-          <button
-            onClick={async () => {
-              if (!sessionId) return
-              try {
-                const res = await conversationsApi.saveAsArtifact(sessionId, activeProject?.id || 'default')
-                addNotification({ type: 'success', message: `Saved chat to artifact: ${res.data.path}` })
-              } catch (e) {
-                addNotification({ type: 'error', message: 'Save failed: ' + (e?.response?.data?.detail || e.message) })
-              }
-            }}
-            disabled={!sessionId}
-            title="Save this conversation as an artifact"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 disabled:opacity-50"
-          >
-            <Save className="w-3 h-3" /> Save chat
-          </button>
-          <button
-            onClick={() => {
-              useStore.getState().setSessionId(null)
-              useStore.getState().clearMessages()
-            }}
-            title="Start a new conversation"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700"
-          >
-            <Plus className="w-3 h-3" /> New
-          </button>
-          <button
-            onClick={toggleMemoryRecall}
-            disabled={recallLoading}
-            title={memoryRecall ? 'Memory recall augmentation is ON — click to disable' : 'Memory recall augmentation is OFF — click to enable'}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors disabled:opacity-50 ${
-              memoryRecall
-                ? 'bg-brand-900 text-brand-300 hover:bg-brand-800'
-                : 'bg-gray-800 text-gray-500 hover:bg-gray-700'
-            }`}
-          >
-            <Sparkles className="w-3 h-3" />
-            Recall
-          </button>
-          <button
-            onClick={cycleContextFocus}
-            title={`Thread focus: ${contextFocus} — controls how strongly recent messages are favoured over older context. Click to cycle: broad → balanced → focused`}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-              contextFocus === 'focused'
-                ? 'bg-amber-900 text-amber-300 hover:bg-amber-800'
-                : contextFocus === 'broad'
-                  ? 'bg-gray-800 text-gray-500 hover:bg-gray-700'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            }`}
-          >
-            <Target className="w-3 h-3" />
-            <span className="text-gray-500">Focus:</span> {contextFocus.charAt(0).toUpperCase() + contextFocus.slice(1)}
-          </button>
-          <button
-            onClick={cycleSkillDiscovery}
-            title={`Auto-Skill: ${skillDiscovery} — off = manual only, suggest = recommend skills, auto = activate automatically. Click to cycle.`}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-              skillDiscovery === 'auto'
-                ? 'bg-emerald-900 text-emerald-300 hover:bg-emerald-800'
-                : skillDiscovery === 'suggest'
-                  ? 'bg-amber-900 text-amber-300 hover:bg-amber-800'
-                  : 'bg-gray-800 text-gray-500 hover:bg-gray-700'
-            }`}
-          >
-            <Wand2 className="w-3 h-3" />
-            <span className="text-gray-500">Skill:</span> {skillDiscovery.charAt(0).toUpperCase() + skillDiscovery.slice(1)}
-          </button>
-          <button
-            onClick={cyclePersonalityWeight}
-            title={`Personality presence: ${personalityWeight} — controls how much the agent's identity shows in responses. Click to cycle: minimal → balanced → strong`}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-colors ${
-              personalityWeight === 'strong'
-                ? 'bg-purple-900 text-purple-300 hover:bg-purple-800'
-                : personalityWeight === 'minimal'
-                  ? 'bg-gray-800 text-gray-500 hover:bg-gray-700'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            }`}
-          >
-            <UserCircle className="w-3 h-3" />
-            <span className="text-gray-500">Persona:</span> {personalityWeight.charAt(0).toUpperCase() + personalityWeight.slice(1)}
-          </button>
-        </div>
-      </div>
 
       {/* Drag overlay */}
       {isDragging && (
