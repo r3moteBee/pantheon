@@ -10,6 +10,8 @@ import SettingsPage from './pages/SettingsPage'
 import SkillsPage from './pages/SkillsPage'
 import MCPPage from './pages/MCPPage'
 import SourcesPage from './pages/SourcesPage'
+import ConnectionsPage from './pages/ConnectionsPage'
+import PersonasPage from './pages/PersonasPage'
 import TasksPage from './pages/TasksPage'
 import ProjectsPage from './pages/ProjectsPage'
 import LoginPage from './pages/LoginPage'
@@ -98,7 +100,9 @@ export default function App() {
           <Route path="artifacts" element={<ArtifactsPage />} />
           <Route path="skills" element={<SkillsPage />} />
           <Route path="mcp" element={<MCPPage />} />
-          <Route path="sources" element={<SourcesPage />} />
+          <Route path="sources" element={<Navigate to="/connections" replace />} />
+          <Route path="connections" element={<ConnectionsPage />} />
+          <Route path="personas" element={<PersonasPage />} />
           <Route path="personality" element={<PersonalityPage />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="projects" element={<ProjectsPage />} />

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, Brain, FolderOpen, User, Settings,
-  ListTodo, Briefcase, Menu, X, Bot, ChevronDown, LogOut, Check, Zap, Plug, Github
+  ListTodo, Briefcase, Menu, X, Bot, ChevronDown, LogOut, Check, Zap, Plug, Github, Users
 } from 'lucide-react'
 import { useStore } from '../store'
 import { projectsApi } from '../api/client'
@@ -17,13 +17,10 @@ function VersionTag() {
 
 const NAV_ITEMS = [
   { to: '/chat', icon: MessageSquare, label: 'Chat' },
-  { to: '/memory', icon: Brain, label: 'Memory' },
   { to: '/artifacts', icon: FolderOpen, label: 'Artifacts' },
   { to: '/skills', icon: Zap, label: 'Skills' },
-  { to: '/mcp', icon: Plug, label: 'MCP' },
-  { to: '/sources', icon: Github, label: 'Sources' },
-  { to: '/personality', icon: User, label: 'Personality' },
-  { to: '/tasks', icon: ListTodo, label: 'Tasks' },
+  { to: '/personas', icon: Users, label: 'Personas' },
+  { to: '/connections', icon: Github, label: 'Connections' },
   { to: '/projects', icon: Briefcase, label: 'Projects' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]

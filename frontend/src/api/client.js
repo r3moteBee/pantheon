@@ -114,15 +114,50 @@ export const systemApi = {
 }
 
 export const sourcesApi = {
+  // Legacy aliases — kept for any existing call sites; new code should
+  // use connectionsApi.
   listGitHub: (projectId) =>
-    api.get('/api/sources/github', { params: { project_id: projectId } }),
+    api.get('/api/connections/github', { params: { project_id: projectId } }),
   listRepos: (token) =>
-    api.get('/api/sources/github/repos', { params: { token } }),
+    api.get('/api/connections/github/repos', { params: { token } }),
   createGitHub: (projectId, token, repo, defaultBranch) =>
-    api.post('/api/sources/github', {
+    api.post('/api/connections/github', {
       project_id: projectId, token, repo, default_branch: defaultBranch,
     }),
-  deleteGitHub: (id) => api.delete(`/api/sources/github/${id}`),
+  deleteGitHub: (id) => api.delete(`/api/connections/github/${id}`),
+}
+
+export const connectionsApi = {
+  list: () => api.get('/api/connections/github'),
+  listRepos: (token) =>
+    api.get('/api/connections/github/repos', { params: { token } }),
+  create: ({ token, repo, default_branch }) =>
+    api.post('/api/connections/github', { token, repo, default_branch }),
+  delete: (id) => api.delete(`/api/connections/github/${id}`),
+}
+
+export const projectRepoApi = {
+  get: (projectId) => api.get(`/api/projects/${projectId}/repo`),
+  bind: (projectId, body) => api.post(`/api/projects/${projectId}/repo`, body),
+  unbind: (projectId) => api.delete(`/api/projects/${projectId}/repo`),
+}
+
+export const projectMcpApi = {
+  list: (projectId) => api.get(`/api/projects/${projectId}/mcp`),
+  set: (projectId, serverId, enabled) =>
+    api.post(`/api/projects/${projectId}/mcp/${serverId}`, { enabled }),
+}
+
+export const projectSettingsApi = {
+  get: (projectId) => api.get(`/api/projects/${projectId}/settings`),
+  update: (projectId, body) => api.put(`/api/projects/${projectId}/settings`, body),
+}
+
+export const taskRunsApi = {
+  list: (params = {}) => api.get('/api/tasks/runs', { params }),
+  get: (id) => api.get(`/api/tasks/runs/${id}`),
+  delete: (id) => api.delete(`/api/tasks/runs/${id}`),
+  cancel: (id) => api.post(`/api/tasks/runs/${id}/cancel`),
 }
 
 export const conversationsApi = {
