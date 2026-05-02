@@ -58,8 +58,11 @@ curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh |
 # Self-hosted SearXNG search only (requires Docker)
 curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-searxng
 
-# Full offline-friendly demo: Ollama + SearXNG
-curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama --with-searxng
+# LibreOffice for Word/Excel/PowerPoint/PDF artifact previews
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-office
+
+# Full offline-friendly demo: Ollama + SearXNG + Office previews
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama --with-searxng --with-office
 ```
 
 Once installed, edit `.env` in your install directory and set your LLM credentials:

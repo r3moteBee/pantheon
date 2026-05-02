@@ -27,6 +27,7 @@ AUTH_PASSWORD=""  # web interface password — prompted if not set
 WITH_OLLAMA=false   # run demo_setup.sh --with-ollama after install
 WITH_SEARXNG=false  # run demo_setup.sh --with-searxng after install
 WITH_BROWSER=false  # run demo_setup.sh --with-browser after install
+WITH_OFFICE=false   # install LibreOffice for Office/PDF preview rendering
 OLLAMA_TAG="4b"     # Nemotron model tag passed to demo_setup.sh
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --with-ollama)  WITH_OLLAMA=true;  shift ;;
     --with-searxng) WITH_SEARXNG=true; shift ;;
     --with-browser) WITH_BROWSER=true; shift ;;
+    --with-office)  WITH_OFFICE=true;  shift ;;
     --ollama-tag)   OLLAMA_TAG="$2";   shift 2 ;;
     --yes|-y)     SKIP_CONFIRM=true;   shift ;;
     --help|-h)
@@ -74,6 +76,7 @@ while [[ $# -gt 0 ]]; do
       echo "  --auth-password PASS     Web interface password (prompted if omitted)"
       echo "  --with-ollama        Install Ollama + Nemotron-3-Nano-4B as the default LLM"
       echo "  --with-searxng       Run a local SearXNG container as the default search backend"
+      echo "  --with-office        Install LibreOffice + poppler for Office/PDF artifact previews"
       echo "  --with-browser       Install Playwright chromium and enable agent browser tools"
       echo "  --ollama-tag TAG     Nemotron tag (4b, 4b-q8_0, 4b-bf16) — default: 4b"
       echo "  --yes, -y            Skip confirmation and model selection prompts"
@@ -707,6 +710,25 @@ else
   pip install --upgrade pip -q
   pip install --no-cache-dir -r backend/requirements.txt -q
   success "Python dependencies installed"
+
+  # ── Optional: LibreOffice for Office artifact previews ─────────────────────
+  if [[ "$WITH_OFFICE" == "true" ]]; then
+    header "Installing LibreOffice for Office/PDF previews..."
+    if [[ -z "${PKG_MANAGER:-}" ]]; then
+      warn "No package manager detected — skipping LibreOffice install."
+    else
+      case "$PKG_MANAGER" in
+        apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y libreoffice poppler-utils ;;
+        dnf)    $SUDO dnf install -y libreoffice poppler-utils ;;
+        yum)    $SUDO yum install -y libreoffice poppler-utils ;;
+        pacman) $SUDO pacman -S --noconfirm libreoffice-fresh poppler ;;
+        brew)   brew install --cask libreoffice && brew install poppler ;;
+        apk)    $SUDO apk add libreoffice poppler-utils ;;
+        *)      warn "Package manager $PKG_MANAGER unsupported — install libreoffice + poppler-utils manually." ;;
+      esac
+      success "LibreOffice installed (artifact previews for .docx/.xlsx/.pptx/.pdf will work)"
+    fi
+  fi
 
   # ── Frontend build ──────────────────────────────────────────────────────────
   header "Building frontend..."
