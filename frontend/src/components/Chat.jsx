@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus, Bookmark, Copy, Loader } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi } from '../api/client'
+import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi, artifactsApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 
 // Parse workspace:// path from show_file result
@@ -247,11 +247,43 @@ function useMarkdownComponents() {
   }
 }
 
-function Message({ msg }) {
+
+function MessageActions({ content, onSaveMessage }) {
+  const [copied, setCopied] = React.useState(false)
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }
+  return (
+    <div className="mt-1 flex items-center gap-0.5 opacity-60 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+      <button
+        onClick={handleCopy}
+        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors rounded"
+        title="Copy message"
+        aria-label="Copy message"
+      >
+        {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+      </button>
+      <button
+        onClick={onSaveMessage}
+        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors rounded"
+        title="Save message as artifact"
+        aria-label="Save message as artifact"
+      >
+        <Bookmark className="w-3 h-3" />
+      </button>
+    </div>
+  )
+}
+
+function Message({ msg, onSaveMessage }) {
   const isUser = msg.role === 'user'
   const mdComponents = useMarkdownComponents()
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+    <div className={`group flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
       <div className={`max-w-3xl ${isUser ? 'order-2' : 'order-1'}`}>
         {!isUser && (
           <div className="flex items-center gap-2 mb-1">
@@ -306,6 +338,10 @@ function Message({ msg }) {
           )}
         </div>
 
+        {!isUser && msg.content && onSaveMessage && (
+          <MessageActions content={msg.content} onSaveMessage={() => onSaveMessage(msg.content)} />
+        )}
+
         {isUser && msg.timestamp && (
           <div className="flex justify-end mt-1">
             <span className="text-xs text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
@@ -349,6 +385,20 @@ export default function Chat() {
   const setSessionId = useStore((s) => s.setSessionId)
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
+  const projectIdForSave = activeProject?.id || 'default'
+  const [saveModal, setSaveModal] = React.useState(null) // { content, defaultPath } | null
+  const handleSaveMessage = React.useCallback((content) => {
+    if (!content) return
+    const stripped = content
+      .slice(0, 60)
+      .replace(/[`*_~#>]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .toLowerCase()
+      .replace(/^-+|-+$/g, '')
+    const slug = stripped || 'response'
+    const date = new Date().toISOString().slice(0, 10)
+    setSaveModal({ content, defaultPath: `responses/${date}-${slug}.md` })
+  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -812,7 +862,7 @@ export default function Chat() {
         )}
 
         {messages.map((msg, i) => (
-          <Message key={i} msg={msg} />
+          <Message key={i} msg={msg} onSaveMessage={handleSaveMessage} />
         ))}
 
         {/* Streaming response */}
@@ -1004,6 +1054,18 @@ export default function Chat() {
         </div>
       </div>
     <ChatHistoryDrawer />
+    {saveModal && (
+      <SaveToArtifactModal
+        defaultPath={saveModal.defaultPath}
+        content={saveModal.content}
+        projectId={projectIdForSave}
+        onClose={() => setSaveModal(null)}
+        onSaved={(art) => {
+          setSaveModal(null)
+          addNotification({ type: 'success', message: `Saved artifact: ${art.path}` })
+        }}
+      />
+    )}
         </div>
   )
 }
@@ -1090,6 +1152,87 @@ function ChatHistoryDrawer() {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function SaveToArtifactModal({ defaultPath, content, projectId, onClose, onSaved }) {
+  const [path, setPath] = React.useState(defaultPath)
+  const [tagsInput, setTagsInput] = React.useState('from-chat')
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState(null)
+
+  const handleSave = async () => {
+    setSaving(true); setError(null)
+    try {
+      const finalPath = path.endsWith('.md') ? path : `${path}.md`
+      const tags = tagsInput
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+      const res = await artifactsApi.create({
+        project_id: projectId,
+        path: finalPath,
+        content,
+        content_type: 'text/markdown',
+        tags,
+        source: { kind: 'chat-message-save' },
+      })
+      onSaved?.(res.data)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message || 'Save failed')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl w-full max-w-md p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+          <Bookmark className="w-4 h-4" /> Save as artifact
+        </h3>
+        <label className="block text-xs text-gray-400 mb-1">Path</label>
+        <input
+          autoFocus
+          type="text"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="responses/note.md"
+          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white font-mono focus:outline-none focus:ring-1 focus:ring-brand-600"
+          onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
+        />
+        <label className="block text-xs text-gray-400 mt-3 mb-1">Tags (comma-separated)</label>
+        <input
+          type="text"
+          value={tagsInput}
+          onChange={(e) => setTagsInput(e.target.value)}
+          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white focus:outline-none focus:ring-1 focus:ring-brand-600"
+        />
+        <p className="text-[11px] text-gray-500 mt-2">
+          {content.length.toLocaleString()} characters · markdown
+        </p>
+        {error && (
+          <div className="mt-2 text-xs text-red-400">{error}</div>
+        )}
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-white"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !path.trim()}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-brand-600 hover:bg-brand-500 rounded-md disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {saving ? <Loader className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </div>
     </div>
   )
