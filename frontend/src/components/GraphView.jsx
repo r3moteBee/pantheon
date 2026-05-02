@@ -24,8 +24,17 @@ export default function GraphView() {
   const [fromInput, setFromInput] = useState('')
   const [toInput, setToInput] = useState('')
   const [pathing, setPathing] = useState(false)
-  const [pathResult, setPathResult] = useState(null)  // {found, path, edges, hops}
+  const [pathResult, setPathResult] = useState(null)
   const [pathError, setPathError] = useState(null)
+  const [pathK, setPathK] = useState(1)
+  const [pathWeighted, setPathWeighted] = useState(false)
+  const [activePathIndex, setActivePathIndex] = useState(0)  // when k>1
+
+  // Edge-create state
+  const [edgeMode, setEdgeMode] = useState(false)  // toggle
+  const [edgeA, setEdgeA] = useState(null)         // first picked node id
+  const [edgeRel, setEdgeRel] = useState('')
+  const [edgeStatus, setEdgeStatus] = useState(null)
 
   const refresh = async () => {
     setLoading(true); setError(null)
@@ -69,16 +78,17 @@ export default function GraphView() {
   }, [nodes, edges])
 
   // Highlighted nodes/edges for path overlay
+  const activePath = pathResult?.paths?.[activePathIndex] || null
   const pathHighlight = useMemo(() => {
-    if (!pathResult?.found) return null
-    const nodeIds = new Set(pathResult.path.map((n) => n.id))
+    if (!pathResult?.found || !activePath) return null
+    const nodeIds = new Set((activePath.path || []).map((n) => n.id))
     const edgeIds = new Set(
-      (pathResult.edges || []).flatMap((e) => [
+      (activePath.edges || []).flatMap((e) => [
         `${e.source}::${e.target}`, `${e.target}::${e.source}`,
       ])
     )
     return { nodeIds, edgeIds }
-  }, [pathResult])
+  }, [pathResult, activePathIndex, activePath])
 
   // Suggestions for autocomplete inputs
   const suggest = (text) => {
@@ -91,21 +101,48 @@ export default function GraphView() {
   const fromSuggestions = suggest(fromInput)
   const toSuggestions = suggest(toInput)
 
+  const createEdge = async (sourceId, targetId) => {
+    if (!edgeRel.trim()) {
+      setEdgeStatus('Type a relationship label first, then click the target node.')
+      return
+    }
+    try {
+      const sourceNode = nodes.find((n) => n.id === sourceId)
+      const targetNode = nodes.find((n) => n.id === targetId)
+      await memoryApi.createGraphEdge(
+        sourceNode?.label, targetNode?.label, edgeRel.trim(), projectId
+      )
+      setEdgeStatus(`Created: ${sourceNode?.label} — ${edgeRel} → ${targetNode?.label}`)
+      setEdgeA(null)
+      setEdgeRel('')
+      await refresh()
+    } catch (e) {
+      setEdgeStatus('Edge create failed: ' + (e?.response?.data?.detail || e.message))
+    }
+  }
+
   const findPath = async () => {
     if (!fromInput.trim() || !toInput.trim()) return
-    setPathing(true); setPathError(null); setPathResult(null)
+    setPathing(true); setPathError(null); setPathResult(null); setActivePathIndex(0)
     try {
-      const res = await memoryApi.graphPath(projectId, fromInput.trim(), toInput.trim())
-      setPathResult(res.data)
-      if (!res.data?.found) {
+      const res = await memoryApi.graphPath(projectId, fromInput.trim(), toInput.trim(),
+        { k: pathK, weighted: pathWeighted })
+      // Normalize shape — single-path or paths[]
+      const data = res.data
+      if (!data?.found) {
         setPathError(`No defined relationship between "${fromInput}" and "${toInput}" in this project's graph.`)
+        setPathResult(null)
+      } else if (data.paths) {
+        setPathResult({ found: true, paths: data.paths })
+      } else {
+        setPathResult({ found: true, paths: [{ path: data.path, edges: data.edges, hops: data.hops }] })
       }
     } catch (e) {
       setPathError(e?.response?.data?.detail || e.message)
     } finally { setPathing(false) }
   }
 
-  const clearPath = () => { setPathResult(null); setPathError(null) }
+  const clearPath = () => { setPathResult(null); setPathError(null); setActivePathIndex(0) }
 
   return (
     <div className="h-full flex flex-col">
@@ -131,12 +168,32 @@ export default function GraphView() {
         >
           {pathing ? 'Searching…' : 'Find Path'}
         </button>
+        <select
+          value={pathK} onChange={(e) => setPathK(Number(e.target.value))}
+          className="text-xs bg-gray-900 border border-gray-800 rounded px-1 py-1"
+          title="Number of alternative paths to find"
+        >
+          {[1,2,3,5].map((n) => <option key={n} value={n}>k={n}</option>)}
+        </select>
+        <label className="text-xs text-gray-400 flex items-center gap-1" title="Use Dijkstra over inverted edge weights — high-weight edges win">
+          <input type="checkbox" checked={pathWeighted} onChange={(e) => setPathWeighted(e.target.checked)} />
+          weighted
+        </label>
         {pathResult && (
           <button onClick={clearPath} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
             <X className="w-3 h-3" /> Clear
           </button>
         )}
         <span className="ml-auto" />
+        <button
+          onClick={() => { setEdgeMode(!edgeMode); setEdgeA(null); setEdgeStatus(null) }}
+          title="Click two nodes in the graph to create an edge between them"
+          className={`text-xs px-2 py-1 rounded border ${
+            edgeMode ? 'bg-emerald-900 border-emerald-700 text-emerald-100' : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {edgeMode ? 'Cancel edge' : '+ Edge'}
+        </button>
         <div className="flex items-center gap-0.5 bg-gray-900 border border-gray-800 rounded p-0.5">
           <button
             onClick={() => setView('graph')}
@@ -199,7 +256,39 @@ export default function GraphView() {
             entities={fgData.entities}
             relationships={fgData.relationships}
             pathHighlight={pathHighlight}
+            onSelectNode={(n) => {
+              if (!edgeMode || !n) return
+              if (!edgeA) {
+                setEdgeA(n.id)
+                setEdgeStatus(`Selected source: ${n.name || n.label}. Pick the target node.`)
+              } else if (edgeA === n.id) {
+                setEdgeStatus('Pick a different target node.')
+              } else {
+                createEdge(edgeA, n.id)
+              }
+            }}
           />
+        )}
+        {edgeMode && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-30 bg-gray-900/95 border border-emerald-700 rounded px-3 py-2 shadow-lg max-w-xl text-xs">
+            <div className="text-emerald-300 font-medium mb-1">Edge mode</div>
+            {!edgeA && <div className="text-gray-300">Click the source node in the graph.</div>}
+            {edgeA && (
+              <div className="space-y-1.5">
+                <div className="text-gray-300">{edgeStatus}</div>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    placeholder="relationship label (e.g. 'works at')"
+                    value={edgeRel}
+                    onChange={(e) => setEdgeRel(e.target.value)}
+                    className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
+                  />
+                </div>
+                <div className="text-gray-500 text-[10px]">Click another node to confirm. Edge will use this label as its relationship.</div>
+              </div>
+            )}
+          </div>
         )}
         {!loading && !error && view === 'list' && (
           <ListView
@@ -212,18 +301,36 @@ export default function GraphView() {
       </div>
 
       {/* Path breadcrumb */}
-      {pathResult?.found && (
+      {pathResult?.found && activePath && (
         <div className="border-t border-gray-800 bg-gray-950 px-3 py-2 max-h-40 overflow-y-auto">
-          <div className="text-xs text-gray-400 mb-1">
-            Path: <span className="text-brand-300 font-medium">{pathResult.hops}</span> hop(s)
+          <div className="text-xs text-gray-400 mb-1 flex items-center gap-3 flex-wrap">
+            <span>Path: <span className="text-brand-300 font-medium">{activePath.hops}</span> hop(s)</span>
+            {pathResult.paths.length > 1 && (
+              <span className="flex items-center gap-1">
+                <span className="text-gray-500">Alternative:</span>
+                {pathResult.paths.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setActivePathIndex(i)}
+                    className={`px-1.5 py-0.5 rounded text-[10px] ${
+                      i === activePathIndex
+                        ? 'bg-brand-700 text-white'
+                        : 'bg-gray-800 text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {i + 1}
+                  </button>
+                ))}
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-1 text-xs">
-            {pathResult.path.map((n, i) => (
-              <React.Fragment key={n.id}>
+            {(activePath.path || []).map((n, i) => (
+              <React.Fragment key={n.id + '-' + i}>
                 <span className="px-2 py-0.5 rounded bg-brand-900 text-brand-100">{n.label}</span>
-                {i < pathResult.path.length - 1 && (
+                {i < activePath.path.length - 1 && (
                   <span className="text-gray-500">
-                    — <span className="italic">{(pathResult.edges[i]?.relationship) || '(connected)'}</span> →
+                    — <span className="italic">{(activePath.edges[i]?.relationship) || '(connected)'}</span> →
                   </span>
                 )}
               </React.Fragment>
