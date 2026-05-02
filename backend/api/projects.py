@@ -380,3 +380,108 @@ async def scan_import_archive(
     archive_bytes = await file.read()
     result = scan_archive(archive_bytes)
     return result.model_dump()
+
+
+# ── Phase G: per-project MCP enablement + settings ──────────────────────────
+
+import sqlite3
+from pathlib import Path as _Path
+
+def _phase_g_db() -> str:
+    from config import get_settings
+    s = get_settings()
+    s.db_dir.mkdir(parents=True, exist_ok=True)
+    return str(s.db_dir / "phase_g.db")
+
+def _phase_g_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(_phase_g_db())
+    conn.row_factory = sqlite3.Row
+    sql = _Path(__file__).resolve().parent.parent / "data" / "migrations" / "002_phase_g.sql"
+    if sql.exists():
+        conn.executescript(sql.read_text())
+    return conn
+
+
+@router.get("/projects/{project_id}/mcp")
+async def get_project_mcp(project_id: str) -> dict[str, Any]:
+    """Return per-project MCP server enablement.
+
+    Returns rows for every connected server. Servers with no row default
+    to enabled=true. UI uses this to render toggle switches.
+    """
+    try:
+        from mcp_client.manager import get_mcp_manager
+        servers = list(get_mcp_manager().list_servers() or [])
+    except Exception:
+        servers = []
+
+    with _phase_g_connect() as conn:
+        rows = conn.execute(
+            "SELECT server_id, enabled FROM project_mcp_enablement WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+    overrides = {r["server_id"]: bool(r["enabled"]) for r in rows}
+
+    out = []
+    for sv in servers:
+        sid = sv.get("id") or sv.get("name")
+        if not sid:
+            continue
+        out.append({
+            "server_id": sid,
+            "name": sv.get("name") or sid,
+            "enabled": overrides.get(sid, True),  # default true
+        })
+    return {"project_id": project_id, "servers": out}
+
+
+@router.post("/projects/{project_id}/mcp/{server_id}")
+async def set_project_mcp(project_id: str, server_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(body.get("enabled", True))
+    with _phase_g_connect() as conn:
+        conn.execute(
+            "INSERT INTO project_mcp_enablement (project_id, server_id, enabled) "
+            "VALUES (?,?,?) ON CONFLICT(project_id,server_id) DO UPDATE SET enabled=excluded.enabled",
+            (project_id, server_id, 1 if enabled else 0),
+        )
+    return {"project_id": project_id, "server_id": server_id, "enabled": enabled}
+
+
+@router.get("/projects/{project_id}/settings")
+async def get_project_settings(project_id: str) -> dict[str, Any]:
+    with _phase_g_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM project_settings WHERE project_id = ?", (project_id,)
+        ).fetchone()
+    if not row:
+        return {
+            "project_id": project_id,
+            "persona": None,
+            "tone_weight": "balanced",
+            "context_focus": "balanced",
+            "skill_discovery": "off",
+        }
+    return dict(row)
+
+
+@router.put("/projects/{project_id}/settings")
+async def update_project_settings(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    fields = ("persona", "tone_weight", "context_focus", "skill_discovery")
+    cur = await get_project_settings(project_id)
+    merged = {**cur, **{k: body.get(k, cur.get(k)) for k in fields}}
+    with _phase_g_connect() as conn:
+        conn.execute(
+            """INSERT INTO project_settings (project_id, persona, tone_weight,
+               context_focus, skill_discovery, updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(project_id) DO UPDATE SET
+                   persona=excluded.persona, tone_weight=excluded.tone_weight,
+                   context_focus=excluded.context_focus,
+                   skill_discovery=excluded.skill_discovery,
+                   updated_at=excluded.updated_at""",
+            (project_id, merged["persona"], merged["tone_weight"],
+             merged["context_focus"], merged["skill_discovery"], now),
+        )
+    return await get_project_settings(project_id)

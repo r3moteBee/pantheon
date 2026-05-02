@@ -25,6 +25,7 @@ from api.tasks import router as tasks_router
 from api.personas import router as personas_router
 from api.system import router as system_router
 from api.sources import router as sources_router
+from api.connections import router as connections_router
 from api.artifacts import router as artifacts_router
 from api.conversations import router as conversations_router
 
@@ -129,7 +130,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pantheon",
     description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
-    version="2026.05.02.01",
+    version="2026.05.02.G1",
     lifespan=lifespan,
 )
 
@@ -200,6 +201,7 @@ app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
 app.include_router(personas_router,    prefix="/api", tags=["personas"])
 app.include_router(system_router, prefix="/api", tags=["system"])
 app.include_router(sources_router, prefix="/api", tags=["sources"])
+app.include_router(connections_router, prefix="/api", tags=["connections"])
 app.include_router(artifacts_router, prefix="/api", tags=["artifacts"])
 app.include_router(conversations_router, prefix="/api", tags=["conversations"])
 

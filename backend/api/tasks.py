@@ -90,3 +90,45 @@ async def get_all_task_logs(
     episodic = EpisodicMemory()
     logs = await episodic.get_task_logs(project_id=project_id, limit=limit)
     return {"logs": logs, "count": len(logs)}
+
+
+# ── Phase G: persistent task_runs dashboard ──────────────────────────────────
+
+from fastapi import HTTPException
+
+@router.get("/tasks/runs")
+async def list_task_runs(
+    project_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    """Cross-project task run history. project_id=None returns all."""
+    from tasks.runs import list_runs
+    runs = list_runs(project_id=project_id, status=status, limit=limit, offset=offset)
+    return {"runs": runs, "count": len(runs)}
+
+
+@router.get("/tasks/runs/{run_id}")
+async def get_task_run(run_id: str) -> dict[str, Any]:
+    from tasks.runs import get_run
+    r = get_run(run_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="run not found")
+    return r
+
+
+@router.delete("/tasks/runs/{run_id}")
+async def delete_task_run(run_id: str) -> dict[str, str]:
+    from tasks.runs import delete_run
+    if not delete_run(run_id):
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"status": "deleted", "id": run_id}
+
+
+@router.post("/tasks/runs/{run_id}/cancel")
+async def cancel_task_run(run_id: str) -> dict[str, str]:
+    from tasks.runs import cancel_run
+    if not cancel_run(run_id):
+        raise HTTPException(status_code=404, detail="run not running")
+    return {"status": "cancelled", "id": run_id}

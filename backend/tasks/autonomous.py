@@ -30,6 +30,13 @@ async def run_autonomous_task(
     from memory.episodic import EpisodicMemory
     episodic = EpisodicMemory()
 
+    # Phase G: persistent run record for the global tasks dashboard
+    from tasks.runs import start_run, complete_run, fail_run
+    run_id = start_run(
+        task_id=task_id, task_name=task_name,
+        project_id=project_id, description=description,
+    )
+
     # Log task start
     await episodic.log_task_event(
         task_id=task_id,
@@ -75,6 +82,11 @@ async def run_autonomous_task(
             task_name=task_name,
             details=f"Result: {result[:500] if result else 'No response'}",
         )
+        complete_run(
+            run_id,
+            result={"summary": (result or "")[:1000]},
+            session_id=session_id,
+        )
         logger.info(f"Autonomous task completed: {task_name}")
 
     except Exception as e:
@@ -86,3 +98,4 @@ async def run_autonomous_task(
             task_name=task_name,
             details=str(e),
         )
+        fail_run(run_id, error=str(e), session_id=session_id)
