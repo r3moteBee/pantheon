@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import { conversationsApi } from '../api/client'
+import Tooltip from './Tooltip'
 
 /**
  * Icon-only contextual action bar for the Chat tab. Lives in the unified
@@ -111,17 +112,18 @@ export default function ChatActions() {
 function IconButton({ icon: Icon, label, onClick, disabled, active, activeColor = 'text-brand-400', toneClass }) {
   const color = toneClass || (active ? activeColor : 'text-gray-400 hover:text-gray-200')
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      aria-label={label}
-      className={`p-1.5 rounded-md transition-colors ${color} ${
-        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-800'
-      } ${active ? 'bg-brand-950' : ''}`}
-    >
-      <Icon className="w-4 h-4" />
-    </button>
+    <Tooltip label={label}>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className={`p-1.5 rounded-md transition-colors ${color} ${
+          disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-gray-800'
+        } ${active ? 'bg-brand-950' : ''}`}
+      >
+        <Icon className="w-4 h-4" />
+      </button>
+    </Tooltip>
   )
 }
 
