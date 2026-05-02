@@ -105,23 +105,86 @@ async def save_chat_as_artifact(
 
     md = _render_chat_markdown(session_id, messages)
     title = req.title or _auto_title_from_messages(messages, session_id)
-    path = req.path or f"chats/{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{_slug(title)}.md"
     tags = req.tags or ["chat-export"]
 
     from artifacts.store import get_store
     from artifacts import embedder
-    a = get_store().create(
-        project_id=project_id,
-        path=path,
-        content=md,
-        content_type="chat-export",
-        title=title,
-        tags=tags,
-        source={"kind": "chat-export", "session_id": session_id, "message_count": len(messages)},
-        edited_by=session_id,
-    )
+    store = get_store()
+
+    # If we already saved this session, update the same artifact (creates v2,
+    # v3, ...). Otherwise create a new one.
+    existing = _find_chat_export(store, project_id, session_id)
+    if existing and not req.path:
+        a = store.update(
+            existing["id"],
+            content=md,
+            title=title,
+            tags=tags,
+            edit_summary=f"Re-saved chat ({len(messages)} messages)",
+            edited_by=session_id,
+        )
+    else:
+        path = req.path or _unique_chat_path(store, project_id, session_id, title)
+        try:
+            a = store.create(
+                project_id=project_id,
+                path=path,
+                content=md,
+                content_type="chat-export",
+                title=title,
+                tags=tags,
+                source={"kind": "chat-export", "session_id": session_id, "message_count": len(messages)},
+                edited_by=session_id,
+            )
+        except sqlite3.IntegrityError:
+            # Path collision (e.g. caller passed an explicit path that's taken).
+            # Disambiguate with a unique suffix and retry once.
+            path = _unique_chat_path(store, project_id, session_id, title, force_unique=True)
+            a = store.create(
+                project_id=project_id,
+                path=path,
+                content=md,
+                content_type="chat-export",
+                title=title,
+                tags=tags,
+                source={"kind": "chat-export", "session_id": session_id, "message_count": len(messages)},
+                edited_by=session_id,
+            )
     embedder.schedule_embed(a["id"], project_id, immediate=True)
     return a
+
+
+def _find_chat_export(store, project_id: str, session_id: str) -> dict[str, Any] | None:
+    """Find an existing chat-export artifact for this session, if any."""
+    items = store.list(
+        project_id=project_id,
+        content_type="chat-export",
+        limit=10000,
+    )
+    for a in items:
+        src = a.get("source") or {}
+        if src.get("session_id") == session_id:
+            return a
+    return None
+
+
+def _unique_chat_path(store, project_id: str, session_id: str, title: str,
+                      *, force_unique: bool = False) -> str:
+    base_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    slug = _slug(title)
+    candidate = f"chats/{base_date}-{slug}.md"
+    if not force_unique and not store.get_by_path(project_id, candidate):
+        return candidate
+    # Disambiguate with HHMM, then a counter if even that's taken.
+    hm = datetime.now(timezone.utc).strftime("%H%M")
+    candidate = f"chats/{base_date}-{hm}-{slug}.md"
+    if not store.get_by_path(project_id, candidate):
+        return candidate
+    for i in range(2, 50):
+        c2 = f"chats/{base_date}-{hm}-{slug}-{i}.md"
+        if not store.get_by_path(project_id, c2):
+            return c2
+    return f"chats/{base_date}-{hm}-{session_id[:8]}.md"
 
 
 def _render_chat_markdown(session_id: str, messages: list[dict[str, Any]]) -> str:

@@ -218,6 +218,30 @@ export default function ArtifactsPage() {
             </div>
           )}
         </div>
+        {/* Select-all row */}
+        {items.length > 0 && (
+          <div className="px-3 py-1.5 border-b border-gray-900 flex items-center gap-2 text-[10px] text-gray-400 bg-gray-950">
+            <input
+              type="checkbox"
+              checked={selected.size > 0 && selected.size === items.length}
+              ref={(el) => {
+                if (el) el.indeterminate = selected.size > 0 && selected.size < items.length
+              }}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelected(new Set(items.map((it) => it.id)))
+                } else {
+                  setSelected(new Set())
+                }
+              }}
+            />
+            <span>
+              {selected.size === 0
+                ? `${items.length} item${items.length === 1 ? '' : 's'}`
+                : `${selected.size} / ${items.length} selected`}
+            </span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto">
           {loading && <div className="p-4 text-xs text-gray-500">Loading…</div>}
           {error && <div className="p-4 text-xs text-red-400">{error}</div>}
@@ -283,16 +307,16 @@ export default function ArtifactsPage() {
 
 
 function ArtifactDetail({ id, onChanged, onClose }) {
-  const [artifact, setArtifact] = useState(null)
-  const [preview, setPreview] = useState(null)
-  const [versions, setVersions] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [showVersions, setShowVersions] = useState(false)
-  const [editSummary, setEditSummary] = useState('')
-  const [tagDraft, setTagDraft] = useState('')
+  const [artifact, setArtifact] = React.useState(null)
+  const [preview, setPreview] = React.useState(null)
+  const [versions, setVersions] = React.useState([])
+  const [loading, setLoading] = React.useState(true)
+  const [view, setView] = React.useState('text')   // 'text' | 'preview'
+  const [draft, setDraft] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const [showVersions, setShowVersions] = React.useState(false)
+  const [editSummary, setEditSummary] = React.useState('')
+  const [tagDraft, setTagDraft] = React.useState('')
 
   const load = async () => {
     setLoading(true)
@@ -307,18 +331,26 @@ function ArtifactDetail({ id, onChanged, onClose }) {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [id])
+  useEffect(() => {
+    load()
+    setView('text') // default to text on each new artifact
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id])
 
   if (loading || !artifact) return <div className="p-4 text-xs text-gray-500">Loading…</div>
 
-  const isText = (artifact.content_type || '').match(/^(text\/|application\/(json|yaml|xml)|chat-export)/)
-  const Icon = iconForType(artifact.content_type)
+  const ct = artifact.content_type || ''
+  const isText = !!ct.match(/^(text\/|application\/(json|yaml|xml)|chat-export)/)
+  const previewSupported = !!preview && preview.type !== 'unsupported' && preview.type !== 'text'
+    || ct === 'text/markdown'   // markdown always supports rendered preview
+  const Icon = iconForType(ct)
+  const dirty = isText && draft !== (artifact.content || '')
 
   const save = async () => {
     setSaving(true)
     try {
       await artifactsApi.update(id, { content: draft, edit_summary: editSummary || 'Edited via UI' })
-      setEditing(false); setEditSummary('')
+      setEditSummary('')
       await load(); onChanged?.()
     } catch (e) {
       alert('Save failed: ' + (e?.response?.data?.detail || e.message))
@@ -326,23 +358,18 @@ function ArtifactDetail({ id, onChanged, onClose }) {
   }
 
   const togglePin = async () => {
-    await artifactsApi.pin(id, !artifact.pinned)
-    await load(); onChanged?.()
+    await artifactsApi.pin(id, !artifact.pinned); await load(); onChanged?.()
   }
-
   const remove = async () => {
     if (!confirm('Delete artifact?')) return
-    await artifactsApi.delete(id)
-    onChanged?.(); onClose?.()
+    await artifactsApi.delete(id); onChanged?.(); onClose?.()
   }
-
   const addTag = async () => {
     if (!tagDraft.trim()) return
     const newTags = Array.from(new Set([...(artifact.tags || []), tagDraft.trim()]))
     await artifactsApi.update(id, { tags: newTags })
     setTagDraft(''); await load(); onChanged?.()
   }
-
   const removeTag = async (t) => {
     const newTags = (artifact.tags || []).filter((x) => x !== t)
     await artifactsApi.update(id, { tags: newTags })
@@ -357,7 +384,8 @@ function ArtifactDetail({ id, onChanged, onClose }) {
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium truncate">{artifact.title || artifact.path}</div>
           <div className="text-[10px] text-gray-500 truncate">
-            {artifact.path} · {artifact.content_type} · {formatBytes(artifact.size_bytes)} · v{versions.length}
+            {artifact.path} · {ct} · {formatBytes(artifact.size_bytes)} · v{versions.length}
+            {dirty && <span className="text-amber-400 ml-2">· unsaved</span>}
           </div>
         </div>
         <button onClick={togglePin} className="text-gray-400 hover:text-amber-400" title="Pin">
@@ -366,19 +394,9 @@ function ArtifactDetail({ id, onChanged, onClose }) {
         <button onClick={() => setShowVersions(!showVersions)} className="text-gray-400 hover:text-gray-200" title="Version history">
           <History className="w-4 h-4" />
         </button>
-        <a
-          href={artifactsApi.rawUrl(id)}
-          download
-          className="text-gray-400 hover:text-gray-200"
-          title="Download original"
-        >
+        <a href={artifactsApi.rawUrl(id)} download className="text-gray-400 hover:text-gray-200" title="Download original">
           <Download className="w-4 h-4" />
         </a>
-        {isText && !editing && (
-          <button onClick={() => setEditing(true)} className="text-gray-400 hover:text-gray-200" title="Edit">
-            <Edit3 className="w-4 h-4" />
-          </button>
-        )}
         <button onClick={remove} className="text-gray-400 hover:text-red-400" title="Delete">
           <Trash2 className="w-4 h-4" />
         </button>
@@ -405,37 +423,63 @@ function ArtifactDetail({ id, onChanged, onClose }) {
         />
       </div>
 
+      {/* Text/Preview tab bar (text artifacts only) */}
+      {isText && previewSupported && (
+        <div className="flex items-center gap-1 px-3 py-1.5 border-b border-gray-800 bg-gray-900/40">
+          <button
+            onClick={() => setView('text')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
+              view === 'text' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+            }`}
+          >
+            <Edit3 className="w-3 h-3" /> Text
+          </button>
+          <button
+            onClick={() => setView('preview')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors ${
+              view === 'preview' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+            }`}
+          >
+            <Eye className="w-3 h-3" /> Preview
+          </button>
+          {dirty && (
+            <div className="ml-auto flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Edit summary"
+                value={editSummary}
+                onChange={(e) => setEditSummary(e.target.value)}
+                className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-0.5 w-44"
+              />
+              <button onClick={save} disabled={saving}
+                      className="px-2 py-0.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50">
+                <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save'}
+              </button>
+              <button onClick={() => setDraft(artifact.content || '')}
+                      className="px-2 py-0.5 text-xs rounded text-gray-400 hover:text-gray-200">
+                Discard
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-hidden flex">
         <div className="flex-1 overflow-y-auto">
-          {editing && isText ? (
-            <div className="h-full flex flex-col">
+          {isText ? (
+            view === 'preview' && previewSupported ? (
+              <PreviewBody artifact={artifact} preview={preview} />
+            ) : (
               <CodeMirror
                 value={draft}
                 height="100%"
-                extensions={langExtension(artifact.content_type)}
+                extensions={langExtension(ct)}
                 onChange={(v) => setDraft(v)}
                 theme="dark"
-                className="flex-1"
+                className="h-full"
               />
-              <div className="border-t border-gray-800 p-2 flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Edit summary (optional)"
-                  value={editSummary}
-                  onChange={(e) => setEditSummary(e.target.value)}
-                  className="flex-1 text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
-                />
-                <button onClick={save} disabled={saving}
-                        className="px-3 py-1 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50">
-                  <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save'}
-                </button>
-                <button onClick={() => { setEditing(false); setDraft(artifact.content || '') }}
-                        className="px-3 py-1 text-xs rounded text-gray-400 hover:text-gray-200">
-                  Cancel
-                </button>
-              </div>
-            </div>
+            )
           ) : (
             <PreviewBody artifact={artifact} preview={preview} />
           )}
