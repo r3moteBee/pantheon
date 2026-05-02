@@ -40,11 +40,13 @@ function langExtension(ct) {
   return []
 }
 
-export default function ArtifactsPage() {
+export default function ArtifactsPage({ lockedProjectId = null }) {
   const activeProject = useStore((s) => s.activeProject)
   const projects = useStore((s) => s.projects) || []
-  const [projectScope, setProjectScope] = useState('current')  // 'current' | 'all'
-  const projectId = projectScope === 'all' ? 'all' : (activeProject?.id || 'default')
+  const [projectScope, setProjectScope] = useState(lockedProjectId ? 'current' : 'current')  // 'current' | 'all'
+  const projectId = lockedProjectId
+    ? lockedProjectId
+    : (projectScope === 'all' ? 'all' : (activeProject?.id || 'default'))
 
   const [items, setItems] = useState([])
   const [folders, setFolders] = useState([])
@@ -120,26 +122,28 @@ export default function ArtifactsPage() {
     <div className="h-full flex">
       {/* Left rail: folders + tags */}
       <div className="w-56 border-r border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-4">
-        <div>
-          <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
-            Project scope
+        {!lockedProjectId && (
+          <div>
+            <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
+              Project scope
+            </div>
+            <div className="flex gap-1 mb-1 text-xs">
+              <button
+                onClick={() => setProjectScope('current')}
+                className={`flex-1 px-2 py-1 rounded ${projectScope === 'current' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+                title={activeProject?.name || 'default'}
+              >
+                {activeProject?.name || 'Default'}
+              </button>
+              <button
+                onClick={() => setProjectScope('all')}
+                className={`flex-1 px-2 py-1 rounded ${projectScope === 'all' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+              >
+                All
+              </button>
+            </div>
           </div>
-          <div className="flex gap-1 mb-1 text-xs">
-            <button
-              onClick={() => setProjectScope('current')}
-              className={`flex-1 px-2 py-1 rounded ${projectScope === 'current' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
-              title={activeProject?.name || 'default'}
-            >
-              {activeProject?.name || 'Default'}
-            </button>
-            <button
-              onClick={() => setProjectScope('all')}
-              className={`flex-1 px-2 py-1 rounded ${projectScope === 'all' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
-            >
-              All
-            </button>
-          </div>
-        </div>
+        )}
         <div>
           <div className="text-xs font-semibold text-gray-400 uppercase mb-2 flex items-center gap-1">
             <FolderOpen className="w-3 h-3" /> Folders

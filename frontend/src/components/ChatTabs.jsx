@@ -1,22 +1,24 @@
 import React from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { MessageSquare, Brain, ListTodo, Github, User as UserIcon, Plug } from 'lucide-react'
+import {
+  MessageSquare, Brain, ListTodo, Github, FolderOpen, Settings,
+} from 'lucide-react'
 import Chat from './Chat'
 import ChatActions from './ChatActions'
 import MemoryPage from '../pages/MemoryPage'
+import ArtifactsPage from '../pages/ArtifactsPage'
 import RepoBindingPanel from './chat-tabs/RepoBindingPanel'
 import ProjectTasksPanel from './chat-tabs/ProjectTasksPanel'
-import ProjectPersonalityPanel from './chat-tabs/ProjectPersonalityPanel'
-import ProjectMcpPanel from './chat-tabs/ProjectMcpPanel'
+import ProjectSettingsPanel from './chat-tabs/ProjectSettingsPanel'
 import { useStore } from '../store'
 
 const TABS = [
-  { id: 'chat',        label: 'Chat',        icon: MessageSquare },
-  { id: 'memory',      label: 'Memory',      icon: Brain },
-  { id: 'tasks',       label: 'Tasks',       icon: ListTodo },
-  { id: 'repository',  label: 'Repository',  icon: Github },
-  { id: 'personality', label: 'Personality', icon: UserIcon },
-  { id: 'mcp',         label: 'MCP',         icon: Plug },
+  { id: 'chat',       label: 'Chat',       icon: MessageSquare },
+  { id: 'memory',     label: 'Memory',     icon: Brain },
+  { id: 'artifacts',  label: 'Artifacts',  icon: FolderOpen },
+  { id: 'repository', label: 'Repository', icon: Github },
+  { id: 'tasks',      label: 'Tasks',      icon: ListTodo },
+  { id: 'settings',   label: 'Project Settings', icon: Settings },
 ]
 
 export default function ChatTabs() {
@@ -33,8 +35,7 @@ export default function ChatTabs() {
   }
 
   // Per-tab right-side action area. Add cases here as other tabs need
-  // contextual icons (e.g. Memory could host refresh/type-filter; Tasks
-  // could host 'Schedule new task').
+  // contextual icons (e.g. Memory could host refresh/type-filter).
   const RightActions = () => {
     if (tab === 'chat') return <ChatActions />
     return null
@@ -82,12 +83,12 @@ export default function ChatTabs() {
 
       {/* Tab body */}
       <div className="flex-1 min-h-0 overflow-hidden">
-        {tab === 'chat'        && <Chat />}
-        {tab === 'memory'      && <div className="h-full overflow-hidden"><MemoryPage embedded /></div>}
-        {tab === 'tasks'       && <ProjectTasksPanel projectId={projectId} />}
-        {tab === 'repository'  && <RepoBindingPanel projectId={projectId} />}
-        {tab === 'personality' && <ProjectPersonalityPanel projectId={projectId} />}
-        {tab === 'mcp'         && <ProjectMcpPanel projectId={projectId} />}
+        {tab === 'chat'       && <Chat />}
+        {tab === 'memory'     && <div className="h-full overflow-hidden"><MemoryPage embedded /></div>}
+        {tab === 'artifacts'  && <ArtifactsPage lockedProjectId={projectId} />}
+        {tab === 'repository' && <RepoBindingPanel projectId={projectId} />}
+        {tab === 'tasks'      && <ProjectTasksPanel projectId={projectId} />}
+        {tab === 'settings'   && <ProjectSettingsPanel projectId={projectId} />}
       </div>
     </div>
   )
