@@ -210,8 +210,12 @@ export const artifactsApi = {
   restoreVersion: (id, n) => api.post(`/api/artifacts/${id}/versions/${n}/restore`),
   bulkTags: (ids, tags, add = true) => api.post('/api/artifacts/bulk/tags', { ids, tags, add }),
   bulkDelete: (ids) => api.post('/api/artifacts/bulk/delete', { ids }),
-  bulkExportUrl: () => '/api/artifacts/bulk/export',
-  exportAllUrl: (projectId) => `/api/artifacts/export-all?project_id=${encodeURIComponent(projectId)}`,
+  bulkExport: (ids) =>
+    api.post('/api/artifacts/bulk/export', { ids }, { responseType: 'blob' }),
+  exportAll: (projectId) =>
+    api.get('/api/artifacts/export-all', {
+      params: { project_id: projectId }, responseType: 'blob',
+    }),
 }
 
 // Files API
