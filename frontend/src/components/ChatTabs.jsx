@@ -2,6 +2,7 @@ import React from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   MessageSquare, Brain, ListTodo, Github, FolderOpen, Settings,
+  ChevronDown, Check,
 } from 'lucide-react'
 import Chat from './Chat'
 import ChatActions from './ChatActions'
@@ -45,18 +46,8 @@ export default function ChatTabs() {
     <div className="h-full flex flex-col">
       {/* Unified top bar: project (far left) · tabs · spacer · actions (right) */}
       <div className="border-b border-gray-800 bg-gray-950 px-3 py-1.5 flex items-center gap-3 overflow-x-auto">
-        {/* Project name pill — anchored far left, always visible */}
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900 border border-gray-800 whitespace-nowrap">
-          <Brain className="w-3 h-3 text-brand-400" />
-          <span className="text-xs font-medium text-gray-200">
-            {activeProject?.name || 'Default Project'}
-          </span>
-          {sessionId && tab === 'chat' && (
-            <span className="text-[10px] text-gray-600 font-mono ml-1">
-              · {sessionId.slice(0, 8)}
-            </span>
-          )}
-        </div>
+        {/* Project pill — clickable, opens project picker dropdown */}
+        <ProjectPickerPill activeProject={activeProject} sessionId={sessionId} tab={tab} />
 
         <div className="flex items-center gap-0.5">
           {TABS.map((t) => {
@@ -93,3 +84,72 @@ export default function ChatTabs() {
     </div>
   )
 }
+
+
+function ProjectPickerPill({ activeProject, sessionId, tab }) {
+  const ref = React.useRef(null)
+  const [open, setOpen] = React.useState(false)
+  const projects = useStore((s) => s.projects) || []
+  const setActiveProject = useStore((s) => s.setActiveProject)
+
+  React.useEffect(() => {
+    if (!open) return
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  const pick = (p) => { setActiveProject(p); setOpen(false) }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900 border border-gray-800 hover:bg-gray-800 hover:border-gray-700 transition-colors whitespace-nowrap"
+        title="Switch project"
+      >
+        <Brain className="w-3 h-3 text-brand-400" />
+        <span className="text-xs font-medium text-gray-200">
+          {activeProject?.name || 'Default Project'}
+        </span>
+        {sessionId && tab === 'chat' && (
+          <span className="text-[10px] text-gray-600 font-mono ml-1">
+            · {sessionId.slice(0, 8)}
+          </span>
+        )}
+        <ChevronDown className="w-3 h-3 text-gray-500 ml-0.5" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-40 min-w-[12rem] rounded-md bg-gray-900 border border-gray-700 shadow-xl py-1">
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-gray-500">
+            Projects
+          </div>
+          {projects.length === 0 && (
+            <div className="px-2 py-1 text-xs text-gray-500 italic">No projects</div>
+          )}
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => pick(p)}
+              className="w-full text-left px-2 py-1.5 text-xs flex items-center gap-2 hover:bg-gray-800"
+            >
+              <Check className={`w-3 h-3 ${activeProject?.id === p.id ? 'text-brand-400' : 'text-transparent'}`} />
+              <span className={activeProject?.id === p.id ? 'text-white font-medium' : 'text-gray-300'}>
+                {p.name}
+              </span>
+            </button>
+          ))}
+          <div className="border-t border-gray-800 mt-1 pt-1">
+            <a
+              href="/projects"
+              className="block px-2 py-1.5 text-xs text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+            >
+              Manage projects →
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
