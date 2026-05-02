@@ -1,5 +1,2 @@
-import Chat from '../components/Chat'
-
-export default function ChatPage() {
-  return <Chat />
-}
+import ChatTabs from '../components/ChatTabs'
+export default function ChatPage() { return <ChatTabs /> }
