@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pantheon",
     description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
-    version="2026.05.02.G8",
+    version="2026.05.02.G8a",
     lifespan=lifespan,
 )
 

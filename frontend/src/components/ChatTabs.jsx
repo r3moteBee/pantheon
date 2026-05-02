@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import {
   MessageSquare, Brain, ListTodo, Github, FolderOpen, Settings,
@@ -87,14 +88,29 @@ export default function ChatTabs() {
 
 
 function ProjectPickerPill({ activeProject, sessionId, tab }) {
-  const ref = React.useRef(null)
-  const [open, setOpen] = React.useState(false)
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+  const [open, setOpen] = useState(false)
+  const [coords, setCoords] = useState({ left: 0, top: 0 })
   const projects = useStore((s) => s.projects) || []
   const setActiveProject = useStore((s) => s.setActiveProject)
 
+  // Position the menu beneath the trigger, anchored to its bounding rect.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return
+    const r = triggerRef.current.getBoundingClientRect()
+    setCoords({ left: r.left, top: r.bottom + 4 })
+  }, [open])
+
+  // Close on outside click. Trigger and portal'd menu both count as inside.
   React.useEffect(() => {
     if (!open) return
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    const onDoc = (e) => {
+      const t = e.target
+      if (triggerRef.current && triggerRef.current.contains(t)) return
+      if (menuRef.current && menuRef.current.contains(t)) return
+      setOpen(false)
+    }
     document.addEventListener('mousedown', onDoc)
     return () => document.removeEventListener('mousedown', onDoc)
   }, [open])
@@ -102,8 +118,9 @@ function ProjectPickerPill({ activeProject, sessionId, tab }) {
   const pick = (p) => { setActiveProject(p); setOpen(false) }
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900 border border-gray-800 hover:bg-gray-800 hover:border-gray-700 transition-colors whitespace-nowrap"
         title="Switch project"
@@ -119,8 +136,12 @@ function ProjectPickerPill({ activeProject, sessionId, tab }) {
         )}
         <ChevronDown className="w-3 h-3 text-gray-500 ml-0.5" />
       </button>
-      {open && (
-        <div className="absolute left-0 top-full mt-1 z-40 min-w-[12rem] rounded-md bg-gray-900 border border-gray-700 shadow-xl py-1">
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          className="rounded-md bg-gray-900 border border-gray-700 shadow-xl py-1 min-w-[12rem]"
+          style={{ position: 'fixed', left: coords.left, top: coords.top, zIndex: 9999 }}
+        >
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-gray-500">
             Projects
           </div>
@@ -147,9 +168,10 @@ function ProjectPickerPill({ activeProject, sessionId, tab }) {
               Manage projects →
             </a>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
 
