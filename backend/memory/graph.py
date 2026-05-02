@@ -304,10 +304,15 @@ class GraphMemory:
         ]
 
     async def list_edges(self, limit: int = 200) -> list[dict[str, Any]]:
-        """List all edges for this project."""
+        """List all edges for this project.
+
+        Returns both node ids and labels so the visualizer can stitch
+        edges to nodes by id while the list view can show labels.
+        """
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT e.id, e.relationship, e.weight, e.created_at,
+                       e.node_a_id, e.node_b_id,
                        na.label as node_a_label, na.node_type as node_a_type,
                        nb.label as node_b_label, nb.node_type as node_b_type
                 FROM graph_edges e
@@ -316,7 +321,14 @@ class GraphMemory:
                 WHERE e.project_id = ?
                 ORDER BY e.created_at DESC LIMIT ?
             """, (self.project_id, limit)).fetchall()
-        return [dict(r) for r in rows]
+        # Frontend-friendly aliases: source/target = node ids
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["source"] = d.get("node_a_id")
+            d["target"] = d.get("node_b_id")
+            out.append(d)
+        return out
 
     async def delete_node(self, node_id: str) -> bool:
         """Delete a node and all its edges."""

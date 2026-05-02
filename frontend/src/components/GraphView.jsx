@@ -17,6 +17,8 @@ export default function GraphView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [typeFilter, setTypeFilter] = useState('')
+  const [view, setView] = useState('graph')  // 'graph' | 'list'
+  const [listSearch, setListSearch] = useState('')
 
   // Path-finder state
   const [fromInput, setFromInput] = useState('')
@@ -135,6 +137,20 @@ export default function GraphView() {
           </button>
         )}
         <span className="ml-auto" />
+        <div className="flex items-center gap-0.5 bg-gray-900 border border-gray-800 rounded p-0.5">
+          <button
+            onClick={() => setView('graph')}
+            className={`text-xs px-2 py-0.5 rounded ${view === 'graph' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+          >
+            Graph
+          </button>
+          <button
+            onClick={() => setView('list')}
+            className={`text-xs px-2 py-0.5 rounded ${view === 'list' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+          >
+            List
+          </button>
+        </div>
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
@@ -161,7 +177,7 @@ export default function GraphView() {
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Canvas (graph) or list */}
       <div className="flex-1 min-h-0 relative">
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
@@ -178,11 +194,19 @@ export default function GraphView() {
             This project's graph is empty. Save artifacts or chat — entities are extracted automatically.
           </div>
         )}
-        {!loading && !error && fgData.entities.length > 0 && (
+        {!loading && !error && view === 'graph' && fgData.entities.length > 0 && (
           <ForceGraph
             entities={fgData.entities}
             relationships={fgData.relationships}
             pathHighlight={pathHighlight}
+          />
+        )}
+        {!loading && !error && view === 'list' && (
+          <ListView
+            nodes={nodes}
+            edges={edges}
+            search={listSearch}
+            setSearch={setListSearch}
           />
         )}
       </div>
@@ -244,6 +268,101 @@ function NodeAutocomplete({ value, onChange, suggestions, placeholder }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+
+function ListView({ nodes, edges, search, setSearch }) {
+  const lower = (search || '').toLowerCase()
+  const matchedNodes = nodes.filter((n) =>
+    !lower
+    || (n.label || '').toLowerCase().includes(lower)
+    || (n.node_type || '').toLowerCase().includes(lower)
+  )
+  const matchedEdges = edges.filter((e) =>
+    !lower
+    || (e.relationship || '').toLowerCase().includes(lower)
+    || (e.node_a_label || '').toLowerCase().includes(lower)
+    || (e.node_b_label || '').toLowerCase().includes(lower)
+  )
+
+  // Group nodes by type
+  const byType = {}
+  for (const n of matchedNodes) {
+    const t = n.node_type || 'other'
+    ;(byType[t] = byType[t] || []).push(n)
+  }
+  const types = Object.keys(byType).sort()
+
+  return (
+    <div className="h-full overflow-y-auto p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Search className="w-3 h-3 text-gray-500" />
+        <input
+          type="text"
+          placeholder="Filter nodes / edges by label or type"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="flex-1 max-w-md text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
+        />
+        <span className="text-[10px] text-gray-500">
+          {matchedNodes.length} node{matchedNodes.length === 1 ? '' : 's'} ·
+          {' '}{matchedEdges.length} edge{matchedEdges.length === 1 ? '' : 's'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Nodes column */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Nodes</h3>
+          {types.length === 0 && <div className="text-xs text-gray-500 italic">No nodes match.</div>}
+          {types.map((t) => (
+            <div key={t} className="mb-3">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{t} ({byType[t].length})</div>
+              <div className="space-y-1">
+                {byType[t].map((n) => (
+                  <div
+                    key={n.id}
+                    className="px-2 py-1 rounded border border-gray-800 bg-gray-900 text-xs flex items-center justify-between"
+                  >
+                    <span className="text-gray-200 truncate">{n.label}</span>
+                    {n.metadata?.description && (
+                      <span className="text-[10px] text-gray-500 truncate ml-2 max-w-xs">
+                        {n.metadata.description}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Edges column */}
+        <div>
+          <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Edges</h3>
+          {matchedEdges.length === 0 && (
+            <div className="text-xs text-gray-500 italic">
+              {edges.length === 0
+                ? 'No edges in this project graph yet. Edges form when extraction finds explicit relationships in your content.'
+                : 'No edges match the filter.'}
+            </div>
+          )}
+          <div className="space-y-1">
+            {matchedEdges.map((e) => (
+              <div
+                key={e.id}
+                className="px-2 py-1 rounded border border-gray-800 bg-gray-900 text-xs flex items-center gap-2"
+              >
+                <span className="text-gray-200 truncate flex-1">{e.node_a_label}</span>
+                <span className="text-brand-300 italic shrink-0">— {e.relationship} →</span>
+                <span className="text-gray-200 truncate flex-1 text-right">{e.node_b_label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
