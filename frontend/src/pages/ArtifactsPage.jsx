@@ -106,16 +106,24 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   }
 
   const handleBulkExport = async () => {
-    const res = await fetch('/api/artifacts/bulk/export', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: Array.from(selected) }),
-    })
-    const blob = await res.blob()
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = 'artifacts.zip'; a.click()
-    URL.revokeObjectURL(url)
+    try {
+      const res = await artifactsApi.bulkExport(Array.from(selected))
+      // Verify content-type — if the auth middleware returned HTML we want
+      // to surface that rather than save a broken file as .zip.
+      const ct = (res.headers?.['content-type'] || '').toLowerCase()
+      if (!ct.includes('zip') && !ct.includes('octet-stream')) {
+        const text = await res.data.text?.()
+        alert('Export returned non-zip response: ' + (text || ct).slice(0, 200))
+        return
+      }
+      const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/zip' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = 'artifacts.zip'; a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      alert('Export failed: ' + (e?.response?.data?.detail || e.message))
+    }
   }
 
   return (
