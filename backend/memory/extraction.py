@@ -299,6 +299,7 @@ async def run_extraction(
     project_id: str = "default",
     session_id: str | None = None,
     provider: Any | None = None,
+    min_messages: int = 4,
 ) -> dict[str, int]:
     """Convenience function for one-shot extraction.
 
@@ -307,6 +308,7 @@ async def run_extraction(
     extractor = MemoryExtractor(
         memory_manager=memory_manager,
         provider=provider,
+        min_messages=min_messages,
     )
     return await extractor.extract_from_messages(
         messages=messages,

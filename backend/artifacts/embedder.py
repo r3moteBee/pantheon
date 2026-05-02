@@ -92,6 +92,26 @@ async def _embed(artifact: dict[str, Any], project_id: str) -> None:
         )
     logger.info("embedded artifact %s: %d chunks", artifact["id"], len(chunks))
 
+    # Graph + entity extraction. Run the same MemoryExtractor used after
+    # conversations so entities land in the project's graph and facts in
+    # semantic memory. Treat the artifact content as a single "user"
+    # message — the extraction prompt's persona-exclusion clause keeps
+    # any embedded role-play out of the graph.
+    try:
+        from memory.extraction import run_extraction
+        await run_extraction(
+            messages=[
+                {"role": "system", "content": f"Artifact: {artifact.get('path', '')}"},
+                {"role": "user", "content": artifact.get("content") or ""},
+            ],
+            memory_manager=mgr,
+            project_id=project_id,
+            session_id=f"artifact:{artifact['id']}",
+            min_messages=1,
+        )
+    except Exception:
+        logger.exception("graph extraction on artifact %s failed", artifact.get("id"))
+
 
 def _chunk(text: str, chunk_chars: int = 2000, overlap: int = 200) -> list[str]:
     if len(text) <= chunk_chars:

@@ -939,9 +939,17 @@ async def execute_tool(
             from artifacts import embedder as _emb
             store = get_store()
             if tool_name == "save_to_artifact":
+                from artifacts.store import project_slug as _ps
+                raw_path = tool_args["path"]
+                # If the agent didn't include the project slug, prepend it so
+                # artifacts cluster by project in the folder tree.
+                proj = _ps(effective_project)
+                norm = raw_path.lstrip("/").strip()
+                if not norm.startswith(f"{proj}/"):
+                    norm = f"{proj}/{norm}"
                 a = store.create(
                     project_id=effective_project,
-                    path=tool_args["path"],
+                    path=norm,
                     content=tool_args["content"],
                     content_type=tool_args.get("content_type") or "text/markdown",
                     title=tool_args.get("title"),

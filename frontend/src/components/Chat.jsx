@@ -397,8 +397,10 @@ export default function Chat() {
       .replace(/^-+|-+$/g, '')
     const slug = stripped || 'response'
     const date = new Date().toISOString().slice(0, 10)
-    setSaveModal({ content, defaultPath: `responses/${date}-${slug}.md` })
-  }, [])
+    const projName = activeProject?.name || 'default'
+    const projSlug = projName.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase().replace(/^-+|-+$/g, '') || 'default'
+    setSaveModal({ content, defaultPath: `${projSlug}/responses/${date}-${slug}.md` })
+  }, [activeProject])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
