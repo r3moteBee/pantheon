@@ -124,16 +124,26 @@ async def list_artifacts(
     limit: int = 200,
     offset: int = 0,
 ) -> dict[str, Any]:
-    items = get_store().list(
-        project_id=project_id, tag=tag, content_type=content_type,
-        path_prefix=path_prefix, pinned_only=pinned_only, search=search,
-        sort=sort, limit=limit, offset=offset,
-    )
+    # 'all' or empty means cross-project browse
+    if project_id in ("all", ""):
+        items = get_store().list_all_projects(
+            tag=tag, content_type=content_type,
+            path_prefix=path_prefix, pinned_only=pinned_only, search=search,
+            sort=sort, limit=limit, offset=offset,
+        )
+    else:
+        items = get_store().list(
+            project_id=project_id, tag=tag, content_type=content_type,
+            path_prefix=path_prefix, pinned_only=pinned_only, search=search,
+            sort=sort, limit=limit, offset=offset,
+        )
     return {"artifacts": items, "count": len(items)}
 
 
 @router.get("/artifacts/folders")
 async def list_folders(project_id: str = Query("default")) -> dict[str, Any]:
+    if project_id in ("all", ""):
+        return {"folders": get_store().folder_tree_all()}
     return {"folders": get_store().folder_tree(project_id)}
 
 

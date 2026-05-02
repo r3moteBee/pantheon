@@ -42,7 +42,9 @@ function langExtension(ct) {
 
 export default function ArtifactsPage() {
   const activeProject = useStore((s) => s.activeProject)
-  const projectId = activeProject?.id || 'default'
+  const projects = useStore((s) => s.projects) || []
+  const [projectScope, setProjectScope] = useState('current')  // 'current' | 'all'
+  const projectId = projectScope === 'all' ? 'all' : (activeProject?.id || 'default')
 
   const [items, setItems] = useState([])
   const [folders, setFolders] = useState([])
@@ -86,7 +88,7 @@ export default function ArtifactsPage() {
     const id = setTimeout(refresh, search ? 300 : 0)
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, filterFolder, filterTag, filterPinned, search, sort])
+  }, [projectId, projectScope, filterFolder, filterTag, filterPinned, search, sort])
 
   const toggleSelect = (id) => {
     const next = new Set(selected)
@@ -118,6 +120,26 @@ export default function ArtifactsPage() {
     <div className="h-full flex">
       {/* Left rail: folders + tags */}
       <div className="w-56 border-r border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-4">
+        <div>
+          <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
+            Project scope
+          </div>
+          <div className="flex gap-1 mb-1 text-xs">
+            <button
+              onClick={() => setProjectScope('current')}
+              className={`flex-1 px-2 py-1 rounded ${projectScope === 'current' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+              title={activeProject?.name || 'default'}
+            >
+              {activeProject?.name || 'Default'}
+            </button>
+            <button
+              onClick={() => setProjectScope('all')}
+              className={`flex-1 px-2 py-1 rounded ${projectScope === 'all' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+            >
+              All
+            </button>
+          </div>
+        </div>
         <div>
           <div className="text-xs font-semibold text-gray-400 uppercase mb-2 flex items-center gap-1">
             <FolderOpen className="w-3 h-3" /> Folders
@@ -273,7 +295,12 @@ export default function ArtifactsPage() {
                       {a.title || a.path}
                     </div>
                     <div className="text-[10px] text-gray-500 truncate">{a.path}</div>
-                    <div className="flex flex-wrap gap-1 mt-1">
+                    <div className="flex flex-wrap gap-1 mt-1 items-center">
+                      {projectScope === 'all' && a.project_id && (
+                        <span className="text-[10px] px-1.5 bg-brand-900 rounded text-brand-300">
+                          {(projects.find((p) => p.id === a.project_id)?.name) || a.project_id}
+                        </span>
+                      )}
                       {(a.tags || []).map((t) => (
                         <span key={t} className="text-[10px] px-1 bg-gray-800 rounded text-gray-400">{t}</span>
                       ))}

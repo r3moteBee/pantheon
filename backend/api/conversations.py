@@ -170,21 +170,22 @@ def _find_chat_export(store, project_id: str, session_id: str) -> dict[str, Any]
 
 def _unique_chat_path(store, project_id: str, session_id: str, title: str,
                       *, force_unique: bool = False) -> str:
+    from artifacts.store import project_slug
+    proj = project_slug(project_id)
     base_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     slug = _slug(title)
-    candidate = f"chats/{base_date}-{slug}.md"
+    candidate = f"{proj}/chats/{base_date}-{slug}.md"
     if not force_unique and not store.get_by_path(project_id, candidate):
         return candidate
-    # Disambiguate with HHMM, then a counter if even that's taken.
     hm = datetime.now(timezone.utc).strftime("%H%M")
-    candidate = f"chats/{base_date}-{hm}-{slug}.md"
+    candidate = f"{proj}/chats/{base_date}-{hm}-{slug}.md"
     if not store.get_by_path(project_id, candidate):
         return candidate
     for i in range(2, 50):
-        c2 = f"chats/{base_date}-{hm}-{slug}-{i}.md"
+        c2 = f"{proj}/chats/{base_date}-{hm}-{slug}-{i}.md"
         if not store.get_by_path(project_id, c2):
             return c2
-    return f"chats/{base_date}-{hm}-{session_id[:8]}.md"
+    return f"{proj}/chats/{base_date}-{hm}-{session_id[:8]}.md"
 
 
 def _render_chat_markdown(session_id: str, messages: list[dict[str, Any]]) -> str:

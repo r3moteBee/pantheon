@@ -400,6 +400,62 @@ class ArtifactStore:
 
     # ── Folder / tag aggregation ────────────────────────────────
 
+    def list_all_projects(
+        self,
+        *,
+        tag: str | None = None,
+        content_type: str | None = None,
+        path_prefix: str | None = None,
+        pinned_only: bool = False,
+        search: str | None = None,
+        sort: str = "modified_desc",
+        limit: int = 200,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Cross-project listing for the 'All projects' UI toggle."""
+        order = {
+            "modified_desc": "updated_at DESC",
+            "modified_asc":  "updated_at ASC",
+            "created_desc":  "created_at DESC",
+            "title_asc":     "title COLLATE NOCASE ASC",
+            "size_desc":     "size_bytes DESC",
+        }.get(sort, "updated_at DESC")
+        clauses = ["deleted_at IS NULL"]
+        args: list[Any] = []
+        if content_type:
+            clauses.append("content_type = ?"); args.append(content_type)
+        if path_prefix:
+            clauses.append("path LIKE ?"); args.append(path_prefix + "%")
+        if pinned_only:
+            clauses.append("pinned = 1")
+        if search:
+            clauses.append("(title LIKE ? OR content LIKE ? OR tags LIKE ?)")
+            wildcard = f"%{search}%"
+            args.extend([wildcard, wildcard, wildcard])
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM artifacts WHERE {' AND '.join(clauses)} "
+                f"ORDER BY pinned DESC, {order} LIMIT ? OFFSET ?",
+                (*args, limit, offset),
+            ).fetchall()
+        results = [self._hydrate_artifact(r) for r in rows]
+        if tag:
+            results = [r for r in results if tag in (r.get("tags") or [])]
+        return results
+
+    def folder_tree_all(self) -> list[str]:
+        """Folder tree across all projects (path stays as stored)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT path FROM artifacts WHERE deleted_at IS NULL"
+            ).fetchall()
+        folders: set[str] = set()
+        for r in rows:
+            parts = (r["path"] or "").split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                folders.add("/".join(parts[:i]))
+        return sorted(p for p in folders if p)
+
     def folder_tree(self, project_id: str = "default") -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -467,3 +523,30 @@ def get_store() -> ArtifactStore:
     if _INSTANCE is None:
         _INSTANCE = ArtifactStore()
     return _INSTANCE
+
+def project_slug(project_id: str) -> str:
+    """Return a filesystem-safe slug for a project's display name.
+
+    Used by save flows to prefix artifact paths so artifacts cluster by
+    project in the folder tree (e.g. 'my-project/chats/2026-05-01-foo.md').
+    Falls back to the project_id if the project record cannot be loaded.
+    """
+    import json
+    import re
+    from pathlib import Path
+    try:
+        from config import get_settings
+        meta = Path(get_settings().db_dir) / "projects.json"
+        if meta.exists():
+            data = json.loads(meta.read_text() or "{}")
+            row = data.get(project_id) if isinstance(data, dict) else None
+            name = (row or {}).get("name") if isinstance(row, dict) else None
+            if name:
+                slug = re.sub(r"[^a-zA-Z0-9]+", "-", name).strip("-").lower()
+                if slug:
+                    return slug
+    except Exception:
+        pass
+    if project_id and project_id != "default":
+        return re.sub(r"[^a-zA-Z0-9]+", "-", project_id).strip("-").lower() or "default"
+    return "default"
