@@ -20,8 +20,40 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def get_all_tool_schemas() -> list[dict[str, Any]]:
-    """Return built-in tools + browser tools (if enabled) + any MCP-provided tools."""
+def _project_disabled_mcp_servers(project_id: str | None) -> set[str]:
+    """Return server_ids the project has explicitly disabled.
+
+    Stored in data/db/phase_g.db project_mcp_enablement table. Servers
+    with no row default to enabled (preserves pre-Phase-G behavior).
+    """
+    if not project_id:
+        return set()
+    try:
+        import sqlite3
+        from config import get_settings
+        db = get_settings().db_dir / "phase_g.db"
+        if not db.exists():
+            return set()
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT server_id FROM project_mcp_enablement "
+            "WHERE project_id = ? AND enabled = 0",
+            (project_id,),
+        ).fetchall()
+        conn.close()
+        return {r["server_id"] for r in rows}
+    except Exception as e:
+        logger.debug("MCP enablement lookup failed: %s", e)
+        return set()
+
+
+def get_all_tool_schemas(project_id: str | None = None) -> list[dict[str, Any]]:
+    """Return built-in tools + browser tools (if enabled) + any MCP-provided tools.
+
+    When project_id is given, MCP tools for servers explicitly disabled
+    on that project are dropped.
+    """
     schemas = list(TOOL_SCHEMAS)
     try:
         from agent.browser_tools import browser_enabled, BROWSER_TOOL_SCHEMAS
@@ -32,7 +64,19 @@ def get_all_tool_schemas() -> list[dict[str, Any]]:
     try:
         from mcp_client.manager import get_mcp_manager
         mgr = get_mcp_manager()
-        mcp_schemas = mgr.get_all_tool_schemas()
+        mcp_schemas = mgr.get_all_tool_schemas() or []
+        if project_id and mcp_schemas:
+            disabled = _project_disabled_mcp_servers(project_id)
+            if disabled:
+                # MCP tools are conventionally prefixed mcp_<server_id>_<tool>
+                def is_disabled(spec):
+                    name = (((spec or {}).get("function") or {}).get("name")) or ""
+                    if not name.startswith("mcp_"):
+                        return False
+                    rest = name[len("mcp_"):]
+                    server = rest.split("_", 1)[0]
+                    return server in disabled
+                mcp_schemas = [sp for sp in mcp_schemas if not is_disabled(sp)]
         if mcp_schemas:
             schemas.extend(mcp_schemas)
             logger.debug("Added %d MCP tools to agent schema", len(mcp_schemas))
@@ -1005,37 +1049,55 @@ async def execute_tool(
             return f"Unknown artifact tool: {tool_name}"
 
         elif tool_name.startswith("github_"):
-            from api.sources import get_connection, get_default_connection, get_token, mark_used, mark_error
+            from api.connections import (
+                get_connection, get_token, mark_used, mark_error,
+                get_project_repo_for_tools, get_project_binding,
+            )
             from integrations.github import GitHubClient, GitHubAuthError, GitHubError, GitHubForbidden, GitHubNotFound
-            connection_id = tool_args.get("connection_id")
-            if connection_id:
-                conn_row = get_connection(connection_id)
-            else:
-                conn_row = get_default_connection(effective_project)
             if tool_name == "github_list_connections":
-                from api.sources import _connect as _gh_connect
+                from api.connections import _connect as _gh_connect
                 with _gh_connect() as cn:
                     rows = cn.execute(
                         "SELECT id, full_name, default_branch, account_login, status "
-                        "FROM github_connections WHERE project_id = ? ORDER BY created_at DESC",
-                        (effective_project,),
+                        "FROM github_connections ORDER BY created_at DESC"
                     ).fetchall()
                 items = [
                     f"- id={r['id']} repo={r['full_name']} branch={r['default_branch']} status={r['status']}"
                     for r in rows
                 ]
-                return "GitHub connections:\n" + ("\n".join(items) if items else "(none)")
+                binding = get_project_binding(effective_project)
+                bound_line = (
+                    f"\nProject {effective_project} is bound to repo {binding['owner']}/{binding['repo']} "
+                    f"(connection {binding['connection_id']})"
+                ) if binding else f"\nProject {effective_project} has no repo bound."
+                return "GitHub connections:\n" + ("\n".join(items) if items else "(none)") + bound_line
+
+            # Resolve which repo this project should act on
+            connection_id = tool_args.get("connection_id")
+            if connection_id:
+                # Explicit connection — caller picked owner/repo themselves
+                conn_row = get_connection(connection_id)
+                owner = (tool_args.get("owner") or (conn_row or {}).get("owner") or "")
+                repo = (tool_args.get("repo") or (conn_row or {}).get("repo") or "")
+            else:
+                spec = get_project_repo_for_tools(effective_project)
+                if not spec:
+                    return (
+                        f"No repo bound to project {effective_project}. Bind one "
+                        f"in Settings → Connections (add a PAT) then in the "
+                        f"Projects page pick a repo for this project."
+                    )
+                conn_row = get_connection(spec["connection_id"])
+                owner = spec["owner"]; repo = spec["repo"]
             if not conn_row:
                 return (
-                    "No active GitHub connection for this project. Add one in "
-                    "Settings → Sources, then retry."
+                    "Connection not found. Re-add the GitHub PAT in "
+                    "Settings → Connections."
                 )
             token = get_token(conn_row["id"])
             if not token:
-                return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Sources."
+                return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Connections."
             client = GitHubClient(token)
-            owner = conn_row["owner"]
-            repo = conn_row["repo"]
             try:
                 if tool_name == "github_read_file":
                     res = await client.read_file(owner, repo, tool_args["path"], ref=tool_args.get("ref"))
