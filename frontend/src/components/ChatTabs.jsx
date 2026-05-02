@@ -42,8 +42,21 @@ export default function ChatTabs() {
 
   return (
     <div className="h-full flex flex-col">
-      {/* Unified top bar: tabs (left) · project + session (center) · actions (right) */}
+      {/* Unified top bar: project (far left) · tabs · spacer · actions (right) */}
       <div className="border-b border-gray-800 bg-gray-950 px-3 py-1.5 flex items-center gap-3 overflow-x-auto">
+        {/* Project name pill — anchored far left, always visible */}
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900 border border-gray-800 whitespace-nowrap">
+          <Brain className="w-3 h-3 text-brand-400" />
+          <span className="text-xs font-medium text-gray-200">
+            {activeProject?.name || 'Default Project'}
+          </span>
+          {sessionId && tab === 'chat' && (
+            <span className="text-[10px] text-gray-600 font-mono ml-1">
+              · {sessionId.slice(0, 8)}
+            </span>
+          )}
+        </div>
+
         <div className="flex items-center gap-0.5">
           {TABS.map((t) => {
             const Icon = t.icon
@@ -61,19 +74,6 @@ export default function ChatTabs() {
               </button>
             )
           })}
-        </div>
-
-        {/* Project name pill — always visible */}
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-900 border border-gray-800 whitespace-nowrap">
-          <Brain className="w-3 h-3 text-brand-400" />
-          <span className="text-xs font-medium text-gray-200">
-            {activeProject?.name || 'Default Project'}
-          </span>
-          {sessionId && tab === 'chat' && (
-            <span className="text-[10px] text-gray-600 font-mono ml-1">
-              · {sessionId.slice(0, 8)}
-            </span>
-          )}
         </div>
 
         <span className="ml-auto" />
