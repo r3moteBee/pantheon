@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield, Cpu, Plug, Key, Globe, Library, Clock, ArrowUpDown, Server } from 'lucide-react'
+import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield, Cpu, Plug, Key, Globe, Library, Clock, ArrowUpDown, Server, User as UserIcon } from 'lucide-react'
 import { useStore } from '../store'
-import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi } from '../api/client'
+import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, taskRunsApi } from '../api/client'
 import SecurityLog from './SecurityLog'
+import PersonalityEditor from './PersonalityEditor'
 
 function LLMSection() {
   const [settings, setSettings] = useState({
@@ -1735,12 +1736,134 @@ function SandboxSection() {
   )
 }
 
+
+
+
+// ── Cross-project task-run dashboard (uses /api/tasks/runs) ─────────────────
+const RUN_STATUS_BADGE = {
+  running:   'bg-blue-900 text-blue-200',
+  completed: 'bg-green-900 text-green-200',
+  failed:    'bg-red-900 text-red-200',
+  cancelled: 'bg-amber-900 text-amber-200',
+  queued:    'bg-gray-800 text-gray-300',
+}
+
+function fmtDuration(ms) {
+  if (!ms && ms !== 0) return ''
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms/1000).toFixed(1)}s`
+  return `${Math.floor(ms/60_000)}m ${Math.floor((ms%60_000)/1000)}s`
+}
+
+function TaskRunsSection() {
+  const [runs, setRuns] = useState([])
+  const [projectNames, setProjectNames] = useState({})
+  const [filter, setFilter] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    projectsApi.list().then((res) => {
+      const m = {}
+      for (const p of res.data.projects || []) m[p.id] = p.name || p.id
+      m.default = 'Default'
+      setProjectNames(m)
+    }).catch(() => {})
+  }, [])
+
+  const refresh = async () => {
+    setLoading(true)
+    try {
+      const params = { limit: 100 }
+      if (filter) params.status = filter
+      const res = await taskRunsApi.list(params)
+      setRuns(res.data?.runs || [])
+    } finally { setLoading(false) }
+  }
+  useEffect(() => { refresh() }, [filter])
+
+  const projectName = (id) => projectNames[id] || id
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+          <Clock className="w-4 h-4 text-brand-400" />
+          Task runs (cross-project)
+        </h3>
+        <div className="flex items-center gap-2">
+          <select
+            value={filter} onChange={(e) => setFilter(e.target.value)}
+            className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
+          >
+            <option value="">All statuses</option>
+            <option value="running">Running</option>
+            <option value="completed">Completed</option>
+            <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
+            <RefreshCw className="w-3 h-3" /> Refresh
+          </button>
+        </div>
+      </div>
+      {loading && <div className="text-xs text-gray-500">Loading…</div>}
+      {!loading && runs.length === 0 && (
+        <div className="text-sm text-gray-500 italic">
+          No autonomous task runs yet across any project.
+        </div>
+      )}
+      <div className="space-y-1">
+        {runs.map((r) => (
+          <div key={r.id} className="p-2.5 rounded border border-gray-800 bg-gray-900">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${RUN_STATUS_BADGE[r.status] || RUN_STATUS_BADGE.queued}`}>
+                {r.status}
+              </span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900 text-brand-200">
+                {projectName(r.project_id)}
+              </span>
+              <span className="text-sm font-medium text-gray-200 truncate flex-1">{r.task_name}</span>
+              <span className="text-[10px] text-gray-500">{r.started_at?.slice(0,16).replace('T',' ')}</span>
+              {r.duration_ms != null && (
+                <span className="text-[10px] text-gray-500">· {fmtDuration(r.duration_ms)}</span>
+              )}
+            </div>
+            {r.description && <div className="text-xs text-gray-400 mt-1">{r.description}</div>}
+            {r.error && <div className="text-xs text-red-400 mt-1">{r.error}</div>}
+            {r.session_id && (
+              <div className="text-[10px] text-gray-600 mt-1 font-mono">session: {r.session_id.slice(0,16)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PersonalitySection() {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2 mb-2">
+        <UserIcon className="w-4 h-4 text-brand-400" />
+        Global agent identity
+      </h3>
+      <p className="text-[11px] text-gray-500 mb-4">
+        This is the agent's stable identity across every project (the
+        soul.md / agent.md files). Per-project tone overrides live in
+        each project's settings tab.
+      </p>
+      <PersonalityEditor />
+    </div>
+  )
+}
+
 export default function Settings() {
   const [tab, setTab] = useState('llms')
 
   const tabs = [
     { id: 'llms', label: 'LLMs', icon: Cpu },
     { id: 'integrations', label: 'Integrations', icon: Plug },
+    { id: 'personality', label: 'Personality', icon: UserIcon },
     { id: 'skills', label: 'Skills', icon: Library },
     { id: 'tasks', label: 'Tasks', icon: Clock },
     { id: 'security', label: 'Security', icon: Shield },
@@ -1796,6 +1919,15 @@ export default function Settings() {
           <div className="h-full overflow-y-auto scrollbar-thin">
             <div className="max-w-3xl mx-auto p-6 space-y-8">
               <GlobalTasksSection />
+              <div className="border-t border-gray-800" />
+              <TaskRunsSection />
+            </div>
+          </div>
+        )}
+        {tab === 'personality' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-3xl mx-auto p-6">
+              <PersonalitySection />
             </div>
           </div>
         )}

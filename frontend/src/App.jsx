@@ -103,7 +103,7 @@ export default function App() {
           <Route path="sources" element={<Navigate to="/connections" replace />} />
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="personas" element={<PersonasPage />} />
-          <Route path="personality" element={<PersonalityPage />} />
+          <Route path="personality" element={<Navigate to="/settings" replace />} />
           <Route path="tasks" element={<TasksPage />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="settings" element={<SettingsPage />} />
