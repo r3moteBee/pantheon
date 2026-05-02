@@ -437,28 +437,57 @@ async def graph_path(
     from_: str = Query(..., alias="from"),
     to: str = Query(...),
     project_id: str = Query(default="default"),
+    k: int = Query(default=1, ge=1, le=10),
+    weighted: bool = Query(default=False),
 ) -> dict[str, Any]:
-    """Find the shortest path between two nodes by label.
+    """Find the shortest path(s) between two nodes by label.
 
-    Returns:
-      {
-        from, to, found: bool,
-        path:  [ {id, label, node_type, ...} ],   # nodes in order
-        edges: [ {id, source, target, relationship, weight} ],   # edges between consecutive nodes
-        hops:  int                                # len(path) - 1
-      }
+    k > 1 returns up to k alternative paths (Yen's algorithm).
+    weighted=true uses Dijkstra over 1/edge_weight so high-weight
+    relationships are preferred (shorter logical distance).
+
+    Single-path response (k=1):
+      {from, to, found, path:[node...], edges:[edge...], hops}
+
+    Multi-path response (k>1):
+      {from, to, found, paths:[
+        {path:[node...], edges:[edge...], hops},
+        ...
+      ]}
     """
     from memory.graph import GraphMemory
     g = GraphMemory(project_id=project_id)
-    path_nodes = await g.get_path(label_a=from_, label_b=to)
-    if not path_nodes:
-        return {"from": from_, "to": to, "found": False, "path": [],
-                "edges": [], "hops": 0}
-    # For each consecutive pair, look up the edge connecting them.
+    if k == 1 and not weighted:
+        path_nodes = await g.get_path(label_a=from_, label_b=to)
+        if not path_nodes:
+            return {"from": from_, "to": to, "found": False, "path": [],
+                    "edges": [], "hops": 0}
+        # k=1, unweighted: use the original single-path response shape.
+        edges = _path_edges(g, project_id, path_nodes)
+        return {
+            "from": from_, "to": to, "found": True,
+            "path": path_nodes, "edges": edges, "hops": len(path_nodes) - 1,
+        }
+
+    # k > 1 or weighted — return paths[]
+    multi = await g.get_paths(label_a=from_, label_b=to, k=k, weighted=weighted)
+    if not multi:
+        return {"from": from_, "to": to, "found": False, "paths": []}
+    out = []
+    for p in multi:
+        out.append({
+            "path": p,
+            "edges": _path_edges(g, project_id, p),
+            "hops": len(p) - 1,
+        })
+    return {"from": from_, "to": to, "found": True, "paths": out, "weighted": weighted}
+
+
+def _path_edges(g, project_id: str, path_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Helper: look up edges between consecutive nodes on a path."""
     import sqlite3
     edges: list[dict[str, Any]] = []
-    db = g.db_path
-    conn = sqlite3.connect(db); conn.row_factory = sqlite3.Row
+    conn = sqlite3.connect(g.db_path); conn.row_factory = sqlite3.Row
     try:
         for a, b in zip(path_nodes, path_nodes[1:]):
             row = conn.execute(
@@ -475,7 +504,4 @@ async def graph_path(
                 edges.append(dict(row))
     finally:
         conn.close()
-    return {
-        "from": from_, "to": to, "found": True,
-        "path": path_nodes, "edges": edges, "hops": len(path_nodes) - 1,
-    }
+    return edges

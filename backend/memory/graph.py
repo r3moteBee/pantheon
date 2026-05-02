@@ -279,6 +279,133 @@ class GraphMemory:
 
         return []  # No path found
 
+    async def get_paths(
+        self,
+        label_a: str,
+        label_b: str,
+        *,
+        k: int = 1,
+        weighted: bool = False,
+    ) -> list[list[dict[str, Any]]]:
+        """Find up to k shortest paths between two nodes.
+
+        weighted=True uses Dijkstra over inverted edge weights (so
+        higher-weight edges produce shorter logical distance — i.e.
+        relationships marked "strong" are preferred). weighted=False
+        does pure BFS hop count, which is just k-shortest-paths via
+        Yen's-algorithm-lite.
+
+        Returns a list of paths; each path is a list of node dicts.
+        """
+        node_a = await self.get_node_by_label(label_a)
+        node_b = await self.get_node_by_label(label_b)
+        if not node_a or not node_b:
+            return []
+        start, end = node_a["id"], node_b["id"]
+        if k <= 1 and not weighted:
+            single = await self.get_path(label_a, label_b)
+            return [single] if single else []
+
+        # Build adjacency + edge weight in one query
+        with self._connect() as conn:
+            edge_rows = conn.execute(
+                "SELECT node_a_id, node_b_id, weight FROM graph_edges WHERE project_id = ?",
+                (self.project_id,),
+            ).fetchall()
+        adj: dict[str, list[tuple[str, float]]] = {}
+        for er in edge_rows:
+            w = float(er["weight"] or 0.5)
+            adj.setdefault(er["node_a_id"], []).append((er["node_b_id"], w))
+            adj.setdefault(er["node_b_id"], []).append((er["node_a_id"], w))
+
+        # Yen's k-shortest-paths
+        if weighted:
+            cost_fn = lambda w: 1.0 / max(w, 0.01)  # invert weight for Dijkstra
+        else:
+            cost_fn = lambda w: 1.0  # uniform = BFS hops
+
+        first = self._dijkstra(start, end, adj, cost_fn)
+        if not first:
+            return []
+        paths_out: list[list[str]] = [first]
+        candidates: list[tuple[float, list[str]]] = []
+        import heapq
+
+        for ki in range(1, k):
+            base = paths_out[-1]
+            for i in range(len(base) - 1):
+                spur_node = base[i]
+                root_path = base[: i + 1]
+                # Block edges that would re-create a previously-found path
+                blocked: set[tuple[str, str]] = set()
+                for p in paths_out:
+                    if len(p) > i and p[: i + 1] == root_path:
+                        blocked.add((p[i], p[i + 1]))
+                        blocked.add((p[i + 1], p[i]))
+                # Block nodes already in root (avoid loops)
+                blocked_nodes = set(root_path[:-1])
+                spur = self._dijkstra(spur_node, end, adj, cost_fn,
+                                      blocked_edges=blocked, blocked_nodes=blocked_nodes)
+                if spur:
+                    full = root_path[:-1] + spur
+                    cost = sum(
+                        cost_fn(w) for j in range(len(full) - 1)
+                        for n, w in adj.get(full[j], []) if n == full[j + 1]
+                    )
+                    heapq.heappush(candidates, (cost, full))
+            if not candidates:
+                break
+            _, next_path = heapq.heappop(candidates)
+            paths_out.append(next_path)
+
+        # Hydrate node id paths into dicts
+        result: list[list[dict[str, Any]]] = []
+        with self._connect() as conn:
+            for p in paths_out:
+                nodes_out = []
+                for nid in p:
+                    row = conn.execute(
+                        "SELECT id, label, node_type FROM graph_nodes WHERE id = ?", (nid,)
+                    ).fetchone()
+                    if row:
+                        nodes_out.append(dict(row))
+                if nodes_out:
+                    result.append(nodes_out)
+        return result
+
+    @staticmethod
+    def _dijkstra(start, end, adj, cost_fn, *, blocked_edges=None, blocked_nodes=None):
+        import heapq
+        blocked_edges = blocked_edges or set()
+        blocked_nodes = blocked_nodes or set()
+        if start in blocked_nodes:
+            return []
+        dist = {start: 0.0}
+        prev: dict[str, str] = {}
+        heap = [(0.0, start)]
+        while heap:
+            d, u = heapq.heappop(heap)
+            if u == end:
+                # Reconstruct
+                path = [u]
+                while path[-1] in prev:
+                    path.append(prev[path[-1]])
+                path.reverse()
+                return path
+            if d > dist.get(u, float("inf")):
+                continue
+            for v, w in adj.get(u, []):
+                if v in blocked_nodes:
+                    continue
+                if (u, v) in blocked_edges:
+                    continue
+                nd = d + cost_fn(w)
+                if nd < dist.get(v, float("inf")):
+                    dist[v] = nd
+                    prev[v] = u
+                    heapq.heappush(heap, (nd, v))
+        return []
+
     async def list_nodes(
         self,
         node_type: str | None = None,
