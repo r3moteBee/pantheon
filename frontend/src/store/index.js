@@ -12,6 +12,17 @@ export const useStore = create((set, get) => ({
   historyOpen: false,
   setHistoryOpen: (v) => set({ historyOpen: !!v }),
 
+  // Chat-bar settings (lifted out of Chat.jsx so the unified top bar can
+  // render them as icons across tab switches)
+  memoryRecall: true,
+  setMemoryRecall: (v) => set({ memoryRecall: !!v }),
+  contextFocus: 'balanced',           // 'broad' | 'balanced' | 'focused'
+  setContextFocus: (v) => set({ contextFocus: v }),
+  skillDiscovery: 'off',              // 'off' | 'suggest' | 'auto'
+  setSkillDiscovery: (v) => set({ skillDiscovery: v }),
+  personalityWeight: 'balanced',      // 'minimal' | 'balanced' | 'strong'
+  setPersonalityWeight: (v) => set({ personalityWeight: v }),
+
   // Chat messages (current session display)
   messages: [],
   addMessage: (msg) => set((state) => ({ messages: [...state.messages, msg] })),
