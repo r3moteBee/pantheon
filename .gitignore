@@ -40,6 +40,7 @@ frontend/dist/
 
 # Data (persisted volumes — don't commit runtime data)
 data/db/*.db
+data/*.db
 data/chroma/
 data/workspace/
 data/projects/
@@ -88,3 +89,4 @@ frontend/BUILD_SUMMARY.txt
 frontend/COMPLETION_REPORT.md
 frontend/INDEX.md
 frontend/QUICKSTART.md
+backend/data/

@@ -644,6 +644,46 @@ class MemoryManager:
         indexer = FileIndexer(memory_manager=self, project_id=self.project_id)
         return await indexer.index_directory(Path(directory), force=force)
 
+    async def index_artifact(self, artifact_id: str, force: bool = False) -> dict:
+        """Index a text artifact into semantic + graph memory.
+
+        Reads the artifact from the artifact store, then runs the
+        same chunk/embed/graph pipeline used for workspace files
+        (FileIndexer.index_text). The artifact's tags and id are
+        forwarded as frontmatter extras so chunks are filterable
+        by artifact and tags later.
+        """
+        from artifacts.store import get_store, is_text_type
+        from memory.file_indexer import FileIndexer
+
+        store = get_store()
+        a = store.get(artifact_id)
+        if not a or a.get("deleted_at"):
+            return {"skipped": True, "reason": "artifact not found"}
+        if not is_text_type(a["content_type"]):
+            return {"skipped": True, "reason": f"non-text content_type {a['content_type']}"}
+
+        text = a.get("content") or ""
+        path = a["path"]
+        is_md = (a["content_type"] or "").startswith("text/markdown") or path.endswith((".md", ".markdown"))
+        extras = {
+            "artifact_id": artifact_id,
+            "artifact_path": path,
+            "tags": a.get("tags") or [],
+        }
+        if a.get("title"):
+            extras["title"] = a["title"]
+
+        indexer = FileIndexer(memory_manager=self, project_id=self.project_id)
+        return await indexer.index_text(
+            text,
+            virtual_path=f"artifact://{artifact_id}/{path}",
+            is_markdown=is_md,
+            frontmatter_extras=extras,
+            force=force,
+            source_label=path,
+        )
+
 
 def create_memory_manager(
     project_id: str = "default",

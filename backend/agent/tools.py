@@ -333,6 +333,40 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "index_artifact",
+            "description": (
+                "Index one artifact, or every artifact under a path "
+                "prefix, into semantic memory + knowledge graph. New "
+                "artifacts are auto-indexed on save; use this to "
+                "backfill artifacts saved before that landed, to "
+                "force-reindex after editing tags, or to bulk-ingest "
+                "a folder like NBJ/. Provide either id (one artifact) "
+                "or path_prefix (folder) — pass a bare folder name like "
+                "'NBJ/' (the project slug is added automatically)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Single artifact id to index."
+                    },
+                    "path_prefix": {
+                        "type": "string",
+                        "description": "Folder prefix; index every text artifact whose path starts with this prefix. Pass bare folder name like 'NBJ/'."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Re-index even if content hash is unchanged (default false).",
+                        "default": False
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_last_response",
             "description": "Save conversation history to a file in the project workspace. By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
             "parameters": {
@@ -1150,6 +1184,59 @@ async def execute_tool(
             files = result.get("files_processed", 1)
             return f"Indexed {files} file(s): {chunks} chunks stored, {entities} entities extracted to graph."
 
+        elif tool_name == "index_artifact":
+            from artifacts.store import get_store, is_text_type, project_slug as _ps_idx
+            from memory.manager import create_memory_manager
+            store = get_store()
+            mgr = create_memory_manager(project_id=effective_project)
+            force = bool(tool_args.get("force", False))
+            aid = tool_args.get("id")
+            prefix = tool_args.get("path_prefix")
+
+            if aid:
+                result = await mgr.index_artifact(aid, force=force)
+                if result.get("skipped"):
+                    return f"Artifact {aid} skipped: {result.get('reason', 'unchanged')}"
+                return (
+                    f"Indexed artifact {aid}: "
+                    f"{result.get('chunks_stored', 0)} chunks stored, "
+                    f"{result.get('entities_extracted', 0)} entities extracted."
+                )
+
+            if prefix is not None:
+                # Apply same normalization as save/list so callers can
+                # pass a bare folder name like 'NBJ/'.
+                proj = _ps_idx(effective_project)
+                norm = (prefix or "").lstrip("/").strip()
+                if norm and norm != proj and not norm.startswith(f"{proj}/"):
+                    norm = f"{proj}/{norm}"
+                items = store.list(
+                    project_id=effective_project,
+                    path_prefix=norm or None,
+                    limit=500,
+                )
+                if not items:
+                    return f"(no artifacts match prefix {norm!r})"
+                indexed = skipped = total_chunks = total_entities = 0
+                for it in items:
+                    if not is_text_type(it["content_type"]):
+                        skipped += 1
+                        continue
+                    r = await mgr.index_artifact(it["id"], force=force)
+                    if r.get("skipped"):
+                        skipped += 1
+                    else:
+                        indexed += 1
+                        total_chunks += r.get("chunks_stored", 0)
+                        total_entities += r.get("entities_extracted", 0)
+                return (
+                    f"Indexed {indexed} artifact(s) under {norm!r} "
+                    f"({skipped} skipped): {total_chunks} chunks stored, "
+                    f"{total_entities} entities extracted."
+                )
+
+            return "index_artifact requires either 'id' or 'path_prefix'."
+
         elif tool_name == "get_job_status":
             from jobs.store import get_store
             jid = (tool_args.get("job_id") or "").strip()
@@ -1312,19 +1399,60 @@ async def execute_tool(
                 return f"{proj}/{norm}"
 
             if tool_name == "save_to_artifact":
+                import sqlite3 as _sqlite3
                 norm = _normalize_artifact_path(tool_args["path"])
-                a = store.create(
-                    project_id=effective_project,
-                    path=norm,
-                    content=tool_args["content"],
-                    content_type=tool_args.get("content_type") or "text/markdown",
-                    title=tool_args.get("title"),
-                    tags=tool_args.get("tags"),
-                    source={"kind": "agent", "session_id": session_id or ""},
-                    edited_by=session_id or "agent",
-                )
+                # Auto-resolve UNIQUE path collisions by suffixing -1, -2, ...
+                # before the final extension. We retry up to 50 times before
+                # surfacing the error.
+                def _candidate(base: str, n: int) -> str:
+                    if n == 0:
+                        return base
+                    p = Path(base)
+                    # path may have no suffix or multiple dots; use the last
+                    # component's last suffix only.
+                    if p.suffix:
+                        return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
+                    return f"{base}-{n}"
+
+                final_path = norm
+                a = None
+                for n in range(50):
+                    cand = _candidate(norm, n)
+                    try:
+                        a = store.create(
+                            project_id=effective_project,
+                            path=cand,
+                            content=tool_args["content"],
+                            content_type=tool_args.get("content_type") or "text/markdown",
+                            title=tool_args.get("title"),
+                            tags=tool_args.get("tags"),
+                            source={"kind": "agent", "session_id": session_id or ""},
+                            edited_by=session_id or "agent",
+                        )
+                        final_path = cand
+                        break
+                    except _sqlite3.IntegrityError as e:
+                        if "UNIQUE" not in str(e) or "path" not in str(e):
+                            raise
+                        continue
+                if a is None:
+                    return (
+                        f"save_to_artifact failed: path {norm!r} and 50 "
+                        f"numbered variants are all taken. Pick a different "
+                        f"path or delete the existing artifact first."
+                    )
                 _emb.schedule_embed(a["id"], effective_project)
-                return f"Saved artifact {a['path']} (id={a['id']}, v{1})"
+                # Auto-index into graph memory so cross-artifact concept
+                # queries work without an explicit indexer call.
+                try:
+                    if memory_manager and is_text_type(a["content_type"]):
+                        await memory_manager.index_artifact(a["id"])
+                except Exception as _ie:
+                    logger.debug("graph index for %s failed: %s", a["id"], _ie)
+                suffix_note = ""
+                if final_path != norm:
+                    suffix_note = f" (path {norm!r} was taken; auto-suffixed)"
+                return f"Saved artifact {a['path']} (id={a['id']}, v{1}){suffix_note}"
             if tool_name == "update_artifact":
                 aid = tool_args["id"]
                 try:
@@ -1337,6 +1465,11 @@ async def execute_tool(
                 except KeyError:
                     return f"Artifact {aid} not found."
                 _emb.schedule_embed(a["id"], effective_project)
+                try:
+                    if memory_manager and is_text_type(a["content_type"]):
+                        await memory_manager.index_artifact(a["id"])
+                except Exception as _ie:
+                    logger.debug("graph index for %s failed: %s", a["id"], _ie)
                 versions = store.list_versions(aid)
                 return f"Updated artifact {a['path']} (now v{len(versions)})"
             if tool_name == "read_artifact":

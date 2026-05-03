@@ -588,6 +588,109 @@ class FileIndexer:
         )
         return stats
 
+    async def index_text(
+        self,
+        text: str,
+        *,
+        virtual_path: str,
+        is_markdown: bool = True,
+        frontmatter_extras: dict[str, Any] | None = None,
+        force: bool = False,
+        source_label: str | None = None,
+    ) -> dict[str, Any]:
+        """Index in-memory text content (e.g., an artifact transcript).
+
+        Mirrors index_file but skips disk extraction so callers can pass
+        content directly. ``virtual_path`` is the logical identity used
+        for dedup and as the displayed source path. ``frontmatter_extras``
+        merges extra metadata (e.g., artifact tags, artifact_id) into
+        each chunk's metadata under ``fm_*`` keys, mirroring how
+        index_file handles real frontmatter.
+        """
+        stats = {
+            "file": virtual_path,
+            "chunks_stored": 0,
+            "entities_extracted": 0,
+            "skipped": False,
+        }
+
+        if not text or not text.strip():
+            stats["skipped"] = True
+            stats["reason"] = "empty content"
+            return stats
+
+        rel_path = virtual_path
+        content_hash = _content_hash(text)
+        if not force and self.file_index.is_indexed(self.project_id, rel_path, content_hash):
+            stats["skipped"] = True
+            stats["reason"] = "unchanged"
+            return stats
+
+        # Parse YAML frontmatter if the body looks like Markdown.
+        frontmatter: dict[str, Any] = {}
+        body = text
+        if is_markdown:
+            frontmatter, body = parse_frontmatter(text)
+        if frontmatter_extras:
+            for k, v in frontmatter_extras.items():
+                frontmatter.setdefault(k, v)
+
+        chunks = chunk_text(
+            body,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            respect_headings=is_markdown,
+        )
+
+        display_name = source_label or Path(virtual_path).name or virtual_path
+        for chunk in chunks:
+            try:
+                chunk_meta = {
+                    "type": "artifact_chunk" if frontmatter_extras and "artifact_id" in frontmatter_extras else "file_chunk",
+                    "source_file": display_name,
+                    "source_path": rel_path,
+                    "chunk_index": str(chunk["chunk_index"]),
+                    "heading": chunk.get("heading", ""),
+                    "content_hash": content_hash,
+                    "project_id": self.project_id,
+                    "indexed_at": _now_iso(),
+                }
+                for k, v in frontmatter.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        chunk_meta[f"fm_{k}"] = str(v)
+                    elif isinstance(v, list):
+                        chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
+                await self.memory_manager.semantic.store(
+                    content=chunk["content"],
+                    metadata=chunk_meta,
+                )
+                stats["chunks_stored"] += 1
+            except Exception as e:
+                logger.warning(
+                    "Failed to store chunk %d of %s: %s",
+                    chunk["chunk_index"], display_name, e,
+                )
+
+        if frontmatter:
+            stats["entities_extracted"] = await self._index_frontmatter_to_graph(
+                frontmatter, display_name,
+            )
+
+        self.file_index.mark_indexed(
+            project_id=self.project_id,
+            file_path=rel_path,
+            content_hash=content_hash,
+            chunk_count=stats["chunks_stored"],
+            file_size=len(text.encode("utf-8")),
+            metadata={"frontmatter_keys": list(frontmatter.keys())} if frontmatter else {},
+        )
+
+        logger.info(
+            "Indexed text %s: %d chunks, %d entities",
+            display_name, stats["chunks_stored"], stats["entities_extracted"],
+        )
+        return stats
+
     async def index_directory(
         self,
         directory: Path,
