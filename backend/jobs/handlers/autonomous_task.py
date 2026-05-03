@@ -334,6 +334,43 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     except Exception:
         logger.debug("episodic log_task_event(completed) failed", exc_info=True)
 
+    # Pipe a completion notice into the chat session that scheduled
+    # this task (if any) so the user sees the result materialize where
+    # they asked for it instead of in an orphan history-drawer chat.
+    parent_session_id = (ctx.payload or {}).get("parent_session_id")
+    if parent_session_id and parent_session_id != session_id:
+        try:
+            chunks_blurb = ""
+            summary_for_parent = (result_text or "(task completed with no final assistant message)")
+            if len(summary_for_parent) > 1500:
+                summary_for_parent = summary_for_parent[:1500] + "…"
+            parent_msg = (
+                f"**Task completed:** *{task_name}* "
+                f"(job_id `{ctx.job_id[:8]}`)\n\n"
+                f"{summary_for_parent}\n\n"
+                f"_Run details: open the Tasks tab; full transcript "
+                f"in chat history under the task name._"
+            )
+            await memory.episodic.save_message(
+                session_id=parent_session_id, project_id=ctx.project_id,
+                role="assistant", content=parent_msg,
+                metadata={
+                    "job_id": ctx.job_id,
+                    "kind": "autonomous_task_completion_notice",
+                    "task_session_id": session_id,
+                    "task_name": task_name,
+                },
+            )
+            logger.info(
+                "Posted task-completion notice to parent session %s for job %s",
+                parent_session_id, ctx.job_id,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to post completion notice to parent session %s",
+                parent_session_id, exc_info=True,
+            )
+
     return {
         "session_id": session_id,
         "task_name": task_name,

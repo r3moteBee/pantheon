@@ -343,6 +343,73 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "create_skill",
+            "description": (
+                "Create a reusable, callable SKILL — NOT a scheduled "
+                "task. Use this when the user says 'create a skill', "
+                "'make this reusable', 'turn this workflow into a "
+                "skill', 'I want to do this again later', or describes "
+                "a multi-step procedure they\'ll want to run multiple "
+                "times. After creation the user can invoke the skill "
+                "with `/skill-name` in any chat, and it injects the "
+                "instructions into the agent\'s system prompt for that "
+                "turn. Distinct from create_task (which schedules an "
+                "AUTONOMOUS RUN). Skills are reusable; tasks fire on "
+                "a schedule and produce job runs.\n\n"
+                "The instructions field should be the full markdown "
+                "workflow definition the agent will follow each time "
+                "the skill fires — list exact tool names per step "
+                "(e.g. mcp_SubDownload_search_youtube, save_to_artifact, "
+                "create_graph_node) so the agent knows what to call. "
+                "Include any schemas, output contracts, or thresholds "
+                "the user already agreed to."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Slug-form name (lowercase, hyphens, no "
+                            "spaces). Used as the /skill-name invocation."
+                        )
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "One-line description shown in the skills list."
+                    },
+                    "triggers": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Phrases that should auto-suggest this skill. "
+                            "Pick content-bearing phrases, not stopwords. "
+                            "Example: ['fetch youtube transcript', "
+                            "'ingest video into graph']."
+                        )
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Topical tags for filtering."
+                    },
+                    "instructions": {
+                        "type": "string",
+                        "description": (
+                            "Full markdown workflow definition. The "
+                            "agent reads this when the skill is "
+                            "invoked. Be specific about tool names, "
+                            "parameter contracts, and output paths."
+                        )
+                    }
+                },
+                "required": ["name", "description", "instructions"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "index_artifact",
             "description": (
                 "Index one artifact, or every artifact under a path "
@@ -1130,6 +1197,62 @@ async def execute_tool(
                 return "Browser tools are disabled. Set BROWSER_ENABLED=true in .env and install Playwright."
             return await execute_browser_tool(tool_name, tool_args, effective_project)
 
+        elif tool_name == "create_skill":
+            from skills import editor as _skill_ed
+            from skills.registry import get_skill_registry
+            import json as _json, re as _re
+
+            name = (tool_args.get("name") or "").strip().lower()
+            if not _re.match(r"^[a-z0-9][a-z0-9_-]{1,63}$", name):
+                return (
+                    "create_skill rejected: name must be lowercase "
+                    "slug (a-z, 0-9, hyphen/underscore), 2-64 chars."
+                )
+            description = (tool_args.get("description") or "").strip()
+            instructions = (tool_args.get("instructions") or "").strip()
+            triggers = tool_args.get("triggers") or []
+            tags = tool_args.get("tags") or []
+            if not description or not instructions:
+                return "create_skill rejected: description and instructions are required."
+
+            try:
+                target = _skill_ed.create_blank_skill(name, description)
+            except FileExistsError:
+                return (
+                    f"Skill {name!r} already exists. Pick a different "
+                    f"name or update the existing skill via the Skills tab."
+                )
+            except Exception as e:
+                return f"create_skill failed: {e}"
+
+            # Update the scaffold with the actual triggers/tags/instructions.
+            try:
+                manifest_path = target / "skill.json"
+                manifest = _json.loads(manifest_path.read_text("utf-8"))
+                if triggers:
+                    manifest["triggers"] = [str(x) for x in triggers]
+                if tags:
+                    manifest["tags"] = [str(x) for x in tags if str(x).strip()]
+                manifest_path.write_text(_json.dumps(manifest, indent=2), "utf-8")
+                (target / "instructions.md").write_text(instructions, "utf-8")
+            except Exception as e:
+                return f"create_skill: scaffold created but failed to fill manifest/instructions: {e}"
+
+            # Refresh the registry so it picks up the new skill.
+            try:
+                from skills.registry import reload_skill_registry; reload_skill_registry()
+            except Exception:
+                pass
+
+            return (
+                f"Skill {name!r} created and registered.\n"
+                f"  triggers: {triggers or '(none — auto-suggest disabled)'}\n"
+                f"  tags: {tags or '(none)'}\n\n"
+                f"Invoke it later with `/{name}` in any chat. Edit it "
+                f"in the Skills tab if you want to refine the "
+                f"instructions or add triggers."
+            )
+
         elif tool_name == "create_task":
             from tasks.scheduler import schedule_agent_task
             plan_text = (tool_args.get("plan") or "").strip()
@@ -1159,6 +1282,7 @@ async def execute_tool(
                 project_id=effective_project,
                 plan=plan_text,
                 plan_status=plan_status,
+                parent_session_id=session_id,
             )
             if skip_review:
                 return (

@@ -145,6 +145,7 @@ async def schedule_agent_task(
     project_id: str = "default",
     plan: str | None = None,
     plan_status: str = "approved",
+    parent_session_id: str | None = None,
 ) -> str:
     """Schedule an autonomous agent task.
 
@@ -185,6 +186,7 @@ async def schedule_agent_task(
                 "schedule": schedule,
                 "plan": plan,
                 "plan_status": plan_status,
+                "parent_session_id": parent_session_id,
             },
             replace_existing=True,
         )
@@ -206,7 +208,9 @@ async def schedule_agent_task(
             kwargs={
                 "task_id": task_id, "task_name": name,
                 "description": description, "project_id": project_id,
-                "schedule": schedule,
+                "schedule": schedule, "plan": plan,
+                "plan_status": plan_status,
+                "parent_session_id": parent_session_id,
             },
             replace_existing=True,
         )
@@ -223,7 +227,9 @@ async def schedule_agent_task(
                 "task_name": name,
                 "description": description,
                 "project_id": project_id,
-                "schedule": schedule,
+                "schedule": schedule, "plan": plan,
+                "plan_status": plan_status,
+                "parent_session_id": parent_session_id,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -254,7 +260,9 @@ async def schedule_agent_task(
                 "task_name": name,
                 "description": description,
                 "project_id": project_id,
-                "schedule": schedule,
+                "schedule": schedule, "plan": plan,
+                "plan_status": plan_status,
+                "parent_session_id": parent_session_id,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -279,14 +287,16 @@ async def _enqueue_autonomous_job(
     task_id: str, task_name: str, description: str,
     project_id: str = "default", schedule: str = "now",
     plan: str | None = None, plan_status: str = "approved",
+    parent_session_id: str | None = None,
     **kwargs,
 ):
     """APScheduler trigger handler. Creates a queued autonomous_task job
     and lets the jobs worker run it. Heartbeats, timeouts, stall detection,
     and UI surfacing all happen via the unified jobs system.
 
-    plan + plan_status are forwarded so the handler can inject the plan
-    into its system prompt at execution time.
+    plan + plan_status + parent_session_id are forwarded so the handler
+    can inject the plan into its system prompt at execution time AND
+    post the completion summary back into the originating chat session.
     """
     from jobs.store import get_store
     get_store().create(
@@ -296,7 +306,8 @@ async def _enqueue_autonomous_job(
         description=description,
         payload={"task_id": task_id, "task_name": task_name,
                  "description": description, "schedule": schedule,
-                 "plan": plan, "plan_status": plan_status},
+                 "plan": plan, "plan_status": plan_status,
+                 "parent_session_id": parent_session_id},
         schedule_id=task_id,
     )
 
