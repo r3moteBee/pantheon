@@ -26,6 +26,70 @@ _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _MAX_IMAGE_SIZE = 5 * 1024 * 1024
 
 
+
+
+def _build_recent_jobs_block(project_id: str | None) -> str:
+    """Build the system-prompt block that lists recent background-job
+    activity for the active project. Empty string when nothing recent.
+
+    Phase H.5 — fixes the confabulation case where the agent previously
+    started a long-running task, the worker died silently, and the next
+    chat turn pattern-matched against chat history to claim progress.
+    With this block the agent reads the actual job state from the store
+    every turn.
+    """
+    if not project_id:
+        return ""
+    try:
+        from datetime import timedelta
+        from jobs.store import get_store
+        runs = get_store().list(
+            project_id=project_id,
+            statuses=["queued", "running", "failed", "stalled", "completed", "cancelled"],
+            started_within=timedelta(hours=24),
+            include_system=False,
+            limit=15,
+        )
+    except Exception:
+        return ""
+    if not runs:
+        return ""
+
+    lines = ["RECENT BACKGROUND JOB ACTIVITY (last 24h, this project):"]
+    for r in runs:
+        rid = (r.get("id") or "")[:8]
+        rtype = r.get("job_type") or "?"
+        title = (r.get("title") or "").strip() or "(untitled)"
+        status = r.get("status") or "?"
+        progress = r.get("progress") or ""
+        error = r.get("error") or ""
+
+        when = ""
+        for col in ("completed_at", "started_at", "created_at"):
+            v = r.get(col)
+            if v:
+                when = v[:16].replace("T", " ")
+                break
+
+        line = f"- [{rtype}] #{rid} {status.upper()} ({when}) — {title!r}"
+        if status in {"failed", "stalled", "cancelled"} and error:
+            line += f"\n    Error: {error[:200]}"
+        elif status == "running" and progress:
+            line += f"\n    Progress: {progress[:200]}"
+        elif r.get("pr_url"):
+            line += f"\n    PR: {r['pr_url']}"
+        lines.append(line)
+
+    lines.append(
+        "\nIMPORTANT: If the user asks about a task you started earlier "
+        "in this conversation, call get_job_status(job_id=...) or "
+        "list_recent_jobs() to read its current state — do NOT guess at "
+        "progress from chat history. Failed and stalled jobs are NOT "
+        "still running; tell the user so and offer to retry."
+    )
+    return "\n".join(lines)
+
+
 class AgentCore:
     """The main agent loop."""
 
@@ -220,6 +284,15 @@ class AgentCore:
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
             )
+
+            # Phase H.5 — append a "recent background jobs" block so the
+            # agent doesn't confabulate progress against dead tasks.
+            try:
+                jobs_block = _build_recent_jobs_block(self.project_id)
+                if jobs_block:
+                    system_prompt = system_prompt + "\n\n" + jobs_block
+            except Exception as e:
+                logger.debug("recent-jobs block injection failed: %s", e)
 
             # Get conversation history from working memory
             history = self._get_working_messages()
