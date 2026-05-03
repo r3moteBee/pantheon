@@ -7,8 +7,10 @@ Images are described via a vision-capable LLM and the description is
 stored as a single semantic chunk, making image content retrievable
 alongside text during inference.
 
-For Markdown files with YAML frontmatter (e.g., CorpusClaw vendor files),
-structured metadata is extracted and routed to the graph as well.
+For Markdown files with YAML frontmatter, structured metadata
+(source, topics, speakers, etc.) is extracted and routed to the
+graph as well — see _index_typed_topics_to_graph for the canonical
+shape used by ingest skills.
 """
 from __future__ import annotations
 
@@ -464,7 +466,7 @@ class FileIndexer:
 
     Usage:
         indexer = FileIndexer(memory_manager, project_id="my-project")
-        stats = await indexer.index_file(Path("/workspace/vendor_report.md"))
+        stats = await indexer.index_file(Path("/workspace/notes/2026-q1-summary.md"))
         stats = await indexer.index_directory(Path("/workspace/"))
     """
 
@@ -947,12 +949,16 @@ class FileIndexer:
         """Extract graph nodes/edges from YAML frontmatter.
 
         Handles two shapes:
-          1. typed-topics ingest (content-ingest-graph and similar):
-             source / video_id / topics[] / speakers[] →
-             source --produces--> video --discusses--> topic
-             video --features_speaker--> person
-          2. CorpusClaw-style vendor files: vendor, product,
-             market_segments, technologies, tags, etc.
+          1. **typed-topics ingest** (the canonical shape, used by
+             content-ingest-graph and any future ingest skill):
+                source / video_id / topics[] / speakers[] →
+                source --produces--> video --discusses--> topic
+                video --features_speaker--> person
+          2. **legacy vendor/product** (kept for backward compat with
+             early research projects): vendor / product /
+             market_segments / technologies / competitors. Will be
+             migrated to a plugin adapter — see SOURCE-ADAPTER design
+             doc.
         """
         entities_created = 0
         graph = self.memory_manager.graph
@@ -965,10 +971,10 @@ class FileIndexer:
                 frontmatter, filename, graph,
             )
             # Don't fall through — typed-topics shape is mutually
-            # exclusive with CorpusClaw vendor shape in practice.
+            # exclusive with the legacy vendor/product shape.
             return entities_created
 
-        # ── Shape 2: CorpusClaw vendor/product ──
+        # ── Shape 2: legacy vendor/product (backward compat) ──
         fm_type = frontmatter.get("type", "")
         vendor = frontmatter.get("vendor", "")
         product = frontmatter.get("product", "")

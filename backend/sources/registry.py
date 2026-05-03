@@ -1,0 +1,210 @@
+"""Source-adapter registry + the canonical ingest() entry point.
+
+Adapters self-register at import time via register_adapter(). The
+registry knows how to:
+  - look up an adapter by source_type or by bucket alias
+  - run the full ingest pipeline (fetch -> save -> index -> graph)
+  - report what's available for UIs / agent tool descriptions
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from sources.base import (
+    AdapterResult,
+    FetchedContent,
+    IngestRequest,
+    SourceAdapter,
+)
+
+logger = logging.getLogger(__name__)
+
+
+_ADAPTERS: dict[str, SourceAdapter] = {}
+_BUCKET_INDEX: dict[str, list[str]] = {}  # alias -> [source_type, ...]
+
+
+def register_adapter(adapter: SourceAdapter) -> None:
+    """Register an adapter. Idempotent — re-registering the same
+    source_type replaces the previous one (useful for hot-reload)."""
+    if not adapter.source_type:
+        raise ValueError("Adapter is missing source_type")
+    _ADAPTERS[adapter.source_type] = adapter
+    for alias in (adapter.bucket_aliases or ()):
+        _BUCKET_INDEX.setdefault(alias, []).append(adapter.source_type)
+    logger.info("Registered source adapter: %s (%s)",
+                adapter.source_type, adapter.display_name)
+
+
+def get_adapter(source_type: str) -> SourceAdapter | None:
+    """Look up an adapter by exact source_type."""
+    return _ADAPTERS.get(source_type)
+
+
+def list_adapters() -> list[dict[str, Any]]:
+    """List every registered adapter — used by /api/sources/adapters
+    for the UI and by the agent's tool description so it knows
+    which source types are available."""
+    return [
+        {
+            "source_type": a.source_type,
+            "display_name": a.display_name,
+            "bucket_aliases": list(a.bucket_aliases or ()),
+            "requires_mcp": list(a.requires_mcp or ()),
+        }
+        for a in _ADAPTERS.values()
+    ]
+
+
+def resolve_by_bucket(bucket: str) -> list[str]:
+    """Map a bucket alias (e.g. 'youtube', 'pdf') to the list of
+    registered source_types under it. Used by the heuristic+bucket
+    type resolver in skills."""
+    return list(_BUCKET_INDEX.get(bucket, []))
+
+
+# ── The pipeline ──────────────────────────────────────────────────
+
+async def ingest(
+    req: IngestRequest,
+    *,
+    memory_manager: Any | None = None,
+    session_id: str | None = None,
+) -> AdapterResult:
+    """End-to-end ingest for one identifier.
+
+    Steps:
+      1. Resolve adapter from req.source_type
+      2. adapter.fetch(req) -> FetchedContent
+      3. adapter.build_frontmatter(req, fetched) -> dict
+      4. Save to artifact store at adapter.render_artifact_path(...)
+         with frontmatter + body, collision-safe
+      5. Schedule embedding + run FileIndexer.index_artifact so the
+         typed-topics frontmatter -> graph branch fires
+      6. adapter.post_save_hook(...) for any source-specific cleanup
+    """
+    from artifacts.store import get_store, project_slug as _ps
+    from artifacts import embedder as _emb
+    import sqlite3 as _sqlite3
+    from pathlib import Path
+    import yaml as _yaml
+
+    adapter = get_adapter(req.source_type)
+    if adapter is None:
+        return AdapterResult(
+            artifact_id="", artifact_path="", chars_saved=0,
+            graph_nodes_created=0, graph_edges_created=0,
+            skipped=True,
+            skip_reason=f"no adapter registered for {req.source_type!r}",
+        )
+
+    # 1. Fetch
+    try:
+        fetched: FetchedContent = await adapter.fetch(req)
+    except Exception as e:
+        logger.exception("adapter %s fetch failed for %s",
+                         req.source_type, req.identifier)
+        return AdapterResult(
+            artifact_id="", artifact_path="", chars_saved=0,
+            graph_nodes_created=0, graph_edges_created=0,
+            skipped=True, skip_reason=f"fetch_failed: {e}",
+        )
+
+    if not fetched.text or not fetched.text.strip():
+        return AdapterResult(
+            artifact_id="", artifact_path="", chars_saved=0,
+            graph_nodes_created=0, graph_edges_created=0,
+            skipped=True, skip_reason="empty_content",
+        )
+
+    # 2. Build frontmatter
+    fm = adapter.build_frontmatter(req, fetched)
+    # Drop None values so the YAML stays clean.
+    fm = {k: v for k, v in fm.items() if v is not None and v != ""}
+
+    fm_yaml = _yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).strip()
+    body = f"---\n{fm_yaml}\n---\n\n{fetched.text.strip()}\n"
+
+    # 3. Path resolution + project slug normalization
+    raw_path = adapter.render_artifact_path(req, fetched)
+    proj = _ps(req.project_id)
+    norm = raw_path.lstrip("/").strip()
+    if norm and norm != proj and not norm.startswith(f"{proj}/"):
+        norm = f"{proj}/{norm}"
+
+    # 4. Save with UNIQUE-path collision retry
+    def _candidate(base: str, n: int) -> str:
+        if n == 0:
+            return base
+        p = Path(base)
+        if p.suffix:
+            return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
+        return f"{base}-{n}"
+
+    store = get_store()
+    a = None
+    final_path = norm
+    for n in range(50):
+        cand = _candidate(norm, n)
+        try:
+            a = store.create(
+                project_id=req.project_id,
+                path=cand,
+                content=body,
+                content_type="text/markdown",
+                title=fetched.title or req.identifier,
+                tags=["ingest", req.source_type],
+                source={
+                    "kind": "source_adapter",
+                    "source_type": req.source_type,
+                    "identifier": req.identifier,
+                    "session_id": session_id or "",
+                },
+                edited_by=session_id or "agent",
+            )
+            final_path = cand
+            break
+        except _sqlite3.IntegrityError as e:
+            if "UNIQUE" not in str(e) or "path" not in str(e):
+                raise
+            continue
+
+    if a is None:
+        return AdapterResult(
+            artifact_id="", artifact_path=norm, chars_saved=0,
+            graph_nodes_created=0, graph_edges_created=0,
+            skipped=True,
+            skip_reason="path_collision_50_variants_taken",
+        )
+
+    # 5. Embed + graph index. The FileIndexer's typed-topics branch
+    #    handles the source/topics/speakers frontmatter and produces
+    #    the source -> content -> topic / speaker edges.
+    _emb.schedule_embed(a["id"], req.project_id)
+    nodes = edges = 0
+    try:
+        if memory_manager:
+            stats = await memory_manager.index_artifact(a["id"])
+            nodes = (stats or {}).get("entities_extracted", 0)
+            # The current indexer doesn't separate nodes/edges in
+            # its return; we report nodes only and leave edges=0
+            # until the indexer is updated.
+    except Exception as e:
+        logger.debug("index_artifact for %s failed: %s", a["id"], e)
+
+    # 6. Post-save hook
+    result = AdapterResult(
+        artifact_id=a["id"],
+        artifact_path=a["path"],
+        chars_saved=len(fetched.text),
+        graph_nodes_created=nodes,
+        graph_edges_created=edges,
+        extra={"final_path": final_path},
+    )
+    try:
+        await adapter.post_save_hook(req, result)
+    except Exception as e:
+        logger.debug("post_save_hook for %s failed: %s",
+                     req.source_type, e)
+    return result

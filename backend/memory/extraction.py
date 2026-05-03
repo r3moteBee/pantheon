@@ -51,7 +51,7 @@ Rules:
   personality traits.
 - Focus on real-world knowledge, user statements, and substantive topics.
 - Do NOT extract pleasantries, filler, or meta-conversation about the chat itself.
-- Entity labels should be canonical (e.g., "WEKA" not "the WEKA company").
+- Entity labels should be canonical (e.g., "Anthropic" not "the Anthropic company"; "PostgreSQL" not "the database we use").
 - Confidence: 1.0 = user explicitly stated it, 0.7 = strongly implied, 0.4 = inferred.
 - Keep descriptions and facts concise — one sentence each.
 - If there is nothing worth extracting, return empty arrays for all keys.
