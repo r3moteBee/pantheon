@@ -378,7 +378,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         mode=SkillDiscoveryMode(discovery_mode),
                         top_k=1,
                     )
-                    if matches and matches[0]["score"] >= 2.0:
+                    if matches and matches[0]["score"] >= 3.0:
                         best = matches[0]
                         skill = best["skill"]
                         if discovery_mode == "auto":
