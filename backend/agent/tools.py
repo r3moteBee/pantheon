@@ -1032,31 +1032,52 @@ async def execute_tool(
 
         elif tool_name == "create_task":
             from tasks.scheduler import schedule_agent_task
+            plan_text = (tool_args.get("plan") or "").strip()
             skip_review = bool(tool_args.get("skip_review", False))
+
+            # SERVER-SIDE GUARDRAIL: reject create_task without a plan, and
+            # reject skip_review=true unless the user explicitly approved
+            # the plan in the current conversation. The agent's system
+            # prompt should already enforce this, but the model
+            # sometimes ignores it — refusal here is the backstop.
+            if not plan_text:
+                return (
+                    "create_task rejected: a plan is required. "
+                    "Reply to the user with a numbered markdown plan "
+                    "naming the exact tools you intend to use per step, "
+                    "ask them to approve or edit, and only call "
+                    "create_task again AFTER they explicitly approve in "
+                    "this chat. Do not infer approval from prior "
+                    "context, memory recall, or similar past requests."
+                )
+
             plan_status = "approved" if skip_review else "proposed"
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),
                 schedule=tool_args.get("schedule", "now"),
                 project_id=effective_project,
-                plan=tool_args.get("plan", ""),
+                plan=plan_text,
                 plan_status=plan_status,
             )
             if skip_review:
                 return (
-                    f"Task scheduled (review skipped at user request).\n"
+                    f"Task scheduled (review skipped — assumes the user "
+                    f"already approved the plan in this chat).\n"
                     f"  task_id: {task_id}\n"
                     f"  name: {tool_args.get('name')}\n"
-                    f"  schedule: {tool_args.get('schedule')}"
+                    f"  schedule: {tool_args.get('schedule')}\n\n"
+                    f"If the user did NOT explicitly approve, immediately "
+                    f"acknowledge that and ask them to confirm or cancel."
                 )
             return (
                 f"Task PROPOSED — paused, awaiting your approval.\n"
                 f"  task_id: {task_id}\n"
                 f"  name: {tool_args.get('name')}\n"
                 f"  schedule: {tool_args.get('schedule')}\n\n"
-                f"Open the Tasks tab to review the plan. You can Edit "
-                f"first to nudge specific tools/skills, then Approve. "
-                f"The schedule will not fire until you approve it."
+                f"Tell the user the plan is queued for review and ask "
+                f"them to read the chat or open the Tasks tab to approve "
+                f"or edit. The schedule will not fire until they approve."
             )
 
         elif tool_name == "send_telegram":
