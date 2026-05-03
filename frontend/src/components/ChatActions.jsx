@@ -3,7 +3,7 @@ import {
   History, Save, Plus, Sparkles, Target, Wand2, UserCircle,
 } from 'lucide-react'
 import { useStore } from '../store'
-import { conversationsApi } from '../api/client'
+import { conversationsApi, skillsApi } from '../api/client'
 import Tooltip from './Tooltip'
 
 /**
@@ -31,6 +31,39 @@ export default function ChatActions() {
   const cycle = (current, options, setter) => {
     const i = options.indexOf(current)
     setter(options[(i + 1) % options.length])
+  }
+
+  // Persist skill-discovery mode to backend and rehydrate on project switch.
+  // The frontend store alone is insufficient — the chat handlers read this
+  // from the backend vault, so a UI-only toggle has no effect.
+  React.useEffect(() => {
+    const pid = activeProject?.id || 'default-project'
+    let cancelled = false
+    skillsApi.getDiscovery(pid).then((res) => {
+      if (cancelled) return
+      const remote = res?.data?.skill_discovery || 'off'
+      if (remote !== skillDiscovery) {
+        // Adopt backend value on mount / project switch (don't overwrite it).
+        setSkillDiscovery(remote)
+      }
+    }).catch(() => { /* offline / no vault — keep local */ })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject?.id])
+
+  const cycleSkillDiscovery = async () => {
+    const options = ['off', 'suggest', 'auto']
+    const next = options[(options.indexOf(skillDiscovery) + 1) % options.length]
+    setSkillDiscovery(next)
+    try {
+      const pid = activeProject?.id || 'default-project'
+      await skillsApi.setDiscovery(pid, next)
+    } catch (e) {
+      addNotification({
+        type: 'error',
+        message: 'Failed to persist skill-discovery mode: ' + (e?.response?.data?.detail || e.message),
+      })
+    }
   }
 
   const onSaveChat = async () => {
@@ -96,7 +129,7 @@ export default function ChatActions() {
         icon={Wand2}
         label={`Auto-skill: ${skillDiscovery}. Cycle: off → suggest → auto`}
         toneClass={skillTone}
-        onClick={() => cycle(skillDiscovery, ['off', 'suggest', 'auto'], setSkillDiscovery)}
+        onClick={cycleSkillDiscovery}
       />
       <IconButton
         icon={UserCircle}
