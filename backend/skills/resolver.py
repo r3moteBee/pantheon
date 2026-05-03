@@ -52,9 +52,13 @@ def resolve_explicit(message: str) -> tuple[str | None, str]:
     rest = match.group(2).strip()
 
     registry = get_skill_registry()
-    skill = registry.get(candidate)
-    if skill:
-        return candidate, rest
+    # Try the literal candidate, then underscore<->hyphen variants,
+    # so /content_ingest_graph and /content-ingest-graph both match
+    # content-ingest-graph.
+    for variant in (candidate, candidate.replace("_", "-"), candidate.replace("-", "_")):
+        skill = registry.get(variant)
+        if skill:
+            return skill.name, rest
 
     # Not a known skill — return original message unchanged
     return None, message

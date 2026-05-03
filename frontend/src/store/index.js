@@ -65,9 +65,6 @@ export const useStore = create((set, get) => ({
   setSkills: (skills) => set({ skills }),
   activeSkill: null,
   setActiveSkill: (skill) => set({ activeSkill: skill }),
-  skillDiscovery: 'off',
-  setSkillDiscovery: (mode) => set({ skillDiscovery: mode }),
-
   // Sidebar open/closed (mobile)
   sidebarOpen: false,
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
