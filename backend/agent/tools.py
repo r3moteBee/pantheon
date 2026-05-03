@@ -538,7 +538,7 @@ TOOL_SCHEMAS = [
                     },
                     "extras": {
                         "type": "object",
-                        "description": "Optional per-call hints. Recognized keys: published_at (YYYY-MM-DD), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int).",
+                        "description": "Optional per-call hints. Recognized keys: published (relative string from search like '4 months ago' — adapter parses to ISO), published_at (absolute YYYY-MM-DD; wins over published if both set), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int). When ingesting YouTube results from mcp_SubDownload_search_youtube, ALWAYS forward each video's 'published' string so artifact paths get a real date instead of unknown-date/.",
                         "additionalProperties": True
                     }
                 },

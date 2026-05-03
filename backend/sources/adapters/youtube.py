@@ -21,8 +21,35 @@ from sources.base import (
     SourceAdapter,
 )
 from sources.registry import register_adapter
+from sources.util import parse_relative_date
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_published_at(extras: dict) -> str | None:
+    """Pick the best published_at signal from a request's extras.
+
+    Skills calling search_youtube get back a 'published' field with
+    a relative string ("4 months ago"). Forwarding that through
+    extras['published'] lets us derive an ISO date in the adapter.
+    Skills that already have an absolute date can pass
+    extras['published_at'] directly. Absolute wins if both are set.
+    """
+    if not isinstance(extras, dict):
+        return None
+    abs_v = extras.get("published_at")
+    if isinstance(abs_v, str) and abs_v.strip():
+        # Trust it's already ISO-ish; parse_relative_date passes
+        # ISO inputs through.
+        parsed = parse_relative_date(abs_v)
+        if parsed:
+            return parsed
+    rel_v = extras.get("published") or extras.get("published_relative")
+    if isinstance(rel_v, str) and rel_v.strip():
+        parsed = parse_relative_date(rel_v)
+        if parsed:
+            return parsed
+    return None
 
 
 class _YouTubeAdapterBase(SourceAdapter):
@@ -57,7 +84,7 @@ class _YouTubeAdapterBase(SourceAdapter):
             title=meta.get("title", "") or req.identifier,
             author_or_publisher=meta.get("author", ""),
             url=(inner or {}).get("video_url") or f"https://www.youtube.com/watch?v={req.identifier}",
-            published_at=req.extras.get("published_at"),  # not in MCP response; skill can pass through
+            published_at=_resolve_published_at(req.extras),
             extra_meta={
                 "video_id": req.identifier,
                 "channel_id": meta.get("channel_id", ""),
