@@ -104,6 +104,18 @@ async def lifespan(app: FastAPI):
     mcp_mgr = get_mcp_manager()
     await mcp_mgr.startup()
 
+    # Phase H — bootstrap handlers, start the jobs worker + stall watchdog.
+    if __import__("os").getenv("JOB_WORKER_ENABLED", "true").lower() != "false":
+        try:
+            from jobs.handlers.bootstrap import bootstrap_handlers
+            bootstrap_handlers()
+            from jobs.worker import get_worker
+            from jobs.watchdog import get_watchdog
+            get_worker().start()
+            get_watchdog().start()
+        except Exception as e:
+            logger.exception("Job worker startup failed: %s", e)
+
     logger.info("Pantheon backend ready")
     import asyncio as _asyncio
     async def _warmup():
@@ -116,6 +128,15 @@ async def lifespan(app: FastAPI):
             logger.warning("ChromaDB warmup skipped: %s", _e)
     _asyncio.create_task(_warmup())
     yield
+
+    # Phase H — stop jobs worker + watchdog
+    try:
+        from jobs.worker import get_worker
+        from jobs.watchdog import get_watchdog
+        await get_worker().stop()
+        await get_watchdog().stop()
+    except Exception:
+        logger.debug("jobs shutdown swallowed", exc_info=True)
 
     # Stop the Telegram bot cleanly
     await stop_telegram_bot()
@@ -131,7 +152,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pantheon",
     description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
-    version="2026.05.02.H1",
+    version="2026.05.02.H2",
     lifespan=lifespan,
 )
 
