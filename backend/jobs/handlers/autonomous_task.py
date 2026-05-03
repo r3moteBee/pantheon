@@ -65,10 +65,22 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
 
     # Run the agent loop. Wrap the whole call in pinger_for so the
     # watchdog stays happy even if the LLM round-trip blocks for minutes.
+    plan = (pl.get("plan") or "").strip()
+    plan_block = ""
+    if plan:
+        plan_block = (
+            "\n\nEXECUTION PLAN (reviewed and approved by the user — "
+            "follow it step by step; do not skip steps; if a step "
+            "requires a tool you don't have, surface that explicitly "
+            "rather than improvising):\n"
+            f"{plan}\n"
+        )
+
     full_prompt = (
         f"You are running an autonomous task: '{task_name}'\n"
         f"Job ID: {ctx.job_id}\n"
-        f"Complete the task fully and save important results to memory.\n\n"
+        f"Complete the task fully and save important results to memory."
+        f"{plan_block}\n\n"
         f"Task:\n{description}"
     )
 

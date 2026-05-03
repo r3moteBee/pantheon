@@ -77,7 +77,9 @@ def list_jobs() -> list[dict[str, Any]]:
             "is_recurring": is_recurring_schedule(schedule_str),
             "description": kwargs.get("description", ""),
             "project_id": kwargs.get("project_id", "default"),
-            "status": "scheduled" if next_run else "completed",
+            "plan": kwargs.get("plan"),
+            "plan_status": kwargs.get("plan_status", "approved"),
+            "status": "scheduled" if next_run else ("paused" if not next_run else "completed"),
         })
     return jobs
 
@@ -141,6 +143,8 @@ async def schedule_agent_task(
     description: str,
     schedule: str,
     project_id: str = "default",
+    plan: str | None = None,
+    plan_status: str = "approved",
 ) -> str:
     """Schedule an autonomous agent task.
 
@@ -179,6 +183,8 @@ async def schedule_agent_task(
                 "description": description,
                 "project_id": project_id,
                 "schedule": schedule,
+                "plan": plan,
+                "plan_status": plan_status,
             },
             replace_existing=True,
         )
@@ -218,6 +224,8 @@ async def schedule_agent_task(
                 "description": description,
                 "project_id": project_id,
                 "schedule": schedule,
+                "plan": plan,
+                "plan_status": plan_status,
             },
             replace_existing=True,
         )
@@ -247,11 +255,20 @@ async def schedule_agent_task(
                 "description": description,
                 "project_id": project_id,
                 "schedule": schedule,
+                "plan": plan,
+                "plan_status": plan_status,
             },
             replace_existing=True,
         )
 
-    logger.info(f"Task scheduled: {name} (id={task_id}, schedule={schedule})")
+    if plan_status == "proposed":
+        try:
+            scheduler.pause_job(task_id)
+            logger.info("Schedule %s paused (plan_status=proposed)", task_id)
+        except Exception:
+            logger.warning("Could not pause newly-proposed schedule", exc_info=True)
+
+    logger.info(f"Task scheduled: {name} (id={task_id}, schedule={schedule}, plan_status={plan_status})")
     return task_id
 
 
@@ -260,11 +277,16 @@ async def schedule_agent_task(
 
 async def _enqueue_autonomous_job(
     task_id: str, task_name: str, description: str,
-    project_id: str = "default", schedule: str = "now", **kwargs,
+    project_id: str = "default", schedule: str = "now",
+    plan: str | None = None, plan_status: str = "approved",
+    **kwargs,
 ):
     """APScheduler trigger handler. Creates a queued autonomous_task job
     and lets the jobs worker run it. Heartbeats, timeouts, stall detection,
     and UI surfacing all happen via the unified jobs system.
+
+    plan + plan_status are forwarded so the handler can inject the plan
+    into its system prompt at execution time.
     """
     from jobs.store import get_store
     get_store().create(
@@ -273,7 +295,8 @@ async def _enqueue_autonomous_job(
         title=task_name,
         description=description,
         payload={"task_id": task_id, "task_name": task_name,
-                 "description": description, "schedule": schedule},
+                 "description": description, "schedule": schedule,
+                 "plan": plan, "plan_status": plan_status},
         schedule_id=task_id,
     )
 
@@ -336,3 +359,38 @@ async def schedule_scheduled_job(
     logger.info("scheduled_job registered: %s (id=%s, schedule=%s, sink=%s)",
                 name, schedule_id, schedule, (output_sink or {}).get("kind", "artifact"))
     return schedule_id
+
+
+
+def approve_schedule(task_id: str) -> dict[str, Any]:
+    """Mark a proposed schedule as approved + resume the APScheduler job
+    so it will fire on its trigger."""
+    scheduler = get_scheduler()
+    job = scheduler.get_job(task_id)
+    if not job:
+        raise ValueError(f"schedule {task_id} not found")
+    kwargs = dict(job.kwargs or {})
+    kwargs["plan_status"] = "approved"
+    scheduler.modify_job(task_id, kwargs=kwargs)
+    try:
+        scheduler.resume_job(task_id)
+    except Exception:
+        pass
+    return {
+        "id": task_id,
+        "plan_status": "approved",
+        "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+    }
+
+
+def update_schedule_plan(task_id: str, plan: str) -> dict[str, Any]:
+    """Edit the plan text on a schedule (typically while it's still in
+    proposed state). Persists into APScheduler kwargs."""
+    scheduler = get_scheduler()
+    job = scheduler.get_job(task_id)
+    if not job:
+        raise ValueError(f"schedule {task_id} not found")
+    kwargs = dict(job.kwargs or {})
+    kwargs["plan"] = plan
+    scheduler.modify_job(task_id, kwargs=kwargs)
+    return {"id": task_id, "plan": plan, "plan_status": kwargs.get("plan_status", "proposed")}

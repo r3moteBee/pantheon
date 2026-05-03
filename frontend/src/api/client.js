@@ -426,6 +426,8 @@ export const tasksApi = {
     api.post('/api/tasks', { name, description, schedule, project_id: projectId }),
   cancel: (taskId) => api.delete(`/api/tasks/${taskId}`),
   runNow: (taskId) => api.post(`/api/tasks/${taskId}/run-now`),
+  approve: (taskId) => api.post(`/api/tasks/${taskId}/approve`),
+  updatePlan: (taskId, plan) => api.patch(`/api/tasks/${taskId}/plan`, { plan }),
   getLogs: (taskId, projectId) =>
     api.get(`/api/tasks/${taskId}/logs`, { params: { project_id: projectId } }),
   getAllLogs: (projectId) =>
