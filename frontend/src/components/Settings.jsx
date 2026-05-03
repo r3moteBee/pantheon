@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, ChevronDown, ChevronRight, MessageCircle, RotateCw, Shield, Cpu, Plug, Key, Globe, Library, Clock, ArrowUpDown, Server, User as UserIcon } from 'lucide-react'
 import { useStore } from '../store'
-import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, taskRunsApi } from '../api/client'
+import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, taskRunsApi, jobsApi } from '../api/client'
 import SecurityLog from './SecurityLog'
 import PersonalityEditor from './PersonalityEditor'
 
@@ -1744,7 +1744,8 @@ const RUN_STATUS_BADGE = {
   running:   'bg-blue-900 text-blue-200',
   completed: 'bg-green-900 text-green-200',
   failed:    'bg-red-900 text-red-200',
-  cancelled: 'bg-amber-900 text-amber-200',
+  stalled:   'bg-amber-900 text-amber-200',
+  cancelled: 'bg-amber-950 text-amber-300',
   queued:    'bg-gray-800 text-gray-300',
 }
 
@@ -1773,10 +1774,10 @@ function TaskRunsSection() {
   const refresh = async () => {
     setLoading(true)
     try {
-      const params = { limit: 100 }
+      const params = { limit: 100, include_system: true }
       if (filter) params.status = filter
-      const res = await taskRunsApi.list(params)
-      setRuns(res.data?.runs || [])
+      const res = await jobsApi.list(params)
+      setRuns(res.data?.jobs || [])
     } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [filter])
@@ -1788,7 +1789,7 @@ function TaskRunsSection() {
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
           <Clock className="w-4 h-4 text-brand-400" />
-          Task runs (cross-project)
+          Job runs (cross-project, all types)
         </h3>
         <div className="flex items-center gap-2">
           <select
@@ -1813,28 +1814,42 @@ function TaskRunsSection() {
         </div>
       )}
       <div className="space-y-1">
-        {runs.map((r) => (
-          <div key={r.id} className="p-2.5 rounded border border-gray-800 bg-gray-900">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${RUN_STATUS_BADGE[r.status] || RUN_STATUS_BADGE.queued}`}>
-                {r.status}
-              </span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900 text-brand-200">
-                {projectName(r.project_id)}
-              </span>
-              <span className="text-sm font-medium text-gray-200 truncate flex-1">{r.task_name}</span>
-              <span className="text-[10px] text-gray-500">{r.started_at?.slice(0,16).replace('T',' ')}</span>
-              {r.duration_ms != null && (
-                <span className="text-[10px] text-gray-500">· {fmtDuration(r.duration_ms)}</span>
+        {runs.map((r) => {
+          const dur = (r.started_at && r.completed_at) ? (new Date(r.completed_at) - new Date(r.started_at)) : null
+          return (
+            <div key={r.id} className="p-2.5 rounded border border-gray-800 bg-gray-900">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${RUN_STATUS_BADGE[r.status] || RUN_STATUS_BADGE.queued}`}>
+                  {r.status}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-900 text-brand-200">
+                  {projectName(r.project_id)}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">
+                  {r.job_type}
+                </span>
+                <span className="text-sm font-medium text-gray-200 truncate flex-1">{r.title || r.task_name || '(untitled)'}</span>
+                <span className="text-[10px] text-gray-500">{r.started_at?.slice(0,16).replace('T',' ')}</span>
+                {dur != null && (
+                  <span className="text-[10px] text-gray-500">· {fmtDuration(dur)}</span>
+                )}
+              </div>
+              {r.progress && r.status === 'running' && (
+                <div className="text-xs text-gray-400 mt-1">{r.progress}</div>
+              )}
+              {r.description && <div className="text-xs text-gray-400 mt-1">{r.description}</div>}
+              {r.error && <div className="text-xs text-red-400 mt-1">{r.error}</div>}
+              {r.session_id && (
+                <div className="text-[10px] text-gray-600 mt-1 font-mono">session: {r.session_id.slice(0,16)}</div>
+              )}
+              {r.pr_url && (
+                <a href={r.pr_url} target="_blank" rel="noreferrer" className="text-[10px] text-brand-300 underline mt-1 inline-block">
+                  {r.pr_url}
+                </a>
               )}
             </div>
-            {r.description && <div className="text-xs text-gray-400 mt-1">{r.description}</div>}
-            {r.error && <div className="text-xs text-red-400 mt-1">{r.error}</div>}
-            {r.session_id && (
-              <div className="text-[10px] text-gray-600 mt-1 font-mono">session: {r.session_id.slice(0,16)}</div>
-            )}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
