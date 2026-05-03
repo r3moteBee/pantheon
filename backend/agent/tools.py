@@ -269,6 +269,23 @@ TOOL_SCHEMAS = [
                             "interval:120."
                         )
                     },
+                    "skill_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional skill slug to drive the task (e.g. "
+                            "'content-ingest-graph', 'research-ingest'). "
+                            "When set, the autonomous agent boots with the "
+                            "skill\'s instructions injected into its system "
+                            "prompt — equivalent to invoking /<slug> in chat. "
+                            "Use this for any scheduled task that should run "
+                            "a registered skill; do NOT bury the slash "
+                            "invocation in the description (it won\'t resolve "
+                            "the way it does in chat). Skills with declared "
+                            "MCP requirements (requires_mcp) are validated at "
+                            "task start — task fails fast if a required "
+                            "connector is offline."
+                        )
+                    },
                     "plan": {
                         "type": "string",
                         "description": (
@@ -1994,6 +2011,27 @@ async def execute_tool(
                 )
 
             plan_status = "approved" if skip_review else "proposed"
+            skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
+            # Validate the skill exists at scheduling time so the user
+            # gets immediate feedback instead of a runtime failure.
+            if skill_name:
+                from skills.registry import get_skill_registry
+                _reg = get_skill_registry()
+                # Tolerate underscore<->hyphen drift the same way
+                # resolve_explicit does.
+                resolved = None
+                for variant in (skill_name, skill_name.replace("_", "-"), skill_name.replace("-", "_")):
+                    sk = _reg.get(variant)
+                    if sk:
+                        resolved = sk.name
+                        break
+                if not resolved:
+                    return (
+                        f"create_task rejected: skill {tool_args.get('skill_name')!r} "
+                        f"is not registered. Use list_skills (or list_source_adapters "
+                        f"for adapter-driven skills) to confirm the slug, then retry."
+                    )
+                skill_name = resolved
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),
@@ -2002,6 +2040,7 @@ async def execute_tool(
                 plan=plan_text,
                 plan_status=plan_status,
                 parent_session_id=session_id,
+                skill_name=skill_name,
             )
             if skip_review:
                 return (
