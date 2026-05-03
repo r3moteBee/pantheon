@@ -720,14 +720,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "list_artifacts",
             "description": (
-                "List artifacts in the project. Filter by tag, "
-                "content_type, path_prefix, or search. THIS is the "
-                "canonical way to verify what scheduled tasks / agents "
-                "have saved — NOT list_workspace_files. To verify "
-                "transcripts under NBJ/: "
-                "list_artifacts(path_prefix='NBJ/'). To find a single "
-                "artifact by name, use search="
-                "<part of title>."
+                "List artifacts in the active project. To find files in a folder use path_prefix with a BARE folder name like 'NBJ/' — do NOT include the project slug yourself; the tool prepends it for you (so 'NBJ/' and 'default-project/NBJ/' both work). To find a single file use read_artifact with id or path."
             ),
             "parameters": {
                 "type": "object",
@@ -1296,18 +1289,30 @@ async def execute_tool(
             return "\n\n".join(parts) or "(no output)"
 
         elif tool_name in ("save_to_artifact", "update_artifact", "read_artifact", "list_artifacts"):
-            from artifacts.store import get_store, is_text_type
+            from artifacts.store import get_store, is_text_type, project_slug as _ps
             from artifacts import embedder as _emb
             store = get_store()
-            if tool_name == "save_to_artifact":
-                from artifacts.store import project_slug as _ps
-                raw_path = tool_args["path"]
-                # If the agent didn't include the project slug, prepend it so
-                # artifacts cluster by project in the folder tree.
+
+            def _normalize_artifact_path(p: str | None) -> str | None:
+                """Make path/path_prefix consistent with how save stores them.
+
+                Saves auto-prepend '<project_slug>/' if missing. Apply the
+                same rule to lookups so agents can save 'NBJ/x.md' and
+                find it again with either 'NBJ/' or 'default-project/NBJ/'.
+                Idempotent: never double-prefixes.
+                """
+                if p is None:
+                    return None
+                norm = p.lstrip("/").strip()
+                if not norm:
+                    return norm
                 proj = _ps(effective_project)
-                norm = raw_path.lstrip("/").strip()
-                if not norm.startswith(f"{proj}/"):
-                    norm = f"{proj}/{norm}"
+                if norm == proj or norm.startswith(f"{proj}/"):
+                    return norm
+                return f"{proj}/{norm}"
+
+            if tool_name == "save_to_artifact":
+                norm = _normalize_artifact_path(tool_args["path"])
                 a = store.create(
                     project_id=effective_project,
                     path=norm,
@@ -1341,23 +1346,35 @@ async def execute_tool(
                 if aid:
                     a = store.get(aid)
                 elif path:
-                    a = store.get_by_path(effective_project, path)
+                    norm_path = _normalize_artifact_path(path)
+                    a = store.get_by_path(effective_project, norm_path)
+                    # Tolerate agent passing the bare path even when the
+                    # caller already saved it under a non-prefixed form.
+                    if not a and norm_path != path:
+                        a = store.get_by_path(effective_project, path)
                 if not a:
                     return f"Artifact not found: id={aid} path={path}"
                 if is_text_type(a["content_type"]):
                     return f"--- {a['path']} (v{store.list_versions(a['id'])[0]['version_number']}) ---\n{a.get('content') or ''}"
                 return f"Artifact {a['path']} is binary ({a['content_type']}); fetch via /api/artifacts/{a['id']}/raw"
             if tool_name == "list_artifacts":
+                norm_prefix = _normalize_artifact_path(tool_args.get("path_prefix"))
                 items = store.list(
                     project_id=effective_project,
                     tag=tool_args.get("tag"),
                     content_type=tool_args.get("content_type"),
-                    path_prefix=tool_args.get("path_prefix"),
+                    path_prefix=norm_prefix,
                     search=tool_args.get("search"),
                     limit=int(tool_args.get("limit") or 20),
                 )
                 if not items:
-                    return "(no artifacts match)"
+                    hint = ""
+                    if norm_prefix and norm_prefix != (tool_args.get("path_prefix") or ""):
+                        hint = (
+                            f" (searched normalized prefix {norm_prefix!r}; "
+                            f"caller passed {tool_args.get('path_prefix')!r})"
+                        )
+                    return f"(no artifacts match){hint}"
                 lines = [
                     f"- id={i['id']} path={i['path']} type={i['content_type']} tags={i.get('tags')}"
                     for i in items
