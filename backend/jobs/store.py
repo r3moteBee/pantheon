@@ -300,6 +300,7 @@ class JobStore:
                    WHERE id = ?""",
                 (JobStatus.FAILED, _now(), error[:2000], session_id, job_id),
             )
+        _record_failure_to_memory(self, job_id, error)
 
     def cancel(self, job_id: str) -> bool:
         """User-requested cancel. If queued, terminate immediately. If
@@ -337,7 +338,14 @@ class JobStore:
             f"No heartbeat in over {idle_seconds // 60} minute(s) — "
             "process likely died. Re-queue with the retry button."
         )
+        # First grab the ids about to be marked so we can write episodic
+        # notes after the UPDATE.
         with self._connect() as conn:
+            ids_to_stall = [r["id"] for r in conn.execute(
+                """SELECT id FROM jobs WHERE status = 'running'
+                   AND (last_heartbeat_at IS NULL OR last_heartbeat_at < ?)""",
+                (cutoff,),
+            ).fetchall()]
             cur = conn.execute(
                 """UPDATE jobs
                    SET status = ?, completed_at = ?, error = ?
@@ -345,7 +353,9 @@ class JobStore:
                      AND (last_heartbeat_at IS NULL OR last_heartbeat_at < ?)""",
                 (JobStatus.STALLED, _now(), msg, cutoff),
             )
-            return cur.rowcount
+        for jid in ids_to_stall:
+            _record_failure_to_memory(self, jid, msg)
+        return cur.rowcount
 
     def retry(self, job_id: str) -> dict[str, Any]:
         """Re-queue a failed/stalled job with the same payload."""

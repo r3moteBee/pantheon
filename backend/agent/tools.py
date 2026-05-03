@@ -300,6 +300,56 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_job_status",
+            "description": (
+                "Get the current state of a background job by id. Use this "
+                "when the user asks about a task you started earlier — "
+                "read the actual status before claiming progress. Returns "
+                "status, progress text, error, result, session_id, "
+                "artifact_id, and pr_url where applicable."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {"type": "string"}
+                },
+                "required": ["job_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_recent_jobs",
+            "description": (
+                "List recent background jobs for the active project. Use "
+                "this when the user asks 'what are you working on' / "
+                "'is anything still running' / 'did that finish'. Filter "
+                "by status when needed. By default omits system job types "
+                "(extraction, file_indexing) so the list is user-relevant."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["queued","running","completed","failed","cancelled","stalled"],
+                        "description": "Optional status filter."
+                    },
+                    "include_system": {
+                        "type": "boolean",
+                        "description": "Include extraction/file_indexing rows. Default false.",
+                        "default": False
+                    },
+                    "limit": {"type": "integer", "default": 10}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "consolidate_memory",
             "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
             "parameters": {
@@ -951,6 +1001,60 @@ async def execute_tool(
             entities = result.get("entities_extracted", result.get("total_entities", 0))
             files = result.get("files_processed", 1)
             return f"Indexed {files} file(s): {chunks} chunks stored, {entities} entities extracted to graph."
+
+        elif tool_name == "get_job_status":
+            from jobs.store import get_store
+            jid = tool_args.get("job_id") or ""
+            j = get_store().get_or_none(jid)
+            if not j:
+                return f"Job {jid!r} not found."
+            lines = [
+                f"job_id: {j['id']}",
+                f"type: {j['job_type']}  status: {j['status'].upper()}",
+                f"title: {j.get('title') or ''}",
+                f"started: {j.get('started_at') or '(not yet)'}",
+                f"completed: {j.get('completed_at') or '(still running)'}",
+            ]
+            if j.get("progress"):
+                lines.append(f"progress: {j['progress']}")
+            if j.get("error"):
+                lines.append(f"error: {j['error']}")
+            if j.get("pr_url"):
+                lines.append(f"pr_url: {j['pr_url']}")
+            if j.get("artifact_id"):
+                lines.append(f"artifact_id: {j['artifact_id']}")
+            if j.get("session_id"):
+                lines.append(f"session_id: {j['session_id']}")
+            if j.get("result"):
+                summary = (j["result"] or {}).get("summary") if isinstance(j["result"], dict) else None
+                if summary:
+                    lines.append(f"summary: {summary[:500]}")
+            return "\n".join(lines)
+
+        elif tool_name == "list_recent_jobs":
+            from jobs.store import get_store
+            include_sys = bool(tool_args.get("include_system", False))
+            statuses = [tool_args["status"]] if tool_args.get("status") else None
+            from datetime import timedelta
+            runs = get_store().list(
+                project_id=effective_project,
+                statuses=statuses, include_system=include_sys,
+                started_within=timedelta(hours=72),
+                limit=int(tool_args.get("limit") or 10),
+            )
+            if not runs:
+                return "(no recent jobs in this project)"
+            out = []
+            for r in runs:
+                line = f"#{r['id'][:8]}  [{r['job_type']}]  {r['status'].upper()}  {r.get('title') or ''}"
+                if r.get("progress") and r["status"] == "running":
+                    line += f"  ({r['progress'][:100]})"
+                if r.get("error"):
+                    line += f"  ERR: {r['error'][:120]}"
+                if r.get("pr_url"):
+                    line += f"  {r['pr_url']}"
+                out.append(line)
+            return "\n".join(out)
 
         elif tool_name == "consolidate_memory":
             if not memory_manager:
