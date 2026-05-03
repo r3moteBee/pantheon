@@ -40,10 +40,21 @@ class ExtractedFields:
     """What an extractor returns. Shape matches the typed-topics
     frontmatter — extractors fill in topics/speakers/claims; the
     artifact's existing source/url/title/published_at fields are
-    NOT touched here."""
+    NOT touched here.
+
+    ``status`` is a free-form diagnostics dict. Conventional keys:
+      strategy: name of the extractor that ran
+      ok: bool — did the extractor finish without an error
+      error: str — populated on failure
+      raw_excerpt: short slice of the LLM response when parsing
+        failed; lets the user diagnose 'why was topics: [] empty'.
+      reason: optional extra context (e.g. 'truncated_to_60k',
+        'no_provider_response')
+    """
     topics: list[dict[str, Any]] = field(default_factory=list)
     speakers: list[dict[str, Any]] = field(default_factory=list)
     claims: list[dict[str, Any]] = field(default_factory=list)
+    status: dict[str, Any] = field(default_factory=dict)
 
 
 # ── Base class + registry ──────────────────────────────────────────
@@ -94,7 +105,7 @@ class NoopExtractor(TopicExtractor):
     name = "noop"
 
     async def extract(self, text, **kwargs) -> ExtractedFields:
-        return ExtractedFields()
+        return ExtractedFields(status={"strategy": "noop", "ok": True})
 
 
 # ── Built-in: llm_default ─────────────────────────────────────────
@@ -166,13 +177,17 @@ class LLMDefaultExtractor(TopicExtractor):
         max_topics: int = 12,
         hint: str | None = None,
     ) -> ExtractedFields:
+        status: dict[str, Any] = {"strategy": self.name, "ok": False}
         if not text or not text.strip():
-            return ExtractedFields()
+            status["error"] = "empty_input"
+            return ExtractedFields(status=status)
         body = text.strip()
+        truncated = False
         if len(body) > self.BODY_BUDGET_CHARS:
             body = body[: self.BODY_BUDGET_CHARS] + "\n\n[…truncated…]"
+            truncated = True
 
-        system = _LLM_SYSTEM_PROMPT.format(max_topics=max_topics)
+        system = _LLM_SYSTEM_PROMPT.replace("{max_topics}", str(max_topics))
         user_lines = [
             f"Document title: {title}" if title else "",
             f"Source type: {source_type}" if source_type else "",
@@ -182,6 +197,7 @@ class LLMDefaultExtractor(TopicExtractor):
         ]
         user = "\n".join(line for line in user_lines if line is not None).strip()
 
+        raw_content = ""
         try:
             from models.provider import get_provider
             provider = get_provider()
@@ -189,21 +205,56 @@ class LLMDefaultExtractor(TopicExtractor):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ])
-            content = _strip_fence(result.get("content") or "")
+            raw_content = (result or {}).get("content") or ""
+            content = _strip_fence(raw_content)
             if not content:
-                return ExtractedFields()
-            parsed = json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.warning("Topic extractor: LLM did not return parseable JSON: %s", e)
-            return ExtractedFields()
-        except Exception as e:
-            logger.warning("Topic extractor: LLM call failed: %s", e)
-            return ExtractedFields()
+                status["error"] = "empty_llm_response"
+                status["raw_excerpt"] = (raw_content or "")[:300]
+                if truncated:
+                    status["reason"] = "input_truncated_to_60k"
+                logger.warning("Topic extractor: empty LLM response (model=%s)",
+                               getattr(provider, "model", "?"))
+                return ExtractedFields(status=status)
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as je:
+                # Try to recover JSON from prose: many models wrap
+                # the JSON in chatter despite the prompt.
+                m = re.search(r"\{[\s\S]*\}\s*$", content)
+                if m:
+                    try:
+                        parsed = json.loads(m.group(0))
+                    except json.JSONDecodeError:
+                        parsed = None
+                else:
+                    parsed = None
+                if parsed is None:
+                    status["error"] = f"json_parse_failed: {je}"
+                    status["raw_excerpt"] = content[:300]
+                    logger.warning(
+                        "Topic extractor: LLM did not return parseable JSON "
+                        "(error=%s, excerpt=%r)", je, content[:200],
+                    )
+                    return ExtractedFields(status=status)
+        except Exception as ex:
+            status["error"] = f"llm_call_failed: {type(ex).__name__}: {ex}"
+            status["raw_excerpt"] = (raw_content or "")[:300]
+            logger.warning("Topic extractor: LLM call failed: %s", ex)
+            return ExtractedFields(status=status)
 
+        topics = list(parsed.get("topics") or [])
+        speakers = list(parsed.get("speakers") or [])
+        claims = list(parsed.get("claims") or [])
+        status.update({
+            "ok": True,
+            "topic_count": len(topics),
+            "speaker_count": len(speakers),
+            "claim_count": len(claims),
+        })
+        if truncated:
+            status["reason"] = "input_truncated_to_60k"
         return ExtractedFields(
-            topics=list(parsed.get("topics") or []),
-            speakers=list(parsed.get("speakers") or []),
-            claims=list(parsed.get("claims") or []),
+            topics=topics, speakers=speakers, claims=claims, status=status,
         )
 
 
