@@ -118,10 +118,29 @@ export default function ProjectTasksPanel({ projectId }) {
             </div>
           )}
           {schedules.map((s) => (
-            <div key={s.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 flex items-center gap-2 text-xs">
-              <span className="font-medium text-gray-200 truncate flex-1">{s.name}</span>
-              <span className="text-gray-500 truncate">{s.schedule || s.trigger}</span>
-              <span className="text-gray-500">next: {s.next_run?.slice(0,16).replace('T',' ') || '(none)'}</span>
+            <div key={s.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-gray-200 truncate flex-1">{s.name || '(untitled schedule)'}</span>
+                <span className="text-gray-500 truncate">{s.schedule || s.trigger}</span>
+                <span className="text-gray-500">next: {s.next_run?.slice(0,16).replace('T',' ') || '(none)'}</span>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (!confirm(`Cancel schedule "${s.name || s.id}"?`)) return
+                    try { await tasksApi.cancel(s.id); await refresh() }
+                    catch (err) { alert(err?.response?.data?.detail || err.message) }
+                  }}
+                  className="text-gray-500 hover:text-red-400"
+                  title="Cancel schedule"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              {s.description && (
+                <div className="text-[11px] text-gray-400 mt-1 truncate" title={s.description}>
+                  {s.description}
+                </div>
+              )}
             </div>
           ))}
         </section>
