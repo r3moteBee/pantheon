@@ -70,7 +70,9 @@ export default function ProjectSettingsPanel({ projectId }) {
       })
       setChatDirty(false)
 
-      setPersonas(personasRes.data?.personas || [])
+      // personasApi.list() already unwraps r.data, so the response IS the
+      // payload — it has .personas at the top level, not .data.personas.
+      setPersonas(personasRes?.personas || personasRes?.data?.personas || [])
       setMcpServers(mcp.data?.servers || [])
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)

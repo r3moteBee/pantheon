@@ -206,6 +206,54 @@ async def list_repos(token: str = Query(..., description="Temporary PAT for pick
     return {"repos": summary, "count": len(summary)}
 
 
+@router.get("/connections/github/{connection_id}/repos")
+async def list_connection_repos(connection_id: str) -> dict[str, Any]:
+    """List repos visible to a stored connection's PAT (no token in URL)."""
+    if not get_connection(connection_id):
+        raise HTTPException(status_code=404, detail="connection not found")
+    token = get_token(connection_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="connection has no stored token")
+    client = GitHubClient(token)
+    try:
+        repos = await client.list_user_repos()
+    except GitHubAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except GitHubError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "repos": [
+            {"full_name": r.get("full_name"), "default_branch": r.get("default_branch"),
+             "private": r.get("private"), "description": r.get("description")}
+            for r in repos
+        ],
+    }
+
+
+@router.get("/connections/github/{connection_id}/branches")
+async def list_connection_branches(
+    connection_id: str,
+    owner: str = Query(...),
+    repo: str = Query(...),
+) -> dict[str, Any]:
+    """List branches in a repo accessible to the stored connection."""
+    if not get_connection(connection_id):
+        raise HTTPException(status_code=404, detail="connection not found")
+    token = get_token(connection_id)
+    if not token:
+        raise HTTPException(status_code=400, detail="connection has no stored token")
+    client = GitHubClient(token)
+    try:
+        branches = await client.list_branches(owner, repo)
+    except GitHubNotFound:
+        raise HTTPException(status_code=404, detail=f"{owner}/{repo} not found")
+    except GitHubAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except GitHubError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"branches": branches}
+
+
 # ── Project repo binding ─────────────────────────────────────────────────────
 
 @router.get("/projects/{project_id}/repo")

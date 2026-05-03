@@ -140,6 +140,11 @@ export const connectionsApi = {
   create: ({ token, repo, default_branch }) =>
     api.post('/api/connections/github', { token, repo, default_branch }),
   delete: (id) => api.delete(`/api/connections/github/${id}`),
+  // Live calls keyed off a stored connection (no token in URL)
+  listConnectionRepos: (id) =>
+    api.get(`/api/connections/github/${id}/repos`),
+  listConnectionBranches: (id, owner, repo) =>
+    api.get(`/api/connections/github/${id}/branches`, { params: { owner, repo } }),
 }
 
 export const projectRepoApi = {

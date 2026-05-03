@@ -218,6 +218,18 @@ class GitHubClient:
         info = await self.get_repo(owner, repo)
         return info.get("default_branch") or "main"
 
+    async def list_branches(self, owner: str, repo: str) -> list[dict[str, Any]]:
+        """List branches for a repo. Returns [{name, commit_sha}, ...]."""
+        rows = await self._paginate(f"/repos/{owner}/{repo}/branches")
+        out = []
+        for r in rows:
+            out.append({
+                "name": r.get("name"),
+                "commit_sha": (r.get("commit") or {}).get("sha"),
+                "protected": r.get("protected", False),
+            })
+        return out
+
     async def get_ref(self, owner: str, repo: str, ref: str) -> dict[str, Any]:
         """ref is 'heads/<branch>' or 'tags/<tag>'."""
         resp = await self._request("GET", f"/repos/{owner}/{repo}/git/ref/{ref}")
