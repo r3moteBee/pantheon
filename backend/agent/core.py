@@ -90,6 +90,53 @@ def _build_recent_jobs_block(project_id: str | None) -> str:
     return "\n".join(lines)
 
 
+
+
+def _build_available_skills_block(project_id: str) -> str:
+    """Render an 'Available skills' block listing installed skills
+    with their trigger phrases. Helps the agent prefer /skill-name
+    invocation over create_task or start_coding_task when a user
+    request matches a registered trigger."""
+    try:
+        from skills.registry import get_skill_registry
+    except Exception:
+        return ""
+    try:
+        registry = get_skill_registry()
+        skills = registry.list_for_project(project_id) or []
+    except Exception:
+        return ""
+    if not skills:
+        return ""
+    lines = [
+        "## Available skills (installed in this project)",
+        "",
+        "When the user's request matches one of the trigger phrases "
+        "below, INVOKE THE SKILL. The skill\'s instructions will run "
+        "as part of your normal turn — you do NOT need create_task "
+        "or start_coding_task. Either:",
+        "  • follow the skill\'s instructions inline this turn, OR",
+        "  • tell the user you\'re running the skill and proceed with "
+        "    the steps it lays out, citing the skill name in your reply.",
+        "",
+        "Skills are NOT scheduled tasks and are NOT coding tasks. They "
+        "are reusable recipes the user has already approved.",
+        "",
+    ]
+    for sk in skills[:30]:
+        try:
+            name = sk.name
+            desc = (sk.manifest.description or "").strip().splitlines()[0][:160]
+            triggers = ", ".join(f"\"{t}\"" for t in (sk.triggers or [])[:6])
+        except Exception:
+            continue
+        lines.append(f"- **/{name}** — {desc}")
+        if triggers:
+            lines.append(f"    triggers: {triggers}")
+    if len(skills) > 30:
+        lines.append(f"\n_... and {len(skills) - 30} more skills_")
+    return "\n".join(lines)
+
 class AgentCore:
     """The main agent loop."""
 
@@ -293,6 +340,18 @@ class AgentCore:
                     system_prompt = system_prompt + "\n\n" + jobs_block
             except Exception as e:
                 logger.debug("recent-jobs block injection failed: %s", e)
+
+            # H7p — append an "Available skills" block so the agent
+            # knows what callable skills are installed even when
+            # auto-discovery is off. When the user's message matches
+            # a trigger, the agent should invoke that skill rather
+            # than fall back to create_task / start_coding_task.
+            try:
+                skills_block = _build_available_skills_block(self.project_id)
+                if skills_block:
+                    system_prompt = system_prompt + "\n\n" + skills_block
+            except Exception as e:
+                logger.debug("available-skills block injection failed: %s", e)
 
             # Get conversation history from working memory
             history = self._get_working_messages()
