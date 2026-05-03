@@ -153,7 +153,15 @@ export default function ProjectTasksPanel({ projectId }) {
             const recurring = sch.is_recurring
             const proposed = sch.plan_status === 'proposed'
             return (
-              <div key={sch.id} className={`p-2 mb-1 rounded border text-xs ${proposed ? 'border-amber-700 bg-amber-950' : 'border-gray-800 bg-gray-900'}`}>
+              <div
+                key={sch.id}
+                onClick={() => proposed && setPlanEditing(sch)}
+                className={`p-2 mb-1 rounded border text-xs ${
+                  proposed
+                    ? 'border-amber-700 bg-amber-950 cursor-pointer hover:bg-amber-900'
+                    : 'border-gray-800 bg-gray-900'
+                }`}
+              >
                 <div className="flex items-center gap-2">
                   {proposed && (
                     <span
@@ -187,9 +195,21 @@ export default function ProjectTasksPanel({ projectId }) {
                   {proposed ? (
                     <>
                       <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          if (!confirm(`Approve and activate "${sch.name}" with the current plan?`)) return
+                          try { await tasksApi.approve(sch.id); await refresh() }
+                          catch (err) { alert('Approve failed: ' + (err?.response?.data?.detail || err.message)) }
+                        }}
+                        className="text-emerald-300 hover:text-emerald-100 flex items-center gap-1"
+                        title="Approve plan as-is and activate the schedule"
+                      >
+                        <Check className="w-3 h-3" /> Approve
+                      </button>
+                      <button
                         onClick={(e) => { e.stopPropagation(); setPlanEditing(sch) }}
                         className="text-amber-300 hover:text-amber-100 flex items-center gap-1"
-                        title="Review and approve plan"
+                        title="Open plan to review or edit before approving"
                       >
                         <ClipboardCheck className="w-3 h-3" /> Review
                       </button>
