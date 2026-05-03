@@ -3,7 +3,10 @@ import { create } from 'zustand'
 export const useStore = create((set, get) => ({
   // Active project
   activeProject: { id: 'default', name: 'Default Project' },
-  setActiveProject: (project) => set({ activeProject: project }),
+  setActiveProject: (project) => {
+    try { if (project?.id) localStorage.setItem('active_project_id', project.id) } catch {}
+    set({ activeProject: project })
+  },
 
   // Active session
   sessionId: null,
@@ -11,6 +14,14 @@ export const useStore = create((set, get) => ({
 
   historyOpen: false,
   setHistoryOpen: (v) => set({ historyOpen: !!v }),
+
+  // Collapsible sidebar (desktop, persisted)
+  sidebarCollapsed: typeof localStorage !== 'undefined' && localStorage.getItem('pantheon_sidebar_collapsed') === 'true',
+  toggleSidebarCollapsed: () => set((state) => {
+    const next = !state.sidebarCollapsed
+    try { localStorage.setItem('pantheon_sidebar_collapsed', String(next)) } catch {}
+    return { sidebarCollapsed: next }
+  }),
 
   // Chat-bar settings (lifted out of Chat.jsx so the unified top bar can
   // render them as icons across tab switches)
