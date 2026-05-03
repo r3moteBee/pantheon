@@ -218,6 +218,27 @@ async def ingest(
     except Exception as e:
         logger.debug("index_artifact for %s failed: %s", a["id"], e)
 
+    # 5b. Cross-artifact similarity pipeline (opt-in per adapter).
+    if adapter.auto_link_similarity:
+        try:
+            from sources.similarity import link_artifact_topics
+            sim = await link_artifact_topics(
+                a["id"], project_id=req.project_id,
+                memory_manager=memory_manager,
+            )
+            edges = sim.edges_added
+            # Surface counts back to the caller via extra.
+            extra_sim = {
+                "similarity_edges_added": sim.edges_added,
+                "similarity_topics_processed": sim.topics_processed,
+                "merge_proposals_queued": sim.proposals_queued,
+            }
+        except Exception as e:
+            logger.warning("auto_link_similarity failed for %s: %s", a["id"], e)
+            extra_sim = {"similarity_error": str(e)}
+    else:
+        extra_sim = {}
+
     # 6. Post-save hook
     result = AdapterResult(
         artifact_id=a["id"],
@@ -225,7 +246,7 @@ async def ingest(
         chars_saved=len(fetched.text),
         graph_nodes_created=nodes,
         graph_edges_created=edges,
-        extra={"final_path": final_path},
+        extra={"final_path": final_path, **extra_sim},
     )
     try:
         await adapter.post_save_hook(req, result)
