@@ -50,10 +50,44 @@ def build_system_prompt(
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project_section = ""
-    if project_id and project_name:
-        project_section = f"\n\n## Active Project\nYou are currently working in project: **{project_name}** (id: {project_id})\nAll memories, files, and context are scoped to this project."
-    elif project_id:
-        project_section = f"\n\n## Active Project\nProject ID: {project_id}"
+    if project_id:
+        try:
+            from artifacts.store import project_slug as _proj_slug_fn
+            slug = _proj_slug_fn(project_id)
+        except Exception:
+            slug = project_id
+        if project_name:
+            project_section = (
+                f"\n\n## Active Project\nYou are currently working in "
+                f"project: **{project_name}** (id: `{project_id}`, "
+                f"artifact path prefix: `{slug}/`).\n"
+            )
+        else:
+            project_section = (
+                f"\n\n## Active Project\nProject ID: `{project_id}` "
+                f"(artifact path prefix: `{slug}/`).\n"
+            )
+        project_section += (
+            "All memories, files, and artifacts are scoped to this "
+            "project.\n\n"
+            "### Storage layout — when the user mentions a folder name\n"
+            f"- The user's **artifacts** for this project live under "
+            f"`{slug}/...`. When the user says \"NBJ/\" or \"the "
+            f"transcripts folder\" with no project qualifier, that "
+            f"means `{slug}/NBJ/` in the artifact store. Use "
+            f"`list_artifacts` / `read_artifact` / `index_artifact` and "
+            f"pass the bare folder name (\"NBJ/\") — the tool prepends "
+            f"the project slug for you.\n"
+            "- The **workspace** is a separate local filesystem for "
+            "files the user dropped onto disk (uploaded files, code "
+            "checkouts). Use `list_workspace_files` / `index_workspace` "
+            "ONLY when the user explicitly references a path on disk, "
+            "or when you've already confirmed the file is there.\n"
+            "- Default to ARTIFACTS when the user references a folder "
+            "the agent created (transcripts, chat exports, saved "
+            "research notes). Default to WORKSPACE only for things "
+            "the user uploaded or files in a code repo.\n"
+        )
 
     memory_section = ""
     if recalled_memories:
