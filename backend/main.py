@@ -28,6 +28,7 @@ from api.sources import router as sources_router
 from api.connections import router as connections_router
 from api.artifacts import router as artifacts_router
 from api.conversations import router as conversations_router
+from api.jobs import router as jobs_router
 
 settings = get_settings()
 
@@ -130,7 +131,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pantheon",
     description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
-    version="2026.05.02.G11",
+    version="2026.05.02.H1",
     lifespan=lifespan,
 )
 
@@ -204,6 +205,7 @@ app.include_router(sources_router, prefix="/api", tags=["sources"])
 app.include_router(connections_router, prefix="/api", tags=["connections"])
 app.include_router(artifacts_router, prefix="/api", tags=["artifacts"])
 app.include_router(conversations_router, prefix="/api", tags=["conversations"])
+app.include_router(jobs_router, prefix="/api", tags=["jobs"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always
