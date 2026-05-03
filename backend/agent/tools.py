@@ -444,6 +444,54 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "save_transcript_artifact",
+            "description": (
+                "Server-side fetch + save for YouTube transcripts. "
+                "Use this INSTEAD OF copying the transcript text into "
+                "save_to_artifact's content field — that pattern gets "
+                "the transcript silently truncated when the LLM "
+                "abbreviates long strings with \"...\".\n\n"
+                "Pass the video_id, the desired artifact path "
+                "(bare folder; project slug auto-prepended), and the "
+                "YAML frontmatter as a string. The backend will:\n"
+                "  1. Call mcp_SubDownload_fetch_transcript(video_id) "
+                "internally.\n"
+                "  2. Stitch '---\\n{frontmatter}\\n---\\n\\n"
+                "{transcript}' as the artifact body.\n"
+                "  3. Save via the artifact store (with auto-suffix "
+                "for path collisions and graph indexing).\n\n"
+                "Use for every YouTube transcript ingest in skills "
+                "like /content-ingest-graph. The agent supplies "
+                "structure (frontmatter, path, title); the server "
+                "supplies the verbatim transcript content."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "video_id": {
+                        "type": "string",
+                        "description": "YouTube video id (e.g. dQw4w9WgXcQ)."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Artifact path. Pass a bare folder/file path like 'youtube-transcripts/{date}/{channel}/{video_id}-{slug}.md'. Project slug is prepended automatically."
+                    },
+                    "frontmatter": {
+                        "type": "string",
+                        "description": "YAML frontmatter as a string, WITHOUT the surrounding '---' fences. The backend wraps it. Include source.type, video_title, channel_name, topics[], etc. per the skill spec."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional artifact title shown in the Artifacts list."
+                    }
+                },
+                "required": ["video_id", "path", "frontmatter"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_last_response",
             "description": "Save conversation history to a file in the project workspace. By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
             "parameters": {
@@ -1198,6 +1246,125 @@ async def execute_tool(
             if not browser_enabled():
                 return "Browser tools are disabled. Set BROWSER_ENABLED=true in .env and install Playwright."
             return await execute_browser_tool(tool_name, tool_args, effective_project)
+
+        elif tool_name == "save_transcript_artifact":
+            from artifacts.store import get_store, is_text_type, project_slug as _ps_st
+            from artifacts import embedder as _emb_st
+            from mcp_client.manager import get_mcp_manager
+            import sqlite3 as _sqlite3st
+            import json as _json_st
+
+            video_id = (tool_args.get("video_id") or "").strip()
+            raw_path = (tool_args.get("path") or "").strip()
+            frontmatter = (tool_args.get("frontmatter") or "").strip()
+            title = tool_args.get("title")
+            if not video_id or not raw_path or not frontmatter:
+                return (
+                    "save_transcript_artifact rejected: video_id, path, "
+                    "and frontmatter are all required."
+                )
+
+            # Strip any --- fences the agent may have included; we add
+            # them ourselves so the result is always well-formed.
+            fm = frontmatter
+            if fm.startswith("---"):
+                fm = fm[3:].lstrip("\n")
+            if fm.endswith("---"):
+                fm = fm[:-3].rstrip("\n")
+            fm = fm.strip("\n").strip()
+
+            # 1. Fetch transcript from the MCP server.
+            mgr = get_mcp_manager()
+            try:
+                fetch_result = await mgr.execute_tool(
+                    "mcp_SubDownload_fetch_transcript",
+                    {"video_id": video_id, "save": False},
+                )
+            except Exception as e:
+                return f"save_transcript_artifact: transcript fetch failed: {e}"
+
+            # The MCP wrapper may return either a Python dict or a JSON
+            # string. Handle both. Look for result.text (full stitched
+            # transcript) or fall back to stitching segments.
+            payload = fetch_result
+            if isinstance(payload, str):
+                try:
+                    payload = _json_st.loads(payload)
+                except Exception:
+                    return f"save_transcript_artifact: could not parse MCP response as JSON: {payload[:200]}"
+            if not isinstance(payload, dict):
+                return f"save_transcript_artifact: unexpected MCP response type {type(payload).__name__}"
+            inner = payload.get("result") if isinstance(payload.get("result"), dict) else payload
+            transcript_text = (inner or {}).get("text") or ""
+            if not transcript_text and isinstance((inner or {}).get("segments"), list):
+                transcript_text = "\n".join(
+                    (seg.get("text") or "").strip() for seg in inner["segments"]
+                )
+            if not transcript_text.strip():
+                return f"save_transcript_artifact: MCP returned no transcript text for {video_id!r}"
+
+            # 2. Stitch frontmatter + transcript.
+            body = f"---\n{fm}\n---\n\n{transcript_text.strip()}\n"
+
+            # 3. Normalize path the same way save_to_artifact does.
+            proj = _ps_st(effective_project)
+            norm = raw_path.lstrip("/").strip()
+            if norm and norm != proj and not norm.startswith(f"{proj}/"):
+                norm = f"{proj}/{norm}"
+
+            # 4. Save with UNIQUE-path collision retry, mirroring
+            #    save_to_artifact behavior.
+            def _candidate(base: str, n: int) -> str:
+                if n == 0:
+                    return base
+                p = Path(base)
+                if p.suffix:
+                    return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
+                return f"{base}-{n}"
+
+            store = get_store()
+            final_path = norm
+            a = None
+            for n in range(50):
+                cand = _candidate(norm, n)
+                try:
+                    a = store.create(
+                        project_id=effective_project,
+                        path=cand,
+                        content=body,
+                        content_type="text/markdown",
+                        title=title or f"Transcript: {video_id}",
+                        tags=["transcript", "youtube"],
+                        source={"kind": "agent_transcript_save", "video_id": video_id, "session_id": session_id or ""},
+                        edited_by=session_id or "agent",
+                    )
+                    final_path = cand
+                    break
+                except _sqlite3st.IntegrityError as e:
+                    if "UNIQUE" not in str(e) or "path" not in str(e):
+                        raise
+                    continue
+            if a is None:
+                return (
+                    f"save_transcript_artifact: path {norm!r} and 50 "
+                    f"numbered variants are all taken."
+                )
+
+            _emb_st.schedule_embed(a["id"], effective_project)
+            try:
+                if memory_manager:
+                    await memory_manager.index_artifact(a["id"])
+            except Exception as _ie:
+                logger.debug("graph index for transcript %s failed: %s", a["id"], _ie)
+
+            chars = len(transcript_text)
+            suffix_note = ""
+            if final_path != norm:
+                suffix_note = f" (path {norm!r} was taken; auto-suffixed)"
+            return (
+                f"Saved transcript artifact {a['path']} "
+                f"(id={a['id']}, {chars} chars of transcript){suffix_note}"
+            )
 
         elif tool_name == "create_skill":
             from skills import editor as _skill_ed
