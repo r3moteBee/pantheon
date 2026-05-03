@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   ListTodo, RefreshCw, X, Check, Clock, AlertTriangle, RotateCcw, Trash2,
-  ExternalLink, FileText,
+  ExternalLink, FileText, Play, Repeat, Zap,
 } from 'lucide-react'
 import { jobsApi, tasksApi } from '../../api/client'
 
@@ -147,34 +147,69 @@ export default function ProjectTasksPanel({ projectId }) {
               No scheduled tasks for this project. Schedule one with the agent or via /api/tasks/create.
             </div>
           )}
-          {schedules.map((s) => (
-            <div key={s.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 text-xs">
-              <div className="flex items-center gap-2">
-                <span className="font-medium text-gray-200 truncate flex-1">{s.name || '(untitled schedule)'}</span>
-                <span className="text-gray-500 truncate" title={s.schedule || s.trigger}>
-                  {renderCadence(s.schedule || s.trigger)}
-                </span>
-                <span className="text-gray-500">next: {s.next_run?.slice(0,16).replace('T',' ') || '(none)'}</span>
-                <button
-                  onClick={async (e) => {
-                    e.stopPropagation()
-                    if (!confirm(`Cancel schedule "${s.name || s.id}"?`)) return
-                    try { await tasksApi.cancel(s.id); await refresh() }
-                    catch (err) { alert(err?.response?.data?.detail || err.message) }
-                  }}
-                  className="text-gray-500 hover:text-red-400"
-                  title="Cancel schedule"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-              {s.description && (
-                <div className="text-[11px] text-gray-400 mt-1 truncate" title={s.description}>
-                  {s.description}
+          {schedules.map((sch) => {
+            const recurring = sch.is_recurring
+            return (
+              <div key={sch.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 text-xs">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                      recurring
+                        ? 'bg-brand-900 text-brand-200'
+                        : 'bg-gray-800 text-gray-400'
+                    }`}
+                    title={recurring ? 'Recurring schedule' : 'One-shot task'}
+                  >
+                    {recurring ? <Repeat className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                    {recurring ? 'recurring' : 'one-shot'}
+                  </span>
+                  <span className="font-medium text-gray-200 truncate flex-1">
+                    {sch.name || '(untitled schedule)'}
+                  </span>
+                  <span className="text-gray-500 truncate" title={sch.schedule || sch.trigger}>
+                    {renderCadence(sch.schedule || sch.trigger)}
+                  </span>
+                  <span className="text-gray-500">
+                    next: {sch.next_run?.slice(0,16).replace('T',' ') || '(none)'}
+                  </span>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      try {
+                        await tasksApi.runNow(sch.id)
+                        await refresh()
+                      } catch (err) {
+                        alert('Run Now failed: ' + (err?.response?.data?.detail || err.message))
+                      }
+                    }}
+                    className="text-gray-400 hover:text-brand-300"
+                    title={recurring
+                      ? 'Run now (in addition to the recurring schedule)'
+                      : 'Run now and remove this one-shot schedule'}
+                  >
+                    <Play className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation()
+                      if (!confirm(`Cancel schedule "${sch.name || sch.id}"?`)) return
+                      try { await tasksApi.cancel(sch.id); await refresh() }
+                      catch (err) { alert(err?.response?.data?.detail || err.message) }
+                    }}
+                    className="text-gray-500 hover:text-red-400"
+                    title="Cancel schedule"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
-              )}
-            </div>
-          ))}
+                {sch.description && (
+                  <div className="text-[11px] text-gray-400 mt-1 truncate" title={sch.description}>
+                    {sch.description}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </section>
 
         {/* Job runs */}

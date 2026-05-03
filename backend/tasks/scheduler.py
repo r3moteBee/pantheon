@@ -41,6 +41,25 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
+def is_recurring_schedule(schedule: str | None) -> bool:
+    """Derive recurrence from the user-facing schedule string.
+
+    One-shot:  'now', 'delay:N'
+    Recurring: 'interval:N', cron expressions ('m h d M dow')
+    """
+    if not schedule:
+        return False
+    s = schedule.strip()
+    if s == "now" or s.startswith("delay:"):
+        return False
+    if s.startswith("interval:"):
+        return True
+    # Treat anything with 5 whitespace-separated parts as cron (recurring)
+    if len(s.split()) == 5:
+        return True
+    return False
+
+
 def list_jobs() -> list[dict[str, Any]]:
     """List all scheduled jobs."""
     scheduler = get_scheduler()
@@ -48,12 +67,14 @@ def list_jobs() -> list[dict[str, Any]]:
     for job in scheduler.get_jobs():
         next_run = job.next_run_time.isoformat() if job.next_run_time else None
         kwargs = job.kwargs or {}
+        schedule_str = kwargs.get("schedule", str(job.trigger))
         jobs.append({
             "id": job.id,
             "name": job.name,
             "next_run": next_run,
             "trigger": str(job.trigger),
-            "schedule": kwargs.get("schedule", str(job.trigger)),
+            "schedule": schedule_str,
+            "is_recurring": is_recurring_schedule(schedule_str),
             "description": kwargs.get("description", ""),
             "project_id": kwargs.get("project_id", "default"),
             "status": "scheduled" if next_run else "completed",
@@ -69,6 +90,50 @@ def cancel_job(job_id: str) -> bool:
         job.remove()
         return True
     return False
+
+
+async def run_job_now(job_id: str) -> dict[str, Any]:
+    """Fire a scheduled job's handler immediately and update lifecycle.
+
+    For RECURRING schedules: leave the schedule in place; APScheduler's
+    next_run_time stays as it was. The user gets an extra ad-hoc run.
+
+    For ONE-SHOT schedules: enqueue + remove the schedule. (date-trigger
+    APScheduler jobs auto-remove after firing anyway, so removing now
+    just brings the disappearance forward.)
+
+    Returns {ran, recurring, schedule_id}.
+    """
+    scheduler = get_scheduler()
+    job = scheduler.get_job(job_id)
+    if not job:
+        raise ValueError(f"job {job_id} not found")
+
+    kwargs = job.kwargs or {}
+    schedule_str = kwargs.get("schedule", str(job.trigger))
+    recurring = is_recurring_schedule(schedule_str)
+
+    # Reuse the same callable + kwargs the trigger would have used.
+    # APScheduler stores the *function reference* on the job; await it
+    # directly so the handler runs in the current event loop and we can
+    # surface failures clearly.
+    fn = job.func
+    try:
+        result = fn(**kwargs)
+        if hasattr(result, "__await__"):
+            await result
+    except Exception as e:
+        raise RuntimeError(f"run-now invocation raised: {e}") from e
+
+    if not recurring:
+        # Single-shot: remove the schedule. The actual run record stays in
+        # the jobs table (Job runs section); Tasks list no longer shows it.
+        try:
+            scheduler.remove_job(job_id)
+        except Exception:
+            pass
+
+    return {"ran": True, "recurring": recurring, "schedule_id": job_id}
 
 
 async def schedule_agent_task(
