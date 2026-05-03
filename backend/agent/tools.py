@@ -75,7 +75,17 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "recall",
-            "description": "Search memories across tiers to retrieve relevant past information.",
+            "description": (
+                "Search the project's memory across episodic "
+                "(past chats), semantic (indexed artifacts and "
+                "workspace files), and graph (linked concepts) "
+                "tiers. ARTIFACTS are first-class memory: any "
+                "transcript, note, or document saved via "
+                "save_to_artifact is indexed into semantic + "
+                "graph and turns up here. Always try this BEFORE "
+                "telling the user you can't find something — "
+                "the artifact may already be indexed."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -811,7 +821,35 @@ async def execute_tool(
             results = await mgr.recall(query=query, tiers=tiers, project_id=effective_project)
             if not results:
                 return "No memories found."
-            lines = [f"[{r.get('tier','?')}] {r.get('content','')[:400]}" for r in results[:10]]
+
+            def _format(r):
+                tier = r.get("tier", "?")
+                content = (r.get("content") or "")[:400]
+                meta = r.get("metadata") or {}
+                # Detect artifact-origin chunks — index_text writes these.
+                artifact_id = meta.get("fm_artifact_id")
+                artifact_path = meta.get("fm_artifact_path") or meta.get("source_path") or ""
+                if artifact_id or (isinstance(artifact_path, str) and artifact_path.startswith("artifact://")):
+                    label = artifact_path.split("artifact://", 1)[-1].split("/", 1)[-1] if "artifact://" in artifact_path else artifact_path
+                    tags = meta.get("fm_tags") or ""
+                    tag_part = f" tags=[{tags}]" if tags else ""
+                    return (
+                        f"[{tier}/artifact] {content}\n"
+                        f"  ↳ source: {label}"
+                        f"  id={artifact_id or '?'}{tag_part}"
+                    )
+                # Workspace-file chunk
+                src_file = meta.get("source_file") or meta.get("source_path")
+                if src_file and tier == "semantic":
+                    return f"[{tier}/file:{src_file}] {content}"
+                # Episodic
+                if tier == "episodic":
+                    sid = meta.get("session_id") or "?"
+                    ts = meta.get("timestamp") or ""
+                    return f"[{tier} session={sid[:8]} {ts}] {content}"
+                return f"[{tier}] {content}"
+
+            lines = [_format(r) for r in results[:10]]
             return "\n\n".join(lines)
 
         elif tool_name == "create_graph_node":
@@ -1176,7 +1214,52 @@ async def execute_tool(
             elif target.is_dir():
                 result = await mgr.index_workspace_directory(str(target), force=force)
             else:
-                return f"Path not found: {path_arg}"
+                # Path not on disk — check whether the user actually meant
+                # an artifact folder. If artifacts exist under that prefix,
+                # auto-pivot to index_artifact instead of failing.
+                from artifacts.store import get_store as _get_art_store, project_slug as _ps_x
+                art_store = _get_art_store()
+                proj_slug = _ps_x(effective_project)
+                norm_pref = (path_arg or "").lstrip("/").strip().rstrip("/")
+                if norm_pref and norm_pref != proj_slug and not norm_pref.startswith(f"{proj_slug}/"):
+                    norm_pref = f"{proj_slug}/{norm_pref}"
+                if norm_pref:
+                    norm_pref = norm_pref + "/"
+                    matches = art_store.list(
+                        project_id=effective_project,
+                        path_prefix=norm_pref,
+                        limit=500,
+                    )
+                    if matches:
+                        # Auto-route to artifact indexing
+                        from artifacts.store import is_text_type as _is_text_x
+                        indexed = skipped = total_chunks = total_entities = 0
+                        for it in matches:
+                            if not _is_text_x(it["content_type"]):
+                                skipped += 1
+                                continue
+                            r = await mgr.index_artifact(it["id"], force=force)
+                            if r.get("skipped"):
+                                skipped += 1
+                            else:
+                                indexed += 1
+                                total_chunks += r.get("chunks_stored", 0)
+                                total_entities += r.get("entities_extracted", 0)
+                        return (
+                            f"Path {path_arg!r} isn't on disk, but matched "
+                            f"{len(matches)} artifact(s) under {norm_pref!r} — "
+                            f"auto-routed to artifact indexing.\n"
+                            f"Indexed {indexed} ({skipped} skipped): "
+                            f"{total_chunks} chunks stored, "
+                            f"{total_entities} entities extracted.\n"
+                            f"Tip: prefer `index_artifact` for artifact "
+                            f"folders; `index_workspace` is for files on disk."
+                        )
+                return (
+                    f"Path not found: {path_arg!r}. If you meant an "
+                    f"artifact folder, use `index_artifact(""path_prefix={path_arg!r})` instead — workspace is for files on "
+                    f"disk, artifacts are the project's persistent store."
+                )
             if result.get("skipped"):
                 return f"File {path_arg} skipped: {result.get('reason', 'unchanged')}"
             chunks = result.get("chunks_stored", result.get("total_chunks", 0))
