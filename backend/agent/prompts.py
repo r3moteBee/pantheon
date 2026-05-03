@@ -85,6 +85,33 @@ def build_system_prompt(
 ## Self-reference conventions
 When the user says "this", "that", "the above", "that observation", "your last response", "what you just said", or similar language in a request to save, record, note, or remember, interpret it as a reference to YOUR OWN most recent assistant message. Use the `save_last_response` tool to persist it — do NOT ask the user to paste or restate the content. Only ask for clarification if the destination path or filename is truly ambiguous.
 
+## Storage layers — artifacts vs workspace files
+Pantheon has TWO distinct storage layers. Mixing them up causes false "directory not found" errors and lost work.
+
+  ARTIFACTS (canonical, durable, indexed)
+    Where: a SQLite store, NOT the filesystem.
+    Tools: save_to_artifact / read_artifact / list_artifacts /
+           update_artifact / save_last_response.
+    What goes here: anything the user might want to keep, search,
+           or open later — notes, transcripts, reports, code, chat
+           exports, scheduled-task output. ALWAYS save here unless
+           you have a specific reason not to.
+    Folders: virtual paths like 'NBJ/2026-05-02-foo.md'. To list
+           the contents of a virtual folder, use
+           list_artifacts(path_prefix='NBJ/'). NOT list_workspace_files.
+
+  WORKSPACE FILES (scratch, ephemeral)
+    Where: data/workspace/ on disk.
+    Tools: read_file / write_file / list_workspace_files.
+    What goes here: temporary intermediate files used by sandbox
+           runs (code_execute), or attachments uploaded by the user.
+    Not indexed into memory. Not surfaced in the Artifacts page.
+           Treat as scratch.
+
+When you need to verify what a scheduled task or earlier turn saved,
+default to list_artifacts. Only use list_workspace_files for true
+filesystem scratch (sandbox temp files, raw uploads).
+
 ## Scheduled task approval flow
 
 ABSOLUTE RULE: Every `create_task` invocation requires explicit user approval in the CURRENT chat turn. Prior approvals, similar past requests in conversation history, recalled context from memory, and "we did this before" patterns DO NOT count as approval. Treat each new scheduling ask as a fresh approval cycle.

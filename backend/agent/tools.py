@@ -134,7 +134,13 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read the contents of a file from the agent workspace.",
+            "description": (
+                "Read a transient file from the workspace SCRATCH AREA "
+                "(data/workspace/, used by sandbox runs). DOES NOT read "
+                "artifacts. To read a saved artifact (notes, transcripts, "
+                "code, chat exports, anything created via save_to_artifact "
+                "or save_last_response), use `read_artifact` instead."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -148,7 +154,14 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Write content to a file in the agent workspace. Creates directories as needed.",
+            "description": (
+                "Write a transient file to the workspace SCRATCH AREA "
+                "(data/workspace/). NOT for durable content — to save "
+                "anything the user might want to keep, search, or open "
+                "later (notes, transcripts, code, reports, etc), use "
+                "`save_to_artifact` instead. Workspace files are not "
+                "indexed into memory and may be cleaned up."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -163,7 +176,15 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_workspace_files",
-            "description": "List files and directories in the agent workspace.",
+            "description": (
+                "List files in the workspace SCRATCH AREA only "
+                "(data/workspace/). DOES NOT list artifacts. To verify "
+                "or browse saved artifacts (everything created via "
+                "save_to_artifact, save_last_response, save_chat_as_artifact, or scheduled-task output sinks), use `list_artifacts` "
+                "with the appropriate path_prefix. Example for "
+                "verifying a folder of saved transcripts: "
+                "list_artifacts(path_prefix='NBJ/')."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -693,7 +714,16 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_artifacts",
-            "description": "List artifacts in the project, optionally filtered by tag, content_type, path prefix, or search string. Use to discover saved content before responding.",
+            "description": (
+                "List artifacts in the project. Filter by tag, "
+                "content_type, path_prefix, or search. THIS is the "
+                "canonical way to verify what scheduled tasks / agents "
+                "have saved — NOT list_workspace_files. To verify "
+                "transcripts under NBJ/: "
+                "list_artifacts(path_prefix='NBJ/'). To find a single "
+                "artifact by name, use search="
+                "<part of title>."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
