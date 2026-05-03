@@ -165,6 +165,16 @@ export const taskRunsApi = {
   cancel: (id) => api.post(`/api/tasks/runs/${id}/cancel`),
 }
 
+// Phase H — unified jobs API
+export const jobsApi = {
+  list: (params = {}) => api.get('/api/jobs', { params }),
+  get: (id) => api.get(`/api/jobs/${id}`),
+  create: (body) => api.post('/api/jobs', body),
+  cancel: (id) => api.post(`/api/jobs/${id}/cancel`),
+  retry: (id) => api.post(`/api/jobs/${id}/retry`),
+  delete: (id) => api.delete(`/api/jobs/${id}`),
+}
+
 export const conversationsApi = {
   list: (projectId, limit = 50) =>
     api.get('/api/conversations', { params: { project_id: projectId, limit } }),
