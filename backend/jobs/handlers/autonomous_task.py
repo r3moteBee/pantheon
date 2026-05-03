@@ -193,25 +193,42 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     full_response = ""
     tool_count = 0
     last_tool_name = None
+    iterations = None
+    text_buf = ""
+    text_deltas_since_tool = 0
     async with pinger_for(ctx, interval=30.0):
         async for event in agent.chat(full_prompt, stream=False):
             etype = event.get("type")
             if etype == "tool_call":
                 tool_count += 1
                 last_tool_name = event.get("name") or "?"
+                text_deltas_since_tool = 0
                 step_idx = _match_tool_to_step(last_tool_name, plan_steps)
                 progress = _format_progress(tool_count, last_tool_name, step_idx, plan_steps)
                 await ctx.heartbeat(progress=progress)
             elif etype == "tool_result":
-                # Surface tool completion + any error
                 name = event.get("name") or last_tool_name or "?"
                 result = (event.get("result") or "")
                 snippet = result.replace("\n", " ")[:80] if isinstance(result, str) else ""
                 await ctx.heartbeat(
                     progress=f"✓ {name} → {snippet}" if snippet else f"✓ {name}"
                 )
+            elif etype in ("text_delta", "text"):
+                # Capture model text. If no tools have fired yet, surface
+                # the recent text so the UI shows the agent is alive
+                # rather than appearing stuck on "Running agent loop…".
+                chunk = event.get("content") or event.get("text") or ""
+                if chunk:
+                    text_buf += chunk
+                    text_deltas_since_tool += 1
+                    if tool_count == 0 and text_deltas_since_tool % 8 == 0:
+                        # heartbeat once every 8 deltas with the tail of text
+                        await ctx.heartbeat(
+                            progress=f"thinking… {text_buf[-200:].strip()[-180:]}"
+                        )
             elif etype == "done":
                 full_response = event.get("full_response", "") or ""
+                iterations = event.get("iterations")
             elif etype == "error":
                 logger.warning(
                     "autonomous_task %s: agent error event: %s",
@@ -219,7 +236,26 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 )
 
     result_text = full_response
-    ctx.update_result({"tool_calls_observed": tool_count})
+    ctx.update_result({
+        "tool_calls_observed": tool_count,
+        "iterations_used": iterations,
+    })
+
+    # Diagnostic: if the loop closed with no tool calls AND no final text,
+    # log a warning so post-mortem is easier.
+    if tool_count == 0 and not (result_text or "").strip():
+        logger.warning(
+            "autonomous_task %s: agent emitted no tool calls and no text. "
+            "Likely causes: model refused to call tools, MAX_TOOL_ITERATIONS "
+            "hit before any progress, or LLM provider returned empty.",
+            ctx.job_id[:8],
+        )
+    elif tool_count == 0:
+        logger.info(
+            "autonomous_task %s: completed with NO tool calls. "
+            "Final text length=%d. Plan may have been ignored.",
+            ctx.job_id[:8], len(result_text or "")
+        )
 
     # If the agent loop returned empty (e.g. hit MAX_TOOL_ITERATIONS or
     # ended on a tool-call turn), recover the last assistant message

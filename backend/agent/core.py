@@ -18,7 +18,7 @@ from models.provider import ModelProvider
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-MAX_TOOL_ITERATIONS = 50
+MAX_TOOL_ITERATIONS = int(__import__('os').getenv('MAX_TOOL_ITERATIONS', '100'))
 
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
@@ -407,7 +407,7 @@ class AgentCore:
             if full_response:
                 self._add_working_message("assistant", full_response)
 
-            yield {"type": "done", "full_response": full_response}
+            yield {"type": "done", "full_response": full_response, "iterations": iterations}
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
