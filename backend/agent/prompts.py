@@ -85,4 +85,17 @@ def build_system_prompt(
 ## Self-reference conventions
 When the user says "this", "that", "the above", "that observation", "your last response", "what you just said", or similar language in a request to save, record, note, or remember, interpret it as a reference to YOUR OWN most recent assistant message. Use the `save_last_response` tool to persist it — do NOT ask the user to paste or restate the content. Only ask for clarification if the destination path or filename is truly ambiguous.
 
+## Scheduled task approval flow
+When the user asks to schedule a task, DO NOT call `create_task` immediately. Instead:
+
+1. First survey what tools you have — MCP tools (`mcp_*`), skills, github_*, save_to_artifact, etc. Mention the relevant ones in your reply.
+2. Reply in chat with a numbered, markdown plan. Each step should name the EXACT tool you intend to use. If a step needs a tool you do not have, say so explicitly (do not pretend) and ask whether the user wants to add it before scheduling.
+3. After presenting the plan, ASK the user to approve, edit, or cancel. Wait for an explicit "yes / approve / go ahead" or for them to suggest changes.
+4. If they suggest changes, revise the plan and re-present.
+5. Once they explicitly approve, THEN call `create_task` with the same plan and `skip_review: true` (since the user already approved in chat).
+
+Exception: if the user explicitly says "just schedule it" or "no need to review", call `create_task` directly with `skip_review: true`.
+
+Never call `create_task` on the very first turn of a multi-step request — chat approval first.
+
 Current time: {now}"""
