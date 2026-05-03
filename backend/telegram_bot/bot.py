@@ -373,7 +373,7 @@ async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
                         message, project_id=project,
                         mode=SkillDiscoveryMode(discovery_mode), top_k=1,
                     )
-                    if matches and matches[0]["score"] >= 2.0:
+                    if matches and matches[0]["score"] >= 3.0:
                         best = matches[0]
                         skill = best["skill"]
                         if discovery_mode == "auto":

@@ -18,6 +18,25 @@ from skills.registry import get_skill_registry
 
 logger = logging.getLogger(__name__)
 
+# Common English stopwords. Excluded from overlap scoring so a skill
+# whose trigger contains 'what', 'the', or 'about' doesn't match
+# every question. Keep this list conservative — only words that
+# carry essentially zero topical signal.
+_STOPWORDS = frozenset({
+    "the", "and", "for", "are", "but", "not", "you", "all", "can",
+    "had", "her", "was", "one", "our", "out", "day", "get", "has",
+    "him", "his", "how", "man", "new", "now", "old", "see", "two",
+    "who", "boy", "did", "its", "let", "put", "say", "she", "too",
+    "use", "any", "what", "this", "with", "have", "from", "they",
+    "would", "there", "their", "could", "should", "also", "into",
+    "than", "then", "them", "these", "those", "your", "about",
+    "tell", "ask", "want", "need", "like", "just", "such", "very",
+    "more", "most", "some", "much", "many", "other", "where",
+    "when", "which", "while", "been", "were", "will", "shall",
+    "may", "might", "make", "take", "give", "find", "look",
+    "going", "doing", "having", "being", "does", "yes",
+})
+
 
 def resolve_explicit(message: str) -> tuple[str | None, str]:
     """Check if the message starts with /skill-name and return (skill_name, rest_of_message).
@@ -64,7 +83,8 @@ def resolve_auto(
 
     # Normalise message for matching
     msg_lower = message.lower()
-    msg_words = set(re.findall(r"\b[a-z]{3,}\b", msg_lower))
+    msg_words_raw = set(re.findall(r"\b[a-z]{3,}\b", msg_lower))
+    msg_words = msg_words_raw - _STOPWORDS
 
     scored: list[tuple[LoadedSkill, float, str]] = []
 
@@ -72,33 +92,43 @@ def resolve_auto(
         score = 0.0
         reasons: list[str] = []
 
-        # Check triggers (highest weight)
+        # Check triggers (highest weight). Full-phrase containment is
+        # the strongest signal — keep that exactly. Partial overlap
+        # ignores stopwords so triggers like "what is the weather"
+        # don't match every question via {what, the}.
         for trigger in skill.triggers:
             trigger_lower = trigger.lower()
             if trigger_lower in msg_lower:
                 score += 3.0
-                reasons.append(f"trigger match: '{trigger}'")
+                reasons.append(f"trigger match: \'{trigger}\'")
                 break  # One trigger match is enough
-            # Partial word overlap with trigger phrase
-            trigger_words = set(re.findall(r"\b[a-z]{3,}\b", trigger_lower))
+            trigger_words_raw = set(re.findall(r"\b[a-z]{3,}\b", trigger_lower))
+            trigger_words = trigger_words_raw - _STOPWORDS
             overlap = msg_words & trigger_words
+            # Require at least 2 NON-STOPWORD overlap terms.
             if len(overlap) >= 2:
                 score += 1.5
                 reasons.append(f"partial trigger: {overlap}")
 
-        # Check tags (medium weight)
+        # Check tags (medium weight). Tags are usually one or two
+        # words, no need for stopword filtering — but ignore generic
+        # one-letter or stopword tags if any author shipped them.
         for tag in skill.tags:
-            if tag.lower() in msg_lower:
+            tag_lower = tag.lower()
+            if tag_lower in _STOPWORDS:
+                continue
+            if tag_lower in msg_lower:
                 score += 1.0
-                reasons.append(f"tag match: '{tag}'")
+                reasons.append(f"tag match: \'{tag}\'")
 
-        # Check skill name (low weight, catches /skill-name-like references)
+        # Check skill name (low weight, catches /skill-name references)
         if skill.name.replace("-", " ") in msg_lower or skill.name in msg_lower:
             score += 2.0
             reasons.append("name match")
 
-        # Check description keywords (low weight)
-        desc_words = set(re.findall(r"\b[a-z]{3,}\b", skill.manifest.description.lower()))
+        # Check description keywords (low weight, stopword-filtered).
+        desc_words_raw = set(re.findall(r"\b[a-z]{3,}\b", skill.manifest.description.lower()))
+        desc_words = desc_words_raw - _STOPWORDS
         desc_overlap = msg_words & desc_words
         if len(desc_overlap) >= 3:
             score += 0.5 * min(len(desc_overlap), 5)
