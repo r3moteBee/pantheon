@@ -101,7 +101,14 @@ async def _build_agent(
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
-    """Send a message to the agent and get a response (non-streaming)."""
+    """Send a message to the agent and get a response (non-streaming).
+
+    Mirrors the WebSocket path's skill-discovery flow:
+      - explicit /skill-name invocations → activate that skill
+      - auto-discovery when discovery_mode in ('suggest','auto') →
+        fire the top match above threshold (REST has no chip UX so
+        'suggest' is treated as 'auto' here)
+    """
     session_id = req.session_id or str(uuid.uuid4())
     provider = get_provider()
     memory = create_memory_manager(
@@ -110,15 +117,69 @@ async def chat(req: ChatRequest) -> ChatResponse:
         provider=provider,
     )
 
+    message = req.message
+    skill_context: str | None = None
+    active_skill_name: str | None = None
+
+    # 1. Explicit /skill-name invocation
+    explicit_skill, remaining_message = resolve_explicit(message)
+    if explicit_skill:
+        registry = get_skill_registry()
+        skill = registry.get(explicit_skill)
+        if skill:
+            active_skill_name = explicit_skill
+            skill_context = build_skill_context(skill, project_id=req.project_id)
+            message = remaining_message or message
+            try:
+                from skills import analytics as _sa
+                _sa.record_fire(explicit_skill, source="explicit")
+            except Exception:
+                pass
+    else:
+        # 2. Auto-discovery
+        try:
+            from secrets.vault import get_vault as _gv
+            discovery_mode = _gv().get_secret(f"skill_discovery_{req.project_id}") or "off"
+        except Exception:
+            discovery_mode = "off"
+        if discovery_mode in ("suggest", "auto"):
+            try:
+                matches = resolve_auto(
+                    message,
+                    project_id=req.project_id,
+                    mode=SkillDiscoveryMode(discovery_mode),
+                    top_k=1,
+                )
+                if matches and matches[0]["score"] >= 3.0:
+                    skill = matches[0]["skill"]
+                    active_skill_name = skill.name
+                    skill_context = build_skill_context(skill, project_id=req.project_id)
+                    try:
+                        from skills import analytics as _sa
+                        # In REST we cannot pause-and-confirm, so mark
+                        # the source as 'auto_rest' regardless of the
+                        # configured mode.
+                        _sa.record_fire(skill.name, source="auto_rest")
+                    except Exception:
+                        pass
+                    logger.info(
+                        "REST chat: auto-fired skill %s (score=%s, mode=%s)",
+                        skill.name, matches[0]["score"], discovery_mode,
+                    )
+            except Exception:
+                logger.exception("REST chat: skill auto-discovery failed")
+
     agent = await _build_agent(
         provider=provider,
         memory_manager=memory,
         project_id=req.project_id,
         session_id=session_id,
+        skill_context=skill_context,
+        active_skill_name=active_skill_name,
     )
 
     full_response = ""
-    async for event in agent.chat(req.message, stream=False):
+    async for event in agent.chat(message, stream=False):
         if event["type"] == "done":
             full_response = event.get("full_response", "")
         elif event["type"] == "error":

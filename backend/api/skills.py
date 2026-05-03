@@ -64,6 +64,44 @@ async def list_skills(
 
 # ── Reload the skill registry ───────────────────────────────────────────────
 
+@router.post("/skills/debug-match")
+async def debug_match_skills(
+    message: str = Query(..., description="User message text to score against installed skills"),
+    project_id: str = Query(default="default"),
+    top_k: int = Query(default=10, ge=1, le=50),
+) -> dict[str, Any]:
+    """Run resolve_auto against a message and return scores for ALL skills.
+
+    Useful when you expect a skill to be suggested but it isn't — this
+    exposes which skills scored, what reasons matched, and which fell
+    below the threshold so you can debug from outside the agent loop.
+    """
+    from skills.resolver import resolve_auto
+    from skills.models import SkillDiscoveryMode
+    matches = resolve_auto(
+        message,
+        project_id=project_id,
+        mode=SkillDiscoveryMode.suggest,  # forces resolution regardless of stored mode
+        top_k=top_k,
+    )
+    return {
+        "message": message,
+        "project_id": project_id,
+        "threshold_for_suggest": 3.0,
+        "matches": [
+            {
+                "skill": m["skill"].name,
+                "score": m["score"],
+                "reason": m["reason"],
+                "would_suggest": m["score"] >= 3.0,
+                "triggers": list(m["skill"].triggers or []),
+                "tags": list(m["skill"].tags or []),
+            }
+            for m in matches
+        ],
+    }
+
+
 @router.post("/skills/reload")
 async def reload_skills() -> dict[str, Any]:
     """Force-reload all skills from disk."""
