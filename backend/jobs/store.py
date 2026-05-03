@@ -191,6 +191,26 @@ class JobStore:
         try: return self.get(job_id)
         except JobNotFound: return None
 
+    def find_latest_for_schedule(self, schedule_id: str) -> dict[str, Any] | None:
+        """Return the most recent job that fired from this schedule, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM jobs WHERE schedule_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (schedule_id,),
+            ).fetchone()
+        return self._hydrate(row) if row else None
+
+    def list_for_schedule(self, schedule_id: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Return all jobs that fired from this schedule, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM jobs WHERE schedule_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (schedule_id, limit),
+            ).fetchall()
+        return [self._hydrate(r) for r in rows]
+
     def list(
         self,
         *,
