@@ -22,6 +22,60 @@ from jobs.handlers import register
 logger = logging.getLogger(__name__)
 
 
+# ── Plan-step parsing + tool→step mapping ───────────────────────────────────
+
+import re as _re
+
+def _extract_plan_steps(plan: str) -> list[str]:
+    """Extract numbered steps from a markdown plan. Returns [] if the plan
+    isn't recognizably step-formatted.
+
+    Recognizes lines starting with '1.', '2.', etc, optionally inside
+    '   ' indentation. Captures up to the next numbered line or the end.
+    """
+    if not plan:
+        return []
+    lines = [ln.strip() for ln in plan.splitlines()]
+    steps: list[str] = []
+    current: list[str] = []
+    for ln in lines:
+        m = _re.match(r"^(\d+)\.\s+(.+)$", ln)
+        if m:
+            if current:
+                steps.append(" ".join(current).strip())
+            current = [m.group(2)]
+        elif current and ln:
+            current.append(ln)
+    if current:
+        steps.append(" ".join(current).strip())
+    return steps
+
+
+def _match_tool_to_step(tool_name: str, steps: list[str]) -> int | None:
+    """Given a tool name, find the plan step that mentions it. Returns
+    the 1-based step index or None if no match."""
+    if not steps or not tool_name:
+        return None
+    lower = tool_name.lower()
+    # Strip common prefixes for fuzzier match
+    short = lower.replace("mcp_", "").replace("github_", "")
+    for i, step in enumerate(steps, start=1):
+        sl = step.lower()
+        if lower in sl or short in sl:
+            return i
+    return None
+
+
+def _format_progress(tool_count: int, tool_name: str,
+                     step_idx: int | None, steps: list[str]) -> str:
+    if step_idx and steps:
+        step_text = steps[step_idx - 1][:60]
+        return f"Step {step_idx}/{len(steps)} → {tool_name}: {step_text}"
+    return f"Tool call #{tool_count}: {tool_name}"
+
+
+
+
 @register("autonomous_task", default_timeout_seconds=600,
           description="Single-fire autonomous agent loop with a free-form prompt.")
 async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
@@ -127,9 +181,45 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     except Exception:
         logger.debug("could not save user prompt to episodic", exc_info=True)
 
-    await ctx.heartbeat(progress="Running agent loop…")
+    # Replace agent.run_autonomous() with our own event-loop pump so we
+    # can update the heartbeat progress with each tool call. That way the
+    # Tasks UI shows the actual step the agent is on instead of a static
+    # "Running agent loop…".
+    plan_steps = _extract_plan_steps(plan)
+    await ctx.heartbeat(
+        progress=("Step 1/%d…" % len(plan_steps)) if plan_steps else "Running agent loop…"
+    )
+
+    full_response = ""
+    tool_count = 0
+    last_tool_name = None
     async with pinger_for(ctx, interval=30.0):
-        result_text = await agent.run_autonomous(full_prompt)
+        async for event in agent.chat(full_prompt, stream=False):
+            etype = event.get("type")
+            if etype == "tool_call":
+                tool_count += 1
+                last_tool_name = event.get("name") or "?"
+                step_idx = _match_tool_to_step(last_tool_name, plan_steps)
+                progress = _format_progress(tool_count, last_tool_name, step_idx, plan_steps)
+                await ctx.heartbeat(progress=progress)
+            elif etype == "tool_result":
+                # Surface tool completion + any error
+                name = event.get("name") or last_tool_name or "?"
+                result = (event.get("result") or "")
+                snippet = result.replace("\n", " ")[:80] if isinstance(result, str) else ""
+                await ctx.heartbeat(
+                    progress=f"✓ {name} → {snippet}" if snippet else f"✓ {name}"
+                )
+            elif etype == "done":
+                full_response = event.get("full_response", "") or ""
+            elif etype == "error":
+                logger.warning(
+                    "autonomous_task %s: agent error event: %s",
+                    ctx.job_id[:8], event.get("message"),
+                )
+
+    result_text = full_response
+    ctx.update_result({"tool_calls_observed": tool_count})
 
     # If the agent loop returned empty (e.g. hit MAX_TOOL_ITERATIONS or
     # ended on a tool-call turn), recover the last assistant message

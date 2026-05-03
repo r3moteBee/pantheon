@@ -1,7 +1,7 @@
 {
   "name": "pantheon-frontend",
   "private": true,
-  "version": "2026.05.02.H7e",
+  "version": "2026.05.02.H7f",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
