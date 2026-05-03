@@ -153,12 +153,6 @@ export const projectRepoApi = {
   unbind: (projectId) => api.delete(`/api/projects/${projectId}/repo`),
 }
 
-export const projectMcpApi = {
-  list: (projectId) => api.get(`/api/projects/${projectId}/mcp`),
-  set: (projectId, serverId, enabled) =>
-    api.post(`/api/projects/${projectId}/mcp/${serverId}`, { enabled }),
-}
-
 export const projectSettingsApi = {
   get: (projectId) => api.get(`/api/projects/${projectId}/settings`),
   update: (projectId, body) => api.put(`/api/projects/${projectId}/settings`, body),
