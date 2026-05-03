@@ -470,6 +470,53 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "start_coding_task",
+            "description": (
+                "Enqueue a long-form coding task to run in the background. "
+                "Returns a job_id immediately. The background agent has the "
+                "github_* tools and code_execute, branches off the project's "
+                "bound repo, makes commits, opens a PR, and saves a summary "
+                "artifact. Use this for substantial coding work that "
+                "shouldn't block the chat. Track progress in the chat Tasks "
+                "tab — call get_job_status(job_id) when the user asks for "
+                "an update.\n\n"
+                "BEFORE calling this, ideally use github_list_directory + "
+                "github_read_file to build a coding_context string that "
+                "describes the tech stack, file layout, and conventions. "
+                "That string is injected into the background agent's system "
+                "prompt and dramatically improves output quality."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_description": {
+                        "type": "string",
+                        "description": "Detailed description of what to build/fix/change."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Short title shown in the Tasks UI."
+                    },
+                    "coding_context": {
+                        "type": "string",
+                        "description": "Project context — tech stack, file layout, conventions."
+                    },
+                    "branch_name": {
+                        "type": "string",
+                        "description": "Optional explicit branch name; auto-generated otherwise."
+                    },
+                    "base_branch": {
+                        "type": "string",
+                        "description": "Optional override for the base branch; defaults to bound repo's default."
+                    }
+                },
+                "required": ["task_description"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_to_artifact",
             "description": (
                 "Save text content to a project artifact. Artifacts are durable, "
@@ -910,6 +957,32 @@ async def execute_tool(
                 return "No memory manager available."
             result = await memory_manager.consolidate_session()
             return result
+
+        elif tool_name == "start_coding_task":
+            from jobs.store import get_store
+            title = tool_args.get("title") or "Coding task"
+            description = tool_args.get("task_description") or ""
+            payload = {
+                "task_description": description,
+                "coding_context": tool_args.get("coding_context") or "",
+                "branch_name": tool_args.get("branch_name"),
+                "base_branch": tool_args.get("base_branch"),
+            }
+            j = get_store().create(
+                job_type="coding_task",
+                project_id=effective_project,
+                title=title,
+                description=description[:200],
+                payload=payload,
+            )
+            return (
+                f"Coding task queued.\n"
+                f"  job_id: {j['id']}\n"
+                f"  title: {title}\n"
+                f"You can call get_job_status(job_id={j['id'][:8]!r}) "
+                f"or list_recent_jobs() to check progress. The user can "
+                f"watch it in the chat Tasks tab."
+            )
 
         elif tool_name == "code_execute":
             from sandbox import get_sandbox
