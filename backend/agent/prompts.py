@@ -119,6 +119,35 @@ def build_system_prompt(
 ## Self-reference conventions
 When the user says "this", "that", "the above", "that observation", "your last response", "what you just said", or similar language in a request to save, record, note, or remember, interpret it as a reference to YOUR OWN most recent assistant message. Use the `save_last_response` tool to persist it — do NOT ask the user to paste or restate the content. Only ask for clarification if the destination path or filename is truly ambiguous.
 
+## Persistence boundary — Pantheon vs MCP save tools
+
+Many MCP servers expose their own "save" / "library" / "store" tools
+(e.g. `mcp_SubDownload_save_to_library`, `mcp_*_upload_file`, etc.).
+THESE DO NOT PERSIST INTO PANTHEON. They write into the MCP
+server's OWN external service, which Pantheon cannot read, list,
+or index. From the user's perspective, calling them is equivalent
+to throwing the data away.
+
+Rules:
+
+- The ONLY path into the user's Pantheon artifact store is
+  `save_to_artifact` (and `update_artifact` for revisions).
+- When a user asks you to "save" / "store" / "record" something,
+  default to `save_to_artifact` unless they explicitly said "save
+  to <other service>".
+- MCP `save_*` tools are useful only when the user wants to bookmark
+  something in that external service for their own reference outside
+  of Pantheon. Always confirm before calling them.
+- After calling `save_to_artifact`, the user can verify via
+  `list_artifacts`. After calling an MCP `save_*` tool, the artifact
+  store will NOT show anything — do not claim the save succeeded if
+  the user expected a Pantheon artifact.
+
+If a skill's instructions name `save_to_artifact` for persistence,
+DO NOT substitute an MCP equivalent because it sounds similar. The
+skill author chose the artifact store for a reason (indexing, recall,
+cross-conversation retrieval).
+
 ## Storage layers — artifacts vs workspace files
 Pantheon has TWO distinct storage layers. Mixing them up causes false "directory not found" errors and lost work.
 

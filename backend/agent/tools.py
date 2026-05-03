@@ -782,13 +782,7 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "save_to_artifact",
             "description": (
-                "Save text content to a project artifact. Artifacts are durable, "
-                "versioned, searchable text or binary content (think: better than "
-                "files). Use whenever the user says 'save this', 'remember that "
-                "observation', 'write a note', etc. Auto-embedded into semantic "
-                "memory so future recall surfaces it. Path examples: "
-                "'notes/2026-04-30-ai-trends.md', 'code/calc.py', "
-                "'chats/exports/today.md'."
+                "Save content into the user's Pantheon artifact store. THIS IS THE ONLY tool that persists anything into `list_artifacts` / `read_artifact` / project-scoped recall. MCP `save_*` / `*_save_to_library` / `*_upload_file` tools are NOT equivalents — they save to external services that Pantheon cannot see. Always use `save_to_artifact` when a skill says \"save as artifact\" or when the user asks you to save something for later use in this project. Pass a bare path like 'youtube-transcripts/foo.md' — the project slug is prepended automatically. UNIQUE-path collisions are auto-resolved by suffixing -1, -2, etc. Returns the saved artifact id."
             ),
             "parameters": {
                 "type": "object",
