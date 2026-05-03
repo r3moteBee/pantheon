@@ -51,7 +51,13 @@ class EpisodicMemory:
         project_id: str = "default",
         embedding_fn: Any = None,
     ):
-        self.db_path = db_path or "data/episodic.db"
+        if db_path is None:
+            try:
+                from config import get_settings
+                db_path = get_settings().episodic_db_path
+            except Exception:
+                db_path = "data/episodic.db"
+        self.db_path = db_path
         self.project_id = project_id
         self._embedding_fn = embedding_fn
         self._vector_collection = None

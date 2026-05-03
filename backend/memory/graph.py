@@ -27,7 +27,13 @@ class GraphMemory:
 
     def __init__(self, project_id: str = "default", db_path: str | None = None):
         self.project_id = project_id
-        self.db_path = db_path or "data/graph.db"
+        if db_path is None:
+            try:
+                from config import get_settings
+                db_path = get_settings().graph_db_path
+            except Exception:
+                db_path = "data/graph.db"
+        self.db_path = db_path
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 

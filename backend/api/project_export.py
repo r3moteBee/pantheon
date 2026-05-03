@@ -60,8 +60,11 @@ def _resolve_episodic_db_path() -> str:
 
     candidates = [
         str(settings.episodic_db_path),       # /app/data/db/episodic.db
-        "data/episodic.db",                    # EpisodicMemory class default (relative)
-        str(settings.data_dir / "episodic.db"),  # alternate flat layout
+        # legacy fallbacks kept for backward-compat with installs that
+        # still have data at the old relative paths; new code writes
+        # only to settings.episodic_db_path.
+        "data/episodic.db",
+        str(settings.data_dir / "episodic.db"),
     ]
     for path in candidates:
         p = _P(path)
@@ -85,8 +88,11 @@ def _resolve_graph_db_path() -> str:
 
     candidates = [
         str(settings.graph_db_path),           # /app/data/db/graph.db
-        "data/graph.db",                       # GraphMemory class default (relative)
-        str(settings.data_dir / "graph.db"),   # alternate flat layout
+        # legacy fallbacks kept for backward-compat with installs that
+        # still have data at the old relative paths; new code writes
+        # only to settings.graph_db_path.
+        "data/graph.db",
+        str(settings.data_dir / "graph.db"),
     ]
     for path in candidates:
         p = _P(path)

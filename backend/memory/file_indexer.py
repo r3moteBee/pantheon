@@ -384,9 +384,15 @@ class FileIndex:
     Prevents re-indexing unchanged files and enables incremental updates.
     """
 
-    def __init__(self, db_path: str = "data/file_index.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            try:
+                from config import get_settings
+                db_path = str(get_settings().db_dir / "file_index.db")
+            except Exception:
+                db_path = "data/file_index.db"
         self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self):
