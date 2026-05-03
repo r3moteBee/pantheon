@@ -5,6 +5,36 @@ import {
 } from 'lucide-react'
 import { jobsApi, tasksApi } from '../../api/client'
 
+function renderCadence(schedule) {
+  if (!schedule) return '—'
+  if (schedule === 'now') return 'one-shot (now)'
+  if (schedule.startsWith('delay:')) {
+    const m = parseFloat(schedule.split(':')[1])
+    if (m < 1) return `in ${Math.round(m * 60)} sec`
+    if (m < 60) return `in ${m} min`
+    if (m < 1440) return `in ${(m / 60).toFixed(1)} hr`
+    return `in ${(m / 1440).toFixed(1)} days`
+  }
+  if (schedule.startsWith('interval:')) {
+    const m = parseInt(schedule.split(':')[1], 10)
+    if (m === 1) return 'every minute'
+    if (m < 60) return `every ${m} min`
+    if (m === 60) return 'hourly'
+    if (m < 1440) return `every ${m / 60} hr`
+    if (m === 1440) return 'daily'
+    return `every ${m / 1440} days`
+  }
+  // Looks like a cron expression
+  if (schedule.split(/\s+/).length === 5) {
+    const [min, hr, dom, mon, dow] = schedule.split(/\s+/)
+    if (dom === '*' && mon === '*' && dow === '*' && min !== '*' && hr !== '*') {
+      return `daily at ${hr.padStart(2,'0')}:${min.padStart(2,'0')}`
+    }
+    return `cron: ${schedule}`
+  }
+  return schedule
+}
+
 const STATUS_BADGE = {
   running:   'bg-blue-900 text-blue-200',
   queued:    'bg-gray-800 text-gray-300',
@@ -121,7 +151,9 @@ export default function ProjectTasksPanel({ projectId }) {
             <div key={s.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 text-xs">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-gray-200 truncate flex-1">{s.name || '(untitled schedule)'}</span>
-                <span className="text-gray-500 truncate">{s.schedule || s.trigger}</span>
+                <span className="text-gray-500 truncate" title={s.schedule || s.trigger}>
+                  {renderCadence(s.schedule || s.trigger)}
+                </span>
                 <span className="text-gray-500">next: {s.next_run?.slice(0,16).replace('T',' ') || '(none)'}</span>
                 <button
                   onClick={async (e) => {

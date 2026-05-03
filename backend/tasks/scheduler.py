@@ -115,6 +115,28 @@ async def schedule_agent_task(
             },
             replace_existing=True,
         )
+    elif schedule.startswith("delay:"):
+        # One-shot — run once N minutes from now. Distinct from interval:N
+        # (which is recurring every N minutes).
+        from datetime import datetime, timedelta, timezone
+        try:
+            minutes = float(schedule.split(":")[1])
+        except (ValueError, IndexError):
+            raise ValueError(f"delay:N requires a number of minutes; got {schedule!r}")
+        run_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        scheduler.add_job(
+            run_autonomous_task,
+            trigger="date",
+            run_date=run_at,
+            id=task_id,
+            name=name,
+            kwargs={
+                "task_id": task_id, "task_name": name,
+                "description": description, "project_id": project_id,
+                "schedule": schedule,
+            },
+            replace_existing=True,
+        )
     elif schedule.startswith("interval:"):
         minutes = int(schedule.split(":")[1])
         scheduler.add_job(
@@ -222,6 +244,12 @@ async def schedule_scheduled_job(
     if schedule == "now":
         scheduler.add_job(_enqueue, trigger="date", id=schedule_id, name=name,
                           replace_existing=True)
+    elif schedule.startswith("delay:"):
+        from datetime import datetime, timedelta, timezone
+        minutes = float(schedule.split(":")[1])
+        run_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        scheduler.add_job(_enqueue, trigger="date", run_date=run_at,
+                          id=schedule_id, name=name, replace_existing=True)
     elif schedule.startswith("interval:"):
         minutes = int(schedule.split(":")[1])
         if not interval_seconds:
