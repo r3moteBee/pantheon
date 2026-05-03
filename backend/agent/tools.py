@@ -191,92 +191,81 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "create_task",
             "description": (
-                "Schedule an autonomous task for the agent to work on independently. "
-                "The 'name' field shows up in the user's Tasks list — make it "
-                "recognizable, NOT a generic word like 'task'. A 3-7 word "
-                "imperative phrase is ideal."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "Detailed instructions for what the agent should do."
-                    },
-                    "schedule": {
-                        "type": "string",
-                        "description": (
-                            "When to run. Distinguish ONE-SHOT (runs once) "
-                            "from RECURRING (repeats forever).\n"
-                            "  ONE-SHOT:\n"
-                            "    'now'            run immediately, once\n"
-                            "    'delay:N'        run once in N minutes from now\n"
-                            "                     (e.g. 'delay:2' = in 2 minutes;\n"
-                            "                      'delay:60' = in 1 hour)\n"
-                            "  RECURRING:\n"
-                            "    'interval:N'     run every N minutes, forever\n"
-                            "                     (e.g. 'interval:60' = hourly)\n"
-                            "    cron expression  e.g. '0 9 * * *' = daily at 9am\n"
-                            "If the user says 'in 2 minutes', use delay:2 — NOT "
-                            "interval:120. interval is recurring; delay is one-shot."
-                        )
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": (
-                            "Short, recognizable label shown to the user (3-7 words, "
-                            "imperative phrase). Examples: 'Daily PR digest', "
-                            "'SUSE blog research', 'Refresh weather every hour'. "
-                            "DO NOT use generic words like 'task', 'job', or 'reminder'."
-                        )
-                    }
-                },
-                "required": ["description", "schedule", "name"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "propose_scheduled_task",
-            "description": (
-                "Propose a scheduled task with an explicit step-by-step plan "
-                "for the user to review and approve before it runs. Prefer "
-                "this over create_task when the work is non-trivial — "
-                "anything involving multi-step research, MCP tools, "
-                "external APIs, or 'do X then Y then Z' sequences. The "
-                "schedule is created in PAUSED state with plan_status='proposed'. "
-                "The user reviews the plan in Tasks tab and clicks Approve, "
-                "after which it becomes active.\n\n"
-                "Plan should be markdown with numbered steps. Call out the "
-                "specific tools you intend to use (MCP servers, skills, "
-                "github_*, etc.) so the user can correct your assumptions "
-                "before the task runs."
+                "Schedule an autonomous task. By default the schedule is "
+                "created in PAUSED state with plan_status='proposed' so "
+                "the user can REVIEW and APPROVE the plan before it runs. "
+                "The task only fires after they click Approve in the Tasks "
+                "tab.\n\n"
+                "BEFORE calling this tool you should:\n"
+                "  1. Survey what tools you actually have available — MCP "
+                "     tools (mcp_*), skills, github_*, save_to_artifact, "
+                "     web_search — and reference SPECIFIC ONES by NAME in "
+                "     the plan. Don't write 'fetch the transcript'; write "
+                "     'fetch via mcp_SubDownload_fetch_transcript'.\n"
+                "  2. If the user mentioned a specific tool / skill / MCP, "
+                "     anchor the relevant step on that exact name.\n"
+                "  3. If a step needs a tool you don't have, write that "
+                "     into the plan explicitly so the user can correct you "
+                "     before approval — DO NOT pretend you have it.\n\n"
+                "Use skip_review=true ONLY when the user explicitly said "
+                "'just do it' or 'no need to review'. Default to plan "
+                "review for any multi-step or non-trivial work."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Short recognizable label (3-7 words, imperative phrase)."
+                        "description": (
+                            "Short recognizable label shown in the Tasks list "
+                            "(3-7 words, imperative). Examples: 'Daily PR digest', "
+                            "'SUSE blog research'. DO NOT use 'task', 'job', "
+                            "or 'reminder'."
+                        )
                     },
                     "description": {
                         "type": "string",
-                        "description": "Detailed task description."
+                        "description": "Detailed task description — what the agent should do."
                     },
                     "schedule": {
                         "type": "string",
                         "description": (
-                            "When to run. Same vocabulary as create_task: "
-                            "'now' / 'delay:N' (one-shot) / 'interval:N' / "
-                            "cron expression (recurring)."
+                            "ONE-SHOT: 'now' / 'delay:N' (run once in N "
+                            "minutes — e.g. delay:2). RECURRING: 'interval:N' "
+                            "(every N minutes, forever — e.g. interval:60 = "
+                            "hourly); cron expression like '0 9 * * *' = "
+                            "daily at 9am. 'in 2 minutes' is delay:2 NOT "
+                            "interval:120."
                         )
                     },
                     "plan": {
                         "type": "string",
                         "description": (
-                            "Markdown plan. Number the steps. For each step "
-                            "name the tool you'll use and why."
+                            "REQUIRED. Markdown plan with numbered steps. "
+                            "For each step name the EXACT tool you intend to "
+                            "use. Example:\n"
+                            "  1. Resolve channel via "
+                            "     `mcp_SubDownload_resolve_channel` (query="
+                            "     \"Nate B Jones\").\n"
+                            "  2. Fetch latest 3 videos via "
+                            "     `mcp_SubDownload_get_channel_latest_videos`.\n"
+                            "  3. For each, fetch transcript via "
+                            "     `mcp_SubDownload_fetch_transcript`.\n"
+                            "  4. Save each via `save_to_artifact` with path "
+                            "     NBJ/{date}-{title}.md.\n"
+                            "  5. Use the topic-extractor skill to add 3-5 "
+                            "     tags to each artifact via `update_artifact`.\n"
+                            "If the user mentions a specific skill or MCP, "
+                            "wire it in by exact name."
+                        )
+                    },
+                    "skip_review": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Default false. Set true ONLY when the user "
+                            "explicitly says they don't want to review the "
+                            "plan before it runs."
                         )
                     }
                 },
@@ -1043,35 +1032,32 @@ async def execute_tool(
 
         elif tool_name == "create_task":
             from tasks.scheduler import schedule_agent_task
+            skip_review = bool(tool_args.get("skip_review", False))
+            plan_status = "approved" if skip_review else "proposed"
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
-                description=tool_args["description"],
+                description=tool_args.get("description", ""),
                 schedule=tool_args.get("schedule", "now"),
                 project_id=effective_project,
+                plan=tool_args.get("plan", ""),
+                plan_status=plan_status,
             )
-            return f"Task scheduled: {tool_args.get('name', 'task')} (id: {task_id}, schedule: {tool_args.get('schedule', 'now')})"
-
-        elif tool_name == "propose_scheduled_task":
-            from tasks.scheduler import schedule_agent_task
-            try:
-                tid = await schedule_agent_task(
-                    name=tool_args.get("name", "task"),
-                    description=tool_args.get("description", ""),
-                    schedule=tool_args.get("schedule", "now"),
-                    project_id=effective_project,
-                    plan=tool_args.get("plan", ""),
-                    plan_status="proposed",
-                )
+            if skip_review:
                 return (
-                    f"Schedule PROPOSED (paused, awaiting approval).\n"
-                    f"  task_id: {tid}\n"
+                    f"Task scheduled (review skipped at user request).\n"
+                    f"  task_id: {task_id}\n"
                     f"  name: {tool_args.get('name')}\n"
-                    f"  schedule: {tool_args.get('schedule')}\n\n"
-                    f"The user can review the plan and Approve in the Tasks tab. "
-                    f"Until then this schedule will not fire."
+                    f"  schedule: {tool_args.get('schedule')}"
                 )
-            except Exception as e:
-                return f"propose_scheduled_task failed: {e}"
+            return (
+                f"Task PROPOSED — paused, awaiting your approval.\n"
+                f"  task_id: {task_id}\n"
+                f"  name: {tool_args.get('name')}\n"
+                f"  schedule: {tool_args.get('schedule')}\n\n"
+                f"Open the Tasks tab to review the plan. You can Edit "
+                f"first to nudge specific tools/skills, then Approve. "
+                f"The schedule will not fire until you approve it."
+            )
 
         elif tool_name == "send_telegram":
             try:
