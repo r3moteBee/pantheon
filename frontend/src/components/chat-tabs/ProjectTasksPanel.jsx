@@ -155,11 +155,11 @@ export default function ProjectTasksPanel({ projectId }) {
             return (
               <div
                 key={sch.id}
-                onClick={() => proposed && setPlanEditing(sch)}
-                className={`p-2 mb-1 rounded border text-xs ${
+                onClick={() => setPlanEditing(sch)}
+                className={`p-2 mb-1 rounded border text-xs cursor-pointer transition-colors ${
                   proposed
-                    ? 'border-amber-700 bg-amber-950 cursor-pointer hover:bg-amber-900'
-                    : 'border-gray-800 bg-gray-900'
+                    ? 'border-amber-700 bg-amber-950 hover:bg-amber-900'
+                    : 'border-gray-800 bg-gray-900 hover:bg-gray-800'
                 }`}
               >
                 <div className="flex items-center gap-2">
@@ -493,9 +493,15 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
   return (
     <div className="w-[28rem] border-l border-gray-800 bg-gray-950 overflow-y-auto p-4 text-xs">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 flex items-center gap-1">
-          <ClipboardCheck className="w-3 h-3" /> pending approval
-        </span>
+        {schedule.plan_status === 'proposed' ? (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 flex items-center gap-1">
+            <ClipboardCheck className="w-3 h-3" /> pending approval
+          </span>
+        ) : (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-100 flex items-center gap-1">
+            <Check className="w-3 h-3" /> approved
+          </span>
+        )}
         <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
           <X className="w-4 h-4" />
         </button>
@@ -547,16 +553,28 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
       {error && <div className="text-xs text-red-400 mt-3">{error}</div>}
 
       <div className="flex items-center gap-2 pt-3 border-t border-gray-800 mt-4">
-        <button
-          onClick={approve}
-          disabled={saving}
-          className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
-        >
-          <Check className="w-3 h-3" /> {saving ? 'Saving…' : (dirty ? 'Save & Approve' : 'Approve')}
-        </button>
+        {schedule.plan_status === 'proposed' ? (
+          <button
+            onClick={approve}
+            disabled={saving}
+            className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+          >
+            <Check className="w-3 h-3" /> {saving ? 'Saving…' : (dirty ? 'Save & Approve' : 'Approve')}
+          </button>
+        ) : (
+          dirty && (
+            <button
+              onClick={savePlan}
+              disabled={saving}
+              className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+            >
+              <Pencil className="w-3 h-3" /> {saving ? 'Saving…' : 'Save plan'}
+            </button>
+          )
+        )}
         <button onClick={discard} disabled={saving}
                 className="ml-auto text-gray-500 hover:text-red-400 flex items-center gap-1">
-          <Trash2 className="w-3 h-3" /> Discard
+          <Trash2 className="w-3 h-3" /> {schedule.plan_status === 'proposed' ? 'Discard' : 'Cancel schedule'}
         </button>
       </div>
     </div>
