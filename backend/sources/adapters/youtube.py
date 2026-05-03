@@ -61,6 +61,7 @@ class _YouTubeAdapterBase(SourceAdapter):
         "{identifier}-{slug}.md"
     )
     bucket_aliases = ("youtube",)
+    auto_link_similarity = True  # H7y: pipeline shipped; cross-link new transcripts
 
     async def fetch(self, req: IngestRequest) -> FetchedContent:
         from mcp_client.manager import get_mcp_manager

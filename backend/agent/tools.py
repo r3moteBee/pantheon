@@ -343,6 +343,142 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "link_topic_similarity",
+            "description": (
+                "Backfill the cross-artifact similarity pipeline "
+                "for already-indexed artifacts. Adds "
+                "SEMANTICALLY_SIMILAR_TO edges between topic nodes "
+                "whose embeddings cosine-match >= 0.86, and queues "
+                "merge proposals for >= 0.92 (proposals are NOT "
+                "auto-applied — use approve_merge to execute).\n\n"
+                "Use this after enabling similarity on an adapter, "
+                "after a bulk ingest where you want to make sure "
+                "everything is cross-linked, or whenever the user "
+                "says \'cross-link existing topics\'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path_prefix": {
+                        "type": "string",
+                        "description": "Optional artifact path prefix to scope the run (e.g. \'youtube-transcripts/\'). Bare folder names are auto-prefixed with the project slug."
+                    },
+                    "link_threshold": {
+                        "type": "number",
+                        "description": "Cosine threshold for SEMANTICALLY_SIMILAR_TO edges. Default 0.86."
+                    },
+                    "merge_threshold": {
+                        "type": "number",
+                        "description": "Cosine threshold for queuing merge proposals. Default 0.92."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_merge_proposals",
+            "description": (
+                "List pending (or all) topic-merge proposals for "
+                "the current project. Use to surface merge "
+                "candidates for the user to review before any "
+                "destructive change happens. Each entry shows the "
+                "two labels, their types, the similarity score, "
+                "and the proposal id needed for approve/reject."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "approved", "rejected", "merged", "stale", "all"],
+                        "description": "Filter by status. \'all\' returns every proposal."
+                    },
+                    "limit": {"type": "integer", "default": 50}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "approve_merge",
+            "description": (
+                "Approve and EXECUTE a topic-merge proposal. This "
+                "rewrites every edge that touched the deprecated "
+                "node to point at the canonical node, then deletes "
+                "the deprecated node. Irreversible — only call "
+                "when the user has explicitly confirmed in chat. "
+                "When in doubt, list proposals first and ask which "
+                "to merge.\n\n"
+                "If the user doesn\'t specify which label is "
+                "canonical, default to the longer one (e.g. \'Dell "
+                "Technologies\' over \'Dell\') and say so in your "
+                "reply."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {"type": "string"},
+                    "canonical_label": {
+                        "type": "string",
+                        "description": "Which of the two labels survives. Must match exactly one of the proposal\'s node labels."
+                    }
+                },
+                "required": ["proposal_id", "canonical_label"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reject_merge",
+            "description": (
+                "Mark a merge proposal as rejected. The two nodes "
+                "stay distinct; the SEMANTICALLY_SIMILAR_TO edge "
+                "between them remains in the graph. Use when the "
+                "user says \'these are different things\' or "
+                "\'don\'t merge those\'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "proposal_id": {"type": "string"}
+                },
+                "required": ["proposal_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "force_merge",
+            "description": (
+                "Manually merge two topic nodes by label, bypassing "
+                "the proposal queue. Use when the user names two "
+                "nodes directly (\'merge Dell into Dell "
+                "Technologies\') and there\'s no existing "
+                "proposal for that pair. Requires explicit user "
+                "intent — do NOT call speculatively."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "label_a": {"type": "string"},
+                    "label_b": {"type": "string"},
+                    "canonical_label": {
+                        "type": "string",
+                        "description": "Which of the two labels survives. Must equal label_a or label_b."
+                    }
+                },
+                "required": ["label_a", "label_b", "canonical_label"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_skill",
             "description": (
                 "Create a reusable, callable SKILL — NOT a scheduled "
@@ -1625,6 +1761,159 @@ async def execute_tool(
                     },
                     indent=2,
                 )
+            )
+
+        elif tool_name == "link_topic_similarity":
+            from sources.similarity import backfill, DEFAULT_LINK_THRESHOLD, DEFAULT_MERGE_THRESHOLD
+            from artifacts.store import project_slug as _ps_lt
+            link_thr = float(tool_args.get("link_threshold") or DEFAULT_LINK_THRESHOLD)
+            merge_thr = float(tool_args.get("merge_threshold") or DEFAULT_MERGE_THRESHOLD)
+            pref = tool_args.get("path_prefix")
+            if pref:
+                proj = _ps_lt(effective_project)
+                norm = pref.lstrip("/").strip()
+                if norm and norm != proj and not norm.startswith(f"{proj}/"):
+                    norm = f"{proj}/{norm}"
+                pref = norm
+            if not memory_manager:
+                return "link_topic_similarity: memory manager unavailable."
+            r = await backfill(
+                project_id=effective_project,
+                memory_manager=memory_manager,
+                path_prefix=pref,
+                link_threshold=link_thr,
+                merge_threshold=merge_thr,
+            )
+            err_part = ""
+            if r.get("errors"):
+                err_part = f"\n  {len(r['errors'])} errors (first: {r['errors'][0]})"
+            return (
+                f"Backfilled similarity for {r['artifacts_processed']} "
+                f"artifact(s):\n"
+                f"  topics processed: {r['topics_processed']}\n"
+                f"  edges added: {r['edges_added']}\n"
+                f"  merge proposals queued: {r['proposals_queued']}"
+                f"{err_part}\n\n"
+                f"Use list_merge_proposals to review the queued "
+                f"merges; approve_merge / reject_merge to act on them."
+            )
+
+        elif tool_name == "list_merge_proposals":
+            from memory import merge_proposals as _mp
+            status = (tool_args.get("status") or "pending").strip()
+            if status == "all":
+                status = None
+            limit = int(tool_args.get("limit") or 50)
+            rows = _mp.list_proposals(
+                project_id=effective_project, status=status, limit=limit,
+            )
+            if not rows:
+                return f"(no merge proposals with status={status or 'any'!r})"
+            lines = [f"{len(rows)} merge proposal(s):"]
+            for r in rows:
+                lines.append(
+                    f"- id={r['id'][:8]} score={r['similarity_score']:.3f} "
+                    f"status={r['status']}\n"
+                    f"    A: {r['node_a_label']} ({r['node_a_type']})\n"
+                    f"    B: {r['node_b_label']} ({r['node_b_type']})\n"
+                    f"    reason: {r.get('reason') or '?'}"
+                )
+            return "\n".join(lines)
+
+        elif tool_name == "approve_merge":
+            from memory import merge_proposals as _mp
+            from sources.similarity import execute_merge
+            pid = tool_args.get("proposal_id") or ""
+            canonical = (tool_args.get("canonical_label") or "").strip()
+            # Allow short prefix match on proposal_id for ergonomics.
+            if pid and len(pid) < 36:
+                cand = [
+                    r for r in _mp.list_proposals(
+                        project_id=effective_project, status=None, limit=200,
+                    )
+                    if r["id"].startswith(pid)
+                ]
+                if len(cand) == 1:
+                    pid = cand[0]["id"]
+                elif len(cand) > 1:
+                    return f"approve_merge: prefix {pid!r} matches {len(cand)} proposals; provide more characters."
+            proposal = _mp.get_proposal(pid)
+            if not proposal:
+                return f"approve_merge: no proposal with id {pid!r}."
+            if not memory_manager:
+                return "approve_merge: memory manager unavailable."
+            res = await execute_merge(
+                pid, canonical_label=canonical,
+                project_id=effective_project,
+                memory_manager=memory_manager,
+                approved_by=session_id or "user",
+            )
+            if not res.get("ok"):
+                return f"approve_merge failed: {res.get('reason')}"
+            return (
+                f"Merged {res.get('deprecated_label')} into "
+                f"{res.get('canonical_label')} "
+                f"({res.get('edges_rewritten', 0)} edges rewritten)."
+            )
+
+        elif tool_name == "reject_merge":
+            from memory import merge_proposals as _mp
+            pid = tool_args.get("proposal_id") or ""
+            if pid and len(pid) < 36:
+                cand = [
+                    r for r in _mp.list_proposals(
+                        project_id=effective_project, status=None, limit=200,
+                    )
+                    if r["id"].startswith(pid)
+                ]
+                if len(cand) == 1:
+                    pid = cand[0]["id"]
+                elif len(cand) > 1:
+                    return f"reject_merge: prefix {pid!r} matches {len(cand)} proposals; provide more characters."
+            ok = _mp.set_status(pid, "rejected", approved_by=session_id or "user")
+            if not ok:
+                return f"reject_merge: no proposal with id {pid!r}."
+            return f"Rejected merge proposal {pid[:8]}. Nodes stay distinct."
+
+        elif tool_name == "force_merge":
+            from memory import merge_proposals as _mp
+            from sources.similarity import execute_merge
+            la = (tool_args.get("label_a") or "").strip()
+            lb = (tool_args.get("label_b") or "").strip()
+            canonical = (tool_args.get("canonical_label") or "").strip()
+            if not la or not lb or not canonical:
+                return "force_merge: label_a, label_b, and canonical_label are required."
+            if canonical not in {la, lb}:
+                return f"force_merge: canonical_label {canonical!r} must equal label_a or label_b."
+            if not memory_manager:
+                return "force_merge: memory manager unavailable."
+            # Look up the node types for the proposal record.
+            graph = memory_manager.graph
+            na = await graph.get_node_by_label(la)
+            nb = await graph.get_node_by_label(lb)
+            if not na or not nb:
+                return f"force_merge: node lookup failed (a={bool(na)}, b={bool(nb)})."
+            type_a = (na.get("metadata") or {}).get("entity_type") or na.get("node_type") or "concept"
+            type_b = (nb.get("metadata") or {}).get("entity_type") or nb.get("node_type") or "concept"
+            pid, _ = _mp.propose(
+                project_id=effective_project,
+                label_a=la, type_a=type_a,
+                label_b=lb, type_b=type_b,
+                similarity_score=1.0,
+                reason="manual_force_merge",
+            )
+            res = await execute_merge(
+                pid, canonical_label=canonical,
+                project_id=effective_project,
+                memory_manager=memory_manager,
+                approved_by=session_id or "user",
+            )
+            if not res.get("ok"):
+                return f"force_merge failed: {res.get('reason')}"
+            return (
+                f"Force-merged {res.get('deprecated_label')} into "
+                f"{res.get('canonical_label')} "
+                f"({res.get('edges_rewritten', 0)} edges rewritten)."
             )
 
         elif tool_name == "create_skill":

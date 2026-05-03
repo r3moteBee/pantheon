@@ -675,7 +675,7 @@ class MemoryManager:
             extras["title"] = a["title"]
 
         indexer = FileIndexer(memory_manager=self, project_id=self.project_id)
-        return await indexer.index_text(
+        result = await indexer.index_text(
             text,
             virtual_path=f"artifact://{artifact_id}/{path}",
             is_markdown=is_md,
@@ -683,6 +683,45 @@ class MemoryManager:
             force=force,
             source_label=path,
         )
+        # Cross-artifact similarity pipeline: store topic embeddings
+        # and (when auto-linking is on) add SEMANTICALLY_SIMILAR_TO
+        # edges + queue merge proposals. Caller controls via the
+        # auto_link_similarity flag on the originating adapter — in
+        # this generic path we always run the upsert step (so
+        # embeddings exist for later backfill or manual link runs)
+        # but only run the full link pipeline when explicitly
+        # requested via index_artifact(..., link_similarity=True).
+        try:
+            from sources.similarity import link_artifact_topics
+            from memory.topic_embeddings import upsert_topic_embedding
+            # Always upsert topic embeddings so they're available
+            # later, even if linking is deferred.
+            for t in (a.get("tags") or []):
+                pass  # tags are already handled by file indexer; topic embeddings are below
+            # Walk the frontmatter topics ourselves rather than re-
+            # parsing — index_text already parsed it but didn't
+            # surface the topic list.
+            import re as _re, yaml as _yaml
+            mfm = _re.match(r"^---\n(.*?)\n---", text, _re.DOTALL)
+            if mfm:
+                fm = _yaml.safe_load(mfm.group(1)) or {}
+                for t in (fm.get("topics") or []):
+                    if not isinstance(t, dict):
+                        continue
+                    label = (t.get("label") or "").strip()
+                    if not label:
+                        continue
+                    await upsert_topic_embedding(
+                        self.semantic,
+                        label=label,
+                        topic_type=(t.get("type") or "concept"),
+                        project_id=self.project_id,
+                        artifact_id=artifact_id,
+                        confidence=t.get("confidence"),
+                    )
+        except Exception as _e:
+            logger.debug("topic embedding upsert failed for %s: %s", artifact_id, _e)
+        return result
 
 
 def create_memory_manager(
