@@ -205,7 +205,21 @@ TOOL_SCHEMAS = [
                     },
                     "schedule": {
                         "type": "string",
-                        "description": "When to run: 'now' for immediate, cron expression like '0 9 * * *' for daily at 9am, or 'interval:60' for every 60 minutes"
+                        "description": (
+                            "When to run. Distinguish ONE-SHOT (runs once) "
+                            "from RECURRING (repeats forever).\n"
+                            "  ONE-SHOT:\n"
+                            "    'now'            run immediately, once\n"
+                            "    'delay:N'        run once in N minutes from now\n"
+                            "                     (e.g. 'delay:2' = in 2 minutes;\n"
+                            "                      'delay:60' = in 1 hour)\n"
+                            "  RECURRING:\n"
+                            "    'interval:N'     run every N minutes, forever\n"
+                            "                     (e.g. 'interval:60' = hourly)\n"
+                            "    cron expression  e.g. '0 9 * * *' = daily at 9am\n"
+                            "If the user says 'in 2 minutes', use delay:2 — NOT "
+                            "interval:120. interval is recurring; delay is one-shot."
+                        )
                     },
                     "name": {
                         "type": "string",
