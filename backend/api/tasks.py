@@ -67,6 +67,23 @@ async def cancel_task(task_id: str) -> dict[str, str]:
     return {"status": "cancelled", "task_id": task_id}
 
 
+@router.post("/tasks/{task_id}/run-now")
+async def run_task_now(task_id: str) -> dict[str, Any]:
+    """Fire a scheduled task immediately.
+
+    For recurring schedules, the schedule stays in place (just adds an
+    ad-hoc run). For one-shot schedules ('now', 'delay:N'), the schedule
+    is removed after firing — the run lives on as a job-history row.
+    """
+    from tasks.scheduler import run_job_now
+    try:
+        return await run_job_now(task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/tasks/{task_id}/logs")
 async def get_task_logs(
     task_id: str,
