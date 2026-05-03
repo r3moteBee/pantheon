@@ -391,11 +391,16 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "get_job_status",
             "description": (
-                "Get the current state of a background job by id. Use this "
-                "when the user asks about a task you started earlier — "
-                "read the actual status before claiming progress. Returns "
-                "status, progress text, error, result, session_id, "
-                "artifact_id, and pr_url where applicable."
+                "Get the current state of a background job. Pass either "
+                "a job UUID (full id from list_recent_jobs) OR a "
+                "schedule_id (the short 8-char hex id returned by "
+                "create_task — refers to the schedule, not a single "
+                "run). When given a schedule_id, this returns the most "
+                "recent run of that schedule. Use this when the user "
+                "asks about a task you started earlier — READ THE "
+                "ACTUAL STATUS before claiming the job did/didn't run. "
+                "Returns status, progress text, error, result, "
+                "session_id, artifact_id, and pr_url where applicable."
             ),
             "parameters": {
                 "type": "object",
@@ -1094,17 +1099,29 @@ async def execute_tool(
                 return (
                     f"Task scheduled (review skipped — assumes the user "
                     f"already approved the plan in this chat).\n"
-                    f"  task_id: {task_id}\n"
+                    f"  schedule_id: {task_id}  (SCHEDULE id, not a "
+                    f"job run id)\n"
                     f"  name: {tool_args.get('name')}\n"
                     f"  schedule: {tool_args.get('schedule')}\n\n"
+                    f"To check whether the schedule actually fired, "
+                    f"call list_recent_jobs() or "
+                    f"get_job_status(job_id={task_id!r}) — that "
+                    f"resolves the schedule to its most recent job "
+                    f"run.\n\n"
                     f"If the user did NOT explicitly approve, immediately "
                     f"acknowledge that and ask them to confirm or cancel."
                 )
             return (
                 f"Task PROPOSED — paused, awaiting your approval.\n"
-                f"  task_id: {task_id}\n"
+                f"  schedule_id: {task_id}  (this is the SCHEDULE id, "
+                f"not a job run id)\n"
                 f"  name: {tool_args.get('name')}\n"
                 f"  schedule: {tool_args.get('schedule')}\n\n"
+                f"NOTE: Each time the schedule fires it produces a "
+                f"separate JOB with its own UUID. To check whether it "
+                f"actually ran, call list_recent_jobs() or "
+                f"get_job_status(job_id={task_id!r}) — the latter "
+                f"will resolve the schedule to its most recent run.\n\n"
                 f"Tell the user the plan is queued for review and ask "
                 f"them to read the chat or open the Tasks tab to approve "
                 f"or edit. The schedule will not fire until they approve."
@@ -1142,12 +1159,37 @@ async def execute_tool(
 
         elif tool_name == "get_job_status":
             from jobs.store import get_store
-            jid = tool_args.get("job_id") or ""
-            j = get_store().get_or_none(jid)
+            jid = (tool_args.get("job_id") or "").strip()
+            store = get_store()
+            j = store.get_or_none(jid)
+            via_schedule = False
+            if not j and jid:
+                # Fall back: maybe the caller passed a schedule_id
+                # (the 8-char hex id returned by create_task) instead
+                # of a full job UUID. Look up the most recent run.
+                j = store.find_latest_for_schedule(jid)
+                via_schedule = bool(j)
             if not j:
-                return f"Job {jid!r} not found."
+                # Also try matching a job UUID by 8-char prefix
+                # (e.g. agent quotes a truncated id).
+                if jid and len(jid) >= 4:
+                    matches = store.list(limit=200)
+                    cand = [r for r in matches if r["id"].startswith(jid)]
+                    if len(cand) == 1:
+                        j = cand[0]
+            if not j:
+                return (
+                    f"No job or schedule found for id {jid!r}. "
+                    f"If this looks like a schedule_id (8-char hex "
+                    f"from create_task), the schedule may not have "
+                    f"fired yet — call list_recent_jobs to see what "
+                    f"actually ran, or check the Tasks tab to "
+                    f"confirm the schedule is approved and active."
+                )
             lines = [
-                f"job_id: {j['id']}",
+                f"job_id: {j['id']}"
+                + (f"  (resolved from schedule_id {jid!r})" if via_schedule else ""),
+                f"schedule_id: {j.get('schedule_id') or '(none)'}",
                 f"type: {j['job_type']}  status: {j['status'].upper()}",
                 f"title: {j.get('title') or ''}",
                 f"started: {j.get('started_at') or '(not yet)'}",
