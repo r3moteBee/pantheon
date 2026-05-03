@@ -153,3 +153,80 @@ async def schedule_agent_task(
 
     logger.info(f"Task scheduled: {name} (id={task_id}, schedule={schedule})")
     return task_id
+
+
+
+# ── Phase H integration: schedule fires enqueue jobs instead of running directly ──
+
+async def _enqueue_autonomous_job(
+    task_id: str, task_name: str, description: str,
+    project_id: str = "default", schedule: str = "now", **kwargs,
+):
+    """APScheduler trigger handler. Creates a queued autonomous_task job
+    and lets the jobs worker run it. Heartbeats, timeouts, stall detection,
+    and UI surfacing all happen via the unified jobs system.
+    """
+    from jobs.store import get_store
+    get_store().create(
+        job_type="autonomous_task",
+        project_id=project_id,
+        title=task_name,
+        description=description,
+        payload={"task_id": task_id, "task_name": task_name,
+                 "description": description, "schedule": schedule},
+        schedule_id=task_id,
+    )
+
+
+async def schedule_scheduled_job(
+    name: str,
+    prompt: str,
+    schedule: str,
+    *,
+    project_id: str = "default",
+    output_sink: dict | None = None,
+    interval_seconds: int | None = None,
+) -> str:
+    """Register a scheduled_job in APScheduler. Each fire enqueues a
+    'scheduled_job' jobs row with the configured prompt + output_sink.
+    """
+    schedule_id = str(uuid.uuid4())[:8]
+    scheduler = get_scheduler()
+
+    payload = {
+        "schedule_id": schedule_id,
+        "prompt": prompt,
+        "output_sink": output_sink or {"kind": "artifact"},
+        "interval_seconds": interval_seconds or 0,
+    }
+
+    async def _enqueue(**_kw):
+        from jobs.store import get_store
+        get_store().create(
+            job_type="scheduled_job", project_id=project_id,
+            title=name, description=prompt[:200],
+            payload=payload, schedule_id=schedule_id,
+        )
+
+    if schedule == "now":
+        scheduler.add_job(_enqueue, trigger="date", id=schedule_id, name=name,
+                          replace_existing=True)
+    elif schedule.startswith("interval:"):
+        minutes = int(schedule.split(":")[1])
+        if not interval_seconds:
+            payload["interval_seconds"] = minutes * 60
+        scheduler.add_job(_enqueue, trigger="interval", minutes=minutes,
+                          id=schedule_id, name=name, replace_existing=True)
+    else:
+        from apscheduler.triggers.cron import CronTrigger
+        parts = schedule.split()
+        if len(parts) != 5:
+            raise ValueError(f"Invalid schedule format: {schedule}")
+        m, h, d, mo, dow = parts
+        scheduler.add_job(_enqueue, trigger=CronTrigger(minute=m, hour=h, day=d,
+                                                       month=mo, day_of_week=dow),
+                          id=schedule_id, name=name, replace_existing=True)
+
+    logger.info("scheduled_job registered: %s (id=%s, schedule=%s, sink=%s)",
+                name, schedule_id, schedule, (output_sink or {}).get("kind", "artifact"))
+    return schedule_id

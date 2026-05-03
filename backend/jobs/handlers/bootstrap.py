@@ -11,7 +11,13 @@ logger = logging.getLogger(__name__)
 
 def bootstrap_handlers() -> None:
     """Import every handler module so it self-registers. Called from
-    main.py:lifespan startup."""
+    main.py:lifespan startup. Also bootstraps output sinks for
+    scheduled_job."""
+    try:
+        from jobs.sinks import bootstrap_sinks
+        bootstrap_sinks()
+    except Exception as e:
+        logger.warning("sinks bootstrap failed: %s", e)
     # Phase H.3 / H.3.5 / H.4 will populate this list as those handlers
     # land. For H.1 the registry is empty — that's fine; the worker just
     # has nothing to dispatch.
