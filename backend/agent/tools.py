@@ -190,18 +190,34 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "create_task",
-            "description": "Schedule an autonomous task for the agent to work on independently.",
+            "description": (
+                "Schedule an autonomous task for the agent to work on independently. "
+                "The 'name' field shows up in the user's Tasks list — make it "
+                "recognizable, NOT a generic word like 'task'. A 3-7 word "
+                "imperative phrase is ideal."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "description": {"type": "string", "description": "What the agent should do in this task"},
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed instructions for what the agent should do."
+                    },
                     "schedule": {
                         "type": "string",
                         "description": "When to run: 'now' for immediate, cron expression like '0 9 * * *' for daily at 9am, or 'interval:60' for every 60 minutes"
                     },
-                    "name": {"type": "string", "description": "Short name for this task"}
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Short, recognizable label shown to the user (3-7 words, "
+                            "imperative phrase). Examples: 'Daily PR digest', "
+                            "'SUSE blog research', 'Refresh weather every hour'. "
+                            "DO NOT use generic words like 'task', 'job', or 'reminder'."
+                        )
+                    }
                 },
-                "required": ["description", "schedule"]
+                "required": ["description", "schedule", "name"]
             }
         }
     },

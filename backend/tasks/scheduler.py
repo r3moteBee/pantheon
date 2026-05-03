@@ -86,6 +86,17 @@ async def schedule_agent_task(
     """
     from tasks.autonomous import run_autonomous_task
 
+    # If the agent (or caller) supplied a generic / empty name, derive
+    # a usable label from the description so the Tasks UI is readable.
+    name = (name or "").strip()
+    if name.lower() in {"", "task", "job", "reminder", "agent task", "autonomous task"}:
+        derived = (description or "").strip().splitlines()[0] if description else ""
+        # Clip to ~60 chars on a word boundary
+        if len(derived) > 60:
+            cut = derived[:60].rsplit(" ", 1)[0]
+            derived = cut + "…"
+        name = derived or "Untitled task"
+
     task_id = str(uuid.uuid4())[:8]
     scheduler = get_scheduler()
 
