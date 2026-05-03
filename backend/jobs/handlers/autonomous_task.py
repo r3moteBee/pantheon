@@ -102,9 +102,111 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     memory = create_memory_manager(
         project_id=ctx.project_id, session_id=session_id, provider=provider,
     )
+
+    # ── Skill resolution (parity with the chat handler) ──────────────
+    # Sources, in order of precedence:
+    #   1. payload.skill_name (set explicitly via create_task)
+    #   2. /<slug> at the start of the description (fallback for
+    #      tasks scheduled by hand or by older clients)
+    skill_context = None
+    active_skill_name = None
+    skill_name_pl = (pl.get("skill_name") or "").strip().lower() or None
+    if not skill_name_pl:
+        # Fallback: parse /<slug> from the description.
+        try:
+            from skills.resolver import resolve_explicit
+            explicit, _rest = resolve_explicit(description or "")
+            if explicit:
+                skill_name_pl = explicit
+        except Exception:
+            pass
+    if skill_name_pl:
+        try:
+            from skills.registry import get_skill_registry
+            from skills.resolver import build_skill_context
+            registry = get_skill_registry()
+            sk = None
+            for variant in (skill_name_pl,
+                            skill_name_pl.replace("_", "-"),
+                            skill_name_pl.replace("-", "_")):
+                sk = registry.get(variant)
+                if sk:
+                    break
+            if not sk:
+                err = (f"skill {skill_name_pl!r} is not registered; "
+                       f"task aborted before agent loop")
+                logger.warning("autonomous_task %s: %s", ctx.job_id[:8], err)
+                ctx.update_result({"error": err, "skill_name_requested": skill_name_pl})
+                return {"status": "failed", "error": err, "session_id": session_id}
+
+            # Validate MCP preconditions if the skill declares any.
+            requires_mcp = []
+            try:
+                requires_mcp = list(getattr(sk.manifest, "requires_mcp", None)
+                                    or getattr(sk, "requires_mcp", None) or [])
+            except Exception:
+                pass
+            if requires_mcp:
+                try:
+                    from mcp_client.manager import get_mcp_manager
+                    available_mcp = {
+                        ((sp or {}).get("function") or {}).get("name")
+                        for sp in (get_mcp_manager().get_all_tool_schemas() or [])
+                        if (sp or {}).get("function")
+                    }
+                except Exception:
+                    available_mcp = set()
+                missing = [t for t in requires_mcp if t not in available_mcp]
+                if missing:
+                    err = (
+                        f"skill {sk.name} requires MCP tools that are "
+                        f"not currently registered: {missing}. "
+                        f"Connect them via Settings → MCP servers and retry."
+                    )
+                    logger.warning("autonomous_task %s: %s",
+                                   ctx.job_id[:8], err)
+                    ctx.update_result({
+                        "error": err,
+                        "skill_name": sk.name,
+                        "missing_mcp_tools": missing,
+                    })
+                    return {"status": "failed", "error": err,
+                            "session_id": session_id}
+
+            skill_context = build_skill_context(sk, project_id=ctx.project_id)
+            active_skill_name = sk.name
+            try:
+                from skills import analytics as _sa
+                _sa.record_fire(sk.name, source="scheduled")
+            except Exception:
+                pass
+            logger.info("autonomous_task %s: skill activated: %s",
+                        ctx.job_id[:8], sk.name)
+            ctx.update_result({"active_skill_name": sk.name})
+        except Exception as e:
+            logger.exception("autonomous_task %s: skill resolution failed: %s",
+                             ctx.job_id[:8], e)
+
+    # ── Resolve project name for the system-prompt active-project block.
+    project_name: str | None = None
+    try:
+        import json as _json
+        from config import get_settings as _gs
+        meta = _gs().db_dir / "projects.json"
+        if meta.exists():
+            data = _json.loads(meta.read_text() or "{}")
+            row = data.get(ctx.project_id) if isinstance(data, dict) else None
+            if isinstance(row, dict):
+                project_name = row.get("name")
+    except Exception:
+        pass
+
     agent = AgentCore(
         provider=provider, memory_manager=memory,
         project_id=ctx.project_id, session_id=session_id,
+        project_name=project_name,
+        skill_context=skill_context,
+        active_skill_name=active_skill_name,
     )
 
     episodic = EpisodicMemory()

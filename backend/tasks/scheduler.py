@@ -146,6 +146,7 @@ async def schedule_agent_task(
     plan: str | None = None,
     plan_status: str = "approved",
     parent_session_id: str | None = None,
+    skill_name: str | None = None,
 ) -> str:
     """Schedule an autonomous agent task.
 
@@ -187,6 +188,7 @@ async def schedule_agent_task(
                 "plan": plan,
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
+                "skill_name": skill_name,
             },
             replace_existing=True,
         )
@@ -211,6 +213,7 @@ async def schedule_agent_task(
                 "schedule": schedule, "plan": plan,
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
+                "skill_name": skill_name,
             },
             replace_existing=True,
         )
@@ -230,6 +233,7 @@ async def schedule_agent_task(
                 "schedule": schedule, "plan": plan,
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
+                "skill_name": skill_name,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -263,6 +267,7 @@ async def schedule_agent_task(
                 "schedule": schedule, "plan": plan,
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
+                "skill_name": skill_name,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -288,6 +293,7 @@ async def _enqueue_autonomous_job(
     project_id: str = "default", schedule: str = "now",
     plan: str | None = None, plan_status: str = "approved",
     parent_session_id: str | None = None,
+    skill_name: str | None = None,
     **kwargs,
 ):
     """APScheduler trigger handler. Creates a queued autonomous_task job
@@ -307,7 +313,8 @@ async def _enqueue_autonomous_job(
         payload={"task_id": task_id, "task_name": task_name,
                  "description": description, "schedule": schedule,
                  "plan": plan, "plan_status": plan_status,
-                 "parent_session_id": parent_session_id},
+                 "parent_session_id": parent_session_id,
+                 "skill_name": skill_name},
         schedule_id=task_id,
     )
 
