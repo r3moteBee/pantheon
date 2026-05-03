@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
   ListTodo, RefreshCw, X, Check, Clock, AlertTriangle, RotateCcw, Trash2,
-  ExternalLink, FileText, Play, Repeat, Zap,
+  ExternalLink, FileText, Play, Repeat, Zap, ClipboardCheck, Pencil,
 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { jobsApi, tasksApi } from '../../api/client'
 
 function renderCadence(schedule) {
@@ -67,6 +68,7 @@ export default function ProjectTasksPanel({ projectId }) {
   const [statusFilter, setStatusFilter] = useState('')
   const [includeSystem, setIncludeSystem] = useState(false)
   const [selectedJob, setSelectedJob] = useState(null)
+  const [planEditing, setPlanEditing] = useState(null)   // { schedule object } when reviewing a proposed plan
 
   const refresh = async () => {
     setLoading(true)
@@ -149,9 +151,19 @@ export default function ProjectTasksPanel({ projectId }) {
           )}
           {schedules.map((sch) => {
             const recurring = sch.is_recurring
+            const proposed = sch.plan_status === 'proposed'
             return (
-              <div key={sch.id} className="p-2 mb-1 rounded border border-gray-800 bg-gray-900 text-xs">
+              <div key={sch.id} className={`p-2 mb-1 rounded border text-xs ${proposed ? 'border-amber-700 bg-amber-950' : 'border-gray-800 bg-gray-900'}`}>
                 <div className="flex items-center gap-2">
+                  {proposed && (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 bg-amber-900 text-amber-100"
+                      title="Proposed — paused, waiting for approval"
+                    >
+                      <ClipboardCheck className="w-3 h-3" />
+                      pending approval
+                    </span>
+                  )}
                   <span
                     className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 ${
                       recurring
@@ -170,8 +182,19 @@ export default function ProjectTasksPanel({ projectId }) {
                     {renderCadence(sch.schedule || sch.trigger)}
                   </span>
                   <span className="text-gray-500">
-                    next: {sch.next_run?.slice(0,16).replace('T',' ') || '(none)'}
+                    next: {proposed ? '(awaiting approval)' : (sch.next_run?.slice(0,16).replace('T',' ') || '(none)')}
                   </span>
+                  {proposed ? (
+                    <>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPlanEditing(sch) }}
+                        className="text-amber-300 hover:text-amber-100 flex items-center gap-1"
+                        title="Review and approve plan"
+                      >
+                        <ClipboardCheck className="w-3 h-3" /> Review
+                      </button>
+                    </>
+                  ) : null}
                   <button
                     onClick={async (e) => {
                       e.stopPropagation()
@@ -272,6 +295,14 @@ export default function ProjectTasksPanel({ projectId }) {
       </div>
 
       {/* Side drawer */}
+      {planEditing && (
+        <PlanReviewDrawer
+          schedule={planEditing}
+          onClose={() => setPlanEditing(null)}
+          onApproved={() => { setPlanEditing(null); refresh() }}
+        />
+      )}
+
       {selectedJob && (
         <JobDetail
           job={selectedJob}
@@ -399,6 +430,115 @@ function Section({ title, children, tone }) {
     <div className={`mt-3 pt-2 border-t ${ring}`}>
       <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{title}</div>
       {children}
+    </div>
+  )
+}
+
+
+
+function PlanReviewDrawer({ schedule, onClose, onApproved }) {
+  const [plan, setPlan] = React.useState(schedule.plan || '')
+  const [editing, setEditing] = React.useState(false)
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState(null)
+  const dirty = plan !== (schedule.plan || '')
+
+  const savePlan = async () => {
+    setSaving(true); setError(null)
+    try {
+      await tasksApi.updatePlan(schedule.id, plan)
+      setEditing(false)
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally { setSaving(false) }
+  }
+
+  const approve = async () => {
+    setSaving(true); setError(null)
+    try {
+      if (dirty) await tasksApi.updatePlan(schedule.id, plan)
+      await tasksApi.approve(schedule.id)
+      onApproved?.()
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message)
+    } finally { setSaving(false) }
+  }
+
+  const discard = async () => {
+    if (!confirm(`Discard the proposed schedule "${schedule.name}"?`)) return
+    try { await tasksApi.cancel(schedule.id); onApproved?.() }
+    catch (e) { setError(e?.response?.data?.detail || e.message) }
+  }
+
+  return (
+    <div className="w-[28rem] border-l border-gray-800 bg-gray-950 overflow-y-auto p-4 text-xs">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 flex items-center gap-1">
+          <ClipboardCheck className="w-3 h-3" /> pending approval
+        </span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <h3 className="text-sm font-medium text-gray-100 mb-1">{schedule.name}</h3>
+      <div className="text-[10px] text-gray-500 mb-3">
+        {renderCadence(schedule.schedule)} · {schedule.is_recurring ? 'recurring' : 'one-shot'}
+      </div>
+      {schedule.description && (
+        <div className="mb-3 p-2 rounded bg-gray-900 border border-gray-800 text-gray-300">
+          {schedule.description}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-wide text-gray-500">Plan</div>
+        {!editing ? (
+          <button onClick={() => setEditing(true)} className="text-gray-400 hover:text-gray-200 flex items-center gap-1">
+            <Pencil className="w-3 h-3" /> Edit
+          </button>
+        ) : (
+          <div className="flex gap-2">
+            <button onClick={savePlan} disabled={saving || !dirty}
+                    className="text-xs px-2 py-0.5 rounded bg-brand-700 hover:bg-brand-600 text-white disabled:opacity-40">
+              Save
+            </button>
+            <button onClick={() => { setPlan(schedule.plan || ''); setEditing(false) }}
+                    className="text-xs px-2 py-0.5 rounded text-gray-400 hover:text-gray-200">
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+
+      {editing ? (
+        <textarea
+          value={plan}
+          onChange={(e) => setPlan(e.target.value)}
+          rows={14}
+          spellCheck={false}
+          className="w-full text-xs font-mono bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-gray-100"
+        />
+      ) : (
+        <div className="prose prose-invert prose-sm max-w-none p-2 rounded bg-gray-900 border border-gray-800">
+          {plan ? <ReactMarkdown>{plan}</ReactMarkdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
+        </div>
+      )}
+
+      {error && <div className="text-xs text-red-400 mt-3">{error}</div>}
+
+      <div className="flex items-center gap-2 pt-3 border-t border-gray-800 mt-4">
+        <button
+          onClick={approve}
+          disabled={saving}
+          className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+        >
+          <Check className="w-3 h-3" /> {saving ? 'Saving…' : (dirty ? 'Save & Approve' : 'Approve')}
+        </button>
+        <button onClick={discard} disabled={saving}
+                className="ml-auto text-gray-500 hover:text-red-400 flex items-center gap-1">
+          <Trash2 className="w-3 h-3" /> Discard
+        </button>
+      </div>
     </div>
   )
 }

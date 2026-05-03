@@ -67,6 +67,30 @@ async def cancel_task(task_id: str) -> dict[str, str]:
     return {"status": "cancelled", "task_id": task_id}
 
 
+class UpdatePlanRequest(BaseModel):
+    plan: str
+
+
+@router.post("/tasks/{task_id}/approve")
+async def approve_task(task_id: str) -> dict[str, Any]:
+    """Approve a proposed schedule and resume its APScheduler trigger."""
+    from tasks.scheduler import approve_schedule
+    try:
+        return approve_schedule(task_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.patch("/tasks/{task_id}/plan")
+async def update_task_plan(task_id: str, req: UpdatePlanRequest) -> dict[str, Any]:
+    """Edit the plan markdown on a schedule (typically while proposed)."""
+    from tasks.scheduler import update_schedule_plan
+    try:
+        return update_schedule_plan(task_id, req.plan)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/tasks/{task_id}/run-now")
 async def run_task_now(task_id: str) -> dict[str, Any]:
     """Fire a scheduled task immediately.

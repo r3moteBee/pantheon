@@ -238,6 +238,55 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "propose_scheduled_task",
+            "description": (
+                "Propose a scheduled task with an explicit step-by-step plan "
+                "for the user to review and approve before it runs. Prefer "
+                "this over create_task when the work is non-trivial — "
+                "anything involving multi-step research, MCP tools, "
+                "external APIs, or 'do X then Y then Z' sequences. The "
+                "schedule is created in PAUSED state with plan_status='proposed'. "
+                "The user reviews the plan in Tasks tab and clicks Approve, "
+                "after which it becomes active.\n\n"
+                "Plan should be markdown with numbered steps. Call out the "
+                "specific tools you intend to use (MCP servers, skills, "
+                "github_*, etc.) so the user can correct your assumptions "
+                "before the task runs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Short recognizable label (3-7 words, imperative phrase)."
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed task description."
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "description": (
+                            "When to run. Same vocabulary as create_task: "
+                            "'now' / 'delay:N' (one-shot) / 'interval:N' / "
+                            "cron expression (recurring)."
+                        )
+                    },
+                    "plan": {
+                        "type": "string",
+                        "description": (
+                            "Markdown plan. Number the steps. For each step "
+                            "name the tool you'll use and why."
+                        )
+                    }
+                },
+                "required": ["name", "description", "schedule", "plan"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "send_telegram",
             "description": "Send a message to the operator via Telegram. Use for important updates, task completions, or when you need human input on a long-running task.",
             "parameters": {
@@ -1001,6 +1050,28 @@ async def execute_tool(
                 project_id=effective_project,
             )
             return f"Task scheduled: {tool_args.get('name', 'task')} (id: {task_id}, schedule: {tool_args.get('schedule', 'now')})"
+
+        elif tool_name == "propose_scheduled_task":
+            from tasks.scheduler import schedule_agent_task
+            try:
+                tid = await schedule_agent_task(
+                    name=tool_args.get("name", "task"),
+                    description=tool_args.get("description", ""),
+                    schedule=tool_args.get("schedule", "now"),
+                    project_id=effective_project,
+                    plan=tool_args.get("plan", ""),
+                    plan_status="proposed",
+                )
+                return (
+                    f"Schedule PROPOSED (paused, awaiting approval).\n"
+                    f"  task_id: {tid}\n"
+                    f"  name: {tool_args.get('name')}\n"
+                    f"  schedule: {tool_args.get('schedule')}\n\n"
+                    f"The user can review the plan and Approve in the Tasks tab. "
+                    f"Until then this schedule will not fire."
+                )
+            except Exception as e:
+                return f"propose_scheduled_task failed: {e}"
 
         elif tool_name == "send_telegram":
             try:
