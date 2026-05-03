@@ -119,6 +119,43 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     async with pinger_for(ctx, interval=30.0):
         result_text = await agent.run_autonomous(full_prompt)
 
+    # If the agent loop returned empty (e.g. hit MAX_TOOL_ITERATIONS or
+    # ended on a tool-call turn), recover the last assistant message
+    # from the saved conversation so the result row isn't blank.
+    if not (result_text or "").strip():
+        logger.warning(
+            "autonomous_task %s: run_autonomous returned empty text. "
+            "Falling back to the last assistant message in the session. "
+            "Likely cause: max-iteration cap hit, or final tool result "
+            "had no closing assistant turn.",
+            ctx.job_id[:8],
+        )
+        try:
+            history = await episodic.get_history(session_id=session_id, limit=200)
+            assistant_msgs = [
+                m for m in history if (m.get("role") == "assistant" and (m.get("content") or "").strip())
+            ]
+            if assistant_msgs:
+                result_text = assistant_msgs[-1]["content"]
+                ctx.update_result({"summary_recovered_from_history": True})
+            else:
+                # Last resort — surface tool-call activity so the user
+                # sees what the agent actually did
+                tool_msgs = [m for m in history if m.get("role") in ("tool", "assistant")]
+                if tool_msgs:
+                    snippet = "\n".join(
+                        f"[{m.get('role')}] {(m.get('content') or '')[:200]}"
+                        for m in tool_msgs[-8:]
+                    )
+                    result_text = (
+                        f"(Agent loop produced no final text. "
+                        f"Last 8 turns of activity:)\n\n{snippet}"
+                    )
+                    ctx.update_result({"summary_recovered_from_history": True,
+                                       "summary_recovery_mode": "tool_trace"})
+        except Exception as e:
+            logger.debug("history fallback failed: %s", e)
+
     if ctx.cancel_requested():
         return {"status": "cancelled", "session_id": session_id,
                 "summary": (result_text or "")[:200]}
