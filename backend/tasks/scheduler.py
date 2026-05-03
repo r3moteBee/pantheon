@@ -149,8 +149,6 @@ async def schedule_agent_task(
       - "interval:N" — run every N minutes
       - cron expression like "0 9 * * *" — daily at 9am
     """
-    from tasks.autonomous import run_autonomous_task
-
     # If the agent (or caller) supplied a generic / empty name, derive
     # a usable label from the description so the Tasks UI is readable.
     name = (name or "").strip()
@@ -164,10 +162,14 @@ async def schedule_agent_task(
 
     task_id = str(uuid.uuid4())[:8]
     scheduler = get_scheduler()
+    # Phase H — schedule fires now enqueue jobs instead of running autonomous
+    # directly. This makes scheduled runs visible in the Tasks UI's Job runs
+    # section and routes through worker timeouts + heartbeats + watchdog.
+    trigger_fn = _enqueue_autonomous_job
 
     if schedule == "now":
         scheduler.add_job(
-            run_autonomous_task,
+            trigger_fn,
             trigger="date",
             id=task_id,
             name=name,
@@ -190,7 +192,7 @@ async def schedule_agent_task(
             raise ValueError(f"delay:N requires a number of minutes; got {schedule!r}")
         run_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
         scheduler.add_job(
-            run_autonomous_task,
+            trigger_fn,
             trigger="date",
             run_date=run_at,
             id=task_id,
@@ -205,7 +207,7 @@ async def schedule_agent_task(
     elif schedule.startswith("interval:"):
         minutes = int(schedule.split(":")[1])
         scheduler.add_job(
-            run_autonomous_task,
+            trigger_fn,
             trigger="interval",
             minutes=minutes,
             id=task_id,
@@ -235,7 +237,7 @@ async def schedule_agent_task(
         else:
             raise ValueError(f"Invalid schedule format: {schedule}")
         scheduler.add_job(
-            run_autonomous_task,
+            trigger_fn,
             trigger=trigger,
             id=task_id,
             name=name,

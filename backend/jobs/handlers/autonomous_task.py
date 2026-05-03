@@ -72,6 +72,37 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
         f"Task:\n{description}"
     )
 
+    # Log which tools are available to this run so we can debug cases
+    # where the agent didn't reach for an MCP tool the user expected.
+    try:
+        from agent.tools import get_all_tool_schemas
+        tool_names = sorted([
+            (((sp or {}).get("function") or {}).get("name"))
+            for sp in get_all_tool_schemas(project_id=ctx.project_id) or []
+            if (sp or {}).get("function")
+        ])
+        mcp_tools = [t for t in tool_names if t and t.startswith("mcp_")]
+        non_mcp = [t for t in tool_names if t and not t.startswith("mcp_")]
+        logger.info(
+            "autonomous_task %s: %d tools available "
+            "(%d MCP: %s; %d built-in/skill)",
+            ctx.job_id[:8], len(tool_names), len(mcp_tools),
+            ", ".join(mcp_tools[:8]) + ("…" if len(mcp_tools) > 8 else ""),
+            len(non_mcp),
+        )
+        ctx.update_result({"available_tool_count": len(tool_names),
+                           "mcp_tool_count": len(mcp_tools),
+                           "mcp_tools_sample": mcp_tools[:20]})
+        if not mcp_tools:
+            logger.warning(
+                "autonomous_task %s: NO MCP tools registered. If you "
+                "expected an MCP server to be reachable, verify it is "
+                "connected in Settings → Connections → MCP servers.",
+                ctx.job_id[:8],
+            )
+    except Exception:
+        logger.debug("tool inventory log failed", exc_info=True)
+
     await ctx.heartbeat(progress="Running agent loop…")
     async with pinger_for(ctx, interval=30.0):
         result_text = await agent.run_autonomous(full_prompt)
