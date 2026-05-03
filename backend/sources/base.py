@@ -102,6 +102,23 @@ class SourceAdapter:
     bucket_aliases: tuple[str, ...] = ()  # e.g. ("youtube", "yt") — heuristic shortcuts
     requires_mcp: tuple[str, ...] = ()    # MCP tool names this adapter needs
 
+    # Default topic-extraction strategy. The registry calls
+    # sources.extraction.get_extractor(strategy) when populating
+    # topics[]/speakers[]/claims[]. Override per-call via
+    # IngestRequest.extras["extractor_strategy"].
+    extractor_strategy: str = "llm_default"
+
+    # Whether ingest() should auto-run the extractor immediately
+    # after fetch(). Skills that prefer to drive extraction
+    # manually (e.g. for chunked long-form sources) can leave this
+    # False and call /api/sources/extract on the saved artifact.
+    auto_extract: bool = True
+
+    # Whether ingest() should kick off cross-artifact similarity
+    # linking after save+index. Off by default — turn on per-source
+    # once the similarity pipeline ships.
+    auto_link_similarity: bool = False
+
     # ── Methods adapters override ─────────────────────────────────
 
     async def fetch(self, req: IngestRequest) -> FetchedContent:

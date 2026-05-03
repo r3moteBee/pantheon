@@ -123,6 +123,31 @@ async def ingest(
     # Drop None values so the YAML stays clean.
     fm = {k: v for k, v in fm.items() if v is not None and v != ""}
 
+    # 2a. Topic extraction (optional, adapter-controlled). Skill can
+    #     override the strategy via extras["extractor_strategy"];
+    #     extras["skip_extraction"]=True forces noop for this call.
+    if adapter.auto_extract and not req.extras.get("skip_extraction"):
+        from sources.extraction import get_extractor
+        strategy = req.extras.get("extractor_strategy") or adapter.extractor_strategy
+        try:
+            extractor = get_extractor(strategy)
+            extracted = await extractor.extract(
+                fetched.text,
+                title=fetched.title,
+                source_type=req.source_type,
+                max_topics=int(req.extras.get("max_topics") or 12),
+                hint=req.extras.get("extraction_hint"),
+            )
+            if extracted.topics:
+                fm["topics"] = extracted.topics
+            if extracted.speakers:
+                fm["speakers"] = extracted.speakers
+            if extracted.claims:
+                fm["claims"] = extracted.claims
+        except Exception as e:
+            logger.warning("Topic extraction (%s) failed for %s: %s",
+                           strategy, req.identifier, e)
+
     fm_yaml = _yaml.safe_dump(fm, sort_keys=False, allow_unicode=True).strip()
     body = f"---\n{fm_yaml}\n---\n\n{fetched.text.strip()}\n"
 
@@ -208,3 +233,41 @@ async def ingest(
         logger.debug("post_save_hook for %s failed: %s",
                      req.source_type, e)
     return result
+
+
+
+async def batch_ingest(
+    reqs: list[IngestRequest],
+    *,
+    memory_manager: Any | None = None,
+    session_id: str | None = None,
+    stop_on_error: bool = False,
+) -> list[AdapterResult]:
+    """Run ingest() over a list of IngestRequests with per-item
+    failure isolation.
+
+    Default behavior: a single item failing (fetch error, no
+    adapter, MCP timeout, etc.) records a skipped AdapterResult
+    for that item and continues with the rest. The caller gets a
+    full list back, one entry per request, and can render a
+    success/skip/fail breakdown without losing partial progress.
+
+    Pass stop_on_error=True only if the caller really wants
+    abort-on-first-failure semantics.
+    """
+    results: list[AdapterResult] = []
+    for req in reqs:
+        try:
+            r = await ingest(req, memory_manager=memory_manager, session_id=session_id)
+        except Exception as e:
+            logger.exception("batch_ingest: %s/%s raised; recording skip",
+                             req.source_type, req.identifier)
+            r = AdapterResult(
+                artifact_id="", artifact_path="", chars_saved=0,
+                graph_nodes_created=0, graph_edges_created=0,
+                skipped=True, skip_reason=f"unhandled: {e}",
+            )
+        results.append(r)
+        if stop_on_error and r.skipped:
+            break
+    return results

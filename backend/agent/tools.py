@@ -492,6 +492,133 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "list_source_adapters",
+            "description": (
+                "List the source adapters registered in the project. "
+                "Each entry has source_type (e.g. 'youtube/keynote'), "
+                "display_name, bucket aliases, and the MCP tools the "
+                "adapter requires. Use this when the user asks 'what "
+                "can I ingest' or before constructing an ingest_source "
+                "call to confirm the source_type is supported."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []}
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ingest_source",
+            "description": (
+                "Canonical end-to-end ingest for one item from a "
+                "registered source adapter. Replaces "
+                "save_transcript_artifact as the preferred ingest "
+                "call.\n\n"
+                "Behavior: fetch the content via the adapter "
+                "(server-side, no transcript truncation), run the "
+                "adapter\'s topic extractor (default LLM-based) to "
+                "populate topics/speakers/claims in the frontmatter, "
+                "save as a Pantheon artifact at the adapter\'s path "
+                "template (with collision-safe -1/-2/... suffixing), "
+                "schedule embedding, and run the typed-topics graph "
+                "extractor so source/content/topic/speaker nodes "
+                "and edges materialize.\n\n"
+                "Use list_source_adapters first to discover supported "
+                "source_types. For batches, prefer batch_ingest_sources."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_type": {
+                        "type": "string",
+                        "description": "Canonical source type (e.g. 'youtube/keynote', 'youtube/interview', 'youtube/other'). Must be a registered adapter."
+                    },
+                    "identifier": {
+                        "type": "string",
+                        "description": "Source-specific id. For YouTube: video_id (e.g. dQw4w9WgXcQ). For blog: URL. For PDF: file path or URL."
+                    },
+                    "extras": {
+                        "type": "object",
+                        "description": "Optional per-call hints. Recognized keys: published_at (YYYY-MM-DD), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int).",
+                        "additionalProperties": True
+                    }
+                },
+                "required": ["source_type", "identifier"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_ingest_sources",
+            "description": (
+                "Run ingest_source over a list of items with "
+                "per-item failure isolation. Use for the typical "
+                "5-10 item ingest run from a search step. A single "
+                "fetch failure does not abort the run; failed items "
+                "appear in the response with skip_reason set."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source_type": {"type": "string"},
+                                "identifier": {"type": "string"},
+                                "extras": {"type": "object", "additionalProperties": True}
+                            },
+                            "required": ["source_type", "identifier"]
+                        },
+                        "description": "List of ingest items."
+                    }
+                },
+                "required": ["items"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "extract_topics",
+            "description": (
+                "Run topic extraction on an existing artifact (or "
+                "raw text) and return the structured topics / "
+                "speakers / claims without writing them anywhere. "
+                "Use when you want to inspect what the extractor "
+                "would produce before letting ingest_source commit "
+                "the results, or to re-run extraction with a "
+                "different strategy after the fact."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "artifact_id": {
+                        "type": "string",
+                        "description": "Existing artifact id to extract from. Either this or text is required."
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Raw text to extract from when no artifact exists yet."
+                    },
+                    "strategy": {
+                        "type": "string",
+                        "description": "Extractor name. Defaults to 'llm_default'. Use 'noop' to skip extraction (no-op pass-through).",
+                        "default": "llm_default"
+                    },
+                    "max_topics": {
+                        "type": "integer",
+                        "description": "Cap on returned topics. Default 12.",
+                        "default": 12
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "save_last_response",
             "description": "Save conversation history to a file in the project workspace. By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
             "parameters": {
@@ -1364,6 +1491,140 @@ async def execute_tool(
             return (
                 f"Saved transcript artifact {a['path']} "
                 f"(id={a['id']}, {chars} chars of transcript){suffix_note}"
+            )
+
+        elif tool_name == "list_source_adapters":
+            from sources import list_adapters
+            adapters = list_adapters()
+            if not adapters:
+                return "(no source adapters registered)"
+            lines = []
+            for a in adapters:
+                aliases = ", ".join(a["bucket_aliases"]) or "(none)"
+                mcp = ", ".join(a["requires_mcp"]) or "(none)"
+                lines.append(
+                    f"- {a['source_type']}: {a['display_name']}\n"
+                    f"    aliases: {aliases}\n"
+                    f"    requires MCP: {mcp}"
+                )
+            return "Registered source adapters:\n" + "\n".join(lines)
+
+        elif tool_name == "ingest_source":
+            from sources import ingest, IngestRequest
+            req = IngestRequest(
+                source_type=tool_args.get("source_type") or "",
+                identifier=tool_args.get("identifier") or "",
+                project_id=effective_project,
+                extras=tool_args.get("extras") or {},
+            )
+            if not req.source_type or not req.identifier:
+                return "ingest_source rejected: source_type and identifier are required."
+            r = await ingest(
+                req, memory_manager=memory_manager, session_id=session_id,
+            )
+            if r.skipped:
+                return (
+                    f"ingest_source skipped {req.source_type}/{req.identifier!r}: "
+                    f"{r.skip_reason or 'unknown'}"
+                )
+            return (
+                f"Ingested {req.source_type}/{req.identifier} -> "
+                f"{r.artifact_path}\n"
+                f"  artifact_id: {r.artifact_id}\n"
+                f"  chars_saved: {r.chars_saved}\n"
+                f"  graph_nodes: {r.graph_nodes_created}"
+            )
+
+        elif tool_name == "batch_ingest_sources":
+            from sources import batch_ingest, IngestRequest
+            items = tool_args.get("items") or []
+            reqs = [
+                IngestRequest(
+                    source_type=it.get("source_type") or "",
+                    identifier=it.get("identifier") or "",
+                    project_id=effective_project,
+                    extras=it.get("extras") or {},
+                )
+                for it in items
+                if it.get("source_type") and it.get("identifier")
+            ]
+            if not reqs:
+                return "batch_ingest_sources rejected: items list is empty or malformed."
+            results = await batch_ingest(
+                reqs, memory_manager=memory_manager, session_id=session_id,
+            )
+            ok = [r for r in results if not r.skipped]
+            sk = [r for r in results if r.skipped]
+            lines = [
+                f"Ingested: {len(ok)}, Skipped: {len(sk)}, Total: {len(results)}",
+                "",
+                "## Ingested",
+            ]
+            for r, req in zip(results, reqs):
+                if r.skipped:
+                    continue
+                lines.append(
+                    f"- {req.source_type}/{req.identifier} -> "
+                    f"{r.artifact_path} ({r.chars_saved} chars, "
+                    f"{r.graph_nodes_created} nodes)"
+                )
+            if sk:
+                lines.append("")
+                lines.append("## Skipped")
+                for r, req in zip(results, reqs):
+                    if not r.skipped:
+                        continue
+                    lines.append(
+                        f"- {req.source_type}/{req.identifier}: {r.skip_reason}"
+                    )
+            return "\n".join(lines)
+
+        elif tool_name == "extract_topics":
+            from sources.extraction import get_extractor
+            from artifacts.store import get_store as _get_art_store_x
+            text = tool_args.get("text") or ""
+            artifact_id = tool_args.get("artifact_id") or ""
+            title = ""
+            source_type = ""
+            if not text and artifact_id:
+                a = _get_art_store_x().get(artifact_id)
+                if not a:
+                    return f"extract_topics: artifact {artifact_id!r} not found."
+                text = a.get("content") or ""
+                title = a.get("title") or ""
+                # Try to read source.type from the existing frontmatter
+                # so the LLM sees consistent context.
+                import re as _re
+                m = _re.match(r"^---\n(.*?)\n---\n", text, _re.DOTALL)
+                if m:
+                    fm_block = m.group(1)
+                    st_m = _re.search(r"type:\s*[\"\'\s]*([^\"\'\n]+)", fm_block)
+                    if st_m:
+                        source_type = st_m.group(1).strip().strip("\"\'")
+                    text = text[m.end():]
+            if not text or not text.strip():
+                return "extract_topics: no text provided (pass text= or artifact_id=)."
+            extractor = get_extractor(tool_args.get("strategy"))
+            extracted = await extractor.extract(
+                text,
+                title=title,
+                source_type=source_type,
+                max_topics=int(tool_args.get("max_topics") or 12),
+            )
+            import json as _json_x
+            return (
+                f"extractor: {extractor.name}\n"
+                f"topics: {len(extracted.topics)}, "
+                f"speakers: {len(extracted.speakers)}, "
+                f"claims: {len(extracted.claims)}\n\n"
+                + _json_x.dumps(
+                    {
+                        "topics": extracted.topics,
+                        "speakers": extracted.speakers,
+                        "claims": extracted.claims,
+                    },
+                    indent=2,
+                )
             )
 
         elif tool_name == "create_skill":

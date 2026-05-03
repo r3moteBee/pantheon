@@ -93,12 +93,44 @@ register_adapter(BlogAnnouncement())
 
 That's the whole adapter. The default `build_frontmatter` produces the typed-topics shape, the registry handles save/index/graph. Skill instructions then call `ingest_source(source_type="blog/announcement", identifier=url)` per item.
 
-## Open design questions
+## Resolved design decisions (H7w)
 
-1. **Topic-extraction step**: should it be an adapter responsibility (with adapters declaring which extraction strategy to use), a skill responsibility (current), or a backend pipeline that runs after every save? Argues for: each source type has known topic-extraction patterns; argues against: extraction is LLM-driven and skill-aware. Recommendation: backend pipeline driven by per-source extractor configs; skills can override.
+### 1. Topic extraction — per-adapter strategy, skill override
 
-2. **Cross-artifact similarity**: same question. Currently skill-driven; should be a backend pipeline that runs after each `index_artifact` and adds `semantically_similar_to` edges where cosine ≥ threshold and types are compatible.
+Each adapter declares `extractor_strategy` (default `"llm_default"`) and `auto_extract` (default `True`). When `ingest()` runs, after `fetch()` and `build_frontmatter()` it calls the named extractor, populates `topics[]` / `speakers[]` / `claims[]` in the frontmatter, then proceeds to save. Skills can override per-call via `IngestRequest.extras["extractor_strategy"]` or skip entirely with `extras["skip_extraction"]=True`.
 
-3. **Per-project source registries**: should some adapters be project-scoped (so different projects can have different research domains)? Likely yes — defer to phase 4.
+Built-in extractors:
+- `llm_default` — single LLM call with a structured JSON-schema prompt; truncates body to 60k chars as a backstop. Returns typed topics, speakers (only when transcript explicitly attributes utterances), and claims.
+- `noop` — empty pass-through. For sources whose topics are already in their metadata.
 
-4. **Failure semantics**: today `ingest()` returns a single `AdapterResult` with `skipped=True` on failure. For batch ingests (5 videos at once), the caller wants per-item failure isolation. Recommend a `batch_ingest(reqs)` helper at the registry level that runs each through `ingest()` and returns a list, never raising on individual failures.
+Adding a new extractor: subclass `TopicExtractor`, set `name`, call `register_extractor(YourClass())`. Same plug-in pattern as adapters.
+
+### 2. Cross-artifact similarity — backend pipeline (next ship)
+
+Decision: similarity should be a backend pipeline that runs post-`index_artifact`, with type-gating from the adapter's topic taxonomy and a configurable cosine threshold (default 0.86). Each adapter declares `auto_link_similarity` (default `False` until the pipeline ships); skills can also opt in via extras.
+
+Implementation slot reserved in `base.py`. The pipeline itself is its own focused ship: it requires storing topic-label embeddings keyed by `(label, topic_type)` so cross-artifact comparison is tractable. Without that index, similarity becomes a quadratic-in-topics problem.
+
+### 3. Per-project source registries — deferred to phase 4
+
+Current registry is global. Project scoping (different research domains enabling different source types) is real but YAGNI for the single-user case. Will revisit when the first cross-project use emerges. The `IngestRequest.project_id` field carries through so when scoping arrives, the adapter resolution path becomes `(project_id, source_type)` instead of just `source_type` — the data model is ready.
+
+### 4. Failure semantics — `batch_ingest()` with per-item isolation
+
+`registry.batch_ingest(reqs)` runs each request through `ingest()`, catches all exceptions (including unhandled ones from adapter code), and returns a list of `AdapterResult` — one per request, with `skipped=True` and a `skip_reason` for failures. Default never aborts on a single failure. Pass `stop_on_error=True` for abort-on-first semantics.
+
+The agent-facing tool is `batch_ingest_sources`; it produces a markdown summary with separate "Ingested" and "Skipped" sections so the user can diagnose partial failures without losing successful work.
+
+## Phase 2 status (H7w)
+
+Wired up:
+- ✅ `batch_ingest()` at the registry level
+- ✅ `TopicExtractor` base + `llm_default` + `noop` extractors with hot-loadable registry
+- ✅ Adapter declarative attrs: `extractor_strategy`, `auto_extract`, `auto_link_similarity`
+- ✅ Agent tools: `list_source_adapters`, `ingest_source`, `batch_ingest_sources`, `extract_topics`
+- ✅ End-to-end smoke-tested with a fake adapter
+
+Still pending (next focused ships):
+- ⏳ Cross-artifact similarity pipeline
+- ⏳ Blog / PDF / podcast adapters (unblocked — each ~30-50 lines now)
+- ⏳ Project-scoped registry (phase 4)

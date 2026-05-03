@@ -1,36 +1,34 @@
-"""Source-adapter plugin registry.
+"""Source-adapter plugin registry — public API.
 
-A *source adapter* is a small plugin that knows how to ingest one
-kind of content (YouTube video, blog post, PDF, slide deck, podcast,
-RSS feed, etc.) into Pantheon's artifact store and graph memory.
-
-Today every ingest skill embeds its own knowledge of how to fetch,
-how to structure frontmatter, and how to map fields to graph nodes.
-This module replaces that with a registry: each adapter declares
-its identity, fetch tool, save tool, frontmatter shape, and graph
-mapping. Skills invoke ``ingest(source_type, identifier, ...)`` and
-the registry routes to the right adapter.
-
-Adding a new source type = a new file under backend/sources/ that
-subclasses SourceAdapter and registers itself. ~30-50 lines.
-
-See SOURCE_ADAPTERS.md in this directory for the design rationale,
-schema specification, and worked examples.
+See SOURCE_ADAPTERS.md for the design.
 """
-from sources.base import SourceAdapter, AdapterResult, IngestRequest
+from sources.base import SourceAdapter, AdapterResult, IngestRequest, FetchedContent
 from sources.registry import (
     register_adapter,
     get_adapter,
     list_adapters,
+    resolve_by_bucket,
     ingest,
+    batch_ingest,
+)
+from sources.extraction import (
+    TopicExtractor,
+    ExtractedFields,
+    register_extractor,
+    get_extractor,
+    list_extractors,
 )
 
+# Importing this package side-effect-registers all built-in adapters.
+from sources import adapters  # noqa: F401
+
 __all__ = [
-    "SourceAdapter",
-    "AdapterResult",
-    "IngestRequest",
-    "register_adapter",
-    "get_adapter",
-    "list_adapters",
-    "ingest",
+    # Types
+    "SourceAdapter", "AdapterResult", "IngestRequest", "FetchedContent",
+    "TopicExtractor", "ExtractedFields",
+    # Registry
+    "register_adapter", "get_adapter", "list_adapters", "resolve_by_bucket",
+    "ingest", "batch_ingest",
+    # Extractor registry
+    "register_extractor", "get_extractor", "list_extractors",
 ]
