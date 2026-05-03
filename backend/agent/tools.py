@@ -20,39 +20,11 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def _project_disabled_mcp_servers(project_id: str | None) -> set[str]:
-    """Return server_ids the project has explicitly disabled.
-
-    Stored in data/db/phase_g.db project_mcp_enablement table. Servers
-    with no row default to enabled (preserves pre-Phase-G behavior).
-    """
-    if not project_id:
-        return set()
-    try:
-        import sqlite3
-        from config import get_settings
-        db = get_settings().db_dir / "phase_g.db"
-        if not db.exists():
-            return set()
-        conn = sqlite3.connect(str(db))
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT server_id FROM project_mcp_enablement "
-            "WHERE project_id = ? AND enabled = 0",
-            (project_id,),
-        ).fetchall()
-        conn.close()
-        return {r["server_id"] for r in rows}
-    except Exception as e:
-        logger.debug("MCP enablement lookup failed: %s", e)
-        return set()
-
-
 def get_all_tool_schemas(project_id: str | None = None) -> list[dict[str, Any]]:
     """Return built-in tools + browser tools (if enabled) + any MCP-provided tools.
 
-    When project_id is given, MCP tools for servers explicitly disabled
-    on that project are dropped.
+    project_id is accepted for back-compat but ignored — MCP servers are
+    enabled globally now (per-project enablement was removed).
     """
     schemas = list(TOOL_SCHEMAS)
     try:
@@ -65,18 +37,6 @@ def get_all_tool_schemas(project_id: str | None = None) -> list[dict[str, Any]]:
         from mcp_client.manager import get_mcp_manager
         mgr = get_mcp_manager()
         mcp_schemas = mgr.get_all_tool_schemas() or []
-        if project_id and mcp_schemas:
-            disabled = _project_disabled_mcp_servers(project_id)
-            if disabled:
-                # MCP tools are conventionally prefixed mcp_<server_id>_<tool>
-                def is_disabled(spec):
-                    name = (((spec or {}).get("function") or {}).get("name")) or ""
-                    if not name.startswith("mcp_"):
-                        return False
-                    rest = name[len("mcp_"):]
-                    server = rest.split("_", 1)[0]
-                    return server in disabled
-                mcp_schemas = [sp for sp in mcp_schemas if not is_disabled(sp)]
         if mcp_schemas:
             schemas.extend(mcp_schemas)
             logger.debug("Added %d MCP tools to agent schema", len(mcp_schemas))

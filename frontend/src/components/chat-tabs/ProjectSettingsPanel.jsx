@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Settings as SettingsIcon, Save, RefreshCw, Download, Archive, Trash2,
-  AlertTriangle, Plug,
+  Settings as SettingsIcon, Save, RefreshCw, Download, Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import {
-  projectsApi, personasApi, projectSettingsApi, projectMcpApi,
+  projectsApi, personasApi, projectSettingsApi,
 } from '../../api/client'
 import { useStore } from '../../store'
 
@@ -38,8 +38,6 @@ export default function ProjectSettingsPanel({ projectId }) {
   // Personas list
   const [personas, setPersonas] = useState([])
 
-  // MCP servers
-  const [mcpServers, setMcpServers] = useState([])
 
   // UI state
   const [loading, setLoading] = useState(true)
@@ -49,11 +47,10 @@ export default function ProjectSettingsPanel({ projectId }) {
   const refresh = async () => {
     setLoading(true); setError(null)
     try {
-      const [proj, settings, personasRes, mcp] = await Promise.all([
+      const [proj, settings, personasRes] = await Promise.all([
         projectsApi.get(projectId),
         projectSettingsApi.get(projectId),
         personasApi.list(),
-        projectMcpApi.list(projectId),
       ])
       const p = proj.data
       setProject(p)
@@ -73,7 +70,6 @@ export default function ProjectSettingsPanel({ projectId }) {
       // personasApi.list() already unwraps r.data, so the response IS the
       // payload — it has .personas at the top level, not .data.personas.
       setPersonas(personasRes?.personas || personasRes?.data?.personas || [])
-      setMcpServers(mcp.data?.servers || [])
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally { setLoading(false) }
@@ -111,13 +107,6 @@ export default function ProjectSettingsPanel({ projectId }) {
     } catch (e) {
       setError(e?.response?.data?.detail || e.message)
     } finally { setSaving(false) }
-  }
-
-  const toggleMcp = async (sv) => {
-    await projectMcpApi.set(projectId, sv.server_id, !sv.enabled)
-    setMcpServers((xs) =>
-      xs.map((x) => x.server_id === sv.server_id ? { ...x, enabled: !x.enabled } : x)
-    )
   }
 
   const exportZip = async () => {
@@ -249,40 +238,6 @@ export default function ProjectSettingsPanel({ projectId }) {
             </Field>
           </div>
         </Section>
-
-        {/* MCP servers */}
-        <Section
-          title="MCP servers"
-          icon={Plug}
-          hint="Per-project enablement. Defaults to enabled for every connected server. Manage server registrations in Settings."
-        >
-          {mcpServers.length === 0 ? (
-            <div className="text-xs text-gray-500 italic">No MCP servers connected.</div>
-          ) : (
-            <div className="space-y-1">
-              {mcpServers.map((sv) => (
-                <div key={sv.server_id}
-                     className="flex items-center justify-between px-3 py-2 rounded border border-gray-800 bg-gray-900">
-                  <div>
-                    <div className="text-sm text-gray-200">{sv.name || sv.server_id}</div>
-                    <div className="text-[10px] text-gray-500 font-mono">{sv.server_id}</div>
-                  </div>
-                  <button
-                    onClick={() => toggleMcp(sv)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                      sv.enabled ? 'bg-brand-600' : 'bg-gray-700'
-                    }`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${
-                      sv.enabled ? 'translate-x-4' : 'translate-x-1'
-                    }`} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </Section>
-
         {/* Lifecycle */}
         <Section title="Export & clone">
           <button

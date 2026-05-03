@@ -402,51 +402,6 @@ def _phase_g_connect() -> sqlite3.Connection:
     return conn
 
 
-@router.get("/projects/{project_id}/mcp")
-async def get_project_mcp(project_id: str) -> dict[str, Any]:
-    """Return per-project MCP server enablement.
-
-    Returns rows for every connected server. Servers with no row default
-    to enabled=true. UI uses this to render toggle switches.
-    """
-    try:
-        from mcp_client.manager import get_mcp_manager
-        servers = list(get_mcp_manager().list_servers() or [])
-    except Exception:
-        servers = []
-
-    with _phase_g_connect() as conn:
-        rows = conn.execute(
-            "SELECT server_id, enabled FROM project_mcp_enablement WHERE project_id = ?",
-            (project_id,),
-        ).fetchall()
-    overrides = {r["server_id"]: bool(r["enabled"]) for r in rows}
-
-    out = []
-    for sv in servers:
-        sid = sv.get("id") or sv.get("name")
-        if not sid:
-            continue
-        out.append({
-            "server_id": sid,
-            "name": sv.get("name") or sid,
-            "enabled": overrides.get(sid, True),  # default true
-        })
-    return {"project_id": project_id, "servers": out}
-
-
-@router.post("/projects/{project_id}/mcp/{server_id}")
-async def set_project_mcp(project_id: str, server_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    enabled = bool(body.get("enabled", True))
-    with _phase_g_connect() as conn:
-        conn.execute(
-            "INSERT INTO project_mcp_enablement (project_id, server_id, enabled) "
-            "VALUES (?,?,?) ON CONFLICT(project_id,server_id) DO UPDATE SET enabled=excluded.enabled",
-            (project_id, server_id, 1 if enabled else 0),
-        )
-    return {"project_id": project_id, "server_id": server_id, "enabled": enabled}
-
-
 @router.get("/projects/{project_id}/settings")
 async def get_project_settings(project_id: str) -> dict[str, Any]:
     with _phase_g_connect() as conn:
