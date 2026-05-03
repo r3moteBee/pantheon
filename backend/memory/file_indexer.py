@@ -744,6 +744,138 @@ class FileIndexer:
         )
         return total_stats
 
+
+    async def _index_typed_topics_to_graph(
+        self,
+        frontmatter: dict[str, Any],
+        filename: str,
+        graph: Any,
+    ) -> int:
+        """Handle the typed-topics frontmatter shape used by
+        content-ingest-graph and other ingest skills.
+
+        Creates source / content / topic / person nodes and the
+        produces / discusses / features_speaker edges per the spec.
+        """
+        entities_created = 0
+
+        # 1. Source node (label = source.type, e.g. 'source:youtube/keynote')
+        src = frontmatter.get("source") or {}
+        source_label = ""
+        if isinstance(src, dict):
+            stype = (src.get("type") or "").strip()
+            if stype:
+                source_label = f"source:{stype}"
+                try:
+                    await graph.add_node("concept", source_label, metadata={
+                        "entity_type": "source",
+                        "source_file": filename,
+                        "url": str(src.get("url") or ""),
+                        "author_or_publisher": str(src.get("author_or_publisher") or ""),
+                    })
+                    entities_created += 1
+                except Exception as e:
+                    logger.debug("source node add failed: %s", e)
+
+        # 2. Content (video/document) node — label = video_title or
+        #    document_title or filename fallback.
+        content_label = (
+            (frontmatter.get("video_title")
+             or frontmatter.get("document_title")
+             or frontmatter.get("title")
+             or filename)
+            or ""
+        ).strip()
+        if content_label:
+            try:
+                await graph.add_node("concept", content_label, metadata={
+                    "entity_type": "video" if frontmatter.get("video_id") else "document",
+                    "source_file": filename,
+                    "video_id": str(frontmatter.get("video_id") or ""),
+                    "channel_name": str(frontmatter.get("channel_name") or ""),
+                    "published_at": str(frontmatter.get("published_at") or ""),
+                })
+                entities_created += 1
+            except Exception as e:
+                logger.debug("content node add failed: %s", e)
+            # source --produces--> video/document
+            if source_label:
+                try:
+                    await graph.add_edge_by_label(source_label, content_label, "PRODUCES")
+                except Exception as e:
+                    logger.debug("source->content edge failed: %s", e)
+
+        # 3. Topic nodes + discusses edges
+        TYPE_MAP = {
+            "concept":         ("concept", "concept"),
+            "market":          ("concept", "market"),
+            "market_segment":  ("concept", "market_segment"),
+            "metric":          ("concept", "metric"),
+            "event":           ("concept", "event"),
+            "other":           ("concept", "other"),
+            "technology":      ("concept", "technology"),
+            "framework":       ("concept", "technology"),
+            "vendor":          ("concept", "organization"),
+            "organization":    ("concept", "organization"),
+            "person":          ("person",  "person"),
+        }
+        topics = frontmatter.get("topics") or []
+        if isinstance(topics, list):
+            for t in topics:
+                if not isinstance(t, dict):
+                    continue
+                label = (t.get("label") or "").strip()
+                if not label:
+                    continue
+                ttype = (t.get("type") or "concept").strip().lower()
+                node_type, entity_type = TYPE_MAP.get(ttype, ("concept", ttype or "concept"))
+                meta = {
+                    "entity_type": entity_type,
+                    "source_file": filename,
+                    "topic_type": ttype,
+                }
+                conf = t.get("confidence")
+                if isinstance(conf, (int, float)):
+                    meta["confidence"] = float(conf)
+                try:
+                    await graph.add_node(node_type, label, metadata=meta)
+                    entities_created += 1
+                except Exception as e:
+                    logger.debug("topic node add failed for %r: %s", label, e)
+                # video --discusses--> topic
+                if content_label:
+                    try:
+                        await graph.add_edge_by_label(content_label, label, "DISCUSSES")
+                    except Exception as e:
+                        logger.debug("video->topic edge failed for %r: %s", label, e)
+
+        # 4. Speaker nodes + features_speaker edges
+        speakers = frontmatter.get("speakers") or []
+        if isinstance(speakers, list):
+            for sp in speakers:
+                if not isinstance(sp, dict):
+                    continue
+                name = (sp.get("name") or "").strip()
+                if not name:
+                    continue
+                role = (sp.get("role") or "speaker").strip().lower()
+                try:
+                    await graph.add_node("person", name, metadata={
+                        "entity_type": "person",
+                        "source_file": filename,
+                        "role": role,
+                    })
+                    entities_created += 1
+                except Exception as e:
+                    logger.debug("speaker node add failed for %r: %s", name, e)
+                if content_label:
+                    try:
+                        await graph.add_edge_by_label(content_label, name, "FEATURES_SPEAKER")
+                    except Exception as e:
+                        logger.debug("video->speaker edge failed for %r: %s", name, e)
+
+        return entities_created
+
     async def _index_image(
         self,
         file_path: Path,
@@ -814,12 +946,29 @@ class FileIndexer:
     ) -> int:
         """Extract graph nodes/edges from YAML frontmatter.
 
-        Handles CorpusClaw-style vendor files with fields like:
-        vendor, product, market_segments, technologies, tags, etc.
+        Handles two shapes:
+          1. typed-topics ingest (content-ingest-graph and similar):
+             source / video_id / topics[] / speakers[] →
+             source --produces--> video --discusses--> topic
+             video --features_speaker--> person
+          2. CorpusClaw-style vendor files: vendor, product,
+             market_segments, technologies, tags, etc.
         """
         entities_created = 0
         graph = self.memory_manager.graph
 
+        # ── Shape 1: typed-topics ingest (transcripts, blogs, PDFs) ──
+        source_block = frontmatter.get("source")
+        topics = frontmatter.get("topics")
+        if isinstance(source_block, dict) or isinstance(topics, list):
+            entities_created += await self._index_typed_topics_to_graph(
+                frontmatter, filename, graph,
+            )
+            # Don't fall through — typed-topics shape is mutually
+            # exclusive with CorpusClaw vendor shape in practice.
+            return entities_created
+
+        # ── Shape 2: CorpusClaw vendor/product ──
         fm_type = frontmatter.get("type", "")
         vendor = frontmatter.get("vendor", "")
         product = frontmatter.get("product", "")
