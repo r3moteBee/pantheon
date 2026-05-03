@@ -72,8 +72,66 @@ def _connect() -> sqlite3.Connection:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_gh_account ON github_connections(account_login)")
+    _migrate_schema(conn)
     conn.commit()
     return conn
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Idempotent schema fixups for installs that pre-date the
+    account-level connection model.
+
+    The pre-G.1 github_connections table had project_id, owner, and repo
+    declared NOT NULL. The new model stores account-level connections
+    with project_id IS NULL and the picked default repo is optional too.
+    SQLite preserves the original column constraints across upgrades, so
+    we have to recreate the table to relax them.
+
+    Strategy: read PRAGMA table_info; if any of the three columns is
+    NOT NULL, copy rows into a fresh table with the relaxed schema and
+    swap them in. Idempotent — exits fast when the schema is already
+    correct.
+    """
+    cols = {row["name"]: row for row in conn.execute("PRAGMA table_info(github_connections)").fetchall()}
+    needs_migration = (
+        cols.get("project_id", {})["notnull"] != 0
+        or cols.get("owner",      {})["notnull"] != 0
+        or cols.get("repo",       {})["notnull"] != 0
+    )
+    if not needs_migration:
+        return
+    logger.info("Migrating github_connections schema (relaxing NOT NULL on project_id/owner/repo)")
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE github_connections__new (
+            id TEXT PRIMARY KEY,
+            project_id TEXT,
+            owner TEXT,
+            repo TEXT,
+            full_name TEXT,
+            default_branch TEXT NOT NULL DEFAULT 'main',
+            account_login TEXT,
+            display_name TEXT,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            error_message TEXT
+        );
+        INSERT INTO github_connections__new
+            (id, project_id, owner, repo, full_name, default_branch,
+             account_login, display_name, created_at, last_used_at,
+             status, error_message)
+        SELECT
+            id, project_id, owner, repo, full_name,
+            COALESCE(default_branch, 'main'),
+            account_login, display_name, created_at, last_used_at,
+            COALESCE(status, 'active'), error_message
+        FROM github_connections;
+        DROP TABLE github_connections;
+        ALTER TABLE github_connections__new RENAME TO github_connections;
+        CREATE INDEX IF NOT EXISTS idx_gh_account ON github_connections(account_login);
+        COMMIT;
+    """)
 
 
 def _vault_key(connection_id: str) -> str:
