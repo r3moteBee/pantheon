@@ -1680,12 +1680,27 @@ async def execute_tool(
                     f"ingest_source skipped {req.source_type}/{req.identifier!r}: "
                     f"{r.skip_reason or 'unknown'}"
                 )
+            est_status = (r.extra or {}).get("extraction_status") or {}
+            est_line = ""
+            if est_status:
+                if est_status.get("ok"):
+                    est_line = (
+                        f"\n  extraction: {est_status.get('strategy')} OK "
+                        f"({est_status.get('topic_count', 0)} topics, "
+                        f"{est_status.get('speaker_count', 0)} speakers)"
+                    )
+                else:
+                    est_line = (
+                        f"\n  extraction: {est_status.get('strategy')} FAILED "
+                        f"({est_status.get('error') or '?'})"
+                    )
             return (
                 f"Ingested {req.source_type}/{req.identifier} -> "
                 f"{r.artifact_path}\n"
                 f"  artifact_id: {r.artifact_id}\n"
                 f"  chars_saved: {r.chars_saved}\n"
                 f"  graph_nodes: {r.graph_nodes_created}"
+                f"{est_line}"
             )
 
         elif tool_name == "batch_ingest_sources":

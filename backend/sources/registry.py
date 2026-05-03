@@ -126,6 +126,7 @@ async def ingest(
     # 2a. Topic extraction (optional, adapter-controlled). Skill can
     #     override the strategy via extras["extractor_strategy"];
     #     extras["skip_extraction"]=True forces noop for this call.
+    extraction_status: dict[str, Any] = {}
     if adapter.auto_extract and not req.extras.get("skip_extraction"):
         from sources.extraction import get_extractor
         strategy = req.extras.get("extractor_strategy") or adapter.extractor_strategy
@@ -144,7 +145,16 @@ async def ingest(
                 fm["speakers"] = extracted.speakers
             if extracted.claims:
                 fm["claims"] = extracted.claims
+            extraction_status = dict(extracted.status or {})
+            # Always record the status, success or failure, so reading
+            # the artifact later tells you why topics is what it is.
+            fm["extraction_status"] = extraction_status
         except Exception as e:
+            extraction_status = {
+                "strategy": strategy, "ok": False,
+                "error": f"unhandled: {type(e).__name__}: {e}",
+            }
+            fm["extraction_status"] = extraction_status
             logger.warning("Topic extraction (%s) failed for %s: %s",
                            strategy, req.identifier, e)
 
@@ -246,7 +256,7 @@ async def ingest(
         chars_saved=len(fetched.text),
         graph_nodes_created=nodes,
         graph_edges_created=edges,
-        extra={"final_path": final_path, **extra_sim},
+        extra={"final_path": final_path, **extra_sim, "extraction_status": extraction_status},
     )
     try:
         await adapter.post_save_hook(req, result)
