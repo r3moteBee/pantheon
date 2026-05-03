@@ -54,6 +54,23 @@ _PUBLIC_PATHS = {
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def _resolve_app_version() -> str:
+    """Single source of truth for the app version: frontend/package.json.
+
+    Bumping frontend/package.json now also bumps the backend version
+    string returned by /api/health so the two stay in sync.
+    """
+    import json as _json
+    pkg = Path(__file__).resolve().parent.parent / "frontend" / "package.json"
+    try:
+        return _json.loads(pkg.read_text())["version"]
+    except Exception:
+        return "0.0.0-dev"
+
+
+_APP_VERSION = _resolve_app_version()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
@@ -152,7 +169,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Pantheon",
     description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
-    version="2026.05.02.H7i",
+    version=_APP_VERSION,
     lifespan=lifespan,
 )
 
