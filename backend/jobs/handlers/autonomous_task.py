@@ -115,6 +115,18 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     except Exception:
         logger.debug("tool inventory log failed", exc_info=True)
 
+    # Persist the prompt as a user message so this session appears in
+    # the chat history drawer (and so resume-from-session can replay
+    # the prior context if the user clicks into it later).
+    try:
+        await memory.episodic.save_message(
+            session_id=session_id, project_id=ctx.project_id,
+            role="user", content=full_prompt,
+            metadata={"job_id": ctx.job_id, "kind": "autonomous_task_prompt"},
+        )
+    except Exception:
+        logger.debug("could not save user prompt to episodic", exc_info=True)
+
     await ctx.heartbeat(progress="Running agent loop…")
     async with pinger_for(ctx, interval=30.0):
         result_text = await agent.run_autonomous(full_prompt)
@@ -159,6 +171,33 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     if ctx.cancel_requested():
         return {"status": "cancelled", "session_id": session_id,
                 "summary": (result_text or "")[:200]}
+
+    # Persist the final assistant message so the session is replayable
+    # from chat history. Even when the recovery branch synthesized this
+    # text, it's still useful to have something stored under the role.
+    try:
+        await memory.episodic.save_message(
+            session_id=session_id, project_id=ctx.project_id,
+            role="assistant",
+            content=(result_text or "(no final assistant message produced)"),
+            metadata={"job_id": ctx.job_id, "kind": "autonomous_task_response"},
+        )
+    except Exception:
+        logger.debug("could not save assistant message to episodic", exc_info=True)
+
+    # Set a useful conversation title so the chat history drawer shows
+    # something more recognizable than 'Chat <id>'.
+    try:
+        import sqlite3
+        ep_path = memory.episodic.db_path
+        conn = sqlite3.connect(ep_path)
+        conn.execute(
+            "UPDATE conversations SET title = ? WHERE session_id = ? AND (title IS NULL OR title = '')",
+            (task_name[:80], session_id),
+        )
+        conn.commit(); conn.close()
+    except Exception:
+        logger.debug("could not set conversation title", exc_info=True)
 
     try:
         await episodic.log_task_event(
