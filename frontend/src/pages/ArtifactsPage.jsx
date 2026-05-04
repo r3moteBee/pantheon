@@ -3,6 +3,7 @@ import {
   FolderOpen, Folder, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
   Save, Download, X, Tag, Edit3, Eye, History, Pin, MoreVertical, FileCode,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -44,6 +45,14 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const activeProject = useStore((s) => s.activeProject)
   const projects = useStore((s) => s.projects) || []
   const [projectScope, setProjectScope] = useState(lockedProjectId ? 'current' : 'current')  // 'current' | 'all'
+  // UI layout state — collapsible folders rail (persisted in localStorage)
+  const [foldersCollapsed, setFoldersCollapsed] = useState(() => {
+    try { return localStorage.getItem('pan_artifacts_folders_collapsed') === '1' }
+    catch { return false }
+  })
+  React.useEffect(() => {
+    try { localStorage.setItem('pan_artifacts_folders_collapsed', foldersCollapsed ? '1' : '0') } catch {}
+  }, [foldersCollapsed])
   const projectId = lockedProjectId
     ? lockedProjectId
     : (projectScope === 'all' ? 'all' : (activeProject?.id || 'default'))
@@ -128,8 +137,22 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
 
   return (
     <div className="h-full flex">
-      {/* Left rail: folders + tags */}
-      <div className="w-56 border-r border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-4">
+      {/* Left rail: folders + tags (collapsible; hidden on mobile when an artifact is open) */}
+      <div className={
+        (foldersCollapsed ? "w-10 " : "w-56 ") +
+        "border-r border-gray-800 bg-gray-950 overflow-y-auto p-2 space-y-3 flex-shrink-0 " +
+        (activeId ? "hidden md:block " : "")
+      }>
+        <div className={"flex " + (foldersCollapsed ? "justify-center" : "justify-end")}>
+          <button
+            onClick={() => setFoldersCollapsed(v => !v)}
+            title={foldersCollapsed ? "Expand folders" : "Collapse folders"}
+            className="text-gray-500 hover:text-gray-200 p-1 rounded"
+          >
+            {foldersCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </button>
+        </div>
+        {!foldersCollapsed && (<>
         {!lockedProjectId && (
           <div>
             <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
@@ -210,10 +233,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             <Star className="w-3 h-3" /> Pinned only
           </button>
         </div>
+        </>)}
       </div>
 
       {/* Middle: list */}
-      <div className="flex-1 min-w-0 border-r border-gray-800 flex flex-col">
+      <div className={
+        "min-w-0 border-r border-gray-800 flex flex-col " +
+        (activeId
+          ? "md:w-80 md:flex-shrink-0 hidden md:flex "
+          : "flex-1 ")
+      }>
         <div className="p-3 border-b border-gray-800 space-y-2">
           <div className="flex items-center gap-2">
             <Search className="w-3 h-3 text-gray-500" />
