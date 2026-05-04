@@ -80,3 +80,41 @@ def parse_relative_date(value: str | None, *, today: "date | None" = None) -> st
     if days is None:
         return None
     return (base - timedelta(days=days)).isoformat()
+
+
+
+def html_to_markdown(html: str) -> str:
+    """Convert cleaned HTML to markdown using markdownify, falling
+    back to a brutal text-only strip if markdownify is unavailable.
+
+    Why not just use trafilatura\'s markdown output? Because
+    trafilatura\'s markdown converter flattens nested HTML structures
+    (lists with bolded labels, definition lists, blockquotes within
+    sections) into inline prose. markdownify handles those cleanly:
+    <ul><li><strong>Foo.</strong> Bar.</li></ul> becomes
+    \"- **Foo.** Bar.\" instead of being inlined.
+    """
+    if not html or not html.strip():
+        return ""
+    try:
+        from markdownify import markdownify as _md
+        out = _md(
+            html,
+            heading_style="ATX",     # use ## not underlines
+            bullets="-",             # consistent list marker
+            strip=["script", "style"],
+            escape_asterisks=False,
+            escape_underscores=False,
+        )
+        # Collapse triple-blank-lines to double for cleanliness.
+        import re as _re
+        out = _re.sub(r"\n{3,}", "\n\n", out)
+        return out.strip() + "\n"
+    except ImportError:
+        # markdownify not installed — fall back to a primitive strip
+        # that at least preserves text without HTML tags. Better than
+        # bailing entirely.
+        import re as _re
+        out = _re.sub(r"<[^>]+>", "", html)
+        out = _re.sub(r"\n{3,}", "\n\n", out)
+        return out.strip() + "\n"
