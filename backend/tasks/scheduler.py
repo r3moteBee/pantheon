@@ -147,6 +147,7 @@ async def schedule_agent_task(
     plan_status: str = "approved",
     parent_session_id: str | None = None,
     skill_name: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> str:
     """Schedule an autonomous agent task.
 
@@ -189,6 +190,7 @@ async def schedule_agent_task(
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
+                "timeout_seconds": timeout_seconds,
             },
             replace_existing=True,
         )
@@ -214,6 +216,7 @@ async def schedule_agent_task(
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
+                "timeout_seconds": timeout_seconds,
             },
             replace_existing=True,
         )
@@ -234,6 +237,7 @@ async def schedule_agent_task(
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
+                "timeout_seconds": timeout_seconds,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -268,6 +272,7 @@ async def schedule_agent_task(
                 "plan_status": plan_status,
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
+                "timeout_seconds": timeout_seconds,
                 "plan": plan,
                 "plan_status": plan_status,
             },
@@ -294,6 +299,7 @@ async def _enqueue_autonomous_job(
     plan: str | None = None, plan_status: str = "approved",
     parent_session_id: str | None = None,
     skill_name: str | None = None,
+    timeout_seconds: int | None = None,
     **kwargs,
 ):
     """APScheduler trigger handler. Creates a queued autonomous_task job
@@ -316,6 +322,7 @@ async def _enqueue_autonomous_job(
                  "parent_session_id": parent_session_id,
                  "skill_name": skill_name},
         schedule_id=task_id,
+        timeout_seconds=timeout_seconds,
     )
 
 
