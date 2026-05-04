@@ -60,7 +60,6 @@ class _WebAdapterBase(SourceAdapter):
             url=url,
             output_format="markdown",
             include_tables=True,
-            include_lists=True,
             include_images=False,
             include_comments=False,
             favor_precision=self.favor_precision,

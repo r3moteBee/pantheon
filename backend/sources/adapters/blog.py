@@ -68,7 +68,6 @@ class _BlogAdapterBase(SourceAdapter):
             url=url,
             output_format="markdown",
             include_tables=True,
-            include_lists=True,
             include_images=False,
             include_comments=False,
             favor_precision=False,  # we want full body; LLM handles boilerplate
