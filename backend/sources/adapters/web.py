@@ -55,16 +55,27 @@ class _WebAdapterBase(SourceAdapter):
         if not downloaded:
             raise RuntimeError(f"trafilatura.fetch_url returned None for {url!r}")
 
-        text = trafilatura.extract(
-            downloaded,
-            url=url,
-            output_format="markdown",
+        from sources.util import html_to_markdown as _h2m
+        cleaned_html = trafilatura.extract(
+            downloaded, url=url,
+            output_format="html",
             include_tables=True,
             include_images=False,
             include_comments=False,
             favor_precision=self.favor_precision,
             with_metadata=False,
         )
+        text = _h2m(cleaned_html or "")
+        if not text or len(text.strip()) < 100:
+            text = trafilatura.extract(
+                downloaded, url=url,
+                output_format="markdown",
+                include_tables=True,
+                include_images=False,
+                include_comments=False,
+                favor_precision=self.favor_precision,
+                with_metadata=False,
+            )
         if not text or len(text.strip()) < 100:
             raise RuntimeError(
                 f"trafilatura extracted < 100 chars from {url!r}; "

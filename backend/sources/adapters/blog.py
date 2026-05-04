@@ -61,18 +61,36 @@ class _BlogAdapterBase(SourceAdapter):
         if not downloaded:
             raise RuntimeError(f"trafilatura.fetch_url returned None for {url!r}")
 
-        # extract returns clean markdown by default; include_tables
-        # and include_lists make sure structured info isn't dropped.
-        text = trafilatura.extract(
+        # Two-step: trafilatura produces cleaned article HTML
+        # (drops nav/footer/ads/comments), markdownify converts that
+        # HTML to markdown with proper list / heading / blockquote
+        # preservation. trafilatura\'s own markdown output flattens
+        # nested structures, which is what produced inline-bolded
+        # would-be-list-items in earlier ingests.
+        from sources.util import html_to_markdown as _h2m
+        cleaned_html = trafilatura.extract(
             downloaded,
             url=url,
-            output_format="markdown",
+            output_format="html",
             include_tables=True,
             include_images=False,
             include_comments=False,
-            favor_precision=False,  # we want full body; LLM handles boilerplate
+            favor_precision=False,
             with_metadata=False,
         )
+        text = _h2m(cleaned_html or "")
+        if not text or len(text.strip()) < 100:
+            # Fall back to trafilatura\'s native markdown output
+            # if HTML extraction didn\'t produce enough.
+            text = trafilatura.extract(
+                downloaded, url=url,
+                output_format="markdown",
+                include_tables=True,
+                include_images=False,
+                include_comments=False,
+                favor_precision=False,
+                with_metadata=False,
+            )
         if not text or len(text.strip()) < 100:
             raise RuntimeError(
                 f"trafilatura extracted < 100 chars from {url!r}; "
