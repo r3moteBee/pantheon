@@ -269,6 +269,19 @@ TOOL_SCHEMAS = [
                             "interval:120."
                         )
                     },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": (
+                            "Optional max wall-clock time the task is "
+                            "allowed to run. Default 1800 (30 min). "
+                            "Bump to 3600 or 7200 for batch ingests "
+                            "(20+ items) where each item takes 30-60s; "
+                            "the watchdog kills the job at this limit "
+                            "regardless of whether work remains. "
+                            "Per-step heartbeats keep the stall watch- "
+                            "dog (5 min idle) happy independently."
+                        )
+                    },
                     "skill_name": {
                         "type": "string",
                         "description": (
@@ -2047,6 +2060,12 @@ async def execute_tool(
                         f"for adapter-driven skills) to confirm the slug, then retry."
                     )
                 skill_name = resolved
+            timeout_seconds = tool_args.get("timeout_seconds")
+            if timeout_seconds is not None:
+                try:
+                    timeout_seconds = int(timeout_seconds)
+                except (TypeError, ValueError):
+                    timeout_seconds = None
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),
@@ -2056,6 +2075,7 @@ async def execute_tool(
                 plan_status=plan_status,
                 parent_session_id=session_id,
                 skill_name=skill_name,
+                timeout_seconds=timeout_seconds,
             )
             if skip_review:
                 return (

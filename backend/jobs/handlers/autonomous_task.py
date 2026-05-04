@@ -76,7 +76,7 @@ def _format_progress(tool_count: int, tool_name: str,
 
 
 
-@register("autonomous_task", default_timeout_seconds=600,
+@register("autonomous_task", default_timeout_seconds=1800,
           description="Single-fire autonomous agent loop with a free-form prompt.")
 async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     pl = ctx.payload
