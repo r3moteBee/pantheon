@@ -172,6 +172,7 @@ export const jobsApi = {
   create: (body) => api.post('/api/jobs', body),
   cancel: (id) => api.post(`/api/jobs/${id}/cancel`),
   retry: (id) => api.post(`/api/jobs/${id}/retry`),
+  rerun: (id) => api.post(`/api/jobs/${id}/rerun`),
   delete: (id) => api.delete(`/api/jobs/${id}`),
 }
 

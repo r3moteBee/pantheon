@@ -191,6 +191,45 @@ class JobStore:
         try: return self.get(job_id)
         except JobNotFound: return None
 
+    def rerun(self, job_id: str) -> dict[str, Any]:
+        """Create a fresh job that mirrors a previous (completed/failed/
+        cancelled/stalled) one. Same payload, title, description,
+        project_id, job_type, schedule_id, timeout. Status starts at
+        QUEUED so the worker picks it up.
+
+        The original job row is left untouched — this gives you a
+        history of attempts rather than overwriting the original.
+        Returns the new job dict."""
+        old = self.get(job_id)  # raises JobNotFound if missing
+        if old.get("status") in {"queued", "running"}:
+            raise ValueError(
+                f"job {job_id} is currently {old['status']!r}; "
+                f"cannot rerun until it completes or fails"
+            )
+        new_id = str(uuid.uuid4())
+        now = _now()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO jobs
+                   (id, job_type, project_id, status, title, description,
+                    payload, scheduled_for, timeout_seconds, max_attempts,
+                    parent_job_id, schedule_id, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    new_id, old["job_type"], old["project_id"], JobStatus.QUEUED,
+                    old.get("title") or old["job_type"],
+                    old.get("description") or "",
+                    json.dumps(old.get("payload") or {}),
+                    None,                       # scheduled_for: run now
+                    old.get("timeout_seconds"),
+                    old.get("max_attempts") or 1,
+                    job_id,                     # parent_job_id: link to original
+                    old.get("schedule_id"),
+                    now,
+                ),
+            )
+        return self.get(new_id)
+
     def find_latest_for_schedule(self, schedule_id: str) -> dict[str, Any] | None:
         """Return the most recent job that fired from this schedule, or None."""
         with self._connect() as conn:

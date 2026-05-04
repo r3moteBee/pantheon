@@ -509,6 +509,37 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "rerun_job",
+            "description": (
+                "Re-run a finished job (completed / failed / stalled / "
+                "cancelled) with the exact same payload, title, "
+                "schedule_id, and timeout. Creates a NEW job entry "
+                "linked back to the original via parent_job_id; the "
+                "original record stays as audit history.\n\n"
+                "Useful when:\n"
+                "  - the user says 'run yesterday\'s research task again'\n"
+                "  - a recent ingest looks incomplete and you want to "
+                "redo the same work\n"
+                "  - a failed task got fixed (e.g. MCP reconnected) "
+                "and the user wants to retry without rebuilding the "
+                "schedule\n\n"
+                "Accepts the full job UUID or an 8-char prefix."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "job_id": {
+                        "type": "string",
+                        "description": "Full UUID or 8-char prefix from list_recent_jobs."
+                    }
+                },
+                "required": ["job_id"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_skill",
             "description": (
                 "Create a reusable, callable SKILL — NOT a scheduled "
@@ -1959,6 +1990,36 @@ async def execute_tool(
                 f"Force-merged {res.get('deprecated_label')} into "
                 f"{res.get('canonical_label')} "
                 f"({res.get('edges_rewritten', 0)} edges rewritten)."
+            )
+
+        elif tool_name == "rerun_job":
+            from jobs.store import get_store
+            jid = (tool_args.get("job_id") or "").strip()
+            if not jid:
+                return "rerun_job rejected: job_id is required."
+            store = get_store()
+            target = store.get_or_none(jid)
+            # Allow 8-char prefix.
+            if not target and len(jid) >= 4:
+                cand = [r for r in store.list(limit=200) if r["id"].startswith(jid)]
+                if len(cand) == 1:
+                    target = cand[0]
+                elif len(cand) > 1:
+                    return f"rerun_job: prefix {jid!r} matches {len(cand)} jobs; provide more characters."
+            if not target:
+                return f"rerun_job: no job with id {jid!r}."
+            try:
+                new_job = store.rerun(target["id"])
+            except ValueError as e:
+                return f"rerun_job rejected: {e}"
+            return (
+                f"Rerun queued.\n"
+                f"  new_job_id: {new_job['id']}\n"
+                f"  from_job_id: {target['id']}\n"
+                f"  type: {new_job['job_type']}\n"
+                f"  title: {new_job.get('title') or '(untitled)'}\n\n"
+                f"Worker picks it up on the next poll. Track via "
+                f"get_job_status({new_job['id'][:8]!r})."
             )
 
         elif tool_name == "create_skill":

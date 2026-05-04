@@ -101,6 +101,20 @@ export default function ProjectTasksPanel({ projectId }) {
     setSelectedJob(res.data)
     await refresh()
   }
+  const rerun = async (id) => {
+    try {
+      const res = await jobsApi.rerun(id)
+      // Response shape is {ok, new_job_id, queued_at, from_job_id}
+      // — fetch the new job record so the detail panel updates.
+      if (res?.data?.new_job_id) {
+        const newJob = await jobsApi.get(res.data.new_job_id)
+        setSelectedJob(newJob.data)
+      }
+      await refresh()
+    } catch (err) {
+      alert('Rerun failed: ' + (err?.response?.data?.detail || err.message))
+    }
+  }
   const remove = async (id) => {
     if (!confirm('Delete this job record?')) return
     await jobsApi.delete(id); await refresh()
@@ -329,6 +343,7 @@ export default function ProjectTasksPanel({ projectId }) {
           onClose={() => setSelectedJob(null)}
           onCancel={() => cancel(selectedJob.id)}
           onRetry={() => retry(selectedJob.id)}
+          onRerun={() => rerun(selectedJob.id)}
           onDelete={() => remove(selectedJob.id)}
           onRefresh={refresh}
         />
@@ -338,7 +353,7 @@ export default function ProjectTasksPanel({ projectId }) {
 }
 
 
-function JobDetail({ job, onClose, onCancel, onRetry, onDelete, onRefresh }) {
+function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefresh }) {
   const [fresh, setFresh] = useState(job)
   useEffect(() => { setFresh(job) }, [job?.id])
   const reload = async () => {
@@ -423,6 +438,15 @@ function JobDetail({ job, onClose, onCancel, onRetry, onDelete, onRefresh }) {
         {(j.status === 'failed' || j.status === 'stalled' || j.status === 'cancelled') && (
           <button onClick={onRetry} className="px-2 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1">
             <RotateCcw className="w-3 h-3" /> Retry
+          </button>
+        )}
+        {(j.status === 'completed' || j.status === 'failed' || j.status === 'stalled' || j.status === 'cancelled') && (
+          <button
+            onClick={onRerun}
+            title="Re-run this exact job with the same payload, even if it succeeded. Useful for re-ingesting after upstream content changes or after a skill update."
+            className="px-2 py-1 rounded bg-emerald-800 hover:bg-emerald-700 text-emerald-100 flex items-center gap-1"
+          >
+            <RotateCcw className="w-3 h-3" /> Rerun
           </button>
         )}
         <button onClick={onDelete} className="ml-auto px-2 py-1 rounded text-gray-500 hover:text-red-400 flex items-center gap-1">

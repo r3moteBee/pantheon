@@ -173,3 +173,27 @@ async def cancel_task_run(run_id: str) -> dict[str, str]:
     if not cancel_run(run_id):
         raise HTTPException(status_code=404, detail="run not running")
     return {"status": "cancelled", "id": run_id}
+
+
+
+@router.post("/jobs/{job_id}/rerun")
+async def rerun_job_endpoint(job_id: str) -> dict[str, Any]:
+    """Re-create a finished job (completed/failed/cancelled/stalled)
+    with the same payload, title, schedule binding, and timeout.
+    The new job is queued; the worker picks it up on next poll.
+    Original job row is preserved as audit history."""
+    from jobs.store import get_store
+    store = get_store()
+    try:
+        new_job = store.rerun(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Treat JobNotFound (custom) and any other lookup failure as 404.
+        raise HTTPException(status_code=404, detail=f"job {job_id} not found: {e}")
+    return {
+        "ok": True,
+        "new_job_id": new_job["id"],
+        "queued_at": new_job.get("created_at"),
+        "from_job_id": job_id,
+    }
