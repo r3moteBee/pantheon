@@ -176,7 +176,12 @@ async def ingest(
     if norm and norm != proj and not norm.startswith(f"{proj}/"):
         norm = f"{proj}/{norm}"
 
-    # 4. Save with UNIQUE-path collision retry
+    # 4. Save: dedup on canonical path by default. If an artifact
+    #    already exists at this path, UPDATE it (creating a new
+    #    version) instead of creating a duplicate. Set
+    #    extras["force_new"]=True to opt out — useful when you
+    #    legitimately want a separate artifact for a new product
+    #    version, follow-up post, etc.
     def _candidate(base: str, n: int) -> str:
         if n == 0:
             return base
@@ -185,33 +190,62 @@ async def ingest(
             return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
         return f"{base}-{n}"
 
+    force_new = bool(req.extras.get("force_new", False))
     store = get_store()
     a = None
     final_path = norm
-    for n in range(50):
-        cand = _candidate(norm, n)
-        try:
-            a = store.create(
-                project_id=req.project_id,
-                path=cand,
-                content=body,
-                content_type="text/markdown",
-                title=fetched.title or req.identifier,
-                tags=["ingest", req.source_type],
-                source={
-                    "kind": "source_adapter",
-                    "source_type": req.source_type,
-                    "identifier": req.identifier,
-                    "session_id": session_id or "",
-                },
-                edited_by=session_id or "agent",
-            )
-            final_path = cand
-            break
-        except _sqlite3.IntegrityError as e:
-            if "UNIQUE" not in str(e) or "path" not in str(e):
-                raise
-            continue
+    update_mode = False
+
+    if not force_new:
+        # See if a previous ingest already lives at the canonical path.
+        existing = store.get_by_path(req.project_id, norm)
+        if existing:
+            try:
+                a = store.update(
+                    existing["id"],
+                    content=body,
+                    title=fetched.title or req.identifier,
+                    tags=["ingest", req.source_type],
+                    edit_summary=f"re-ingest from {req.source_type} ({req.identifier})",
+                    edited_by=session_id or "agent",
+                )
+                final_path = existing["path"]
+                update_mode = True
+                logger.info("re-ingest updated existing artifact %s at %s",
+                            a["id"], final_path)
+            except Exception as e:
+                logger.warning(
+                    "re-ingest update failed for %s: %s; falling through to create",
+                    existing.get("path"), e,
+                )
+
+    if a is None:
+        # No existing artifact (or force_new) — create with the
+        # familiar UNIQUE-path collision retry.
+        for n in range(50):
+            cand = _candidate(norm, n)
+            try:
+                a = store.create(
+                    project_id=req.project_id,
+                    path=cand,
+                    content=body,
+                    content_type="text/markdown",
+                    title=fetched.title or req.identifier,
+                    tags=["ingest", req.source_type],
+                    source={
+                        "kind": "source_adapter",
+                        "source_type": req.source_type,
+                        "identifier": req.identifier,
+                        "session_id": session_id or "",
+                    },
+                    edited_by=session_id or "agent",
+                )
+                final_path = cand
+                break
+            except _sqlite3.IntegrityError as e:
+                if "UNIQUE" not in str(e) or "path" not in str(e):
+                    raise
+                continue
 
     if a is None:
         return AdapterResult(
@@ -264,7 +298,12 @@ async def ingest(
         chars_saved=len(fetched.text),
         graph_nodes_created=nodes,
         graph_edges_created=edges,
-        extra={"final_path": final_path, **extra_sim, "extraction_status": extraction_status},
+        extra={
+            "final_path": final_path,
+            "update_mode": update_mode,
+            **extra_sim,
+            "extraction_status": extraction_status,
+        },
     )
     try:
         await adapter.post_save_hook(req, result)

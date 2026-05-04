@@ -1738,12 +1738,18 @@ async def execute_tool(
                         f"\n  extraction: {est_status.get('strategy')} FAILED "
                         f"({est_status.get('error') or '?'})"
                     )
+            mode_line = ""
+            if (r.extra or {}).get("update_mode"):
+                mode_line = "\n  mode: UPDATED existing artifact (new version)"
+            else:
+                mode_line = "\n  mode: CREATED new artifact"
             return (
                 f"Ingested {req.source_type}/{req.identifier} -> "
                 f"{r.artifact_path}\n"
                 f"  artifact_id: {r.artifact_id}\n"
                 f"  chars_saved: {r.chars_saved}\n"
                 f"  graph_nodes: {r.graph_nodes_created}"
+                f"{mode_line}"
                 f"{est_line}"
             )
 

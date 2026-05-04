@@ -150,6 +150,17 @@ class GraphMemory:
         """Add an edge between two nodes."""
         edge_id = str(uuid.uuid4())
         with self._connect() as conn:
+            # Idempotency: skip if this exact edge already exists in
+            # this project. Re-ingesting the same artifact should
+            # not pile parallel edges.
+            existing = conn.execute(
+                """SELECT id FROM graph_edges
+                   WHERE project_id = ? AND node_a_id = ? AND node_b_id = ?
+                     AND relationship = ?""",
+                (self.project_id, node_a_id, node_b_id, relationship),
+            ).fetchone()
+            if existing:
+                return existing["id"]
             conn.execute("""
                 INSERT OR REPLACE INTO graph_edges
                 (id, project_id, node_a_id, node_b_id, relationship, weight, created_at)
