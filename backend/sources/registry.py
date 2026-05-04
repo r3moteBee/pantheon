@@ -145,6 +145,14 @@ async def ingest(
                 fm["speakers"] = extracted.speakers
             if extracted.claims:
                 fm["claims"] = extracted.claims
+            # Specialized extractors contribute extra structured
+            # fields (specifications, announcement, release, etc.)
+            # via frontmatter_additions. Merge at top-level.
+            for k, v in (extracted.frontmatter_additions or {}).items():
+                if k in {"topics", "speakers", "claims",
+                         "source", "extraction_status"}:
+                    continue  # don't let extractors clobber canonical fields
+                fm[k] = v
             extraction_status = dict(extracted.status or {})
             # Always record the status, success or failure, so reading
             # the artifact later tells you why topics is what it is.
