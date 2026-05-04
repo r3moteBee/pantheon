@@ -569,6 +569,26 @@ function ArtifactDetail({ id, onChanged, onClose }) {
 }
 
 
+// Strip YAML frontmatter (--- delimited block at the start) so it
+// doesn't render as prose. Also normalize a few common LLM/trafilatura
+// markdown quirks: bold markers like **foo**bar (no trailing space)
+// are invalid CommonMark and render as literal asterisks; we insert a
+// space so the parser produces real <strong>. Same for *italic*word.
+function cleanMarkdownForPreview(raw) {
+  if (!raw) return ''
+  let s = String(raw)
+  // 1. Strip leading frontmatter block.
+  if (s.startsWith('---\n') || s.startsWith('---\r\n')) {
+    const m = s.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n+/)
+    if (m) s = s.slice(m[0].length)
+  }
+  // 2. Fix **bold**word -> **bold** word (closing ** must be followed by space or punctuation).
+  s = s.replace(/(\*\*)([^*\s][^*]*?[^*\s])(\*\*)(\w)/g, '$1$2$3 $4')
+  // Also handle the inverse: word**bold** with no leading space.
+  s = s.replace(/(\w)(\*\*)([^*\s])/g, '$1 $2$3')
+  return s
+}
+
 function PreviewBody({ artifact, preview }) {
   const ct = artifact.content_type || ''
 
@@ -577,8 +597,10 @@ function PreviewBody({ artifact, preview }) {
   if (preview.type === 'text') {
     if (ct === 'text/markdown') {
       return (
-        <div className="prose prose-invert prose-sm max-w-none p-6">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{preview.content || ''}</ReactMarkdown>
+        <div className="prose prose-invert max-w-3xl mx-auto p-6">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {cleanMarkdownForPreview(preview.content || '')}
+          </ReactMarkdown>
         </div>
       )
     }
