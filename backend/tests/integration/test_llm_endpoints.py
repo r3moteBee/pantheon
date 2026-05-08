@@ -133,3 +133,67 @@ def test_store_resolve_role_returns_none_when_unmapped(monkeypatch, tmp_path):
     _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import resolve_role
     assert resolve_role("vision") is None
+
+
+def test_migration_creates_primary_from_legacy(monkeypatch, tmp_path):
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    vault = _v.get_vault()
+    vault.set_secret("llm_base_url", "https://api.openai.com/v1")
+    vault.set_secret("llm_api_key", "sk-legacy")
+    vault.set_secret("llm_model", "gpt-4o")
+    vault.set_secret("embedding_base_url", "http://localhost:11434/v1")
+    vault.set_secret("embedding_api_key", "ollama")
+    vault.set_secret("embedding_model", "nomic-embed-text")
+
+    from llm_config.migration import migrate_from_legacy
+    migrate_from_legacy()
+
+    from llm_config.store import list_endpoints, get_role_mapping, resolve_role
+    eps = {e.name: e for e in list_endpoints()}
+    assert "primary" in eps
+    assert "embed" in eps
+    assert eps["primary"].api_type == "openai"
+    assert eps["embed"].api_type == "ollama"  # detected from :11434
+
+    rm = get_role_mapping()
+    assert rm["chat"]["endpoint"] == "primary"
+    assert rm["chat"]["model"] == "gpt-4o"
+    assert rm["embed"]["endpoint"] == "embed"
+
+    # Roles without legacy config inherit from primary.
+    assert rm["prefill"]["endpoint"] == "primary"
+    assert rm["vision"]["endpoint"] == "primary"
+
+    # Resolved role returns the API key from the new layout.
+    r = resolve_role("chat")
+    assert r is not None
+    assert r.api_key == "sk-legacy"
+
+
+def test_migration_is_idempotent(monkeypatch, tmp_path):
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    vault = _v.get_vault()
+    vault.set_secret("llm_base_url", "https://api.openai.com/v1")
+    vault.set_secret("llm_api_key", "sk-legacy")
+    vault.set_secret("llm_model", "gpt-4o")
+    from llm_config.migration import migrate_from_legacy
+    from llm_config.store import list_endpoints
+
+    migrate_from_legacy()
+    first = len(list_endpoints())
+    migrate_from_legacy()
+    assert len(list_endpoints()) == first
+
+
+def test_migration_no_legacy_creates_nothing(monkeypatch, tmp_path):
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    from llm_config.migration import migrate_from_legacy
+    from llm_config.store import list_endpoints, get_role_mapping
+    migrate_from_legacy()
+    assert list_endpoints() == []
+    assert get_role_mapping() == {}
+    # Flag still set so we don't re-run.
+    assert _v.get_vault().get_secret("llm_config_migrated_v1") == "true"
