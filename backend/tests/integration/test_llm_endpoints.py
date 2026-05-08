@@ -436,3 +436,25 @@ def test_embed_role_uses_assigned_model_not_legacy_default(monkeypatch, tmp_path
     p = provider.get_embedding_provider()
     assert p.embedding_model == "nomic-embed-text"
     assert p.base_url == "http://localhost:11434/v1"
+
+
+def test_list_endpoints_triggers_migration(monkeypatch, tmp_path):
+    """Opening the Settings page (which calls list_endpoints first)
+    should surface the user's legacy vault config. Regression test
+    for the migration-trigger asymmetry that would otherwise show
+    empty endpoints on first load."""
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    vault = _v.get_vault()
+    vault.set_secret("llm_base_url", "https://api.openai.com/v1")
+    vault.set_secret("llm_api_key", "sk-legacy")
+    vault.set_secret("llm_model", "gpt-4o")
+
+    from llm_config.store import list_endpoints, get_role_mapping
+    eps = list_endpoints()
+    assert len(eps) == 1
+    assert eps[0].name == "primary"
+
+    rm = get_role_mapping()
+    assert rm["chat"]["endpoint"] == "primary"
+    assert rm["chat"]["model"] == "gpt-4o"
