@@ -20,11 +20,11 @@ from llm_config.models import (
 
 logger = logging.getLogger(__name__)
 
-_ENDPOINTS_KEY = "llm_saved_endpoints"
-_ROLE_MAPPING_KEY = "llm_role_mapping"
+ENDPOINTS_KEY = "llm_saved_endpoints"
+ROLE_MAPPING_KEY = "llm_role_mapping"
 
 
-def _key_secret_name(endpoint_name: str) -> str:
+def key_secret_name(endpoint_name: str) -> str:
     return f"llm_endpoint_key__{endpoint_name}"
 
 
@@ -42,7 +42,7 @@ class ResolvedRole:
 
 def list_endpoints() -> list[EndpointPublic]:
     vault = get_vault()
-    raw = vault.get_secret(_ENDPOINTS_KEY) or "[]"
+    raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     try:
         items = json.loads(raw)
     except json.JSONDecodeError:
@@ -52,7 +52,7 @@ def list_endpoints() -> list[EndpointPublic]:
     for it in items:
         try:
             name = it.get("name", "")
-            key_set = bool(vault.get_secret(_key_secret_name(name)))
+            key_set = bool(vault.get_secret(key_secret_name(name)))
             out.append(EndpointPublic(
                 name=name,
                 base_url=it.get("base_url", ""),
@@ -68,7 +68,7 @@ def save_endpoint(payload: EndpointWithKey) -> EndpointPublic:
     """Create or update an endpoint by name. If api_key is None on
     update, the existing key is preserved; passing empty string clears it."""
     vault = get_vault()
-    raw = vault.get_secret(_ENDPOINTS_KEY) or "[]"
+    raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     items = json.loads(raw) if raw else []
     # Remove existing entry with same name (update).
     items = [i for i in items if i.get("name") != payload.name]
@@ -77,14 +77,14 @@ def save_endpoint(payload: EndpointWithKey) -> EndpointPublic:
         "base_url": payload.base_url,
         "api_type": payload.api_type,
     })
-    vault.set_secret(_ENDPOINTS_KEY, json.dumps(items))
+    vault.set_secret(ENDPOINTS_KEY, json.dumps(items))
     if payload.api_key is not None:
-        vault.set_secret(_key_secret_name(payload.name), payload.api_key)
+        vault.set_secret(key_secret_name(payload.name), payload.api_key)
     return EndpointPublic(
         name=payload.name,
         base_url=payload.base_url,
         api_type=payload.api_type,
-        api_key_set=bool(payload.api_key) or bool(vault.get_secret(_key_secret_name(payload.name))),
+        api_key_set=bool(payload.api_key) or bool(vault.get_secret(key_secret_name(payload.name))),
     )
 
 
@@ -92,10 +92,10 @@ def delete_endpoint(name: str) -> None:
     """Delete an endpoint and its API key. Roles that reference it
     are unbound (endpoint set to "")."""
     vault = get_vault()
-    raw = vault.get_secret(_ENDPOINTS_KEY) or "[]"
+    raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     items = [i for i in json.loads(raw or "[]") if i.get("name") != name]
-    vault.set_secret(_ENDPOINTS_KEY, json.dumps(items))
-    vault.delete_secret(_key_secret_name(name))
+    vault.set_secret(ENDPOINTS_KEY, json.dumps(items))
+    vault.delete_secret(key_secret_name(name))
     # Unbind any roles pointing at this endpoint.
     rm = get_role_mapping()
     changed = False
@@ -104,7 +104,7 @@ def delete_endpoint(name: str) -> None:
             rm[role] = {"endpoint": "", "model": ""}
             changed = True
     if changed:
-        vault.set_secret(_ROLE_MAPPING_KEY, json.dumps(rm))
+        vault.set_secret(ROLE_MAPPING_KEY, json.dumps(rm))
 
 
 def get_endpoint(name: str) -> EndpointPublic | None:
@@ -115,13 +115,13 @@ def get_endpoint(name: str) -> EndpointPublic | None:
 
 
 def get_endpoint_api_key(name: str) -> str | None:
-    return get_vault().get_secret(_key_secret_name(name))
+    return get_vault().get_secret(key_secret_name(name))
 
 
 # ── Role mapping ──────────────────────────────────────────────────
 
 def get_role_mapping() -> dict[str, dict[str, str]]:
-    raw = get_vault().get_secret(_ROLE_MAPPING_KEY) or "{}"
+    raw = get_vault().get_secret(ROLE_MAPPING_KEY) or "{}"
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -139,7 +139,7 @@ def set_role_mapping(roles: list[RoleAssignment]) -> None:
         if r.endpoint and r.endpoint not in existing_names:
             raise ValueError(f"unknown endpoint {r.endpoint!r} for role {r.role!r}")
     rm = {r.role: {"endpoint": r.endpoint, "model": r.model} for r in roles}
-    get_vault().set_secret(_ROLE_MAPPING_KEY, json.dumps(rm))
+    get_vault().set_secret(ROLE_MAPPING_KEY, json.dumps(rm))
 
 
 def resolve_role(role: str) -> ResolvedRole | None:

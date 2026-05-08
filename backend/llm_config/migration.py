@@ -9,7 +9,7 @@ import json
 import logging
 
 from secrets.vault import get_vault
-from llm_config.store import _ENDPOINTS_KEY, _ROLE_MAPPING_KEY, _key_secret_name
+from llm_config.store import ENDPOINTS_KEY, ROLE_MAPPING_KEY, key_secret_name
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def migrate_from_legacy() -> None:
             "api_type": _guess_api_type(primary_legacy["base_url"]),
         })
         if primary_legacy["api_key"]:
-            vault.set_secret(_key_secret_name("primary"), primary_legacy["api_key"])
+            vault.set_secret(key_secret_name("primary"), primary_legacy["api_key"])
 
     for new_role, prefix, ep_name in _ROLE_TO_LEGACY:
         legacy = _read_legacy(prefix)
@@ -109,7 +109,7 @@ def migrate_from_legacy() -> None:
                 "api_type": _guess_api_type(legacy["base_url"]),
             })
             if legacy["api_key"]:
-                vault.set_secret(_key_secret_name(ep_name), legacy["api_key"])
+                vault.set_secret(key_secret_name(ep_name), legacy["api_key"])
             role_mapping[new_role] = {"endpoint": ep_name, "model": legacy["model"]}
         elif primary_present:
             # Inherit from primary; use the role-specific model if
@@ -124,9 +124,9 @@ def migrate_from_legacy() -> None:
         # runs on a vault that already has new-style data.
 
     if endpoints:
-        vault.set_secret(_ENDPOINTS_KEY, json.dumps(endpoints))
+        vault.set_secret(ENDPOINTS_KEY, json.dumps(endpoints))
     if role_mapping:
-        vault.set_secret(_ROLE_MAPPING_KEY, json.dumps(role_mapping))
+        vault.set_secret(ROLE_MAPPING_KEY, json.dumps(role_mapping))
 
     vault.set_secret(_FLAG, "true")
     logger.info(
