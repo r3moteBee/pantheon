@@ -37,6 +37,8 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── project_import.py    Import a project zip
 │   │   ├── personas.py          Persona CRUD (apollo, athena, zeus, ...)
 │   │   ├── connections.py       GitHub PAT connections
+│   │   ├── llm_endpoints.py     /api/llm/{endpoints,roles,probe} — named endpoints + role mapping
+│   │   ├── settings.py          Legacy flat-config CRUD; still in place for backward compat
 │   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match
 │   ├── sources/                 Source-adapter plugin registry — see SOURCE_ADAPTERS.md
 │   │   ├── base.py              SourceAdapter, IngestRequest, FetchedContent, AdapterResult
@@ -83,7 +85,12 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   └── models.py            SkillManifest (Pydantic), MemoryAccess (Enum), etc.
 │   ├── tasks/scheduler.py       APScheduler integration; schedule_agent_task accepts skill_name
 │   ├── mcp_client/manager.py    MCP server connection pool
-│   ├── models/provider.py       ModelProvider — get_provider(), get_embedding_provider()
+│   ├── llm_config/              Named endpoints + role-mapping registry (replaces flat per-role config)
+│   │   ├── models.py            Pydantic: SavedEndpoint, EndpointWithKey, EndpointPublic, RoleAssignment
+│   │   ├── store.py             Vault-backed CRUD; resolve_role(role) → ResolvedRole
+│   │   ├── migration.py         One-shot migrator from legacy llm_*/prefill_*/vision_*/embedding_*/reranker_* keys
+│   │   └── probe.py             Generic /models discovery for openai / ollama / anthropic / custom
+│   ├── models/provider.py       ModelProvider + 5 role getters that consult llm_config.store.resolve_role
 │   ├── secrets/vault.py         Encrypted secret storage in data/db/vault.db
 │   ├── config.py                Settings (Pydantic v2). settings.db_dir is canonical.
 │   ├── data/                    BUNDLED defaults — personas/, personality/. Tracked in git.
@@ -94,7 +101,9 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── pages/ArtifactsPage.jsx
 │   │   ├── components/Chat.jsx, ChatTabs.jsx, Layout.jsx
 │   │   ├── components/chat-tabs/ProjectTasksPanel.jsx (Tasks panel — schedules + jobs)
-│   │   ├── api/client.js        Axios wrappers for backend endpoints
+│   │   ├── components/settings/    LLM endpoints + role mapping UI (EndpointCard, AddEndpointForm,
+│   │   │                            EndpointList, RoleMapping, RoleMappingRow)
+│   │   ├── api/client.js        Axios wrappers for backend endpoints (incl. llmApi.*)
 │   │   └── store/index.js       Zustand store
 │   ├── tailwind.config.js       Uses @tailwindcss/typography for prose styling
 │   └── package.json
@@ -180,6 +189,21 @@ These are different and the agent must not confuse them:
 The autonomous_task handler resolves `payload.skill_name` (with underscore↔hyphen tolerance), validates `requires_mcp` against the live MCP manager, and passes the full skill_context + project_name + active_skill_name to AgentCore. If the skill's required MCP tools are offline, the handler fails fast with a clear error rather than running a doomed loop.
 
 System prompt distinguishes these explicitly under the "Skills vs scheduled tasks" section in `agent/prompts.py`. Don't merge them.
+
+## LLM endpoints + role mapping
+
+Pantheon's LLM configuration is **named endpoints + role mapping**, not flat per-role triplets. Two concepts:
+
+- **Saved endpoint** — `{name, base_url, api_type, api_key}` stored once. `api_type` is `openai` (covers OpenAI-compat), `anthropic`, `ollama`, or `custom`. The API key lives in the vault keyed by `llm_endpoint_key__<name>`.
+- **Role mapping** — five roles (`chat`, `prefill`, `vision`, `embed`, `rerank`) each point at one saved endpoint + a model id. JSON-serialized in vault under `llm_role_mapping`.
+
+The 5 role-getter functions in `models/provider.py` (`get_provider`, `get_prefill_provider`, `get_vision_provider`, `get_embedding_provider`, `get_reranker_provider`) all consult `llm_config.store.resolve_role(role)` and instantiate `ModelProvider` with the resolved tuple. There's a per-role cache (`_role_cache`) cleared by `reset_provider()` — every endpoint/role mutation in the API router calls it.
+
+**Migration.** Legacy `llm_*`, `prefill_*`, `vision_*`, `embedding_*`, `reranker_*` vault keys are auto-migrated to the new shape on first read of `list_endpoints()` / `get_role_mapping()` / `resolve_role()`. Idempotent via the `llm_config_migrated_v1` flag. Heuristic: `:11434` → ollama, `anthropic.com` → anthropic, otherwise openai. The legacy keys are NOT deleted; the legacy `/api/settings` flat-config endpoint still works for backward compat.
+
+**Frontend.** The Settings page has two panels: **Endpoints** (list of cards + add form, each with Probe + Delete) and **Role Mapping** (one row per role with cascading endpoint+model dropdowns + per-row Fetch button). Components under `frontend/src/components/settings/`. API client calls go through `llmApi.*` in `frontend/src/api/client.js`.
+
+**Adding a new role.** Update both `llm_config.models.ROLES` (Python tuple) and `frontend/src/components/settings/RoleMapping.jsx` (`ROLES` array). Then add a getter in `models/provider.py` and any caller. Migration's `_ROLE_TO_LEGACY` only matters if the new role has legacy flat keys.
 
 ## Conventions and gotchas
 
