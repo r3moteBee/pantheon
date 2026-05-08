@@ -239,149 +239,64 @@ class ModelProvider:
         return await fetch_models(self.base_url, self.api_key)
 
 
-_provider_instance: ModelProvider | None = None
-_embedding_provider_instance: ModelProvider | None = None
-_prefill_provider_instance: ModelProvider | None = None
-_vision_provider_instance: ModelProvider | None = None
-_reranker_provider_instance: ModelProvider | None = None
+# Per-role provider cache. Cleared by reset_provider().
+_role_cache: dict[str, ModelProvider] = {}
 
 
-def _vault_or(key: str, fallback: str = "") -> str | None:
-    """Read a vault secret, returning None if empty so callers fall back to defaults."""
-    try:
-        from secrets.vault import get_vault
-        val = get_vault().get_secret(key)
-        return val if val else None
-    except Exception:
+def _build_for_role(role: str) -> ModelProvider | None:
+    """Resolve role → endpoint+model from the llm_config store and
+    instantiate a ModelProvider. Returns None when the role is
+    unmapped (acceptable for vision and reranker)."""
+    from llm_config.store import resolve_role
+    rr = resolve_role(role)
+    if rr is None:
         return None
+    return ModelProvider(base_url=rr.base_url, api_key=rr.api_key, model=rr.model)
 
 
 def get_provider() -> ModelProvider:
-    """Get the singleton primary model provider."""
-    global _provider_instance
-    if _provider_instance is None:
-        _provider_instance = ModelProvider(
-            base_url=_vault_or("llm_base_url"),
-            api_key=_vault_or("llm_api_key"),
-            model=_vault_or("llm_model"),
-            embedding_model=_vault_or("embedding_model"),
-        )
-    return _provider_instance
+    """Primary chat provider. Falls back to a no-op-ish ModelProvider
+    constructed from settings if the role isn't mapped — same shape
+    as before to keep existing call sites working when the user hasn't
+    finished configuring."""
+    if "chat" not in _role_cache:
+        built = _build_for_role("chat")
+        _role_cache["chat"] = built or ModelProvider()
+    return _role_cache["chat"]
 
 
 def get_embedding_provider() -> ModelProvider:
-    """Get the singleton embedding provider.
-
-    Falls back to the primary provider's endpoint/key when no separate
-    embedding_base_url is configured.
-    """
-    global _embedding_provider_instance
-    if _embedding_provider_instance is None:
-        # Resolve: vault → .env → primary provider fallback
-        primary = get_provider()
-        emb_base = _vault_or("embedding_base_url") or settings.embedding_base_url or None
-        emb_key = _vault_or("embedding_api_key") or settings.embedding_api_key or None
-        emb_model = _vault_or("embedding_model") or settings.embedding_model or None
-
-        _embedding_provider_instance = ModelProvider(
-            base_url=emb_base or primary.base_url,
-            api_key=emb_key or primary.api_key,
-            model=primary.model,  # not used for embeddings, but required by init
-            embedding_model=emb_model or primary.embedding_model,
-        )
-        if emb_base:
-            logger.info("Embedding provider configured at %s", emb_base)
-    return _embedding_provider_instance
+    """Embedding provider. Falls back to ModelProvider() with settings."""
+    if "embed" not in _role_cache:
+        built = _build_for_role("embed")
+        _role_cache["embed"] = built or ModelProvider()
+    return _role_cache["embed"]
 
 
 def get_prefill_provider() -> ModelProvider:
-    """Get the singleton prefill/summarisation provider.
-
-    Falls back to the primary provider when no separate prefill_base_url is
-    configured.  The model defaults to llm_prefill_model, then llm_model.
-    """
-    global _prefill_provider_instance
-    if _prefill_provider_instance is None:
-        primary = get_provider()
-        pre_base = _vault_or("prefill_base_url") or settings.prefill_base_url or None
-        pre_key = _vault_or("prefill_api_key") or settings.prefill_api_key or None
-        pre_model = (
-            _vault_or("llm_prefill_model")
-            or settings.llm_prefill_model
-            or primary.model
-        )
-
-        _prefill_provider_instance = ModelProvider(
-            base_url=pre_base or primary.base_url,
-            api_key=pre_key or primary.api_key,
-            model=pre_model,
-            embedding_model=primary.embedding_model,
-        )
-        if pre_base:
-            logger.info("Prefill provider configured at %s (model: %s)", pre_base, pre_model)
-    return _prefill_provider_instance
+    """Prefill / fallback provider. Falls back to the chat provider
+    (same as the legacy behavior when prefill_* keys were empty)."""
+    if "prefill" not in _role_cache:
+        built = _build_for_role("prefill")
+        _role_cache["prefill"] = built or get_provider()
+    return _role_cache["prefill"]
 
 
 def get_vision_provider() -> ModelProvider | None:
-    """Get the singleton vision provider for image analysis.
-
-    Returns None when no dedicated vision model is configured, signalling
-    callers to fall back to the primary provider.
-    """
-    global _vision_provider_instance
-    if _vision_provider_instance is None:
-        vis_base = _vault_or("vision_base_url") or settings.vision_base_url or None
-        vis_key = _vault_or("vision_api_key") or settings.vision_api_key or None
-        vis_model = _vault_or("llm_vision_model") or settings.llm_vision_model or None
-
-        if not vis_model and not vis_base:
-            return None  # Not configured — callers should use fallback chain
-
-        primary = get_provider()
-        _vision_provider_instance = ModelProvider(
-            base_url=vis_base or primary.base_url,
-            api_key=vis_key or primary.api_key,
-            model=vis_model or primary.model,
-            embedding_model=primary.embedding_model,
-        )
-        if vis_base:
-            logger.info("Vision provider configured at %s (model: %s)", vis_base, vis_model)
-        else:
-            logger.info("Vision provider using primary endpoint (model: %s)", vis_model)
-    return _vision_provider_instance
+    """Optional vision provider. None when unmapped."""
+    if "vision" not in _role_cache:
+        _role_cache["vision"] = _build_for_role("vision")  # may be None
+    return _role_cache["vision"]
 
 
 def get_reranker_provider() -> ModelProvider | None:
-    """Get the singleton reranker provider.
-
-    Returns None when no reranker is configured (model + base_url both blank).
-    """
-    global _reranker_provider_instance
-    if _reranker_provider_instance is None:
-        rr_base = _vault_or("reranker_base_url") or settings.reranker_base_url or None
-        rr_key = _vault_or("reranker_api_key") or settings.reranker_api_key or None
-        rr_model = _vault_or("reranker_model") or settings.reranker_model or None
-
-        if not rr_base and not rr_model:
-            return None  # Not configured
-
-        primary = get_provider()
-        _reranker_provider_instance = ModelProvider(
-            base_url=rr_base or primary.base_url,
-            api_key=rr_key or primary.api_key,
-            model=rr_model or "reranker",
-            embedding_model=primary.embedding_model,
-        )
-        if rr_base:
-            logger.info("Reranker provider configured at %s (model: %s)", rr_base, rr_model)
-    return _reranker_provider_instance
+    """Optional reranker provider. None when unmapped."""
+    if "rerank" not in _role_cache:
+        _role_cache["rerank"] = _build_for_role("rerank")  # may be None
+    return _role_cache["rerank"]
 
 
 def reset_provider() -> None:
-    """Reset all provider singletons (call after settings change)."""
-    global _provider_instance, _embedding_provider_instance, _prefill_provider_instance, _vision_provider_instance, _reranker_provider_instance
-    _provider_instance = None
-    _embedding_provider_instance = None
-    _prefill_provider_instance = None
-    _vision_provider_instance = None
-    _reranker_provider_instance = None
+    """Clear all cached per-role providers. Called whenever settings
+    or role mapping change so the next get_*_provider() rebuilds."""
+    _role_cache.clear()
