@@ -34,3 +34,98 @@ def test_role_assignment_validates_role_name():
     assert r.role == "chat"
     with pytest.raises(ValueError):
         RoleAssignment(role="bogus", endpoint="primary", model="x")
+
+
+# ── Vault-backed store tests ──────────────────────────────────────
+#
+# Note: Pantheon's Settings.vault_db_path is a derived property from
+# DATA_DIR — there is no VAULT_DB_PATH env var. To isolate each test's
+# vault DB, we construct a SecretsVault directly against tmp_path and
+# pin it as the module-level singleton, then clear the in-memory secret
+# cache. This matches the spirit of the spec while working with the
+# real vault module.
+def _reset_vault(tmp_path):
+    from secrets import vault as _v
+    _v._cache.clear()
+    _v._vault_instance = _v.SecretsVault(
+        db_path=str(tmp_path / "vault.db"),
+        master_key="test-key",
+    )
+
+
+def test_store_round_trip_endpoints(monkeypatch, tmp_path):
+    """Saved endpoints round-trip through the vault."""
+    _reset_vault(tmp_path)
+    from llm_config.store import (
+        list_endpoints, save_endpoint, delete_endpoint,
+    )
+    from llm_config.models import EndpointWithKey
+
+    assert list_endpoints() == []
+    save_endpoint(EndpointWithKey(
+        name="primary", base_url="https://api.openai.com/v1",
+        api_type="openai", api_key="sk-test",
+    ))
+    eps = list_endpoints()
+    assert len(eps) == 1
+    assert eps[0].name == "primary"
+    assert eps[0].api_key_set is True
+
+    delete_endpoint("primary")
+    assert list_endpoints() == []
+
+
+def test_store_role_mapping_round_trip(monkeypatch, tmp_path):
+    _reset_vault(tmp_path)
+    from llm_config.store import (
+        save_endpoint, set_role_mapping, get_role_mapping,
+    )
+    from llm_config.models import EndpointWithKey, RoleAssignment
+
+    save_endpoint(EndpointWithKey(
+        name="primary", base_url="https://api.openai.com/v1",
+        api_type="openai", api_key="sk-test",
+    ))
+    set_role_mapping([
+        RoleAssignment(role="chat", endpoint="primary", model="gpt-4o"),
+        RoleAssignment(role="embed", endpoint="primary", model="text-embedding-3-small"),
+    ])
+    rm = get_role_mapping()
+    assert rm["chat"]["endpoint"] == "primary"
+    assert rm["chat"]["model"] == "gpt-4o"
+    assert rm["embed"]["model"] == "text-embedding-3-small"
+
+
+def test_store_set_role_rejects_unknown_endpoint(monkeypatch, tmp_path):
+    _reset_vault(tmp_path)
+    from llm_config.store import set_role_mapping
+    from llm_config.models import RoleAssignment
+
+    with pytest.raises(ValueError, match="unknown endpoint"):
+        set_role_mapping([RoleAssignment(role="chat", endpoint="missing", model="x")])
+
+
+def test_store_resolve_role_returns_full_tuple(monkeypatch, tmp_path):
+    _reset_vault(tmp_path)
+    from llm_config.store import (
+        save_endpoint, set_role_mapping, resolve_role,
+    )
+    from llm_config.models import EndpointWithKey, RoleAssignment
+
+    save_endpoint(EndpointWithKey(
+        name="primary", base_url="https://api.openai.com/v1",
+        api_type="openai", api_key="sk-test",
+    ))
+    set_role_mapping([RoleAssignment(role="chat", endpoint="primary", model="gpt-4o")])
+    r = resolve_role("chat")
+    assert r is not None
+    assert r.base_url == "https://api.openai.com/v1"
+    assert r.api_key == "sk-test"
+    assert r.model == "gpt-4o"
+    assert r.api_type == "openai"
+
+
+def test_store_resolve_role_returns_none_when_unmapped(monkeypatch, tmp_path):
+    _reset_vault(tmp_path)
+    from llm_config.store import resolve_role
+    assert resolve_role("vision") is None
