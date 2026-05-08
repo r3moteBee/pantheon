@@ -377,3 +377,35 @@ def test_router_probe_models_with_saved_endpoint_uses_stored_key(monkeypatch, tm
     monkeypatch.setattr(probe, "probe_models", _fake)
     c.post("/api/llm/probe", json={"endpoint_name": "primary"})
     assert captured["api_key"] == "stored-key"
+
+
+def test_get_provider_uses_new_store(monkeypatch, tmp_path):
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    vault = _v.get_vault()
+    # Pre-set the migrated flag so we skip the legacy heuristic.
+    vault.set_secret("llm_config_migrated_v1", "true")
+    from llm_config.store import save_endpoint, set_role_mapping
+    from llm_config.models import EndpointWithKey, RoleAssignment
+    save_endpoint(EndpointWithKey(
+        name="primary", base_url="https://api.openai.com/v1",
+        api_type="openai", api_key="sk-new",
+    ))
+    set_role_mapping([RoleAssignment(role="chat", endpoint="primary", model="gpt-4o")])
+
+    # Force the provider to re-resolve.
+    from models import provider
+    provider.reset_provider()
+    p = provider.get_provider()
+    assert p.base_url == "https://api.openai.com/v1"
+    assert p.api_key == "sk-new"
+    assert p.model == "gpt-4o"
+
+
+def test_get_vision_provider_returns_none_when_unbound(monkeypatch, tmp_path):
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    _v.get_vault().set_secret("llm_config_migrated_v1", "true")
+    from models import provider
+    provider.reset_provider()
+    assert provider.get_vision_provider() is None
