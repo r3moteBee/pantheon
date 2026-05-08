@@ -95,10 +95,7 @@ def delete_endpoint(name: str) -> None:
     raw = vault.get_secret(_ENDPOINTS_KEY) or "[]"
     items = [i for i in json.loads(raw or "[]") if i.get("name") != name]
     vault.set_secret(_ENDPOINTS_KEY, json.dumps(items))
-    try:
-        vault.delete_secret(_key_secret_name(name))
-    except Exception:
-        pass
+    vault.delete_secret(_key_secret_name(name))
     # Unbind any roles pointing at this endpoint.
     rm = get_role_mapping()
     changed = False
@@ -133,14 +130,15 @@ def get_role_mapping() -> dict[str, dict[str, str]]:
 
 def set_role_mapping(roles: list[RoleAssignment]) -> None:
     """Replace the entire role mapping. Validates that every endpoint
-    referenced exists. Roles not in `roles` are left untouched."""
+    referenced exists; raises ValueError on the first missing one.
+
+    Any role not present in `roles` is removed from the stored mapping.
+    """
     existing_names = {e.name for e in list_endpoints()}
     for r in roles:
         if r.endpoint and r.endpoint not in existing_names:
             raise ValueError(f"unknown endpoint {r.endpoint!r} for role {r.role!r}")
-    rm = get_role_mapping()
-    for r in roles:
-        rm[r.role] = {"endpoint": r.endpoint, "model": r.model}
+    rm = {r.role: {"endpoint": r.endpoint, "model": r.model} for r in roles}
     get_vault().set_secret(_ROLE_MAPPING_KEY, json.dumps(rm))
 
 
