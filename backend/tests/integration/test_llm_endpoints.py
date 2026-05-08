@@ -7,6 +7,8 @@ os.makedirs("/tmp/pantheon-tests-data/db", exist_ok=True)
 
 import pytest
 
+pytest_plugins = ["pytest_asyncio"]
+
 
 def test_saved_endpoint_validates_api_type():
     from llm_config.models import SavedEndpoint
@@ -197,3 +199,83 @@ def test_migration_no_legacy_creates_nothing(monkeypatch, tmp_path):
     assert get_role_mapping() == {}
     # Flag still set so we don't re-run.
     assert _v.get_vault().get_secret("llm_config_migrated_v1") == "true"
+
+
+@pytest.mark.asyncio
+async def test_probe_openai_extracts_model_ids(monkeypatch):
+    """probe() shape-tests the OpenAI /v1/models response."""
+    from llm_config import probe
+
+    async def _fake_get(url, *, headers, timeout):
+        class _R:
+            status_code = 200
+            def json(self):
+                return {"data": [{"id": "gpt-4o"}, {"id": "gpt-4o-mini"}]}
+            def raise_for_status(self):
+                pass
+        return _R()
+
+    monkeypatch.setattr(probe, "_async_get", _fake_get)
+    result = await probe.probe_models(
+        base_url="https://api.openai.com/v1",
+        api_type="openai",
+        api_key="sk-test",
+    )
+    assert result.ok is True
+    assert "gpt-4o" in result.models
+    assert "gpt-4o-mini" in result.models
+
+
+@pytest.mark.asyncio
+async def test_probe_ollama_uses_tags_endpoint(monkeypatch):
+    from llm_config import probe
+
+    captured = {}
+    async def _fake_get(url, *, headers, timeout):
+        captured["url"] = url
+        class _R:
+            status_code = 200
+            def json(self):
+                return {"models": [{"name": "llama3.2:3b"}, {"name": "qwen2.5:14b"}]}
+            def raise_for_status(self):
+                pass
+        return _R()
+
+    monkeypatch.setattr(probe, "_async_get", _fake_get)
+    result = await probe.probe_models(
+        base_url="http://localhost:11434/v1",
+        api_type="ollama",
+        api_key="",
+    )
+    assert "/api/tags" in captured["url"]  # ollama uses its native endpoint
+    assert "llama3.2:3b" in result.models
+
+
+@pytest.mark.asyncio
+async def test_probe_anthropic_returns_static_list():
+    from llm_config import probe
+    result = await probe.probe_models(
+        base_url="https://api.anthropic.com",
+        api_type="anthropic",
+        api_key="sk-ant",
+    )
+    assert result.ok is True
+    assert any("opus" in m for m in result.models)
+    assert any("sonnet" in m for m in result.models)
+
+
+@pytest.mark.asyncio
+async def test_probe_handles_failure(monkeypatch):
+    from llm_config import probe
+
+    async def _fake_get(url, *, headers, timeout):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(probe, "_async_get", _fake_get)
+    result = await probe.probe_models(
+        base_url="http://localhost:99999",
+        api_type="openai",
+        api_key="",
+    )
+    assert result.ok is False
+    assert "connection refused" in result.error
