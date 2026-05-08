@@ -251,7 +251,16 @@ def _build_for_role(role: str) -> ModelProvider | None:
     rr = resolve_role(role)
     if rr is None:
         return None
-    return ModelProvider(base_url=rr.base_url, api_key=rr.api_key, model=rr.model)
+    # Pass model in both slots so the embed role gets its embedding_model
+    # populated — ModelProvider uses `model` for chat and `embedding_model`
+    # for embed() calls. For non-embed roles the embedding_model field is
+    # set but unused.
+    return ModelProvider(
+        base_url=rr.base_url,
+        api_key=rr.api_key,
+        model=rr.model,
+        embedding_model=rr.model,
+    )
 
 
 def get_provider() -> ModelProvider:
