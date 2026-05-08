@@ -409,3 +409,30 @@ def test_get_vision_provider_returns_none_when_unbound(monkeypatch, tmp_path):
     from models import provider
     provider.reset_provider()
     assert provider.get_vision_provider() is None
+
+
+def test_embed_role_uses_assigned_model_not_legacy_default(monkeypatch, tmp_path):
+    """When the embed role is mapped to a new endpoint+model, the
+    resulting ModelProvider's embedding_model field reflects the
+    assigned model — not whatever the legacy settings default is."""
+    _reset_vault(monkeypatch, tmp_path)
+    from secrets import vault as _v
+    _v.get_vault().set_secret("llm_config_migrated_v1", "true")
+    from llm_config.store import save_endpoint, set_role_mapping
+    from llm_config.models import EndpointWithKey, RoleAssignment
+
+    save_endpoint(EndpointWithKey(
+        name="ollama-local",
+        base_url="http://localhost:11434/v1",
+        api_type="ollama",
+        api_key="",
+    ))
+    set_role_mapping([RoleAssignment(
+        role="embed", endpoint="ollama-local", model="nomic-embed-text",
+    )])
+
+    from models import provider
+    provider.reset_provider()
+    p = provider.get_embedding_provider()
+    assert p.embedding_model == "nomic-embed-text"
+    assert p.base_url == "http://localhost:11434/v1"
