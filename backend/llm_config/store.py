@@ -28,6 +28,15 @@ def key_secret_name(endpoint_name: str) -> str:
     return f"llm_endpoint_key__{endpoint_name}"
 
 
+def _ensure_migrated() -> None:
+    """Lazy migration trigger. Idempotent — checks the flag first.
+    Called from any store read that must surface legacy data."""
+    vault = get_vault()
+    if not vault.get_secret("llm_config_migrated_v1"):
+        from llm_config.migration import migrate_from_legacy
+        migrate_from_legacy()
+
+
 @dataclass
 class ResolvedRole:
     """What ModelProvider needs to construct itself for a role."""
@@ -41,6 +50,7 @@ class ResolvedRole:
 # ── Endpoint CRUD ─────────────────────────────────────────────────
 
 def list_endpoints() -> list[EndpointPublic]:
+    _ensure_migrated()
     vault = get_vault()
     raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     try:
@@ -121,6 +131,7 @@ def get_endpoint_api_key(name: str) -> str | None:
 # ── Role mapping ──────────────────────────────────────────────────
 
 def get_role_mapping() -> dict[str, dict[str, str]]:
+    _ensure_migrated()
     raw = get_vault().get_secret(ROLE_MAPPING_KEY) or "{}"
     try:
         return json.loads(raw)
@@ -149,12 +160,7 @@ def resolve_role(role: str) -> ResolvedRole | None:
     if the migration flag isn't set."""
     if role not in ROLES:
         return None
-    # Lazy migration: if not migrated, do it now. Imported locally
-    # to keep store.py free of the heuristic logic.
-    vault = get_vault()
-    if not vault.get_secret("llm_config_migrated_v1"):
-        from llm_config.migration import migrate_from_legacy
-        migrate_from_legacy()
+    _ensure_migrated()
     rm = get_role_mapping()
     binding = rm.get(role) or {}
     endpoint_name = binding.get("endpoint") or ""
