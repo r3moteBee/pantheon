@@ -41,21 +41,25 @@ def test_role_assignment_validates_role_name():
 # Note: Pantheon's Settings.vault_db_path is a derived property from
 # DATA_DIR — there is no VAULT_DB_PATH env var. To isolate each test's
 # vault DB, we construct a SecretsVault directly against tmp_path and
-# pin it as the module-level singleton, then clear the in-memory secret
-# cache. This matches the spirit of the spec while working with the
-# real vault module.
-def _reset_vault(tmp_path):
+# pin it as the module-level singleton via monkeypatch so the original
+# is auto-restored at teardown. Without monkeypatch the singleton
+# would leak across modules and point at a vanished tmp_path DB.
+def _reset_vault(monkeypatch, tmp_path):
+    """Replace the vault singleton with one rooted at tmp_path. monkeypatch
+    auto-restores the original at test teardown so subsequent tests in
+    other modules aren't poisoned."""
     from secrets import vault as _v
-    _v._cache.clear()
-    _v._vault_instance = _v.SecretsVault(
+    fresh = _v.SecretsVault(
         db_path=str(tmp_path / "vault.db"),
         master_key="test-key",
     )
+    monkeypatch.setattr(_v, "_vault_instance", fresh)
+    monkeypatch.setattr(_v, "_cache", {})
 
 
 def test_store_round_trip_endpoints(monkeypatch, tmp_path):
     """Saved endpoints round-trip through the vault."""
-    _reset_vault(tmp_path)
+    _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import (
         list_endpoints, save_endpoint, delete_endpoint,
     )
@@ -76,7 +80,7 @@ def test_store_round_trip_endpoints(monkeypatch, tmp_path):
 
 
 def test_store_role_mapping_round_trip(monkeypatch, tmp_path):
-    _reset_vault(tmp_path)
+    _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import (
         save_endpoint, set_role_mapping, get_role_mapping,
     )
@@ -97,7 +101,7 @@ def test_store_role_mapping_round_trip(monkeypatch, tmp_path):
 
 
 def test_store_set_role_rejects_unknown_endpoint(monkeypatch, tmp_path):
-    _reset_vault(tmp_path)
+    _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import set_role_mapping
     from llm_config.models import RoleAssignment
 
@@ -106,7 +110,7 @@ def test_store_set_role_rejects_unknown_endpoint(monkeypatch, tmp_path):
 
 
 def test_store_resolve_role_returns_full_tuple(monkeypatch, tmp_path):
-    _reset_vault(tmp_path)
+    _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import (
         save_endpoint, set_role_mapping, resolve_role,
     )
@@ -126,6 +130,6 @@ def test_store_resolve_role_returns_full_tuple(monkeypatch, tmp_path):
 
 
 def test_store_resolve_role_returns_none_when_unmapped(monkeypatch, tmp_path):
-    _reset_vault(tmp_path)
+    _reset_vault(monkeypatch, tmp_path)
     from llm_config.store import resolve_role
     assert resolve_role("vision") is None
