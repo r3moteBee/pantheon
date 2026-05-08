@@ -128,7 +128,7 @@ async def test_handler_aborts_when_required_mcp_missing(monkeypatch):
     # Register a fake skill with an impossible MCP requirement.
     from skills.models import (
         SkillManifest, LoadedSkill,
-        PantheonExtensions, MemoryAccess,
+        PantheonExtensions, MemoryConfig,
     )
     from skills.registry import get_skill_registry
 
@@ -138,7 +138,7 @@ async def test_handler_aborts_when_required_mcp_missing(monkeypatch):
         version="1.0.0",
         triggers=["needs fake mcp"],
         tags=["test"],
-        pantheon=PantheonExtensions(memory=MemoryAccess(), project_aware=False),
+        pantheon=PantheonExtensions(memory=MemoryConfig(), project_aware=False),
     )
     # requires_mcp may not be a model field on every SkillManifest version;
     # add it via setattr after construction so the test stays compatible.
