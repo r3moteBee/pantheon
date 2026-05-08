@@ -1,10 +1,10 @@
 """Generic probe-models for any (base_url, api_type, api_key) tuple.
 
 Different API types expose model lists differently:
-  - openai (and OpenAI-compatible): GET /v1/models -> {"data": [{"id": ...}]}
+  - openai (and OpenAI-compatible): GET /models -> {"data": [{"id": ...}]}
   - ollama: GET /api/tags -> {"models": [{"name": ...}]}
   - anthropic: no public list endpoint; we return a curated static list
-  - custom: try /v1/models first, fall back to /models, then to anthropic's static set
+  - custom: try the OpenAI shape first; if that fails, try the Ollama shape
 """
 from __future__ import annotations
 import logging
