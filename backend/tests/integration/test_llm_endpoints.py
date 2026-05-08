@@ -279,3 +279,101 @@ async def test_probe_handles_failure(monkeypatch):
     )
     assert result.ok is False
     assert "connection refused" in result.error
+
+
+def _fastapi_client(monkeypatch, tmp_path):
+    """Spin up a TestClient with isolated vault state."""
+    from fastapi.testclient import TestClient
+    _reset_vault(monkeypatch, tmp_path)
+    from main import app
+    return TestClient(app)
+
+
+def test_router_get_endpoints_empty(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    r = c.get("/api/llm/endpoints")
+    assert r.status_code == 200
+    assert r.json() == {"endpoints": []}
+
+
+def test_router_create_and_list_endpoint(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    r = c.post("/api/llm/endpoints", json={
+        "name": "primary",
+        "base_url": "https://api.openai.com/v1",
+        "api_type": "openai",
+        "api_key": "sk-test",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["name"] == "primary"
+    assert body["api_key_set"] is True
+    assert "api_key" not in body  # never echoed back
+
+    r2 = c.get("/api/llm/endpoints")
+    assert len(r2.json()["endpoints"]) == 1
+
+
+def test_router_delete_endpoint_unbinds_roles(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    c.post("/api/llm/endpoints", json={
+        "name": "primary", "base_url": "https://x", "api_type": "openai", "api_key": "k",
+    })
+    c.put("/api/llm/roles", json={"roles": [
+        {"role": "chat", "endpoint": "primary", "model": "gpt-4o"},
+    ]})
+    c.delete("/api/llm/endpoints/primary")
+    r = c.get("/api/llm/roles")
+    assert r.json()["roles"]["chat"]["endpoint"] == ""
+
+
+def test_router_role_mapping_round_trip(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    c.post("/api/llm/endpoints", json={
+        "name": "primary", "base_url": "https://x", "api_type": "openai", "api_key": "k",
+    })
+    r = c.put("/api/llm/roles", json={"roles": [
+        {"role": "chat", "endpoint": "primary", "model": "gpt-4o"},
+        {"role": "embed", "endpoint": "primary", "model": "text-embedding-3-small"},
+    ]})
+    assert r.status_code == 200
+    g = c.get("/api/llm/roles").json()
+    assert g["roles"]["chat"]["model"] == "gpt-4o"
+    assert g["roles"]["embed"]["endpoint"] == "primary"
+
+
+def test_router_role_rejects_unknown_endpoint(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    r = c.put("/api/llm/roles", json={"roles": [
+        {"role": "chat", "endpoint": "missing", "model": "gpt-4o"},
+    ]})
+    assert r.status_code == 400
+    assert "missing" in r.json()["detail"]
+
+
+def test_router_probe_models_with_monkeypatched_probe(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    from llm_config import probe
+    async def _fake(*, base_url, api_type, api_key):
+        return probe.ProbeResult(ok=True, models=["m1", "m2"], base_url=base_url, api_type=api_type)
+    monkeypatch.setattr(probe, "probe_models", _fake)
+    r = c.post("/api/llm/probe", json={
+        "base_url": "https://x", "api_type": "openai", "api_key": "k",
+    })
+    assert r.status_code == 200
+    assert r.json()["models"] == ["m1", "m2"]
+
+
+def test_router_probe_models_with_saved_endpoint_uses_stored_key(monkeypatch, tmp_path):
+    c = _fastapi_client(monkeypatch, tmp_path)
+    c.post("/api/llm/endpoints", json={
+        "name": "primary", "base_url": "https://x", "api_type": "openai", "api_key": "stored-key",
+    })
+    captured = {}
+    from llm_config import probe
+    async def _fake(*, base_url, api_type, api_key):
+        captured["api_key"] = api_key
+        return probe.ProbeResult(ok=True, models=[], base_url=base_url, api_type=api_type)
+    monkeypatch.setattr(probe, "probe_models", _fake)
+    c.post("/api/llm/probe", json={"endpoint_name": "primary"})
+    assert captured["api_key"] == "stored-key"
