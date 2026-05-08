@@ -29,6 +29,7 @@ from api.connections import router as connections_router
 from api.artifacts import router as artifacts_router
 from api.conversations import router as conversations_router
 from api.jobs import router as jobs_router
+from api.llm_endpoints import router as llm_endpoints_router
 
 settings = get_settings()
 
@@ -244,6 +245,7 @@ app.include_router(connections_router, prefix="/api", tags=["connections"])
 app.include_router(artifacts_router, prefix="/api", tags=["artifacts"])
 app.include_router(conversations_router, prefix="/api", tags=["conversations"])
 app.include_router(jobs_router, prefix="/api", tags=["jobs"])
+app.include_router(llm_endpoints_router, prefix="/api", tags=["llm"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always
