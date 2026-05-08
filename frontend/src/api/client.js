@@ -297,6 +297,22 @@ export const settingsApi = {
     api.post('/api/settings/search/test', null, { params: { query } }),
 }
 
+// LLM Endpoints + Role Mapping API
+export const llmApi = {
+  listEndpoints: () =>
+    api.get('/api/llm/endpoints').then((r) => r.data.endpoints),
+  saveEndpoint: (payload) =>
+    api.post('/api/llm/endpoints', payload).then((r) => r.data),
+  deleteEndpoint: (name) =>
+    api.delete(`/api/llm/endpoints/${encodeURIComponent(name)}`).then((r) => r.data),
+  getRoles: () =>
+    api.get('/api/llm/roles').then((r) => r.data.roles),
+  setRoles: (roles) =>
+    api.put('/api/llm/roles', { roles }).then((r) => r.data.roles),
+  probe: (payload) =>
+    api.post('/api/llm/probe', payload).then((r) => r.data),
+}
+
 // MCP Connections API
 export const mcpApi = {
   listConnections: () => api.get('/api/mcp/connections'),
