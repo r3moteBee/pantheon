@@ -345,7 +345,7 @@ def _render_chapter_body(chapter: dict[str, Any], sections: list[dict[str, Any]]
         out.append(f"_(Part {part_code})_")
     out.append("")
     for sec in sections:
-        out.append(_render_section_body(sec))
+        out.append(_render_section_body(sec).rstrip())
         out.append("")
     return "\n".join(out).rstrip() + "\n"
 
@@ -379,26 +379,37 @@ class GeneralLawChapter(_MALegisBaseAdapter):
             )
             section_refs = section_refs[:max_sections]
 
-        # Politeness: cap concurrent connections to 4.
+        # Sequential per-section fetch through one client. Each await
+        # blocks the next, so we never have more than one in-flight
+        # request — already maximally polite without an explicit cap.
+        # A transient blip on one section logs a warning and skips that
+        # section rather than aborting the whole chapter.
         sections: list[dict[str, Any]] = []
         async with httpx.AsyncClient(
             timeout=_HTTP_TIMEOUT,
             follow_redirects=True,
-            limits=httpx.Limits(max_connections=4),
         ) as client:
             for ref in section_refs:
                 code = ref.get("Code")
                 if not code:
                     continue
                 url = f"{_API_BASE}/Chapters/{chapter}/Sections/{code}"
-                r = await client.get(
-                    url,
-                    headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
-                )
+                try:
+                    r = await client.get(
+                        url,
+                        headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
+                    )
+                except (httpx.HTTPError, OSError) as e:
+                    logger.warning("malegis: section %s/%s fetch failed: %s", chapter, code, e)
+                    continue
                 if r.status_code != 200:
                     logger.warning("malegis: section %s/%s returned %s", chapter, code, r.status_code)
                     continue
-                payload = r.json()
+                try:
+                    payload = r.json()
+                except ValueError as e:
+                    logger.warning("malegis: section %s/%s JSON parse failed: %s", chapter, code, e)
+                    continue
                 if isinstance(payload, list):
                     payload = payload[0] if payload else {}
                 if payload:
