@@ -709,3 +709,226 @@ def _parse_approved_date(s: str) -> "str | None":
 
 
 register_adapter(SessionLaw())
+
+
+# ── Bill identifier parsing ───────────────────────────────────────
+
+_BILL_TERSE_RE = re.compile(
+    r"^\s*(?P<prefix>[HS]D?)\.?(?P<num>\d+)(?:@(?P<court>\d+))?\s*$",
+    re.IGNORECASE,
+)
+_BILL_URL_RE = re.compile(
+    r"malegislature\.gov/Bills/(?P<court>\d+)/(?P<prefix>[HS]D?)\.?(?P<num>\d+)",
+    re.IGNORECASE,
+)
+
+
+def _parse_bill_identifier(identifier: str) -> dict[str, Any]:
+    """Return {'bill_number', 'general_court'}.
+
+    'general_court' is None when the caller used the bare-bill shorthand
+    (e.g. 'H4038'); the adapter resolves it via _current_court() before
+    fetching.
+    """
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    m = _BILL_URL_RE.search(s)
+    if m:
+        return {
+            "bill_number": f"{m.group('prefix').upper()}{m.group('num')}",
+            "general_court": int(m.group("court")),
+        }
+    m = _BILL_TERSE_RE.match(s)
+    if m:
+        court = int(m.group("court")) if m.group("court") else None
+        return {
+            "bill_number": f"{m.group('prefix').upper()}{m.group('num')}",
+            "general_court": court,
+        }
+    raise RuntimeError(
+        f"malegis/bill: cannot parse identifier {identifier!r}; "
+        f"expected 'H4038', 'H.4038', 'H4038@193', or a malegislature.gov URL"
+    )
+
+
+# ── Bill body rendering ───────────────────────────────────────────
+
+def _render_bill_body(
+    bill: dict[str, Any],
+    *,
+    history,
+) -> tuple[str, list[dict]]:
+    """Render a bill payload as markdown. Returns (markdown, mgl_citations).
+
+    `history` is an optional list of DocumentHistoryAction dicts. Pass
+    None to omit the History section.
+    """
+    title = (bill.get("Title") or "").strip()
+    bill_number = bill.get("BillNumber") or "?"
+    court = bill.get("GeneralCourtNumber") or "?"
+    legtype = (bill.get("LegislationTypeName") or "Bill").strip()
+    pinslip = (bill.get("Pinslip") or "").strip()
+    doc_text = _normalize_prose(bill.get("DocumentText") or "")
+
+    primary = (bill.get("PrimarySponsor") or {}).get("Name")
+    cosponsors = [c.get("Name") for c in (bill.get("Cosponsors") or []) if c.get("Name")]
+    joint = (bill.get("JointSponsor") or {}).get("Name")
+
+    out: list[str] = []
+    out.append(f"# {title}".rstrip())
+    out.append("")
+    out.append(f"**{bill_number}** · {legtype} · {court}rd General Court")
+    out.append("")
+    if pinslip:
+        for line in pinslip.splitlines() or [pinslip]:
+            out.append(f"> {line.strip()}")
+        out.append("")
+
+    if doc_text:
+        out.append("## Bill text")
+        out.append("")
+        out.append(doc_text)
+        out.append("")
+
+    out.append("## Sponsors")
+    out.append("")
+    if primary:
+        out.append(f"- Primary: {primary}")
+    if cosponsors:
+        out.append(f"- Cosponsors: {', '.join(cosponsors)}")
+    if joint:
+        out.append(f"- Joint sponsor: {joint}")
+    out.append("")
+
+    recs = bill.get("CommitteeRecommendations") or []
+    if recs:
+        out.append("## Committee recommendations")
+        out.append("")
+        for rec in recs:
+            code = (rec.get("Committee") or {}).get("CommitteeCode", "?")
+            action = rec.get("Action") or "?"
+            out.append(f"- {code}: {action}")
+        out.append("")
+
+    amendments = bill.get("Amendments") or []
+    if amendments:
+        out.append("## Amendments")
+        out.append("")
+        for am in amendments:
+            num = am.get("AmendmentNumber") or am.get("Number") or "?"
+            atitle = (am.get("Title") or "").strip()
+            out.append(f"- {num}: {atitle}".rstrip(": "))
+        out.append("")
+
+    rollcalls = bill.get("RollCalls") or []
+    if rollcalls:
+        out.append("## Roll calls")
+        out.append("")
+        for rc in rollcalls:
+            branch = rc.get("Branch") or "?"
+            num = rc.get("RollCallNumber") or rc.get("Number") or "?"
+            out.append(f"- {branch} #{num}")
+        out.append("")
+
+    if history:
+        out.append("## History")
+        out.append("")
+        for h in history:
+            date_ = (h.get("Date") or "").strip()
+            branch = (h.get("Branch") or "").strip()
+            action = (h.get("Action") or "").strip()
+            desc = (h.get("Description") or "").strip()
+            line = f"- {date_} · {branch} · {action}".rstrip(" ·")
+            if desc:
+                line += f" — {desc}"
+            out.append(line)
+        out.append("")
+
+    body = "\n".join(out).rstrip() + "\n"
+    cites = _extract_mgl_citations(body)
+    return body, cites
+
+
+# ── Bill adapter ──────────────────────────────────────────────────
+
+class Bill(_MALegisBaseAdapter):
+    source_type = "malegis/bill"
+    display_name = "MA bill / docket"
+    artifact_path_template = "mass-bills/court-{general_court}/{bill_number}.md"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_bill_identifier(req.identifier)
+        bill_number = parts["bill_number"]
+        court = (req.extras or {}).get("general_court") or parts["general_court"]
+        if court is None:
+            court = await _current_court()
+        court = int(court)
+
+        url = f"{_API_BASE}/GeneralCourts/{court}/Documents/{bill_number}"
+        payload = await _http_get_json(url)
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if not payload:
+            raise RuntimeError(f"malegis/bill: empty payload for {court}/{bill_number}")
+
+        history = None
+        if (req.extras or {}).get("include_history"):
+            try:
+                history = await _http_get_json(
+                    f"{_API_BASE}/GeneralCourts/{court}/Documents/{bill_number}/DocumentHistoryActions"
+                )
+            except Exception as e:
+                logger.warning("malegis/bill: history fetch failed for %s/%s: %s",
+                               court, bill_number, e)
+
+        body, cites = _render_bill_body(payload, history=history)
+
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        title = (payload.get("Title") or bill_number).strip()
+        primary = (payload.get("PrimarySponsor") or {}).get("Name", "")
+        return FetchedContent(
+            text=body,
+            title=title,
+            author_or_publisher=primary or "Massachusetts General Court",
+            url=f"{_SITE_BASE}/Bills/{court}/{bill_number}",
+            published_at=as_of,
+            extra_meta={
+                "bill_number": bill_number,
+                "docket_number": payload.get("DocketNumber"),
+                "general_court": court,
+                "legislation_type": payload.get("LegislationTypeName"),
+                "primary_sponsor": primary,
+                "cosponsors": [c.get("Name") for c in (payload.get("Cosponsors") or []) if c.get("Name")],
+                "committee_recommendations": [
+                    {
+                        "committee_code": (rec.get("Committee") or {}).get("CommitteeCode"),
+                        "action": rec.get("Action"),
+                    }
+                    for rec in (payload.get("CommitteeRecommendations") or [])
+                ],
+                "pinslip": (payload.get("Pinslip") or "").strip(),
+                "citation": f"{bill_number} ({court}th General Court)",
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+                "mgl_citations": cites,
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            general_court=fetched.extra_meta.get("general_court", "0"),
+            bill_number=fetched.extra_meta.get("bill_number", "?"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in ("bill_number", "docket_number", "general_court",
+                    "legislation_type", "primary_sponsor", "cosponsors",
+                    "committee_recommendations", "pinslip"):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+register_adapter(Bill())

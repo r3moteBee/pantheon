@@ -411,3 +411,124 @@ def test_session_law_adapter_path():
     f = _StubFetched(extra_meta={"year": 2024, "chapter_number": "1"})
     assert a.render_artifact_path(_StubReq(), f) == \
         "mass-session-laws/2024/chapter-1.md"
+
+
+# ── Bill identifier parsing ───────────────────────────────────────
+
+def test_bill_terse_current_court():
+    from sources.adapters.malegislature import _parse_bill_identifier
+    p = _parse_bill_identifier("H4038")
+    assert p == {"bill_number": "H4038", "general_court": None}
+
+
+def test_bill_with_dot():
+    from sources.adapters.malegislature import _parse_bill_identifier
+    assert _parse_bill_identifier("H.4038")["bill_number"] == "H4038"
+    assert _parse_bill_identifier("S.100")["bill_number"] == "S100"
+
+
+def test_bill_court_pinned():
+    from sources.adapters.malegislature import _parse_bill_identifier
+    p = _parse_bill_identifier("H4038@193")
+    assert p == {"bill_number": "H4038", "general_court": 193}
+
+
+def test_bill_url_form():
+    from sources.adapters.malegislature import _parse_bill_identifier
+    p = _parse_bill_identifier("https://malegislature.gov/Bills/193/H4038")
+    assert p == {"bill_number": "H4038", "general_court": 193}
+
+
+def test_bill_invalid():
+    from sources.adapters.malegislature import _parse_bill_identifier
+    with pytest.raises(RuntimeError):
+        _parse_bill_identifier("just a string")
+
+
+# ── Bill body rendering ───────────────────────────────────────────
+
+_BILL_FIXTURE = {
+    "Title": "An Act relative to the planning board in the town of Shutesbury",
+    "BillNumber": "H4038",
+    "DocketNumber": "HD4496",
+    "GeneralCourtNumber": 193,
+    "PrimarySponsor": {"Id": "ALS1", "Name": "Aaron L. Saunders"},
+    "Cosponsors": [
+        {"Id": "ALS1", "Name": "Aaron L. Saunders"},
+        {"Id": "JMC0", "Name": "Joanne M. Comerford"},
+    ],
+    "JointSponsor": {"Id": "JMC0", "Name": "Joanne M. Comerford"},
+    "LegislationTypeName": "Bill",
+    "Pinslip": "By Representative Saunders... a joint petition relative to the membership of the planning board.",
+    "DocumentText": (
+        "\tSECTION 1. Notwithstanding section 9 of chapter 40A of the General Laws "
+        "to the contrary, the chair may designate an associate member.\r\n"
+        "\tSECTION 2. This act shall take effect upon its passage.\r\n"
+    ),
+    "EmergencyPreamble": None,
+    "RollCalls": [],
+    "Attachments": [],
+    "CommitteeRecommendations": [
+        {"Action": "Favorable", "Committee": {"CommitteeCode": "J10"}},
+        {"Action": "Place in OD", "Committee": {"CommitteeCode": "H52"}},
+    ],
+    "Amendments": [],
+}
+
+
+def test_render_bill_body_has_title_and_meta():
+    from sources.adapters.malegislature import _render_bill_body
+    body, cites = _render_bill_body(_BILL_FIXTURE, history=None)
+    assert body.startswith("# An Act relative to the planning board")
+    assert "**H4038**" in body
+    assert "193rd General Court" in body
+
+
+def test_render_bill_body_pinslip_blockquote():
+    from sources.adapters.malegislature import _render_bill_body
+    body, _ = _render_bill_body(_BILL_FIXTURE, history=None)
+    assert "> By Representative Saunders" in body
+
+
+def test_render_bill_body_includes_text_and_sponsors():
+    from sources.adapters.malegislature import _render_bill_body
+    body, _ = _render_bill_body(_BILL_FIXTURE, history=None)
+    assert "## Bill text" in body
+    assert "SECTION 1." in body
+    assert "## Sponsors" in body
+    assert "Aaron L. Saunders" in body
+    assert "Joanne M. Comerford" in body
+
+
+def test_render_bill_body_committee_recommendations():
+    from sources.adapters.malegislature import _render_bill_body
+    body, _ = _render_bill_body(_BILL_FIXTURE, history=None)
+    assert "## Committee recommendations" in body
+    assert "J10" in body
+    assert "Favorable" in body
+
+
+def test_render_bill_body_extracts_mgl_citations():
+    from sources.adapters.malegislature import _render_bill_body
+    _, cites = _render_bill_body(_BILL_FIXTURE, history=None)
+    assert {"chapter": "40A", "section": "9"} in cites
+
+
+def test_render_bill_body_with_history():
+    from sources.adapters.malegislature import _render_bill_body
+    history = [
+        {"Date": "2023-07-21", "Branch": "House", "Action": "Filed", "Description": ""},
+        {"Date": "2024-01-08", "Branch": "Joint", "Action": "Approved by the Governor", "Description": ""},
+    ]
+    body, _ = _render_bill_body(_BILL_FIXTURE, history=history)
+    assert "## History" in body
+    assert "Filed" in body
+    assert "Approved by the Governor" in body
+
+
+def test_bill_adapter_path():
+    from sources.adapters.malegislature import Bill
+    a = Bill()
+    f = _StubFetched(extra_meta={"general_court": 193, "bill_number": "H4038"})
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-bills/court-193/H4038.md"
