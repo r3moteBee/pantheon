@@ -20,17 +20,7 @@ for the full design.
 from __future__ import annotations
 
 import logging
-import re
-from datetime import date, datetime, timezone
-from typing import Any, Optional
-
-from sources.base import (
-    FetchedContent,
-    IngestRequest,
-    SourceAdapter,
-)
-from sources.registry import register_adapter
-from sources.util import html_to_markdown
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
