@@ -1222,3 +1222,147 @@ class RollCall(_MALegisBaseAdapter):
 
 
 register_adapter(RollCall())
+
+
+# ── Committee-vote parser + renderer + adapter ────────────────────
+
+_CV_TERSE_RE = re.compile(
+    r"^\s*(?P<committee>[A-Z][A-Z0-9]+)\s*/\s*(?P<doc>[HS]D?\d+)\s*$",
+    re.IGNORECASE,
+)
+_CV_WITH_COURT_RE = re.compile(
+    r"^\s*(?P<court>\d+)\s*/\s*(?P<committee>[A-Z][A-Z0-9]+)\s*/\s*(?P<doc>[HS]D?\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _parse_committee_vote_identifier(identifier: str) -> dict[str, Any]:
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    m = _CV_WITH_COURT_RE.match(s)
+    if m:
+        return {
+            "general_court": int(m.group("court")),
+            "committee_code": m.group("committee").upper(),
+            "document_number": m.group("doc").upper(),
+        }
+    m = _CV_TERSE_RE.match(s)
+    if m:
+        return {
+            "general_court": None,
+            "committee_code": m.group("committee").upper(),
+            "document_number": m.group("doc").upper(),
+        }
+    raise RuntimeError(
+        f"malegis/committee-vote: cannot parse identifier {identifier!r}; "
+        f"expected '<committee>/<doc>' or '<court>/<committee>/<doc>'"
+    )
+
+
+def _render_committee_vote_body(
+    votes: list[dict[str, Any]],
+    *,
+    committee_code: str,
+    document_number: str,
+    general_court: int,
+) -> str:
+    out: list[str] = []
+    out.append(f"# Committee {committee_code} vote on {document_number}")
+    out.append("")
+    out.append(f"**Court:** {general_court}")
+    out.append("")
+    if not votes:
+        out.append("_No votes recorded._")
+        return "\n".join(out).rstrip() + "\n"
+
+    for v in votes:
+        action = v.get("Action") or "?"
+        date_ = (v.get("Date") or "").strip()
+        yeas = v.get("Yeas", 0)
+        nays = v.get("Nays", 0)
+        members = v.get("Members") or []
+        out.append(f"## {action} — {date_}".rstrip(" —"))
+        out.append("")
+        out.append(f"**Tally:** Yea: {yeas} · Nay: {nays}")
+        out.append("")
+        if members:
+            out.append("| Member | Vote |")
+            out.append("|---|---|")
+            for mem in members:
+                out.append(f"| {mem.get('Name', '?')} | {mem.get('Vote', '?')} |")
+            out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+class CommitteeVote(_MALegisBaseAdapter):
+    source_type = "malegis/committee-vote"
+    display_name = "MA committee vote"
+    artifact_path_template = "mass-committee-votes/court-{general_court}/{committee_code}/{document_number}.md"
+    extractor_strategy = "noop"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_committee_vote_identifier(req.identifier)
+        court = (req.extras or {}).get("general_court") or parts["general_court"]
+        if court is None:
+            court = await _current_court()
+        court = int(court)
+        committee = parts["committee_code"]
+        doc = parts["document_number"]
+        url = (
+            f"{_API_BASE}/GeneralCourts/{court}/Committees/{committee}"
+            f"/Documents/{doc}/CommitteeVotes"
+        )
+        payload = await _http_get_json(url)
+        if not isinstance(payload, list):
+            payload = [payload] if payload else []
+
+        body = _render_committee_vote_body(
+            payload,
+            committee_code=committee,
+            document_number=doc,
+            general_court=court,
+        )
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        last_action = ""
+        last_date = ""
+        last_tally = {"yea": 0, "nay": 0}
+        if payload:
+            v = payload[-1]
+            last_action = v.get("Action") or ""
+            last_date = _short_date(v.get("Date") or "")
+            last_tally = {"yea": v.get("Yeas", 0), "nay": v.get("Nays", 0)}
+        return FetchedContent(
+            text=body,
+            title=f"Committee {committee} vote on {doc}",
+            author_or_publisher="Massachusetts General Court",
+            url=f"{_SITE_BASE}/Bills/{court}/{doc}",
+            published_at=last_date or as_of,
+            extra_meta={
+                "general_court": court,
+                "committee_code": committee,
+                "document_number": doc,
+                "action": last_action,
+                "tally": last_tally,
+                "citation": f"{committee} vote on {doc} ({_ordinal(court)} General Court)",
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            general_court=fetched.extra_meta.get("general_court", "0"),
+            committee_code=fetched.extra_meta.get("committee_code", "?"),
+            document_number=fetched.extra_meta.get("document_number", "?"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in ("general_court", "committee_code", "document_number", "action", "tally"):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+register_adapter(CommitteeVote())

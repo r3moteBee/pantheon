@@ -688,3 +688,61 @@ def test_roll_call_adapter_path():
     })
     assert a.render_artifact_path(_StubReq(), f) == \
         "mass-roll-calls/court-193/House/rc-123.md"
+
+
+# ── Committee-vote adapter ────────────────────────────────────────
+
+def test_committee_vote_terse():
+    from sources.adapters.malegislature import _parse_committee_vote_identifier
+    p = _parse_committee_vote_identifier("J10/H4038")
+    assert p == {"general_court": None, "committee_code": "J10", "document_number": "H4038"}
+
+
+def test_committee_vote_with_court():
+    from sources.adapters.malegislature import _parse_committee_vote_identifier
+    p = _parse_committee_vote_identifier("193/J10/H4038")
+    assert p == {"general_court": 193, "committee_code": "J10", "document_number": "H4038"}
+
+
+def test_committee_vote_invalid():
+    from sources.adapters.malegislature import _parse_committee_vote_identifier
+    with pytest.raises(RuntimeError):
+        _parse_committee_vote_identifier("nope")
+
+
+_COMMITTEE_VOTE_FIXTURE = [
+    {
+        "Action": "Favorable",
+        "Date": "2024-02-10T14:00:00",
+        "Yeas": 8,
+        "Nays": 2,
+        "Members": [
+            {"Name": "Alice", "Vote": "Yea"},
+            {"Name": "Bob", "Vote": "Nay"},
+        ],
+    },
+]
+
+
+def test_render_committee_vote_body():
+    from sources.adapters.malegislature import _render_committee_vote_body
+    body = _render_committee_vote_body(
+        _COMMITTEE_VOTE_FIXTURE,
+        committee_code="J10",
+        document_number="H4038",
+        general_court=193,
+    )
+    assert body.startswith("# Committee J10 vote on H4038")
+    assert "Favorable" in body
+    assert "Yea: 8" in body
+    assert "| Alice | Yea |" in body
+
+
+def test_committee_vote_adapter_path():
+    from sources.adapters.malegislature import CommitteeVote
+    a = CommitteeVote()
+    f = _StubFetched(extra_meta={
+        "general_court": 193, "committee_code": "J10", "document_number": "H4038",
+    })
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-committee-votes/court-193/J10/H4038.md"
