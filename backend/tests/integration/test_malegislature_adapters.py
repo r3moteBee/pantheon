@@ -333,7 +333,20 @@ def test_mgl_citations_dedupes():
     from sources.adapters.malegislature import _extract_mgl_citations
     text = "chapter 40A and chapter 40A and section 9 of chapter 40A of the General Laws"
     cites = _extract_mgl_citations(text)
-    assert len(cites) == len({(c["chapter"], c["section"]) for c in cites})
+    # Section-bearing match for 40A wins; bare "chapter 40A" mentions are
+    # suppressed (no separate {40A, None} entry) and the duplicate
+    # section-bearing match is collapsed.
+    assert cites == [{"chapter": "40A", "section": "9"}]
+
+
+def test_mgl_citations_keeps_chapter_only_when_no_section_pair():
+    from sources.adapters.malegislature import _extract_mgl_citations
+    text = "chapter 40A of the General Laws and chapter 41 of the General Laws"
+    cites = _extract_mgl_citations(text)
+    # Both chapters have only chapter-level mentions; both survive.
+    assert {"chapter": "40A", "section": None} in cites
+    assert {"chapter": "41", "section": None} in cites
+    assert len(cites) == 2
 
 
 # ── Session law body rendering ────────────────────────────────────
