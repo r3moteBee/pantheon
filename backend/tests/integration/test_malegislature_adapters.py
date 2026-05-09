@@ -544,3 +544,83 @@ def test_bill_adapter_path():
     f = _StubFetched(extra_meta={"general_court": 193, "bill_number": "H4038"})
     assert a.render_artifact_path(_StubReq(), f) == \
         "mass-bills/court-193/H4038.md"
+
+
+# ── Hearing adapter ───────────────────────────────────────────────
+
+def test_hearing_id_int_form():
+    from sources.adapters.malegislature import _parse_hearing_identifier
+    assert _parse_hearing_identifier("5655") == {"event_id": 5655}
+
+
+def test_hearing_url_form():
+    from sources.adapters.malegislature import _parse_hearing_identifier
+    p = _parse_hearing_identifier("https://malegislature.gov/Events/Hearings/Detail/5655")
+    assert p == {"event_id": 5655}
+
+
+def test_hearing_invalid():
+    from sources.adapters.malegislature import _parse_hearing_identifier
+    with pytest.raises(RuntimeError):
+        _parse_hearing_identifier("not an id")
+
+
+_HEARING_FIXTURE = {
+    "EventId": 5655,
+    "Name": "House Committee on Intergovernmental Affairs",
+    "Status": "Confirmed",
+    "EventDate": "2026-05-29T13:00:00",
+    "StartTime": "2026-05-29T13:00:00",
+    "Description": "Higher Education and Federal relationships",
+    "HearingHost": {"CommitteeCode": "Hxx", "GeneralCourtNumber": 194},
+    "Location": {
+        "LocationName": "Massachusetts Maritime Academy",
+        "City": "Bourne",
+        "State": "MA",
+    },
+    "HearingAgendas": [],
+}
+
+
+def test_render_hearing_body_has_header():
+    from sources.adapters.malegislature import _render_hearing_body
+    body = _render_hearing_body(_HEARING_FIXTURE)
+    assert body.startswith("# House Committee on Intergovernmental Affairs")
+    assert "Confirmed" in body
+    assert "Hxx" in body
+    assert "Massachusetts Maritime Academy" in body
+    assert "Higher Education and Federal relationships" in body
+
+
+def test_render_hearing_body_with_agenda():
+    from sources.adapters.malegislature import _render_hearing_body
+    h = dict(_HEARING_FIXTURE)
+    h["HearingAgendas"] = [
+        {"DocumentNumber": "H100", "Title": "An Act about widgets"},
+        {"DocumentNumber": "S200", "Title": "An Act about gadgets"},
+    ]
+    body = _render_hearing_body(h)
+    assert "## Agenda" in body
+    assert "H100" in body
+    assert "An Act about widgets" in body
+
+
+def test_hearing_adapter_path():
+    from sources.adapters.malegislature import Hearing
+    a = Hearing()
+    f = _StubFetched(extra_meta={"event_id": 5655, "event_date": "2026-05-29"})
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-hearings/2026-05-29/event-5655.md"
+
+
+def test_hearing_adapter_unknown_date_path():
+    from sources.adapters.malegislature import Hearing
+    a = Hearing()
+    f = _StubFetched(extra_meta={"event_id": 5655, "event_date": ""})
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-hearings/unknown-date/event-5655.md"
+
+
+def test_hearing_uses_noop_extractor():
+    from sources.adapters.malegislature import Hearing
+    assert Hearing.extractor_strategy == "noop"
