@@ -1073,3 +1073,152 @@ class Hearing(_MALegisBaseAdapter):
 
 
 register_adapter(Hearing())
+
+
+# ── Roll-call parser + renderer + adapter ─────────────────────────
+
+_ROLLCALL_URL_RE = re.compile(
+    r"malegislature\.gov/RollCall/(?P<court>\d+)/(?P<branch>House|Senate|H|S)/(?P<num>\d+)",
+    re.IGNORECASE,
+)
+_ROLLCALL_FULL_RE = re.compile(
+    r"^\s*(?P<court>\d+)\s*/\s*(?P<branch>House|Senate|H|S)\s*/\s*(?P<num>\d+)\s*$",
+    re.IGNORECASE,
+)
+_ROLLCALL_SHORT_RE = re.compile(
+    r"^\s*(?P<branch>H|S|House|Senate)\s*/\s*(?P<num>\d+)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _expand_branch(b: str) -> str:
+    b = b.strip().lower()
+    if b in ("h", "house"):
+        return "House"
+    if b in ("s", "senate"):
+        return "Senate"
+    raise RuntimeError(f"malegis: unknown branch {b!r}")
+
+
+def _parse_roll_call_identifier(identifier: str) -> dict[str, Any]:
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    m = _ROLLCALL_URL_RE.search(s)
+    if m:
+        return {
+            "general_court": int(m.group("court")),
+            "branch": _expand_branch(m.group("branch")),
+            "roll_call_number": int(m.group("num")),
+        }
+    m = _ROLLCALL_FULL_RE.match(s)
+    if m:
+        return {
+            "general_court": int(m.group("court")),
+            "branch": _expand_branch(m.group("branch")),
+            "roll_call_number": int(m.group("num")),
+        }
+    m = _ROLLCALL_SHORT_RE.match(s)
+    if m:
+        return {
+            "general_court": None,
+            "branch": _expand_branch(m.group("branch")),
+            "roll_call_number": int(m.group("num")),
+        }
+    raise RuntimeError(
+        f"malegis/roll-call: cannot parse identifier {identifier!r}; "
+        f"expected '<court>/<branch>/<num>', '<H|S>/<num>', or a RollCall URL"
+    )
+
+
+def _render_roll_call_body(rc: dict[str, Any]) -> str:
+    branch = rc.get("Branch") or "?"
+    num = rc.get("RollCallNumber") or rc.get("Number") or "?"
+    court = rc.get("GeneralCourtNumber") or "?"
+    when = (rc.get("Date") or "").strip()
+    question = (rc.get("Question") or "").strip()
+    yeas = rc.get("Yeas", 0)
+    nays = rc.get("Nays", 0)
+    present = rc.get("Present", 0)
+    absent = rc.get("Absent", 0)
+    members = rc.get("Members") or []
+
+    out: list[str] = []
+    out.append(f"# {branch} Roll Call #{num} — {when}".rstrip(" —"))
+    out.append("")
+    out.append(f"**Court:** {court} · **Tally:** Yea: {yeas} · Nay: {nays} · Present: {present} · Absent: {absent}")
+    if question:
+        out.append("")
+        out.append(f"> {question}")
+    out.append("")
+    if members:
+        out.append("| Member | Vote |")
+        out.append("|---|---|")
+        for mem in members:
+            out.append(f"| {mem.get('Name', '?')} | {mem.get('Vote', '?')} |")
+    return "\n".join(out).rstrip() + "\n"
+
+
+class RollCall(_MALegisBaseAdapter):
+    source_type = "malegis/roll-call"
+    display_name = "MA floor roll call"
+    artifact_path_template = "mass-roll-calls/court-{general_court}/{branch}/rc-{roll_call_number}.md"
+    extractor_strategy = "noop"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_roll_call_identifier(req.identifier)
+        court = (req.extras or {}).get("general_court") or parts["general_court"]
+        if court is None:
+            court = await _current_court()
+        court = int(court)
+        branch = parts["branch"]
+        num = parts["roll_call_number"]
+        url = f"{_API_BASE}/GeneralCourts/{court}/Branches/{branch}/RollCalls/{num}"
+        payload = await _http_get_json(url)
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if not payload:
+            raise RuntimeError(f"malegis/roll-call: empty payload for {court}/{branch}/{num}")
+
+        body = _render_roll_call_body(payload)
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        vote_date = _short_date(payload.get("Date") or "")
+        return FetchedContent(
+            text=body,
+            title=f"{branch} Roll Call #{num}",
+            author_or_publisher="Massachusetts General Court",
+            url=f"{_SITE_BASE}/RollCall/{court}/{branch}/{num}",
+            published_at=vote_date or as_of,
+            extra_meta={
+                "general_court": court,
+                "branch": branch,
+                "roll_call_number": num,
+                "tally": {
+                    "yea": payload.get("Yeas", 0),
+                    "nay": payload.get("Nays", 0),
+                    "present": payload.get("Present", 0),
+                    "absent": payload.get("Absent", 0),
+                },
+                "vote_date": vote_date,
+                "citation": f"{branch} Roll Call #{num} ({_ordinal(court)} General Court)",
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            general_court=fetched.extra_meta.get("general_court", "0"),
+            branch=fetched.extra_meta.get("branch", "?"),
+            roll_call_number=fetched.extra_meta.get("roll_call_number", "0"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in ("general_court", "branch", "roll_call_number", "tally", "vote_date"):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+register_adapter(RollCall())
