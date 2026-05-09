@@ -50,13 +50,10 @@ class MyAdapter(SourceAdapter):
 
 ## Migration path
 
-Phase 1 (this ship): scaffold + YouTube adapters. Existing `save_transcript_artifact` agent tool still works; it writes the same shape adapters produce, so artifacts saved via either path are interoperable.
-
-Phase 2: add a thin `ingest_source` agent tool that wraps `sources.ingest()`. Skills migrate to it. `save_transcript_artifact` stays as a deprecation alias.
-
-Phase 3: add adapters for blog, PDF, slide deck, podcast (each ~30-50 lines following `youtube.py`). Update `content-ingest-graph` skill to drive `ingest_source` for any registered source type.
-
-Phase 4: registry-aware skill creation — when a user creates a research skill, the system prompt and skill template enumerate the registered source types so the agent knows what's actually supported.
+- **Phase 1 — shipped.** Scaffold + YouTube adapters. `save_transcript_artifact` agent tool kept as a deprecation alias; artifacts written via either path are interoperable.
+- **Phase 2 — shipped.** `ingest_source`, `batch_ingest_sources`, `list_source_adapters`, `extract_topics` agent tools wrap `sources.ingest()` and `sources.batch_ingest()`. Skills drive them.
+- **Phase 3 — shipped.** Blog, PDF, podcast, web, forum, github, cfr, malegislature adapters all landed. Slide-deck deferred until a real use case emerges. The `content-ingest-graph` skill drives `ingest_source` for any registered source type.
+- **Phase 4 — partially shipped.** `list_source_adapters` makes the registry visible to agent prompts. Per-project source-adapter scoping is still global (deferred — see CLAUDE.md "Things explicitly NOT done yet").
 
 ## Worked example: adding a blog adapter
 
@@ -99,17 +96,19 @@ That's the whole adapter. The default `build_frontmatter` produces the typed-top
 
 Each adapter declares `extractor_strategy` (default `"llm_default"`) and `auto_extract` (default `True`). When `ingest()` runs, after `fetch()` and `build_frontmatter()` it calls the named extractor, populates `topics[]` / `speakers[]` / `claims[]` in the frontmatter, then proceeds to save. Skills can override per-call via `IngestRequest.extras["extractor_strategy"]` or skip entirely with `extras["skip_extraction"]=True`.
 
-Built-in extractors:
+Built-in extractors (in `backend/sources/extraction.py`):
 - `llm_default` — single LLM call with a structured JSON-schema prompt; truncates body to 60k chars as a backstop. Returns typed topics, speakers (only when transcript explicitly attributes utterances), and claims.
-- `noop` — empty pass-through. For sources whose topics are already in their metadata.
+- `llm_announcement` — vendor / event announcements (who/what/when/dollars/partners).
+- `llm_structured_specs` — datasheets / product pages (specs + pricing + features).
+- `llm_research_paper` — academic papers (abstract + methodology + findings).
+- `llm_changelog` — release notes.
+- `noop` — empty pass-through. For sources whose topics are already in their metadata, or for metadata-only artifacts (hearings, roll calls, committee votes).
 
-Adding a new extractor: subclass `TopicExtractor`, set `name`, call `register_extractor(YourClass())`. Same plug-in pattern as adapters.
+Adding a new extractor: subclass `TopicExtractor` (or `LLMDefaultExtractor` to inherit JSON-recovery + diagnostics), set `name`, call `register_extractor(YourClass())`. Same plug-in pattern as adapters.
 
-### 2. Cross-artifact similarity — backend pipeline (next ship)
+### 2. Cross-artifact similarity — shipped
 
-Decision: similarity should be a backend pipeline that runs post-`index_artifact`, with type-gating from the adapter's topic taxonomy and a configurable cosine threshold (default 0.86). Each adapter declares `auto_link_similarity` (default `False` until the pipeline ships); skills can also opt in via extras.
-
-Implementation slot reserved in `base.py`. The pipeline itself is its own focused ship: it requires storing topic-label embeddings keyed by `(label, topic_type)` so cross-artifact comparison is tractable. Without that index, similarity becomes a quadratic-in-topics problem.
+Backend pipeline runs post-`index_artifact` with type-gating from the adapter's topic taxonomy and a cosine threshold of 0.86 (matches above 0.92 queue a merge proposal). Each adapter declares `auto_link_similarity` (default `False`); the pipeline reads it on each ingest. Implementation lives in `backend/sources/similarity.py` with topic-label embeddings stored in `backend/memory/topic_embeddings.py` (keyed by `(project_id, topic_type, label)`) and reviewable merges in `backend/memory/merge_proposals.py`. Agents call `list_merge_proposals` / `approve_merge` to curate the graph; a UI panel for this is still TODO (see CLAUDE.md).
 
 ### 3. Per-project source registries — deferred to phase 4
 
@@ -121,16 +120,34 @@ Current registry is global. Project scoping (different research domains enabling
 
 The agent-facing tool is `batch_ingest_sources`; it produces a markdown summary with separate "Ingested" and "Skipped" sections so the user can diagnose partial failures without losing successful work.
 
-## Phase 2 status (H7w)
+## Current state (2026-05-09)
 
-Wired up:
-- ✅ `batch_ingest()` at the registry level
-- ✅ `TopicExtractor` base + `llm_default` + `noop` extractors with hot-loadable registry
+Adapters registered (28 across 9 mechanisms):
+
+| Mechanism | Adapters | File |
+|---|---|---|
+| `youtube` | interview, keynote, other (3) | `adapters/youtube.py` |
+| `blog` | announcement, influencer, technical, news (4) | `adapters/blog.py` |
+| `pdf` | datasheet, whitepaper, research, marketing (4) | `adapters/pdf.py` |
+| `web` | product-page, service-page, changelog (3) | `adapters/web.py` |
+| `forum` | reddit, hackernews (2) | `adapters/forum.py` |
+| `podcast` | episode (1) | `adapters/podcast.py` |
+| `github` | release, changelog (2) | `adapters/github.py` |
+| `cfr` | section, part (2) | `adapters/cfr.py` |
+| `malegis` | general-law-section, general-law-chapter, session-law, bill, hearing, roll-call, committee-vote (7) | `adapters/malegislature.py` |
+
+Pipeline pieces shipped:
+- ✅ `ingest()` / `batch_ingest()` at the registry level
+- ✅ `TopicExtractor` base + 6 built-in extractors (`llm_default`, `llm_announcement`, `llm_structured_specs`, `llm_research_paper`, `llm_changelog`, `noop`) with hot-loadable registry
 - ✅ Adapter declarative attrs: `extractor_strategy`, `auto_extract`, `auto_link_similarity`
 - ✅ Agent tools: `list_source_adapters`, `ingest_source`, `batch_ingest_sources`, `extract_topics`
-- ✅ End-to-end smoke-tested with a fake adapter
+- ✅ Cross-artifact similarity pipeline + topic-label embeddings + merge proposals
+- ✅ Live integration tests for malegislature (gated by `MALEGIS_LIVE=1`)
 
-Still pending (next focused ships):
-- ⏳ Cross-artifact similarity pipeline
-- ⏳ Blog / PDF / podcast adapters (unblocked — each ~30-50 lines now)
-- ⏳ Project-scoped registry (phase 4)
+Still deferred (see CLAUDE.md "Things explicitly NOT done yet" for full list):
+- ⏳ Project-scoped registry (currently global)
+- ⏳ UI panel for merge-proposal review (agent-tool only)
+- ⏳ Playwright fallback for JS-rendered web pages
+- ⏳ OCR for image-only PDFs
+- ⏳ Reddit OAuth flow (currently uses pasted-payload workaround)
+- ⏳ `mgl_citations` → graph edges in file_indexer (frontmatter populated; consumer pending)
