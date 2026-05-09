@@ -941,3 +941,135 @@ class Bill(_MALegisBaseAdapter):
 
 
 register_adapter(Bill())
+
+
+# ── Hearing parser + renderer + adapter ───────────────────────────
+
+_HEARING_URL_RE = re.compile(
+    r"malegislature\.gov/Events/(?:Hearings|SpecialEvents)/Detail/(?P<id>\d+)",
+    re.IGNORECASE,
+)
+
+
+def _parse_hearing_identifier(identifier: str) -> dict[str, int]:
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    m = _HEARING_URL_RE.search(s)
+    if m:
+        return {"event_id": int(m.group("id"))}
+    if s.isdigit():
+        return {"event_id": int(s)}
+    raise RuntimeError(
+        f"malegis/hearing: cannot parse identifier {identifier!r}; "
+        f"expected an integer EventId or a malegislature.gov URL"
+    )
+
+
+def _short_date(iso_or_t: str) -> str:
+    """Extract YYYY-MM-DD from '2026-05-29T13:00:00' or similar."""
+    if not iso_or_t:
+        return ""
+    return iso_or_t[:10] if len(iso_or_t) >= 10 else ""
+
+
+def _render_hearing_body(h: dict[str, Any]) -> str:
+    name = (h.get("Name") or "Hearing").strip()
+    status = (h.get("Status") or "").strip()
+    event_date = (h.get("EventDate") or "").strip()
+    start_time = (h.get("StartTime") or "").strip()
+    description = (h.get("Description") or "").strip()
+    host = h.get("HearingHost") or {}
+    loc = h.get("Location") or {}
+    agendas = h.get("HearingAgendas") or []
+
+    out: list[str] = []
+    out.append(f"# {name}")
+    out.append("")
+    if status:
+        out.append(f"**Status:** {status}")
+    if event_date:
+        out.append(f"**Date:** {event_date}" + (f"  (start {start_time})" if start_time else ""))
+    if host.get("CommitteeCode"):
+        out.append(f"**Host committee:** {host['CommitteeCode']}")
+    if loc.get("LocationName"):
+        loc_str = loc["LocationName"]
+        for k in ("City", "State"):
+            if loc.get(k):
+                loc_str += f", {loc[k]}"
+        out.append(f"**Location:** {loc_str}")
+    out.append("")
+    if description:
+        out.append("## Description")
+        out.append("")
+        out.append(description)
+        out.append("")
+    if agendas:
+        out.append("## Agenda")
+        out.append("")
+        for ag in agendas:
+            num = ag.get("DocumentNumber") or ag.get("Number") or "?"
+            atitle = (ag.get("Title") or "").strip()
+            out.append(f"- **{num}** — {atitle}".rstrip(" —"))
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+class Hearing(_MALegisBaseAdapter):
+    source_type = "malegis/hearing"
+    display_name = "MA hearing"
+    artifact_path_template = "mass-hearings/{event_date}/event-{event_id}.md"
+    extractor_strategy = "noop"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_hearing_identifier(req.identifier)
+        eid = parts["event_id"]
+        payload = await _http_get_json(f"{_API_BASE}/Hearings/{eid}")
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if not payload:
+            raise RuntimeError(f"malegis/hearing: empty payload for {eid}")
+
+        body = _render_hearing_body(payload)
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        event_date = _short_date(payload.get("EventDate") or "")
+        host = payload.get("HearingHost") or {}
+        loc = payload.get("Location") or {}
+        return FetchedContent(
+            text=body,
+            title=(payload.get("Name") or f"Hearing {eid}").strip(),
+            author_or_publisher="Massachusetts General Court",
+            url=f"{_SITE_BASE}/Events/Hearings/Detail/{eid}",
+            published_at=event_date or as_of,
+            extra_meta={
+                "event_id": eid,
+                "event_date": event_date,
+                "host_committee": host.get("CommitteeCode"),
+                "location": {
+                    "name": loc.get("LocationName"),
+                    "city": loc.get("City"),
+                    "state": loc.get("State"),
+                },
+                "status": payload.get("Status"),
+                "citation": f"MA Hearing #{eid}",
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        date_ = fetched.extra_meta.get("event_date") or "unknown-date"
+        return self.artifact_path_template.format(
+            event_date=date_,
+            event_id=fetched.extra_meta.get("event_id", "0"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in ("event_id", "event_date", "host_committee", "location", "status"):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+register_adapter(Hearing())
