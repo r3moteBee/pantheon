@@ -746,3 +746,31 @@ def test_committee_vote_adapter_path():
     })
     assert a.render_artifact_path(_StubReq(), f) == \
         "mass-committee-votes/court-193/J10/H4038.md"
+
+
+# ── End-to-end registration ───────────────────────────────────────
+
+def test_all_seven_adapters_registered():
+    from sources import adapters  # noqa: F401
+    from sources.registry import list_adapters
+    types = {a["source_type"] for a in list_adapters()}
+    expected = {
+        "malegis/general-law-section",
+        "malegis/general-law-chapter",
+        "malegis/session-law",
+        "malegis/bill",
+        "malegis/hearing",
+        "malegis/roll-call",
+        "malegis/committee-vote",
+    }
+    missing = expected - types
+    assert not missing, f"Missing adapters: {missing}"
+
+
+def test_bucket_aliases_resolve_all():
+    from sources import adapters  # noqa: F401
+    from sources.registry import resolve_by_bucket
+    for alias in ("malegis", "mass", "malaw"):
+        types = set(resolve_by_bucket(alias))
+        assert "malegis/general-law-section" in types
+        assert "malegis/bill" in types
