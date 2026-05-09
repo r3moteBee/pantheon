@@ -297,3 +297,157 @@ class GeneralLawSection(_MALegisBaseAdapter):
 
 
 register_adapter(GeneralLawSection())
+
+
+# ── General Law chapter identifier parsing ────────────────────────
+
+_CHAPTER_BARE_RE = re.compile(
+    rf"^\s*{_CODE.format(name='chapter')}\s*$",
+)
+
+_CHAPTER_URL_RE = re.compile(
+    rf"""
+    malegislature\.gov/Laws/GeneralLaws/
+    (?:[A-Za-z0-9_-]+/)*?
+    Chapter{_CODE.format(name='chapter')}
+    (?:/?$|/?[?#])
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _parse_chapter_identifier(identifier: str) -> dict[str, str]:
+    """Return {'chapter'} for any accepted shape."""
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    for rx in (_CHAPTER_URL_RE, _CHAPTER_ONLY_RE, _CHAPTER_BARE_RE):
+        m = rx.search(s)
+        if m:
+            return {"chapter": _norm_code(m.group("chapter"))}
+    raise RuntimeError(
+        f"malegis/general-law-chapter: cannot parse identifier {identifier!r}; "
+        f"expected 'M.G.L. c. <chapter>', 'Chapter <chapter>', '<chapter>', "
+        f"or a malegislature.gov URL"
+    )
+
+
+# ── General Law chapter body rendering ────────────────────────────
+
+def _render_chapter_body(chapter: dict[str, Any], sections: list[dict[str, Any]]) -> str:
+    code = chapter.get("Code", "?")
+    name = (chapter.get("Name") or "").strip()
+    part_code = (chapter.get("Part") or {}).get("Code", "")
+    out: list[str] = []
+    out.append(f"# Chapter {code} — {name}".rstrip())
+    if part_code:
+        out.append("")
+        out.append(f"_(Part {part_code})_")
+    out.append("")
+    for sec in sections:
+        out.append(_render_section_body(sec))
+        out.append("")
+    return "\n".join(out).rstrip() + "\n"
+
+
+# ── General Law chapter adapter ───────────────────────────────────
+
+class GeneralLawChapter(_MALegisBaseAdapter):
+    source_type = "malegis/general-law-chapter"
+    display_name = "MGL — entire chapter"
+    artifact_path_template = "mass-laws/chapter-{chapter_code}/index.md"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        import httpx
+        parts = _parse_chapter_identifier(req.identifier)
+        chapter = parts["chapter"]
+        max_sections = int((req.extras or {}).get("max_sections") or 200)
+
+        # First call: chapter detail, includes the section index.
+        chapter_payload = await _http_get_json(f"{_API_BASE}/Chapters/{chapter}")
+        if isinstance(chapter_payload, list):
+            chapter_payload = chapter_payload[0] if chapter_payload else {}
+        if not chapter_payload:
+            raise RuntimeError(f"malegis: empty chapter payload for {chapter}")
+
+        section_refs = chapter_payload.get("Sections") or []
+        if len(section_refs) > max_sections:
+            logger.warning(
+                "malegis: chapter %s has %d sections; capped at %d. "
+                "Pass extras['max_sections'] to raise the cap.",
+                chapter, len(section_refs), max_sections,
+            )
+            section_refs = section_refs[:max_sections]
+
+        # Politeness: cap concurrent connections to 4.
+        sections: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(
+            timeout=_HTTP_TIMEOUT,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=4),
+        ) as client:
+            for ref in section_refs:
+                code = ref.get("Code")
+                if not code:
+                    continue
+                url = f"{_API_BASE}/Chapters/{chapter}/Sections/{code}"
+                r = await client.get(
+                    url,
+                    headers={"User-Agent": _USER_AGENT, "Accept": "application/json"},
+                )
+                if r.status_code != 200:
+                    logger.warning("malegis: section %s/%s returned %s", chapter, code, r.status_code)
+                    continue
+                payload = r.json()
+                if isinstance(payload, list):
+                    payload = payload[0] if payload else {}
+                if payload:
+                    sections.append(payload)
+
+        body = _render_chapter_body(chapter_payload, sections)
+        if len(body.strip()) < 50:
+            raise RuntimeError(f"malegis: chapter {chapter} rendered too small")
+
+        chapter_code = chapter_payload.get("Code", chapter)
+        part_code = (chapter_payload.get("Part") or {}).get("Code", "")
+        name = (chapter_payload.get("Name") or "").strip()
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        citation = f"M.G.L. c. {chapter_code}"
+        site_url = (
+            f"{_SITE_BASE}/Laws/GeneralLaws/Part{part_code}/Chapter{chapter_code}"
+            if part_code else
+            f"{_SITE_BASE}/Laws/GeneralLaws/Chapter{chapter_code}"
+        )
+        return FetchedContent(
+            text=body,
+            title=f"Chapter {chapter_code} — {name}".rstrip(),
+            author_or_publisher="Massachusetts General Court",
+            url=site_url,
+            published_at=as_of,
+            extra_meta={
+                "chapter_code": chapter_code,
+                "part_code": part_code,
+                "is_repealed": bool(chapter_payload.get("IsRepealed")),
+                "section_count": len(sections),
+                "citation": citation,
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+                "hierarchy": {"part": part_code, "chapter": chapter_code},
+                "mgl_citations": [],
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            chapter_code=fetched.extra_meta.get("chapter_code", "?"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        fm["hierarchy"] = fetched.extra_meta.get("hierarchy", {})
+        fm["is_repealed"] = fetched.extra_meta.get("is_repealed", False)
+        fm["section_count"] = fetched.extra_meta.get("section_count", 0)
+        return fm
+
+
+register_adapter(GeneralLawChapter())
