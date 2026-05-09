@@ -172,11 +172,10 @@ _CHAPTER_ONLY_RE = re.compile(
 # ── Body rendering ────────────────────────────────────────────────
 
 _WS_RE = re.compile(r"[ \t]+")
-_PARA_BREAK_RE = re.compile(r"(?:\r\n|\r|\n){2,}")
 
 
 def _normalize_prose(s: str) -> str:
-    """Collapse \\r\\n line endings to \\n and tidy whitespace."""
+    """Normalize line endings to \\n, collapse intra-line whitespace, preserve blank lines."""
     if not s:
         return ""
     s = s.replace("\r\n", "\n").replace("\r", "\n")
@@ -200,9 +199,8 @@ def _render_section_body(section: dict[str, Any]) -> str:
     out.append("")
     if is_repealed:
         out.append(f"_Repealed_ — {name or 'see chapter notes'}")
+        out.append("")
     if text:
-        # Restore paragraph breaks (\n\n) but keep single newlines as
-        # subsection joiners.
         out.append(text)
     return "\n".join(out).rstrip() + "\n"
 
@@ -218,11 +216,10 @@ class _MALegisBaseAdapter(SourceAdapter):
 
     def build_frontmatter(self, req, fetched) -> dict[str, Any]:
         fm = super().build_frontmatter(req, fetched)
-        for key in (
-            "citation", "jurisdiction", "as_of_date", "mgl_citations",
-        ):
-            if key in fetched.extra_meta:
-                fm[key] = fetched.extra_meta[key]
+        meta = fetched.extra_meta or {}
+        for key in ("citation", "jurisdiction", "as_of_date", "mgl_citations"):
+            if key in meta:
+                fm[key] = meta[key]
         return fm
 
 
