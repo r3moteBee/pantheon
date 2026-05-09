@@ -624,3 +624,67 @@ def test_hearing_adapter_unknown_date_path():
 def test_hearing_uses_noop_extractor():
     from sources.adapters.malegislature import Hearing
     assert Hearing.extractor_strategy == "noop"
+
+
+# ── Roll-call adapter ─────────────────────────────────────────────
+
+def test_roll_call_full_form():
+    from sources.adapters.malegislature import _parse_roll_call_identifier
+    p = _parse_roll_call_identifier("193/House/123")
+    assert p == {"general_court": 193, "branch": "House", "roll_call_number": 123}
+
+
+def test_roll_call_short_branch():
+    from sources.adapters.malegislature import _parse_roll_call_identifier
+    p = _parse_roll_call_identifier("H/123")
+    assert p == {"general_court": None, "branch": "House", "roll_call_number": 123}
+    p = _parse_roll_call_identifier("S/45")
+    assert p == {"general_court": None, "branch": "Senate", "roll_call_number": 45}
+
+
+def test_roll_call_url_form():
+    from sources.adapters.malegislature import _parse_roll_call_identifier
+    p = _parse_roll_call_identifier("https://malegislature.gov/RollCall/193/House/123")
+    assert p == {"general_court": 193, "branch": "House", "roll_call_number": 123}
+
+
+def test_roll_call_invalid():
+    from sources.adapters.malegislature import _parse_roll_call_identifier
+    with pytest.raises(RuntimeError):
+        _parse_roll_call_identifier("nonsense")
+
+
+_ROLLCALL_FIXTURE = {
+    "RollCallNumber": 123,
+    "Branch": "House",
+    "GeneralCourtNumber": 193,
+    "Date": "2024-03-15T10:00:00",
+    "Question": "Shall the bill pass?",
+    "Yeas": 100,
+    "Nays": 50,
+    "Present": 2,
+    "Absent": 8,
+    "Members": [
+        {"Name": "Aaron L. Saunders", "Vote": "Yea"},
+        {"Name": "Joanne M. Comerford", "Vote": "Nay"},
+    ],
+}
+
+
+def test_render_roll_call_body():
+    from sources.adapters.malegislature import _render_roll_call_body
+    body = _render_roll_call_body(_ROLLCALL_FIXTURE)
+    assert body.startswith("# House Roll Call #123")
+    assert "Yea: 100" in body
+    assert "Nay: 50" in body
+    assert "| Aaron L. Saunders | Yea |" in body
+
+
+def test_roll_call_adapter_path():
+    from sources.adapters.malegislature import RollCall
+    a = RollCall()
+    f = _StubFetched(extra_meta={
+        "general_court": 193, "branch": "House", "roll_call_number": 123,
+    })
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-roll-calls/court-193/House/rc-123.md"
