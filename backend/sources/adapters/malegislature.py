@@ -30,6 +30,7 @@ from sources.base import (
     SourceAdapter,
 )
 from sources.registry import register_adapter
+from sources.util import html_to_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -462,3 +463,249 @@ class GeneralLawChapter(_MALegisBaseAdapter):
 
 
 register_adapter(GeneralLawChapter())
+
+
+# ── Session law identifier parsing ────────────────────────────────
+
+_SESSION_LAW_TERSE_RE = re.compile(r"^\s*(?P<year>\d{4})\s*/\s*(?P<chapter>\d+[A-Z]?)\s*$")
+_SESSION_LAW_NATURAL_RE = re.compile(
+    r"""
+    (?:
+      (?P<year1>\d{4})\s+chapter\s+(?P<chapter1>\d+[A-Z]?)
+    )|(?:
+      (?:acts|resolves)\s+of\s+(?P<year2>\d{4})\s*,?\s*chapter\s+(?P<chapter2>\d+[A-Z]?)
+    )|(?:
+      chapter\s+(?P<chapter3>\d+[A-Z]?)\s+of\s+(?P<year3>\d{4})
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_SESSION_LAW_URL_RE = re.compile(
+    r"malegislature\.gov/Laws/SessionLaws/(?:Acts|Resolves)/(?P<year>\d{4})/Chapter(?P<chapter>\d+[A-Z]?)",
+    re.IGNORECASE,
+)
+
+
+def _parse_session_law_identifier(identifier: str) -> dict[str, str]:
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    m = _SESSION_LAW_URL_RE.search(s)
+    if m:
+        return {"year": m.group("year"), "chapter": _norm_code(m.group("chapter"))}
+    m = _SESSION_LAW_TERSE_RE.match(s)
+    if m:
+        return {"year": m.group("year"), "chapter": _norm_code(m.group("chapter"))}
+    m = _SESSION_LAW_NATURAL_RE.search(s)
+    if m:
+        year = m.group("year1") or m.group("year2") or m.group("year3")
+        chapter = m.group("chapter1") or m.group("chapter2") or m.group("chapter3")
+        return {"year": year, "chapter": _norm_code(chapter)}
+    raise RuntimeError(
+        f"malegis/session-law: cannot parse identifier {identifier!r}; "
+        f"expected '<year>/<chapter>', '<year> Chapter <chapter>', "
+        f"'Chapter <chapter> of <year>', or a SessionLaws URL"
+    )
+
+
+# ── Cross-reference extraction (used by bills + session laws) ─────
+
+_MGL_CITATION_PATTERNS = [
+    # "section <s> of chapter <c> [of the General Laws]"
+    re.compile(
+        r"section\s+(?P<section>\d+[A-Z]?)\s+of\s+chapter\s+(?P<chapter>\d+[A-Z]?)",
+        re.IGNORECASE,
+    ),
+    # "M.G.L. c. <c> § <s>"
+    re.compile(
+        r"M\.?\s*G\.?\s*L\.?\s+c\.?\s*(?P<chapter>\d+[A-Z]?)\s*§\s*(?P<section>\d+[A-Z]?)",
+        re.IGNORECASE,
+    ),
+    # "chapter <c> of the General Laws" (no section)
+    re.compile(
+        r"chapter\s+(?P<chapter>\d+[A-Z]?)\s+of\s+the\s+General\s+Laws",
+        re.IGNORECASE,
+    ),
+    # "M.G.L. c. <c>" (no section)
+    re.compile(
+        r"M\.?\s*G\.?\s*L\.?\s+c\.?\s*(?P<chapter>\d+[A-Z]?)\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def _extract_mgl_citations(text: str) -> list[dict[str, "str | None"]]:
+    """Pull MGL citations out of free text. Returns a deduped list of
+    {'chapter', 'section'} dicts (section may be None when only the
+    chapter is mentioned).
+
+    Order: section-bearing patterns first so '...section 9 of chapter
+    40A...' captures the pair before the chapter-only pattern matches
+    'chapter 40A' alone.
+    """
+    if not text:
+        return []
+    seen: set[tuple[str, "str | None"]] = set()
+    out: list[dict[str, "str | None"]] = []
+
+    # First pass: section + chapter
+    for rx in _MGL_CITATION_PATTERNS[:2]:
+        for m in rx.finditer(text):
+            key = (_norm_code(m.group("chapter")), _norm_code(m.group("section")))
+            if key not in seen:
+                seen.add(key)
+                out.append({"chapter": key[0], "section": key[1]})
+
+    # Second pass: chapter only — skip if we already have a section
+    # citation for that chapter.
+    chapters_with_section = {c for (c, s) in seen if s is not None}
+    for rx in _MGL_CITATION_PATTERNS[2:]:
+        for m in rx.finditer(text):
+            chapter = _norm_code(m.group("chapter"))
+            key = (chapter, None)
+            if key in seen:
+                continue
+            if chapter in chapters_with_section:
+                continue
+            seen.add(key)
+            out.append({"chapter": chapter, "section": None})
+    return out
+
+
+# ── Session law body rendering ────────────────────────────────────
+
+_RELATIVE_ANCHOR_RE = re.compile(r'\((/(?:Laws|Bills|RollCall)/[^)\s]+)\)')
+
+
+def _rewrite_relative_anchors(md: str) -> str:
+    """Rewrite markdown links whose targets start with /Laws/, /Bills/,
+    or /RollCall/ to absolute malegislature.gov URLs."""
+    return _RELATIVE_ANCHOR_RE.sub(lambda m: f"({_SITE_BASE}{m.group(1)})", md)
+
+
+def _render_session_law_body(law: dict[str, Any]) -> tuple[str, list[dict]]:
+    """Render a session law as markdown. Returns (markdown, mgl_citations)."""
+    title = (law.get("Title") or "").strip()
+    year = law.get("Year")
+    chapter_number = law.get("ChapterNumber") or "?"
+    law_type = (law.get("Type") or "Acts").strip()
+    status = (law.get("Status") or "").strip()
+    chapter_html = law.get("ChapterText") or ""
+
+    md_body = html_to_markdown(chapter_html)
+    md_body = _rewrite_relative_anchors(md_body)
+
+    out: list[str] = []
+    out.append(f"# {title}".rstrip())
+    out.append("")
+    header_bits = [f"*{law_type} of {year}, Chapter {chapter_number}*"]
+    if status:
+        header_bits.append(f"— {status}")
+    out.append(" ".join(header_bits))
+    out.append("")
+    if md_body.strip():
+        out.append(md_body.rstrip())
+        out.append("")
+
+    origin = law.get("OriginBill") or {}
+    if origin:
+        out.append("---")
+        out.append("")
+        out.append("**Origin bill:** "
+                   f"{origin.get('BillNumber', '?')}"
+                   f" — {(origin.get('Title') or '').strip()}")
+        sponsor = (origin.get("PrimarySponsor") or {}).get("Name")
+        if sponsor:
+            out.append(f"**Primary sponsor:** {sponsor}")
+
+    body_md = "\n".join(out).rstrip() + "\n"
+    cites = _extract_mgl_citations(body_md)
+    return body_md, cites
+
+
+# ── Session law adapter ───────────────────────────────────────────
+
+class SessionLaw(_MALegisBaseAdapter):
+    source_type = "malegis/session-law"
+    display_name = "MA session law (Acts/Resolves)"
+    artifact_path_template = "mass-session-laws/{year}/chapter-{chapter_number}.md"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_session_law_identifier(req.identifier)
+        year = parts["year"]
+        chapter = parts["chapter"]
+        url = f"{_API_BASE}/SessionLaws/{year}/{chapter}"
+        payload = await _http_get_json(url)
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if not payload:
+            raise RuntimeError(f"malegis/session-law: empty payload for {year}/{chapter}")
+
+        body, cites = _render_session_law_body(payload)
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        title = (payload.get("Title") or f"{payload.get('Type', 'Acts')} {year} c. {chapter}").strip()
+        origin = payload.get("OriginBill") or {}
+        approved = (payload.get("ApprovedDate") or "").strip()
+        published_at = _parse_approved_date(approved) or as_of
+        site_url = f"{_SITE_BASE}/Laws/SessionLaws/{payload.get('Type', 'Acts')}/{year}/Chapter{chapter}"
+        return FetchedContent(
+            text=body,
+            title=title,
+            author_or_publisher="Massachusetts General Court",
+            url=site_url,
+            published_at=published_at,
+            extra_meta={
+                "year": year,
+                "chapter_number": chapter,
+                "act_type": payload.get("Type") or "Acts",
+                "approval_type": payload.get("ApprovalType") or "",
+                "approved_date": approved,
+                "origin_bill": {
+                    "number": origin.get("BillNumber"),
+                    "court": origin.get("GeneralCourtNumber"),
+                    "primary_sponsor": (origin.get("PrimarySponsor") or {}).get("Name"),
+                },
+                "citation": f"{payload.get('Type', 'Acts')} of {year}, Chapter {chapter}",
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+                "mgl_citations": cites,
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            year=fetched.extra_meta.get("year", "0000"),
+            chapter_number=fetched.extra_meta.get("chapter_number", "?"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in ("year", "chapter_number", "act_type", "approval_type",
+                    "approved_date", "origin_bill"):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+_APPROVED_DATE_RE = re.compile(r"^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})$")
+_MONTHS = {
+    "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+    "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+}
+
+
+def _parse_approved_date(s: str) -> "str | None":
+    """Convert 'Jan 08 2024' → '2024-01-08'. Returns None if unparseable."""
+    if not s:
+        return None
+    m = _APPROVED_DATE_RE.match(s.strip())
+    if not m:
+        return None
+    mon_name, day, year = m.group(1), int(m.group(2)), int(m.group(3))
+    mon = _MONTHS.get(mon_name)
+    if not mon:
+        return None
+    return f"{year:04d}-{mon:02d}-{day:02d}"
+
+
+register_adapter(SessionLaw())
