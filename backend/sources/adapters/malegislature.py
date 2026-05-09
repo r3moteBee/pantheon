@@ -20,7 +20,16 @@ for the full design.
 from __future__ import annotations
 
 import logging
+import re
+from datetime import datetime, timezone
 from typing import Any
+
+from sources.base import (
+    FetchedContent,
+    IngestRequest,
+    SourceAdapter,
+)
+from sources.registry import register_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -77,3 +86,217 @@ async def _current_court() -> int:
     n = _CURRENT_COURT_CACHE.get("court", _DEFAULT_COURT_FLOOR)
     _CURRENT_COURT_CACHE.setdefault("court", n)
     return n
+
+
+# ── Identifier parsing ────────────────────────────────────────────
+
+# A "code" is a chapter or section identifier: digits with an optional
+# trailing single uppercase letter (e.g. "23A", "3B", "6", "1024").
+_CODE = r"(?P<{name}>\d+[A-Z]?)"
+
+_SECTION_FORMAL_RE = re.compile(
+    rf"""
+    (?:^|\s)
+    (?:M\.?\s*G\.?\s*L\.?|MGL|chapter)\s+
+    (?:c\.?\s*)?{_CODE.format(name='chapter')}
+    \s*(?:§|section|sec\.?|s\.?)\s*
+    {_CODE.format(name='section')}
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_SECTION_TERSE_RE = re.compile(
+    rf"^\s*{_CODE.format(name='chapter')}\s*/\s*{_CODE.format(name='section')}\s*$",
+    re.IGNORECASE,
+)
+
+_SECTION_URL_RE = re.compile(
+    rf"""
+    malegislature\.gov/Laws/GeneralLaws/
+    (?:[A-Za-z0-9_-]+/)*?       # arbitrary Part/Title segments
+    Chapter{_CODE.format(name='chapter')}/
+    Section{_CODE.format(name='section')}
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _norm_code(s: str) -> str:
+    """Uppercase the trailing letter in a code so '23a' and '23A' compare equal."""
+    return s.strip().upper()
+
+
+def _parse_section_identifier(identifier: str) -> dict[str, str]:
+    """Return {'chapter', 'section'} for any accepted shape.
+
+    Raises RuntimeError when the identifier is unparseable or names
+    only a chapter (use _parse_chapter_identifier for that).
+    """
+    s = (identifier or "").strip()
+    if not s:
+        raise RuntimeError("malegis: empty identifier")
+    for rx in (_SECTION_URL_RE, _SECTION_FORMAL_RE, _SECTION_TERSE_RE):
+        m = rx.search(s)
+        if m:
+            return {
+                "chapter": _norm_code(m.group("chapter")),
+                "section": _norm_code(m.group("section")),
+            }
+    # If the input parses as a chapter-only citation, give a targeted error.
+    if _CHAPTER_ONLY_RE.search(s):
+        raise RuntimeError(
+            f"malegis/general-law-section: section number missing in {identifier!r} "
+            f"(use general-law-chapter for whole-chapter ingest)"
+        )
+    raise RuntimeError(
+        f"malegis/general-law-section: cannot parse identifier {identifier!r}; "
+        f"expected 'M.G.L. c. <chapter> § <section>', '<chapter>/<section>', "
+        f"or a malegislature.gov URL"
+    )
+
+
+# Sentinel used by the section parser to give a better error when the
+# user passed a chapter-only citation. The chapter parser uses the same
+# regex.
+_CHAPTER_ONLY_RE = re.compile(
+    rf"""
+    ^\s*
+    (?:M\.?\s*G\.?\s*L\.?|MGL|chapter)\s+
+    (?:c\.?\s*)?{_CODE.format(name='chapter')}
+    \s*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+# ── Body rendering ────────────────────────────────────────────────
+
+_WS_RE = re.compile(r"[ \t]+")
+_PARA_BREAK_RE = re.compile(r"(?:\r\n|\r|\n){2,}")
+
+
+def _normalize_prose(s: str) -> str:
+    """Collapse \\r\\n line endings to \\n and tidy whitespace."""
+    if not s:
+        return ""
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    # Collapse runs of spaces/tabs but preserve newlines.
+    lines = [_WS_RE.sub(" ", ln).strip() for ln in s.split("\n")]
+    return "\n".join(lines).strip()
+
+
+def _render_section_body(section: dict[str, Any]) -> str:
+    """Render one MGL section as markdown.
+
+    Input is the raw JSON dict from /Chapters/{c}/Sections/{s}.
+    """
+    code = section.get("Code", "?")
+    name = (section.get("Name") or "").strip()
+    text = _normalize_prose(section.get("Text") or "")
+    is_repealed = bool(section.get("IsRepealed"))
+
+    out: list[str] = []
+    out.append(f"## Section {code}. {name}".rstrip())
+    out.append("")
+    if is_repealed:
+        out.append(f"_Repealed_ — {name or 'see chapter notes'}")
+    if text:
+        # Restore paragraph breaks (\n\n) but keep single newlines as
+        # subsection joiners.
+        out.append(text)
+    return "\n".join(out).rstrip() + "\n"
+
+
+# ── Adapter base ──────────────────────────────────────────────────
+
+class _MALegisBaseAdapter(SourceAdapter):
+    """Shared behavior: bucket aliases, common frontmatter additions."""
+    bucket_aliases = ("malegis", "mass", "malaw")
+    requires_mcp = ()
+    extractor_strategy = "llm_default"
+    auto_link_similarity = True
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        for key in (
+            "citation", "jurisdiction", "as_of_date", "mgl_citations",
+        ):
+            if key in fetched.extra_meta:
+                fm[key] = fetched.extra_meta[key]
+        return fm
+
+
+# ── General Law section adapter ───────────────────────────────────
+
+class GeneralLawSection(_MALegisBaseAdapter):
+    source_type = "malegis/general-law-section"
+    display_name = "MGL — single section"
+    artifact_path_template = "mass-laws/chapter-{chapter_code}/section-{section_code}.md"
+
+    async def fetch(self, req: IngestRequest) -> FetchedContent:
+        parts = _parse_section_identifier(req.identifier)
+        chapter = parts["chapter"]
+        section = parts["section"]
+        url = f"{_API_BASE}/Chapters/{chapter}/Sections/{section}"
+        payload = await _http_get_json(url)
+        # The endpoint returns a single dict (not an array) despite the
+        # swagger schema. Defend against either shape.
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if not payload:
+            raise RuntimeError(f"malegis: empty payload from {url}")
+
+        body = _render_section_body(payload)
+        if len(body.strip()) < 10:
+            raise RuntimeError(
+                f"malegis/general-law-section: rendered body too short for "
+                f"chapter {chapter} section {section}"
+            )
+
+        chapter_code = (payload.get("Chapter") or {}).get("Code") or chapter
+        part_code = (payload.get("Part") or {}).get("Code") or ""
+        name = (payload.get("Name") or "").strip()
+        as_of = datetime.now(timezone.utc).date().isoformat()
+        citation = f"M.G.L. c. {chapter_code} § {section}"
+        site_url = (
+            f"{_SITE_BASE}/Laws/GeneralLaws/Part{part_code}/Chapter{chapter_code}/Section{section}"
+            if part_code else
+            f"{_SITE_BASE}/Laws/GeneralLaws/Chapter{chapter_code}/Section{section}"
+        )
+        return FetchedContent(
+            text=body,
+            title=f"Section {section}. {name}".strip(),
+            author_or_publisher="Massachusetts General Court",
+            url=site_url,
+            published_at=as_of,
+            extra_meta={
+                "chapter_code": chapter_code,
+                "section_code": section,
+                "part_code": part_code,
+                "is_repealed": bool(payload.get("IsRepealed")),
+                "citation": citation,
+                "jurisdiction": "MA",
+                "as_of_date": as_of,
+                "hierarchy": {
+                    "part": part_code,
+                    "chapter": chapter_code,
+                    "section": section,
+                },
+                "mgl_citations": [],
+            },
+        )
+
+    def render_artifact_path(self, req, fetched):
+        return self.artifact_path_template.format(
+            chapter_code=fetched.extra_meta.get("chapter_code", "?"),
+            section_code=fetched.extra_meta.get("section_code", "?"),
+        )
+
+    def build_frontmatter(self, req, fetched) -> dict[str, Any]:
+        fm = super().build_frontmatter(req, fetched)
+        fm["hierarchy"] = fetched.extra_meta.get("hierarchy", {})
+        fm["is_repealed"] = fetched.extra_meta.get("is_repealed", False)
+        return fm
+
+
+register_adapter(GeneralLawSection())
