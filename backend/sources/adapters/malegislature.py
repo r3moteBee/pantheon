@@ -127,6 +127,14 @@ def _norm_code(s: str) -> str:
     return s.strip().upper()
 
 
+def _ordinal(n: int | str) -> str:
+    """Return the English ordinal form of n (e.g. 193 → '193rd', 192 → '192nd', 211 → '211th')."""
+    n = int(n)
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }"
+
+
 def _parse_section_identifier(identifier: str) -> dict[str, str]:
     """Return {'chapter', 'section'} for any accepted shape.
 
@@ -778,10 +786,10 @@ def _render_bill_body(
     out: list[str] = []
     out.append(f"# {title}".rstrip())
     out.append("")
-    out.append(f"**{bill_number}** · {legtype} · {court}rd General Court")
+    out.append(f"**{bill_number}** · {legtype} · {_ordinal(court)} General Court")
     out.append("")
     if pinslip:
-        for line in pinslip.splitlines() or [pinslip]:
+        for line in pinslip.splitlines():
             out.append(f"> {line.strip()}")
         out.append("")
 
@@ -874,11 +882,12 @@ class Bill(_MALegisBaseAdapter):
 
         history = None
         if (req.extras or {}).get("include_history"):
+            import httpx
             try:
                 history = await _http_get_json(
                     f"{_API_BASE}/GeneralCourts/{court}/Documents/{bill_number}/DocumentHistoryActions"
                 )
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ValueError) as e:
                 logger.warning("malegis/bill: history fetch failed for %s/%s: %s",
                                court, bill_number, e)
 
@@ -908,7 +917,7 @@ class Bill(_MALegisBaseAdapter):
                     for rec in (payload.get("CommitteeRecommendations") or [])
                 ],
                 "pinslip": (payload.get("Pinslip") or "").strip(),
-                "citation": f"{bill_number} ({court}th General Court)",
+                "citation": f"{bill_number} ({_ordinal(court)} General Court)",
                 "jurisdiction": "MA",
                 "as_of_date": as_of,
                 "mgl_citations": cites,

@@ -415,6 +415,18 @@ def test_session_law_adapter_path():
 
 # ── Bill identifier parsing ───────────────────────────────────────
 
+def test_ordinal_helper():
+    from sources.adapters.malegislature import _ordinal
+    assert _ordinal(193) == "193rd"
+    assert _ordinal(192) == "192nd"
+    assert _ordinal(194) == "194th"
+    assert _ordinal(201) == "201st"
+    assert _ordinal(211) == "211th"
+    assert _ordinal(112) == "112th"
+    assert _ordinal(213) == "213th"
+    assert _ordinal("193") == "193rd"
+
+
 def test_bill_terse_current_court():
     from sources.adapters.malegislature import _parse_bill_identifier
     p = _parse_bill_identifier("H4038")
