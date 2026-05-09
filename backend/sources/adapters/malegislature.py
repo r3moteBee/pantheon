@@ -81,6 +81,10 @@ async def _current_court() -> int:
             n = max(nums)
             _CURRENT_COURT_CACHE["court"] = n
             return n
+        logger.warning(
+            "malegis: /GeneralCourts/Documents returned no usable court numbers; "
+            "using fallback (cache or floor %d)", _DEFAULT_COURT_FLOOR,
+        )
     except Exception as e:
         logger.warning("malegis: current-court lookup failed (%s); using fallback", e)
     # Fallback to whatever we last cached (if anything), else the floor.
@@ -550,6 +554,11 @@ def _extract_mgl_citations(text: str) -> list[dict[str, "str | None"]]:
     Order: section-bearing patterns first so '...section 9 of chapter
     40A...' captures the pair before the chapter-only pattern matches
     'chapter 40A' alone.
+
+    FOLLOW-UP: bills and session laws populate `mgl_citations` in
+    frontmatter, but the file_indexer's typed-topics graph branch
+    doesn't yet consume them. See the deferred-follow-ups section in
+    docs/superpowers/plans/2026-05-08-massachusetts-legislature-adapter.md.
     """
     if not text:
         return []
@@ -1020,6 +1029,9 @@ class Hearing(_MALegisBaseAdapter):
     display_name = "MA hearing"
     artifact_path_template = "mass-hearings/{event_date}/event-{event_id}.md"
     extractor_strategy = "noop"
+    # noop extraction means no topic_node embeddings, so the similarity
+    # pipeline would loop over an empty topic set per ingest.
+    auto_link_similarity = False
 
     async def fetch(self, req: IngestRequest) -> FetchedContent:
         parts = _parse_hearing_identifier(req.identifier)
@@ -1164,6 +1176,7 @@ class RollCall(_MALegisBaseAdapter):
     display_name = "MA floor roll call"
     artifact_path_template = "mass-roll-calls/court-{general_court}/{branch}/rc-{roll_call_number}.md"
     extractor_strategy = "noop"
+    auto_link_similarity = False  # noop extraction → no topics to link
 
     async def fetch(self, req: IngestRequest) -> FetchedContent:
         parts = _parse_roll_call_identifier(req.identifier)
@@ -1300,6 +1313,7 @@ class CommitteeVote(_MALegisBaseAdapter):
     display_name = "MA committee vote"
     artifact_path_template = "mass-committee-votes/court-{general_court}/{committee_code}/{document_number}.md"
     extractor_strategy = "noop"
+    auto_link_similarity = False  # noop extraction → no topics to link
 
     async def fetch(self, req: IngestRequest) -> FetchedContent:
         parts = _parse_committee_vote_identifier(req.identifier)
