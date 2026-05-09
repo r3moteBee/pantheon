@@ -282,3 +282,119 @@ def test_chapter_adapter_frontmatter():
     assert fm["citation"] == "M.G.L. c. 23A"
     assert fm["section_count"] == 25
     assert fm["hierarchy"]["chapter"] == "23A"
+
+
+# ── Session law identifier parsing ────────────────────────────────
+
+def test_session_law_terse():
+    from sources.adapters.malegislature import _parse_session_law_identifier
+    assert _parse_session_law_identifier("2024/1") == {"year": "2024", "chapter": "1"}
+
+
+def test_session_law_natural():
+    from sources.adapters.malegislature import _parse_session_law_identifier
+    assert _parse_session_law_identifier("2024 Chapter 1") == {"year": "2024", "chapter": "1"}
+    assert _parse_session_law_identifier("Chapter 1 of 2024") == {"year": "2024", "chapter": "1"}
+    assert _parse_session_law_identifier("Acts of 2024, Chapter 1") == {"year": "2024", "chapter": "1"}
+
+
+def test_session_law_url():
+    from sources.adapters.malegislature import _parse_session_law_identifier
+    p = _parse_session_law_identifier(
+        "https://malegislature.gov/Laws/SessionLaws/Acts/2024/Chapter1",
+    )
+    assert p == {"year": "2024", "chapter": "1"}
+
+
+# ── mgl_citations regex extraction ────────────────────────────────
+
+def test_mgl_citations_extracts_chapter_section():
+    from sources.adapters.malegislature import _extract_mgl_citations
+    text = "section 9 of chapter 40A of the General Laws"
+    cites = _extract_mgl_citations(text)
+    assert {"chapter": "40A", "section": "9"} in cites
+
+
+def test_mgl_citations_extracts_chapter_only():
+    from sources.adapters.malegislature import _extract_mgl_citations
+    text = "as provided by chapter 41 of the General Laws"
+    cites = _extract_mgl_citations(text)
+    assert {"chapter": "41", "section": None} in cites
+
+
+def test_mgl_citations_extracts_formal_form():
+    from sources.adapters.malegislature import _extract_mgl_citations
+    text = "M.G.L. c. 23A § 1 governs this matter"
+    cites = _extract_mgl_citations(text)
+    assert {"chapter": "23A", "section": "1"} in cites
+
+
+def test_mgl_citations_dedupes():
+    from sources.adapters.malegislature import _extract_mgl_citations
+    text = "chapter 40A and chapter 40A and section 9 of chapter 40A of the General Laws"
+    cites = _extract_mgl_citations(text)
+    assert len(cites) == len({(c["chapter"], c["section"]) for c in cites})
+
+
+# ── Session law body rendering ────────────────────────────────────
+
+_SESSION_LAW_FIXTURE = {
+    "Year": 2024,
+    "ChapterNumber": "1",
+    "Type": "Acts",
+    "ApprovalType": "Executive approval (signed)",
+    "Title": "AN ACT PROVIDING FOR THE APPOINTMENT OF ASSOCIATE MEMBERS",
+    "Status": "Approved by the Governor, January 8, 2024",
+    "ApprovedDate": "Jan 08 2024",
+    "ChapterText": (
+        '<p><em>Be it enacted by the Senate and House...</em></p>\n'
+        '<p>SECTION 1. Notwithstanding <a href="/Laws/GeneralLaws/PartI/TitleVII/Chapter40A/Section9">'
+        'section 9 of chapter 40A of the General Laws</a> or any other law to the contrary, '
+        'the chair may designate an associate member.</p>\n'
+        '<p>SECTION 2. This act shall take effect upon its passage.</p>'
+    ),
+    "OriginBill": {
+        "BillNumber": "H4038",
+        "DocketNumber": "HD4496",
+        "Title": "An Act relative to the planning board",
+        "PrimarySponsor": {"Name": "Aaron L. Saunders"},
+        "GeneralCourtNumber": 193,
+    },
+}
+
+
+def test_render_session_law_has_title():
+    from sources.adapters.malegislature import _render_session_law_body
+    body, cites = _render_session_law_body(_SESSION_LAW_FIXTURE)
+    assert body.startswith("# AN ACT PROVIDING FOR THE APPOINTMENT")
+    assert "Acts of 2024, Chapter 1" in body
+    assert "Approved by the Governor" in body
+
+
+def test_render_session_law_anchor_rewrite():
+    from sources.adapters.malegislature import _render_session_law_body
+    body, _ = _render_session_law_body(_SESSION_LAW_FIXTURE)
+    assert "https://malegislature.gov/Laws/GeneralLaws/PartI/TitleVII/Chapter40A/Section9" in body
+    assert "(/Laws/GeneralLaws/" not in body
+
+
+def test_render_session_law_origin_bill_footer():
+    from sources.adapters.malegislature import _render_session_law_body
+    body, _ = _render_session_law_body(_SESSION_LAW_FIXTURE)
+    assert "Origin bill" in body
+    assert "H4038" in body
+    assert "Aaron L. Saunders" in body
+
+
+def test_render_session_law_extracts_citations():
+    from sources.adapters.malegislature import _render_session_law_body
+    _, cites = _render_session_law_body(_SESSION_LAW_FIXTURE)
+    assert {"chapter": "40A", "section": "9"} in cites
+
+
+def test_session_law_adapter_path():
+    from sources.adapters.malegislature import SessionLaw
+    a = SessionLaw()
+    f = _StubFetched(extra_meta={"year": 2024, "chapter_number": "1"})
+    assert a.render_artifact_path(_StubReq(), f) == \
+        "mass-session-laws/2024/chapter-1.md"
