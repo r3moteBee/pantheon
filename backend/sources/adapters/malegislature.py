@@ -1324,18 +1324,27 @@ class CommitteeVote(_MALegisBaseAdapter):
             general_court=court,
         )
         as_of = datetime.now(timezone.utc).date().isoformat()
+        # Frontmatter summary fields reflect the *most recent* vote.
+        # The CommitteeVotes endpoint isn't documented to be sorted, so
+        # pick by max parsed Date instead of trusting list order. Falls
+        # back to the last entry when no Date is parseable.
         last_action = ""
         last_date = ""
         last_tally = {"yea": 0, "nay": 0}
         if payload:
-            v = payload[-1]
-            last_action = v.get("Action") or ""
-            last_date = _short_date(v.get("Date") or "")
-            last_tally = {"yea": v.get("Yeas", 0), "nay": v.get("Nays", 0)}
+            latest = max(
+                payload,
+                key=lambda v: _short_date(v.get("Date") or "") or "",
+                default=payload[-1],
+            )
+            last_action = latest.get("Action") or ""
+            last_date = _short_date(latest.get("Date") or "")
+            last_tally = {"yea": latest.get("Yeas", 0), "nay": latest.get("Nays", 0)}
         return FetchedContent(
             text=body,
             title=f"Committee {committee} vote on {doc}",
             author_or_publisher="Massachusetts General Court",
+            # Committee votes don't have a standalone page; link to the bill.
             url=f"{_SITE_BASE}/Bills/{court}/{doc}",
             published_at=last_date or as_of,
             extra_meta={
