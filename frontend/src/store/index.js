@@ -1,8 +1,18 @@
 import { create } from 'zustand'
 
+// Read the persisted active-project id once at module load. Layout.jsx
+// fetches the project list on mount and upgrades activeProject with the
+// full record (including name); until then, the id alone is enough for
+// any project-scoped fetch to target the right project from the very
+// first frame.
+const _initialProjectId = (() => {
+  try { return localStorage.getItem('active_project_id') || 'default' }
+  catch { return 'default' }
+})()
+
 export const useStore = create((set, get) => ({
   // Active project
-  activeProject: { id: 'default', name: 'Default Project' },
+  activeProject: { id: _initialProjectId, name: '' },
   setActiveProject: (project) => {
     try { if (project?.id) localStorage.setItem('active_project_id', project.id) } catch {}
     set({ activeProject: project })
