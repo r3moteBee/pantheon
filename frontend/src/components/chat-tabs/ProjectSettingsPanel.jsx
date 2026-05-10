@@ -7,6 +7,7 @@ import {
   projectsApi, personasApi, projectSettingsApi,
 } from '../../api/client'
 import { useStore } from '../../store'
+import InfoTooltip from '../help/InfoTooltip'
 
 const TONES   = ['focused', 'balanced', 'broad']
 const SKILLS  = ['off', 'suggest', 'auto']
@@ -209,7 +210,10 @@ export default function ProjectSettingsPanel({ projectId }) {
             </select>
           </Field>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Tone weight">
+            <Field
+              label="Tone weight"
+              tooltip="How strongly the persona's tone colors responses. Use minimal for matter-of-fact answers, strong for fully in-character."
+            >
               <select
                 value={chatDefaults.tone_weight}
                 onChange={(e) => updateChat('tone_weight', e.target.value)}
@@ -218,7 +222,10 @@ export default function ProjectSettingsPanel({ projectId }) {
                 {TONES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="Context focus">
+            <Field
+              label="Context focus"
+              tooltip="How tightly the agent stays on the current message vs. the wider conversation."
+            >
               <select
                 value={chatDefaults.context_focus}
                 onChange={(e) => updateChat('context_focus', e.target.value)}
@@ -227,7 +234,10 @@ export default function ProjectSettingsPanel({ projectId }) {
                 {TONES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
-            <Field label="Skill discovery">
+            <Field
+              label="Skill discovery"
+              tooltip="Whether the agent auto-loads matching skills: off = manual /skill only; suggest = ask first; auto = load silently."
+            >
               <select
                 value={chatDefaults.skill_discovery}
                 onChange={(e) => updateChat('skill_discovery', e.target.value)}
@@ -289,10 +299,13 @@ function Section({ title, hint, icon: Icon, tone, children }) {
   )
 }
 
-function Field({ label, children }) {
+function Field({ label, tooltip, children }) {
   return (
     <div>
-      <label className="block text-xs text-gray-400 mb-1">{label}</label>
+      <label className="block text-xs text-gray-400 mb-1">
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} />}
+      </label>
       {children}
     </div>
   )

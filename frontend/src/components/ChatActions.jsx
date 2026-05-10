@@ -119,27 +119,27 @@ export default function ChatActions() {
       <IconButton
         icon={Sparkles}
         label={memoryRecall
-          ? 'Memory recall: ON — click to disable'
-          : 'Memory recall: OFF — click to enable'}
+          ? 'Memory recall: ON. The agent searches past chats and indexed files for relevant context before answering. Click to toggle.'
+          : 'Memory recall: OFF. The agent searches past chats and indexed files for relevant context before answering. Click to toggle.'}
         active={memoryRecall}
         activeColor="text-brand-400"
         onClick={() => setMemoryRecall(!memoryRecall)}
       />
       <IconButton
         icon={Target}
-        label={`Thread focus: ${contextFocus}. Cycle: broad → balanced → focused`}
+        label={`Thread focus: ${contextFocus}. How tightly the agent stays on the current message vs. the wider conversation. Cycle: broad → balanced → focused.`}
         toneClass={focusTone}
         onClick={() => cycle(contextFocus, ['broad', 'balanced', 'focused'], setContextFocus)}
       />
       <IconButton
         icon={Wand2}
-        label={`Auto-skill: ${skillDiscovery}. Cycle: off → suggest → auto`}
+        label={`Auto-skill: ${skillDiscovery}. Whether the agent auto-loads matching skills (off = manual /skill only; suggest = ask first; auto = load silently). Cycle: off → suggest → auto.`}
         toneClass={skillTone}
         onClick={cycleSkillDiscovery}
       />
       <IconButton
         icon={UserCircle}
-        label={`Persona presence: ${personalityWeight}. Cycle: minimal → balanced → strong`}
+        label={`Persona presence: ${personalityWeight}. How strongly the persona's tone colors responses. Cycle: minimal → balanced → strong.`}
         toneClass={personaTone}
         onClick={() => cycle(personalityWeight, ['minimal', 'balanced', 'strong'], setPersonalityWeight)}
       />

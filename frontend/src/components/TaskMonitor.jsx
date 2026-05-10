@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Play, Square, Trash2, ChevronDown, ChevronRight, Clock, RefreshCw } from 'lucide-react'
 import { useStore } from '../store'
 import { tasksApi } from '../api/client'
+import InfoTooltip from './help/InfoTooltip'
 
 function CreateTaskForm({ onTaskCreated, activeProject }) {
   const [name, setName] = useState('')
@@ -43,18 +44,24 @@ function CreateTaskForm({ onTaskCreated, activeProject }) {
         rows={2}
         className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 resize-none"
       />
-      <select
-        value={schedule}
-        onChange={(e) => setSchedule(e.target.value)}
-        className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
-      >
-        <option value="now">Run Now (once)</option>
-        <option value="0 9 * * *">Daily at 9am</option>
-        <option value="0 9 * * 1">Weekly (Monday 9am)</option>
-        <option value="0 9 1 * *">Monthly (1st at 9am)</option>
-        <option value="interval:60">Every Hour</option>
-        <option value="interval:360">Every 6 Hours</option>
-      </select>
+      <div>
+        <label className='block text-xs text-gray-400 mb-1'>
+          Schedule
+          <InfoTooltip text="Pick a preset to run once now, on a daily/weekly/monthly cadence, or every N hours. cron syntax is standard 5-field (min hour day month weekday) — e.g. 0 9 * * * = 9am daily." />
+        </label>
+        <select
+          value={schedule}
+          onChange={(e) => setSchedule(e.target.value)}
+          className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+        >
+          <option value="now">Run Now (once)</option>
+          <option value="0 9 * * *">Daily at 9am</option>
+          <option value="0 9 * * 1">Weekly (Monday 9am)</option>
+          <option value="0 9 1 * *">Monthly (1st at 9am)</option>
+          <option value="interval:60">Every Hour</option>
+          <option value="interval:360">Every 6 Hours</option>
+        </select>
+      </div>
       <button
         onClick={createTask}
         disabled={loading || !name.trim()}
