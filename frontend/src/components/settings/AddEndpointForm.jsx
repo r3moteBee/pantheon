@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { llmApi } from '../../api/client'
+import InfoTooltip from '../help/InfoTooltip'
 
 const API_TYPES = [
   { value: 'openai', label: 'OpenAI / OpenAI-compatible', placeholder: 'https://api.openai.com/v1' },
@@ -8,7 +9,14 @@ const API_TYPES = [
   { value: 'custom', label: 'Custom', placeholder: 'https://your.endpoint/v1' },
 ]
 
-export default function AddEndpointForm({ onSaved }) {
+const HINTS = {
+  name: "A short label for this endpoint (e.g. openai, local-ollama). Used internally; you won't see it in chat.",
+  api_type: "Pick the protocol the endpoint speaks. Most cloud providers and OpenRouter speak openai. Anthropic uses its own. Use ollama for local Ollama.",
+  base_url: "The root URL the API responds at — usually ends in /v1. See the help drawer above for common values.",
+  api_key: "Stored encrypted in the local vault and never leaves your machine.",
+}
+
+export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed }) {
   const [name, setName] = useState('')
   const [apiType, setApiType] = useState('openai')
   const [baseUrl, setBaseUrl] = useState('')
@@ -17,8 +25,26 @@ export default function AddEndpointForm({ onSaved }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [testResult, setTestResult] = useState(null)
+  const formRef = useRef(null)
 
   const apiTypeMeta = API_TYPES.find((t) => t.value === apiType)
+
+  // Consume prefill from the help drawer's "Use this" buttons. We
+  // overwrite the three known fields, leave api_key alone (the user
+  // pastes that), and scroll the form into view so they see the change
+  // even when the drawer is below the fold.
+  useEffect(() => {
+    if (!prefill) return
+    if (prefill.name) setName(prefill.name)
+    if (prefill.api_type) setApiType(prefill.api_type)
+    if (prefill.base_url) setBaseUrl(prefill.base_url)
+    setTestResult(null)
+    setError('')
+    if (formRef.current) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+    onPrefillConsumed?.()
+  }, [prefill, onPrefillConsumed])
 
   const handleTest = async () => {
     setError('')
@@ -57,10 +83,16 @@ export default function AddEndpointForm({ onSaved }) {
   }
 
   return (
-    <form onSubmit={handleSave} className='border border-gray-700 rounded-md p-3 bg-gray-900/30 space-y-3'>
+    <form
+      ref={formRef}
+      onSubmit={handleSave}
+      className='border border-gray-700 rounded-md p-3 bg-gray-900/30 space-y-3'
+    >
       <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
         <div>
-          <label className='block text-xs text-gray-400 mb-1'>Name</label>
+          <label className='block text-xs text-gray-400 mb-1'>
+            Name <InfoTooltip text={HINTS.name} />
+          </label>
           <input
             type='text'
             value={name}
@@ -71,7 +103,9 @@ export default function AddEndpointForm({ onSaved }) {
           />
         </div>
         <div>
-          <label className='block text-xs text-gray-400 mb-1'>API type</label>
+          <label className='block text-xs text-gray-400 mb-1'>
+            API type <InfoTooltip text={HINTS.api_type} />
+          </label>
           <select
             value={apiType}
             onChange={(e) => setApiType(e.target.value)}
@@ -84,7 +118,9 @@ export default function AddEndpointForm({ onSaved }) {
         </div>
       </div>
       <div>
-        <label className='block text-xs text-gray-400 mb-1'>Base URL</label>
+        <label className='block text-xs text-gray-400 mb-1'>
+          Base URL <InfoTooltip text={HINTS.base_url} />
+        </label>
         <input
           type='url'
           value={baseUrl}
@@ -95,7 +131,9 @@ export default function AddEndpointForm({ onSaved }) {
         />
       </div>
       <div>
-        <label className='block text-xs text-gray-400 mb-1'>API key</label>
+        <label className='block text-xs text-gray-400 mb-1'>
+          API key <InfoTooltip text={HINTS.api_key} />
+        </label>
         <div className='flex gap-2'>
           <input
             type={showKey ? 'text' : 'password'}
