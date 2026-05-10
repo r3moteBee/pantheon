@@ -36,16 +36,22 @@ export default function ChatActions() {
   // Persist skill-discovery mode to backend and rehydrate on project switch.
   // The frontend store alone is insufficient — the chat handlers read this
   // from the backend vault, so a UI-only toggle has no effect.
+  //
+  // When the backend has no value for the active project, keep the
+  // current local value (the user's cross-project preference, populated
+  // from localStorage on store init). Only the explicit backend value
+  // overrides the local preference.
   React.useEffect(() => {
     const pid = activeProject?.id || 'default-project'
     let cancelled = false
     skillsApi.getDiscovery(pid).then((res) => {
       if (cancelled) return
-      const remote = res?.data?.skill_discovery || 'off'
-      if (remote !== skillDiscovery) {
-        // Adopt backend value on mount / project switch (don't overwrite it).
+      const remote = res?.data?.skill_discovery
+      if (remote && remote !== skillDiscovery) {
+        // Backend has a value for this project — adopt it.
         setSkillDiscovery(remote)
       }
+      // No remote value → keep local; nothing to do.
     }).catch(() => { /* offline / no vault — keep local */ })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
