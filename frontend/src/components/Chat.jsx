@@ -983,6 +983,8 @@ function ChatHistoryDrawer() {
   const setSessionId = useStore((s) => s.setSessionId)
   const setMessages = useStore((s) => s.setMessages)
   const clearMessages = useStore((s) => s.clearMessages)
+  const projects = useStore((s) => s.projects)
+  const setActiveProject = useStore((s) => s.setActiveProject)
   const [items, setItems] = React.useState([])
   const [loading, setLoading] = React.useState(false)
 
@@ -1005,6 +1007,17 @@ function ChatHistoryDrawer() {
       clearMessages()
       setMessages(msgs)
       setSessionId(sessionId)
+
+      // Sync active project to match the session's project so the
+      // pill never disagrees with the chat content. If the session's
+      // project no longer exists in the loaded list, leave the pill
+      // alone — chat content still loads.
+      const sessionProjectId = res.data?.project_id
+      if (sessionProjectId && sessionProjectId !== projectId) {
+        const target = projects.find((p) => p.id === sessionProjectId)
+        if (target) setActiveProject(target)
+      }
+
       setOpen(false)
     } catch (e) {
       alert('Resume failed: ' + (e?.response?.data?.detail || e.message))
