@@ -254,6 +254,17 @@ class EpisodicMemory:
             for r in rows
         ]
 
+    async def get_session_project_id(self, session_id: str) -> str | None:
+        """Return the owning project_id for a session, or None when the
+        conversation row is missing. Canonical lookup — messages also
+        carry project_id but the conversation row is the source of truth."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT project_id FROM conversations WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        return row["project_id"] if row else None
+
     async def get_sessions(
         self,
         project_id: str = "default",
