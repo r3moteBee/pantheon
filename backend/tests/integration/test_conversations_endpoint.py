@@ -29,7 +29,7 @@ def client_with_session():
     session_id = "sess-test-resume-sync"
 
     ep = EpisodicMemory()
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         ep.save_message(
             project_id=project_id,
             session_id=session_id,
