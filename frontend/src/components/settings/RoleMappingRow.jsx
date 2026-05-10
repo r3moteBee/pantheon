@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react'
 import { llmApi } from '../../api/client'
+import InfoTooltip from '../help/InfoTooltip'
+
+const ROLE_HINTS = {
+  chat: 'The main agent loop — every chat message goes through this model.',
+  prefill: 'Cheap helper for short structured tasks (titles, tags, summaries). Falls back to chat if unset.',
+  vision: 'Image-aware completions when an artifact has visuals. Falls back to chat if unset.',
+  embed: 'Embeddings model for semantic memory + similarity. No fallback — must be set or semantic search is disabled.',
+  rerank: 'Re-orders semantic-search results. Falls back to embed-only ranking if unset.',
+}
 
 export default function RoleMappingRow({
   role, label, description, endpoints, value, onChange,
@@ -10,6 +19,7 @@ export default function RoleMappingRow({
 
   const selectedEndpoint = value?.endpoint || ''
   const selectedModel = value?.model || ''
+  const hint = ROLE_HINTS[role]
 
   useEffect(() => {
     setModels([])
@@ -35,7 +45,10 @@ export default function RoleMappingRow({
   return (
     <div className='grid grid-cols-12 gap-2 items-center py-2 border-b border-gray-800'>
       <div className='col-span-3'>
-        <div className='text-sm text-gray-200'>{label}</div>
+        <div className='text-sm text-gray-200'>
+          {label}
+          {hint && <InfoTooltip text={hint} />}
+        </div>
         <div className='text-xs text-gray-500'>{description}</div>
       </div>
       <div className='col-span-4'>
