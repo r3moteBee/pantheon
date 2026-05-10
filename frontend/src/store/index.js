@@ -10,6 +10,16 @@ const _initialProjectId = (() => {
   catch { return 'default' }
 })()
 
+// Read the persisted skill-discovery mode once at module load. The
+// mode is also persisted per-project in the backend vault — see
+// ChatActions.jsx — but localStorage carries the user's cross-project
+// preference, so a project that has never set the value inherits the
+// last choice rather than falling back to a hardcoded default.
+const _initialSkillDiscovery = (() => {
+  try { return localStorage.getItem('chat_skill_discovery') || 'auto' }
+  catch { return 'auto' }
+})()
+
 export const useStore = create((set, get) => ({
   // Active project
   activeProject: { id: _initialProjectId, name: '' },
@@ -39,8 +49,11 @@ export const useStore = create((set, get) => ({
   setMemoryRecall: (v) => set({ memoryRecall: !!v }),
   contextFocus: 'balanced',           // 'broad' | 'balanced' | 'focused'
   setContextFocus: (v) => set({ contextFocus: v }),
-  skillDiscovery: 'off',              // 'off' | 'suggest' | 'auto'
-  setSkillDiscovery: (v) => set({ skillDiscovery: v }),
+  skillDiscovery: _initialSkillDiscovery,  // 'off' | 'suggest' | 'auto'
+  setSkillDiscovery: (v) => {
+    try { localStorage.setItem('chat_skill_discovery', v) } catch {}
+    set({ skillDiscovery: v })
+  },
   personalityWeight: 'balanced',      // 'minimal' | 'balanced' | 'strong'
   setPersonalityWeight: (v) => set({ personalityWeight: v }),
 
