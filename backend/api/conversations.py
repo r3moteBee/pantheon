@@ -16,6 +16,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _lookup_session_project_id(ep: EpisodicMemory, session_id: str) -> str | None:
+    """Return the owning project_id for a session, or None if the
+    session row is missing. Read from the conversations table; messages
+    also carry project_id but the conversation row is the canonical
+    home."""
+    with sqlite3.connect(ep.db_path) as conn:
+        row = conn.execute(
+            "SELECT project_id FROM conversations WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    return row[0] if row else None
+
+
 class SaveAsArtifactRequest(BaseModel):
     path: str | None = None
     title: str | None = None
@@ -40,19 +53,14 @@ async def get_conversation(
 ) -> dict[str, Any]:
     ep = EpisodicMemory()
     messages = await ep.get_history(session_id=session_id, limit=limit)
-    if not messages:
-        # Still return session metadata if it exists
-        with sqlite3.connect(ep.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT * FROM conversations WHERE session_id = ?", (session_id,)
-            ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="conversation not found")
+    session_project_id = _lookup_session_project_id(ep, session_id)
+    if not messages and session_project_id is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
     return {
         "session_id": session_id,
         "messages": messages,
         "count": len(messages),
+        "project_id": session_project_id,
     }
 
 
@@ -66,16 +74,21 @@ async def resume_conversation(
     The frontend uses this to load the message history into the chat
     pane and continue the same session. AgentCore.from_session() is
     used by the WebSocket handler when subsequent messages arrive
-    with the same session_id.
+    with the same session_id. Also returns the session's owning
+    project_id so the frontend can sync the active-project pill when
+    a user resumes a session from a different project than the one
+    currently active.
     """
     ep = EpisodicMemory()
     messages = await ep.get_history(session_id=session_id, limit=500)
     if not messages:
         raise HTTPException(status_code=404, detail="no messages for session")
+    session_project_id = _lookup_session_project_id(ep, session_id)
     return {
         "session_id": session_id,
         "messages": messages,
         "message_count": len(messages),
+        "project_id": session_project_id,
     }
 
 
