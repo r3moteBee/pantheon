@@ -15,13 +15,9 @@ import PersonasPage from './pages/PersonasPage'
 import TasksPage from './pages/TasksPage'
 import ProjectsPage from './pages/ProjectsPage'
 import LoginPage from './pages/LoginPage'
-import { useStore } from './store'
-import { projectsApi, authApi } from './api/client'
+import { authApi } from './api/client'
 
 export default function App() {
-  const setProjects = useStore((s) => s.setProjects)
-  const setActiveProject = useStore((s) => s.setActiveProject)
-
   // null = checking, false = needs login, true = authenticated
   const [authState, setAuthState] = useState(null)
 
@@ -55,24 +51,7 @@ export default function App() {
 
   const handleLogin = (token) => {
     setAuthState(true)
-    // Load projects now that we are authenticated
-    projectsApi.list().then((res) => {
-      const projects = res.data.projects || []
-      setProjects(projects)
-      if (projects.length > 0) setActiveProject(projects[0])
-    }).catch(console.error)
   }
-
-  // Load projects on first authenticated render
-  useEffect(() => {
-    if (authState === true) {
-      projectsApi.list().then((res) => {
-        const projects = res.data.projects || []
-        setProjects(projects)
-        if (projects.length > 0) setActiveProject(projects[0])
-      }).catch(console.error)
-    }
-  }, [authState])
 
   // Checking auth
   if (authState === null) {
