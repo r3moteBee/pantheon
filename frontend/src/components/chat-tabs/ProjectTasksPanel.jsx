@@ -6,6 +6,7 @@ import {
 import ReactMarkdown from 'react-markdown'
 import { jobsApi, tasksApi } from '../../api/client'
 import HelpDrawer from '../help/HelpDrawer'
+import { mermaidMarkdownComponents } from '../markdownComponents'
 
 function renderCadence(schedule) {
   if (!schedule) return '—'
@@ -622,7 +623,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
         />
       ) : (
         <div className="prose prose-invert prose-sm max-w-none p-2 rounded bg-gray-900 border border-gray-800">
-          {plan ? <ReactMarkdown>{plan}</ReactMarkdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
+          {plan ? <ReactMarkdown components={mermaidMarkdownComponents}>{plan}</ReactMarkdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
         </div>
       )}
 

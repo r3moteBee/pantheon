@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
 import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi, artifactsApi } from '../api/client'
 import SkillPicker from './SkillPicker'
+import { mermaidMarkdownComponents } from './markdownComponents'
 
 // Parse workspace:// path from show_file result
 function parseShowFileResult(result) {
@@ -82,7 +83,7 @@ function FilePreview({ filePath, caption }) {
             <div className="text-gray-500 text-sm">Loading...</div>
           ) : textContent !== null ? (
             (ext === 'md' || ext === 'markdown') ? (
-              <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-invert prose-sm max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} className="prose prose-invert prose-sm max-w-none" components={mermaidMarkdownComponents}>
                 {textContent}
               </ReactMarkdown>
             ) : (
@@ -194,6 +195,7 @@ function useMarkdownComponents() {
   }
 
   return {
+    ...mermaidMarkdownComponents,
     code: ({ node, inline, className, children, ...props }) => {
       if (inline) {
         return <code className="bg-gray-700 px-1 py-0.5 rounded text-xs font-mono" {...props}>{children}</code>
