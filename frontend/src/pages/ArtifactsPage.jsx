@@ -14,6 +14,7 @@ import { javascript } from '@codemirror/lang-javascript'
 import { artifactsApi } from '../api/client'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
+import { mermaidMarkdownComponents } from '../components/markdownComponents'
 
 function iconForType(ct) {
   if (!ct) return FileText
@@ -628,7 +629,7 @@ function PreviewBody({ artifact, preview }) {
     if (ct === 'text/markdown') {
       return (
         <div className="prose prose-invert max-w-3xl mx-auto p-6">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mermaidMarkdownComponents}>
             {cleanMarkdownForPreview(preview.content || '')}
           </ReactMarkdown>
         </div>
