@@ -56,8 +56,9 @@ export default function EndpointList({ onChange }) {
       </div>
       <HelpDrawer title='Common LLM providers' storageKey='help.llm-providers'>
         <p className='text-xs text-gray-400 mb-3'>
-          Click a provider name below to configure it. You'll still need to
-          paste an API key from the provider's signup page.
+          Click a <strong>provider name on the left</strong> to set it up as
+          an LLM endpoint. Click the <strong>link on the right</strong> to
+          get an API key for that provider.
         </p>
         <div className='overflow-x-auto'>
           <table className='w-full text-xs'>

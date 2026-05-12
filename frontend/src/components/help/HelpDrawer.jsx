@@ -44,19 +44,19 @@ export default function HelpDrawer({
   const Chevron = open ? ChevronDown : ChevronRight
 
   return (
-    <div className="border border-gray-700 rounded-md bg-gray-900/30 overflow-hidden">
+    <div className="border border-amber-900/40 rounded-md bg-amber-950/40 overflow-hidden">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800/50"
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-amber-100/90 hover:bg-amber-900/30"
       >
-        <Chevron className="w-4 h-4 text-gray-500" aria-hidden="true" />
-        <HelpCircle className="w-4 h-4 text-gray-500" aria-hidden="true" />
+        <Chevron className="w-4 h-4 text-amber-500/70" aria-hidden="true" />
+        <HelpCircle className="w-4 h-4 text-amber-500/70" aria-hidden="true" />
         <span className="flex-1 text-left">{title}</span>
       </button>
       {open && (
-        <div className="px-3 py-3 border-t border-gray-800">
+        <div className="px-3 py-3 border-t border-amber-900/30">
           {children}
         </div>
       )}
