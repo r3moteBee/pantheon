@@ -13,6 +13,7 @@ import { python } from '@codemirror/lang-python'
 import { javascript } from '@codemirror/lang-javascript'
 import { artifactsApi } from '../api/client'
 import { useStore } from '../store'
+import HelpDrawer from '../components/help/HelpDrawer'
 
 function iconForType(ct) {
   if (!ct) return FileText
@@ -243,6 +244,35 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           ? "md:w-80 md:flex-shrink-0 hidden md:flex "
           : "flex-1 ")
       }>
+        {!activeId && (
+          <div className="p-3 border-b border-gray-800">
+            <HelpDrawer title='About artifacts' storageKey='help.artifacts'>
+              <p className='text-xs text-gray-400 mb-2'>
+                <strong>Artifacts</strong> are durable, indexed, searchable
+                storage — saved via <code className='text-amber-200/80'>save_to_artifact</code>{' '}
+                in chat or by the source-adapter pipeline. They are distinct
+                from <strong>workspace files</strong> (ephemeral scratch on
+                disk, accessed via <code className='text-amber-200/80'>read_file</code> /{' '}
+                <code className='text-amber-200/80'>write_file</code>).
+              </p>
+              <ul className='text-xs text-gray-400 list-disc pl-5 space-y-1'>
+                <li><strong>Project scope</strong> (left rail) — <em>Current</em> shows
+                  only this project's artifacts; <em>All</em> shows across every
+                  project (useful for cross-project review).</li>
+                <li><strong>Tags + pins</strong> — tag to group, pin to keep
+                  important items at top of search.</li>
+                <li><strong>Versions</strong> — every save creates a new version;
+                  open the history pane (clock icon) to diff or restore.</li>
+                <li><strong>Bulk select</strong> — check rows to zip-export or
+                  delete in batch.</li>
+                <li>Saving to the same canonical path <em>updates</em> the
+                  existing artifact (creates a new version). Pass{' '}
+                  <code className='text-amber-200/80'>force_new=true</code>{' '}
+                  when you want a separate row.</li>
+              </ul>
+            </HelpDrawer>
+          </div>
+        )}
         <div className="p-3 border-b border-gray-800 space-y-2">
           <div className="flex items-center gap-2">
             <Search className="w-3 h-3 text-gray-500" />
