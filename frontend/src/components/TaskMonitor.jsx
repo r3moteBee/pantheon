@@ -3,6 +3,7 @@ import { Play, Square, Trash2, ChevronDown, ChevronRight, Clock, RefreshCw } fro
 import { useStore } from '../store'
 import { tasksApi } from '../api/client'
 import InfoTooltip from './help/InfoTooltip'
+import HelpDrawer from './help/HelpDrawer'
 
 function CreateTaskForm({ onTaskCreated, activeProject }) {
   const [name, setName] = useState('')
@@ -237,6 +238,37 @@ export default function TaskMonitor() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto scrollbar-thin p-6">
         <div className="max-w-2xl mx-auto space-y-4">
+          <HelpDrawer title='About task schedules' storageKey='help.task-schedules'>
+            <p className='text-xs text-gray-400 mb-3'>
+              Pick a preset for the common cases, or ask the agent to schedule
+              a task with custom timing using the syntax below.
+            </p>
+            <table className='w-full text-xs mb-3'>
+              <tbody className='text-gray-300'>
+                <tr className='border-t border-amber-900/30'>
+                  <td className='py-1.5 pr-3 font-mono text-amber-200/80 align-top'>now</td>
+                  <td className='py-1.5'>Run once, immediately</td>
+                </tr>
+                <tr className='border-t border-amber-900/30'>
+                  <td className='py-1.5 pr-3 font-mono text-amber-200/80 align-top'>delay:N</td>
+                  <td className='py-1.5'>Run once after N minutes</td>
+                </tr>
+                <tr className='border-t border-amber-900/30'>
+                  <td className='py-1.5 pr-3 font-mono text-amber-200/80 align-top'>interval:N</td>
+                  <td className='py-1.5'>Recurring, every N minutes</td>
+                </tr>
+                <tr className='border-t border-amber-900/30'>
+                  <td className='py-1.5 pr-3 font-mono text-amber-200/80 align-top'>m h dom mon dow</td>
+                  <td className='py-1.5'>Standard 5-field cron — e.g. <code className='text-amber-200/80'>0 9 * * 1</code> = Monday 9am</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className='text-xs text-gray-400'>
+              A <strong>skill</strong> (<code className='text-amber-200/80'>/slug</code> in chat) is a reusable
+              callable; a <strong>scheduled task</strong> is a one-shot or recurring autonomous run
+              that may optionally invoke a skill. Don't confuse them.
+            </p>
+          </HelpDrawer>
           <CreateTaskForm onTaskCreated={loadTasks} activeProject={activeProject} />
 
           <div className="space-y-3">

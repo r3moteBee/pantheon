@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Github, Plug, Trash2, Plus, RefreshCw, Eye, EyeOff, AlertTriangle } from 'lucide-react'
 import { connectionsApi } from '../api/client'
 import MCPConnections from '../components/MCPConnections'
+import HelpDrawer from '../components/help/HelpDrawer'
 
 const TABS = [
   { id: 'github', label: 'GitHub', icon: Github },
@@ -105,6 +106,58 @@ function GitHubAccountsTab() {
         System-wide PATs. Bind a specific repo to a project on the chat
         <span className="text-gray-300"> Repository </span>tab.
       </p>
+
+      <div className='mb-4'>
+        <HelpDrawer title='About GitHub Personal Access Tokens' storageKey='help.github-pat'>
+          <p className='text-xs text-gray-400 mb-3'>
+            Pantheon uses a PAT to read repositories and open pull requests on
+            your behalf when the agent runs coding tasks. Generate either type
+            below — fine-grained is preferred but classic works too.
+          </p>
+          <table className='w-full text-xs mb-3'>
+            <thead className='text-gray-500'>
+              <tr>
+                <th className='text-left font-normal pb-1 pr-3'>Type</th>
+                <th className='text-left font-normal pb-1 pr-3'>Required scope</th>
+                <th className='text-left font-normal pb-1'>Generate at</th>
+              </tr>
+            </thead>
+            <tbody className='text-gray-300'>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>Fine-grained <span className='text-gray-500'>(recommended)</span></td>
+                <td className='py-1.5 pr-3 align-top'>
+                  Contents: read &amp; write<br/>
+                  Pull requests: read &amp; write
+                </td>
+                <td className='py-1.5 align-top'>
+                  <a href='https://github.com/settings/personal-access-tokens'
+                     target='_blank' rel='noopener noreferrer'
+                     className='text-brand-400 hover:underline'>
+                    github.com/settings/personal-access-tokens
+                  </a>
+                </td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>Classic</td>
+                <td className='py-1.5 pr-3 align-top'>
+                  <code className='text-amber-200/80'>repo</code>
+                </td>
+                <td className='py-1.5 align-top'>
+                  <a href='https://github.com/settings/tokens'
+                     target='_blank' rel='noopener noreferrer'
+                     className='text-brand-400 hover:underline'>
+                    github.com/settings/tokens
+                  </a>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p className='text-xs text-gray-400'>
+            Tokens are encrypted in the local secrets vault and never written
+            to logs. Removing an account clears any project bindings using it.
+          </p>
+        </HelpDrawer>
+      </div>
 
       {error && (
         <div className="mb-4 p-3 rounded-md border border-red-700 bg-red-950 text-red-300 text-sm flex items-center gap-2">

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { jobsApi, tasksApi } from '../../api/client'
+import HelpDrawer from '../help/HelpDrawer'
 
 function renderCadence(schedule) {
   if (!schedule) return '—'
@@ -153,8 +154,59 @@ export default function ProjectTasksPanel({ projectId }) {
           </div>
         </div>
 
+        <HelpDrawer title='About schedules and job runs' storageKey='help.project-tasks'>
+          <p className='text-xs text-gray-400 mb-3'>
+            A <strong>schedule</strong> is a recurring or one-shot trigger.
+            Each firing produces a <strong>job run</strong> listed below.
+            Schedules can be proposed by the agent and wait for your
+            <span className='text-amber-200/90'> Approve</span> /
+            <span className='text-amber-200/90'> Review</span> before activating.
+          </p>
+          <table className='w-full text-xs mb-3'>
+            <thead className='text-gray-500'>
+              <tr>
+                <th className='text-left font-normal pb-1 pr-3'>Status</th>
+                <th className='text-left font-normal pb-1'>Meaning</th>
+              </tr>
+            </thead>
+            <tbody className='text-gray-300'>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300'>queued</span></td>
+                <td className='py-1'>Waiting for a worker</td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-200'>running</span></td>
+                <td className='py-1'>Executing now</td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-200'>completed</span></td>
+                <td className='py-1'>Finished successfully</td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-200'>failed</span></td>
+                <td className='py-1'>Errored — Retry or Rerun from the detail panel</td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-200'>stalled</span></td>
+                <td className='py-1'>No heartbeat for 5+ min — watchdog killed it</td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300'>cancelled</span></td>
+                <td className='py-1'>Cancelled manually, or a one-shot replaced by Run Now</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className='text-xs text-gray-400'>
+            Cadence syntax: <code className='text-amber-200/80'>now</code>,
+            <code className='text-amber-200/80 ml-1'>delay:N</code> (once after N min),
+            <code className='text-amber-200/80 ml-1'>interval:N</code> (every N min),
+            or 5-field cron. Toggle <strong>system jobs</strong> to also see
+            extraction and file-indexing runs.
+          </p>
+        </HelpDrawer>
+
         {/* Schedules section */}
-        <section className="mb-6">
+        <section className="mb-6 mt-4">
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2 flex items-center gap-2">
             <Clock className="w-3 h-3" /> Schedules ({schedules.length})
           </h3>
