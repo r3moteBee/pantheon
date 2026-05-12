@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import { Github, Plug, Trash2, Plus, RefreshCw, Eye, EyeOff, AlertTriangle } from 'lucide-react'
+import { Github, Plug, Trash2, Plus, RefreshCw, Eye, EyeOff, AlertTriangle, Search } from 'lucide-react'
 import { connectionsApi } from '../api/client'
 import MCPConnections from '../components/MCPConnections'
 import HelpDrawer from '../components/help/HelpDrawer'
+import SearchProvidersTab from '../components/connections/SearchProvidersTab'
 
 const TABS = [
   { id: 'github', label: 'GitHub', icon: Github },
   { id: 'mcp',    label: 'MCP servers', icon: Plug },
+  { id: 'search', label: 'Web search', icon: Search },
 ]
 
 export default function ConnectionsPage() {
@@ -36,6 +38,7 @@ export default function ConnectionsPage() {
       <div className="flex-1 overflow-hidden">
         {tab === 'github' && <GitHubAccountsTab />}
         {tab === 'mcp'    && <MCPTab />}
+        {tab === 'search' && <SearchProvidersTab />}
       </div>
     </div>
   )
