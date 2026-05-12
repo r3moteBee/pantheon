@@ -56,31 +56,35 @@ export default function EndpointList({ onChange }) {
       </div>
       <HelpDrawer title='Common LLM providers' storageKey='help.llm-providers'>
         <p className='text-xs text-gray-400 mb-3'>
-          Click <strong>Use this</strong> to pre-fill the form below. You'll
-          still need to paste an API key from the provider's signup page.
+          Click a provider name below to configure it. You'll still need to
+          paste an API key from the provider's signup page.
         </p>
         <div className='overflow-x-auto'>
           <table className='w-full text-xs'>
             <thead className='text-gray-500'>
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Provider</th>
-                <th className='text-left font-normal pb-1 pr-3'>Base URL</th>
                 <th className='text-left font-normal pb-1 pr-3'>API type</th>
-                <th className='text-left font-normal pb-1 pr-3'>Get a key</th>
-                <th className='pb-1'></th>
+                <th className='text-left font-normal pb-1'>Get a key</th>
               </tr>
             </thead>
             <tbody className='text-gray-300'>
               {LLM_PROVIDERS.map((p) => (
                 <tr key={p.name} className='border-t border-gray-800'>
-                  <td className='py-1.5 pr-3'>{p.name}</td>
                   <td className='py-1.5 pr-3'>
-                    <code className='font-mono text-[11px] text-gray-400 break-all'>{p.base_url}</code>
+                    <button
+                      type='button'
+                      onClick={() => useProvider(p)}
+                      className='text-left text-brand-400 hover:underline focus:outline-none focus:underline'
+                      title={`Pre-fill form with ${p.base_url}`}
+                    >
+                      {p.name}
+                    </button>
                   </td>
                   <td className='py-1.5 pr-3'>
                     <code className='font-mono text-[11px] text-gray-400'>{p.api_type}</code>
                   </td>
-                  <td className='py-1.5 pr-3'>
+                  <td className='py-1.5'>
                     <a
                       href={p.signup_url}
                       target='_blank'
@@ -92,15 +96,6 @@ export default function EndpointList({ onChange }) {
                     {p.signup_note && (
                       <span className='text-gray-500 ml-1'>· {p.signup_note}</span>
                     )}
-                  </td>
-                  <td className='py-1.5'>
-                    <button
-                      type='button'
-                      onClick={() => useProvider(p)}
-                      className='text-[11px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600'
-                    >
-                      Use this
-                    </button>
                   </td>
                 </tr>
               ))}
