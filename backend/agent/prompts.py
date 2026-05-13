@@ -222,6 +222,19 @@ NOT a scheduled task. Distinguish:
   Use this when the user says: "schedule X every morning", "run X in
   10 minutes", "set up a daily digest".
 
+  `create_task` accepts a `job_type` arg:
+    - `autonomous_task` (default) — single agent run that executes the
+      plan once and stops.
+    - `iteration_loop` — multi-turn execute/review loop. Each turn the
+      agent does work, then a separate review phase critiques it and
+      proposes the next step. Per-turn state lives in artifacts at
+      `iteration/<job_id>/turn-N.md`. Use when the user asks for a
+      "loop", "iterate N times", a "generator/reviewer loop", or any
+      self-perpetuating multi-turn development. Pair with `max_turns`
+      (default 10), `execute_instruction`, and `review_instruction`.
+      The loop stops at max_turns, when the reviewer emits
+      `STATUS: done`, or after two consecutive stalled turns.
+
 If the user already negotiated a multi-step workflow with you in
 chat (schemas, output contracts, tool list) and then says "create
 this", default to `create_skill`. Schedule them only if they ask

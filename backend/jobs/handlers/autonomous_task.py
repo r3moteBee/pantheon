@@ -442,13 +442,32 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     parent_session_id = (ctx.payload or {}).get("parent_session_id")
     if parent_session_id and parent_session_id != session_id:
         try:
-            chunks_blurb = ""
-            summary_for_parent = (result_text or "(task completed with no final assistant message)")
-            if len(summary_for_parent) > 1500:
-                summary_for_parent = summary_for_parent[:1500] + "…"
+            tc = int(tool_count or 0)
+            it = int(iterations or 0)
+            body = (result_text or "").strip()
+            silent_failure = (tc == 0 and not body)
+            if silent_failure:
+                summary_for_parent = (
+                    "⚠️ **NO OUTPUT — likely silent failure.** "
+                    "The agent ran but emitted no tool calls and no text. "
+                    "Possible causes: model decided the plan was satisfied "
+                    "without doing anything, model returned empty, or the "
+                    "plan was too vague. Check the Tasks tab → job "
+                    "transcript for full diagnostics."
+                )
+            else:
+                if len(body) > 1500:
+                    body = body[:1500] + "…"
+                summary_for_parent = body or "(agent made tool calls but emitted no final text — see Tasks tab for transcript)"
+            metrics_line = (
+                f"_Tools: {tc} call{'s' if tc != 1 else ''}"
+                + (f" (last: `{last_tool_name}`)" if last_tool_name else "")
+                + f" · Iterations: {it}_"
+            )
             parent_msg = (
                 f"**Task completed:** *{task_name}* "
                 f"(job_id `{ctx.job_id[:8]}`)\n\n"
+                f"{metrics_line}\n\n"
                 f"{summary_for_parent}\n\n"
                 f"_Run details: open the Tasks tab; full transcript "
                 f"in chat history under the task name._"
