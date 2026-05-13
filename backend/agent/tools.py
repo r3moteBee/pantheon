@@ -375,6 +375,27 @@ TOOL_SCHEMAS = [
                             "gaps, propose the single most important next "
                             "step, emit STATUS: continue|done)."
                         )
+                    },
+                    "branch_strategy": {
+                        "type": "string",
+                        "enum": ["single_feature", "main", "branch_per_turn"],
+                        "default": "single_feature",
+                        "description": (
+                            "Only used when job_type='iteration_loop'. "
+                            "Controls how loop turns interact with the "
+                            "bound GitHub repo:\n"
+                            " - 'single_feature' (default): all turns commit "
+                            "to ONE branch named `iteration/<job_id>`. The "
+                            "next turn sees the prior turn's code naturally. "
+                            "One optional PR at loop end consolidates the "
+                            "arc.\n"
+                            " - 'main': all turns commit directly to main. "
+                            "Fastest compound visibility; riskiest if a turn "
+                            "breaks the build.\n"
+                            " - 'branch_per_turn': each turn creates its own "
+                            "feature branch. Legacy / opt-in only — produces "
+                            "branch sprawl unless you really want PR-per-turn."
+                        )
                     }
                 },
                 "required": ["name", "description", "schedule", "plan"]
@@ -2194,11 +2215,20 @@ async def execute_tool(
                 except (TypeError, ValueError):
                     max_turns = 10
                 max_turns = max(1, min(max_turns, 50))
+                branch_strategy = (tool_args.get("branch_strategy") or "single_feature").strip()
+                if branch_strategy not in ("single_feature", "main", "branch_per_turn"):
+                    return (
+                        f"create_task rejected: branch_strategy "
+                        f"{branch_strategy!r} not recognized. Use "
+                        f"'single_feature' (default), 'main', or "
+                        f"'branch_per_turn'."
+                    )
                 extras = {
                     "max_turns": max_turns,
                     "topic": tool_args.get("name", "iteration"),
                     "execute_instruction": (tool_args.get("execute_instruction") or "").strip() or None,
                     "review_instruction": (tool_args.get("review_instruction") or "").strip() or None,
+                    "branch_strategy": branch_strategy,
                 }
                 if timeout_seconds is None:
                     timeout_seconds = 7200

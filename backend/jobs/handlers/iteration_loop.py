@@ -47,11 +47,56 @@ DEFAULT_REVIEW_INSTRUCTION = (
     "Review the previous execute phase. Be concrete:\n"
     "  1. What was actually accomplished (refer to specific files / artifacts).\n"
     "  2. Bugs, gaps, or steps that were skipped.\n"
-    "  3. The single most important next step for the following turn.\n"
+    "  3. The single most important next step for the following turn.\n\n"
+    "DO NOT keep iterating just because the loop has more turns budgeted. "
+    "If the project has reached a coherent milestone (it builds, it runs "
+    "end-to-end, the topic's stated goal is achieved, or further turns "
+    "would just churn the same files), emit STATUS: done. Stopping early "
+    "is fine and often better than burning turns on busywork.\n\n"
     "End your reply with exactly one of these two lines on its own:\n"
     "  STATUS: continue   (more turns needed)\n"
     "  STATUS: done       (project work for this loop is complete)"
 )
+
+
+def _branch_policy_block(branch_strategy: str, target_branch: str | None, turn: int) -> str:
+    """Render the per-turn branch-policy instructions for the execute prompt."""
+    if branch_strategy == "main":
+        return (
+            "\n\nBRANCH POLICY (strategy=main):\n"
+            "  - Commit ALL changes directly to `main` via "
+            "`github_write_files` with branch=\"main\".\n"
+            "  - Do NOT create feature branches. Do NOT call "
+            "`github_create_branch`.\n"
+            "  - The next turn will see your code on main automatically."
+        )
+    if branch_strategy == "single_feature" and target_branch:
+        block = (
+            f"\n\nBRANCH POLICY (strategy=single_feature):\n"
+            f"  - This entire loop runs on ONE branch: `{target_branch}`.\n"
+            f"  - When WRITING files, pass branch=\"{target_branch}\" to "
+            f"`github_write_files`. NEVER write to main and NEVER create "
+            f"any other branch.\n"
+            f"  - When READING files (`github_read_file`, "
+            f"`github_list_directory`), pass ref=\"{target_branch}\" so "
+            f"you see the cumulative state from prior turns. Reading "
+            f"without ref shows main, which is stale relative to your work.\n"
+        )
+        if turn == 1:
+            block += (
+                f"  - This is turn 1. The branch may not exist yet — your "
+                f"FIRST tool call should be "
+                f"`github_create_branch(new_branch=\"{target_branch}\")` "
+                f"to fork it from main. Then proceed with the work.\n"
+            )
+        return block
+    # branch_per_turn: agent decides per turn (legacy behaviour)
+    return (
+        "\n\nBRANCH POLICY (strategy=branch_per_turn, LEGACY):\n"
+        "  - Each turn creates its own feature branch. This produces "
+        "branch sprawl unless you really want PR-per-turn. Consider "
+        "using single_feature or main for new loops."
+    )
 
 
 def _extract_status(review_text: str) -> str:
@@ -98,8 +143,14 @@ async def _run_phase(
         async for event in agent.chat(prompt, stream=False):
             etype = event.get("type")
             if etype == "tool_call":
+                name = event.get("name") or "?"
+                # Filter Pantheon's synthetic pre-recall event (emitted as a
+                # tool_call from agent/core.py) so it doesn't mask real tools
+                # in the metrics. It's memory loading, not agent action.
+                if name == "context_loaded":
+                    continue
                 tool_count += 1
-                last_tool = event.get("name") or "?"
+                last_tool = name
                 await ctx.heartbeat(progress=f"{phase_label}: tool #{tool_count} {last_tool}")
             elif etype == "tool_result":
                 name = event.get("name") or last_tool or "?"
@@ -141,11 +192,22 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
     review_instruction = (pl.get("review_instruction") or DEFAULT_REVIEW_INSTRUCTION).strip()
     parent_session_id = pl.get("parent_session_id")
     plan = (pl.get("plan") or "").strip()
+    branch_strategy = (pl.get("branch_strategy") or "single_feature").strip()
+    if branch_strategy not in ("single_feature", "main", "branch_per_turn"):
+        branch_strategy = "single_feature"
+    if branch_strategy == "single_feature":
+        target_branch: str | None = f"iteration/{ctx.job_id[:8]}"
+    elif branch_strategy == "main":
+        target_branch = "main"
+    else:
+        target_branch = None
 
-    await ctx.heartbeat(progress=f"Booting iteration loop ({max_turns} turns max)…")
+    await ctx.heartbeat(progress=f"Booting iteration loop ({max_turns} turns max, strategy={branch_strategy})…")
     ctx.update_result({
         "task_name": task_name, "topic": topic,
         "max_turns": max_turns,
+        "branch_strategy": branch_strategy,
+        "target_branch": target_branch,
     })
 
     from agent.core import AgentCore
@@ -200,11 +262,13 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
             project_name=project_name,
         )
 
+        branch_policy = _branch_policy_block(branch_strategy, target_branch, turn)
         execute_prompt = (
             f"You are running turn {turn} of {max_turns} of an iterative "
             f"development loop on '{topic}'.\n\n"
             f"Prior turns:\n{prior}\n"
-            f"{plan_block}\n"
+            f"{plan_block}"
+            f"{branch_policy}\n\n"
             f"This turn's execute instruction:\n{execute_instruction}\n\n"
             f"Make at least one concrete tool call — do not stop after only "
             f"reading state. Write code, save artifacts, commit files, query "
@@ -229,14 +293,19 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
         # Stall recovery
         if execute_result["tool_count"] == 0 and not execute_result["text"]:
             await ctx.heartbeat(progress=f"T{turn} exec stalled — retrying with nudge")
-            nudge_prompt = execute_prompt + (
+            nudge_extra = (
                 "\n\n⚠️  IMPORTANT: your previous attempt produced no tool "
                 "calls and no text. The loop CANNOT make progress without "
                 "concrete tool use. Make at least one tool call now — pick "
-                "the smallest plausible step (e.g. github_list_directory to "
-                "survey the repo, or save_to_artifact to record state) and "
-                "execute it. Then summarise."
+                "the smallest plausible step (e.g. github_list_directory "
             )
+            if target_branch and target_branch != "main":
+                nudge_extra += f"with ref=\"{target_branch}\" "
+            nudge_extra += (
+                "to survey the repo, or save_to_artifact to record state) "
+                "and execute it. Then summarise."
+            )
+            nudge_prompt = execute_prompt + nudge_extra
             retry_session = execute_session + "-retry"
             retry_memory = create_memory_manager(
                 project_id=ctx.project_id, session_id=retry_session, provider=provider,
