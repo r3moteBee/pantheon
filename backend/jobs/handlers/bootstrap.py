@@ -41,6 +41,10 @@ def bootstrap_handlers() -> None:
         from jobs.handlers import file_indexing     # noqa: F401
     except Exception as e:
         logger.debug("file_indexing handler unavailable: %s", e)
+    try:
+        from jobs.handlers import iteration_loop    # noqa: F401
+    except Exception as e:
+        logger.debug("iteration_loop handler unavailable: %s", e)
 
     from jobs.handlers import HANDLERS
     logger.info("Handlers registered: %s", sorted(HANDLERS.keys()))

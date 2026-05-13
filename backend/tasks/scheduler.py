@@ -148,6 +148,8 @@ async def schedule_agent_task(
     parent_session_id: str | None = None,
     skill_name: str | None = None,
     timeout_seconds: int | None = None,
+    job_type: str = "autonomous_task",
+    extras: dict | None = None,
 ) -> str:
     """Schedule an autonomous agent task.
 
@@ -191,6 +193,8 @@ async def schedule_agent_task(
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
                 "timeout_seconds": timeout_seconds,
+                "job_type": job_type,
+                "extras": extras,
             },
             replace_existing=True,
         )
@@ -217,6 +221,8 @@ async def schedule_agent_task(
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
                 "timeout_seconds": timeout_seconds,
+                "job_type": job_type,
+                "extras": extras,
             },
             replace_existing=True,
         )
@@ -238,8 +244,8 @@ async def schedule_agent_task(
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
                 "timeout_seconds": timeout_seconds,
-                "plan": plan,
-                "plan_status": plan_status,
+                "job_type": job_type,
+                "extras": extras,
             },
             replace_existing=True,
         )
@@ -273,8 +279,8 @@ async def schedule_agent_task(
                 "parent_session_id": parent_session_id,
                 "skill_name": skill_name,
                 "timeout_seconds": timeout_seconds,
-                "plan": plan,
-                "plan_status": plan_status,
+                "job_type": job_type,
+                "extras": extras,
             },
             replace_existing=True,
         )
@@ -300,27 +306,39 @@ async def _enqueue_autonomous_job(
     parent_session_id: str | None = None,
     skill_name: str | None = None,
     timeout_seconds: int | None = None,
+    job_type: str = "autonomous_task",
+    extras: dict | None = None,
     **kwargs,
 ):
-    """APScheduler trigger handler. Creates a queued autonomous_task job
-    and lets the jobs worker run it. Heartbeats, timeouts, stall detection,
-    and UI surfacing all happen via the unified jobs system.
+    """APScheduler trigger handler. Creates a queued job and lets the
+    jobs worker run it. Heartbeats, timeouts, stall detection, and UI
+    surfacing all happen via the unified jobs system.
+
+    job_type selects the handler — defaults to autonomous_task. Use
+    'iteration_loop' for multi-turn execute/review loops. extras gets
+    merged into the job payload so handler-specific config (max_turns,
+    instructions, etc.) flows through without new positional args.
 
     plan + plan_status + parent_session_id are forwarded so the handler
     can inject the plan into its system prompt at execution time AND
     post the completion summary back into the originating chat session.
     """
     from jobs.store import get_store
+    payload = {
+        "task_id": task_id, "task_name": task_name,
+        "description": description, "schedule": schedule,
+        "plan": plan, "plan_status": plan_status,
+        "parent_session_id": parent_session_id,
+        "skill_name": skill_name,
+    }
+    if extras:
+        payload.update(extras)
     get_store().create(
-        job_type="autonomous_task",
+        job_type=job_type,
         project_id=project_id,
         title=task_name,
         description=description,
-        payload={"task_id": task_id, "task_name": task_name,
-                 "description": description, "schedule": schedule,
-                 "plan": plan, "plan_status": plan_status,
-                 "parent_session_id": parent_session_id,
-                 "skill_name": skill_name},
+        payload=payload,
         schedule_id=task_id,
         timeout_seconds=timeout_seconds,
     )

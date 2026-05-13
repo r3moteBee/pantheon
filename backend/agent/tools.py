@@ -328,6 +328,53 @@ TOOL_SCHEMAS = [
                             "explicitly says they don't want to review the "
                             "plan before it runs."
                         )
+                    },
+                    "job_type": {
+                        "type": "string",
+                        "enum": ["autonomous_task", "iteration_loop"],
+                        "default": "autonomous_task",
+                        "description": (
+                            "Pick the handler that runs this task.\n"
+                            " - 'autonomous_task' (default): one-shot agent "
+                            "run that executes the plan and stops.\n"
+                            " - 'iteration_loop': multi-turn execute / "
+                            "review loop. Each turn the agent does work, "
+                            "then a review phase critiques it and proposes "
+                            "the next step. Per-turn state is persisted to "
+                            "iteration/<job_id>/turn-N.md artifacts. Use "
+                            "this when the user asks for a 'loop', "
+                            "'iterate N times', a 'generator / reviewer "
+                            "loop', or self-perpetuating multi-turn work. "
+                            "Pair with max_turns / execute_instruction / "
+                            "review_instruction."
+                        )
+                    },
+                    "max_turns": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": (
+                            "Only used when job_type='iteration_loop'. "
+                            "Hard upper bound on turns; the loop also stops "
+                            "early if the reviewer emits 'STATUS: done'."
+                        )
+                    },
+                    "execute_instruction": {
+                        "type": "string",
+                        "description": (
+                            "Only used when job_type='iteration_loop'. "
+                            "Per-turn execute-phase instruction. "
+                            "If omitted, the task description is used."
+                        )
+                    },
+                    "review_instruction": {
+                        "type": "string",
+                        "description": (
+                            "Only used when job_type='iteration_loop'. "
+                            "Per-turn review-phase instruction. If omitted, "
+                            "a sensible default is used (surface bugs / "
+                            "gaps, propose the single most important next "
+                            "step, emit STATUS: continue|done)."
+                        )
                     }
                 },
                 "required": ["name", "description", "schedule", "plan"]
@@ -2133,6 +2180,28 @@ async def execute_tool(
                     timeout_seconds = int(timeout_seconds)
                 except (TypeError, ValueError):
                     timeout_seconds = None
+            job_type = (tool_args.get("job_type") or "autonomous_task").strip()
+            if job_type not in ("autonomous_task", "iteration_loop"):
+                return (
+                    f"create_task rejected: job_type {job_type!r} is not "
+                    f"recognized. Use 'autonomous_task' (default) or "
+                    f"'iteration_loop'."
+                )
+            extras: dict | None = None
+            if job_type == "iteration_loop":
+                try:
+                    max_turns = int(tool_args.get("max_turns", 10))
+                except (TypeError, ValueError):
+                    max_turns = 10
+                max_turns = max(1, min(max_turns, 50))
+                extras = {
+                    "max_turns": max_turns,
+                    "topic": tool_args.get("name", "iteration"),
+                    "execute_instruction": (tool_args.get("execute_instruction") or "").strip() or None,
+                    "review_instruction": (tool_args.get("review_instruction") or "").strip() or None,
+                }
+                if timeout_seconds is None:
+                    timeout_seconds = 7200
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),
@@ -2143,6 +2212,8 @@ async def execute_tool(
                 parent_session_id=session_id,
                 skill_name=skill_name,
                 timeout_seconds=timeout_seconds,
+                job_type=job_type,
+                extras=extras,
             )
             if skip_review:
                 return (
