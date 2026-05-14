@@ -1047,7 +1047,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "github_list_connections",
-            "description": "List GitHub connections (repos linked to this project). Returns connection ids, repos, and default branches. Use this to discover which repos the agent can act on.",
+            "description": "Diagnostic only — list configured GitHub PATs and show which one is bound to this project. You do NOT need to call this before other github_* tools; they automatically use the project's bound repo.",
             "parameters": {"type": "object", "properties": {}}
         }
     },
@@ -1055,13 +1055,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "github_read_file",
-            "description": "Read a file from a connected GitHub repository. Returns the file content. Use to understand existing code before making changes.",
+            "description": "Read a file from the GitHub repo bound to this project. Use to understand existing code before making changes.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string", "description": "ID from github_list_connections. If omitted, the default connection for the active project is used."},
                     "path": {"type": "string", "description": "Path within the repo, e.g. 'src/main.py'"},
-                    "ref": {"type": "string", "description": "Optional branch or commit sha. Defaults to the default branch."}
+                    "ref": {"type": "string", "description": "Optional branch or commit sha. Defaults to the repo's default branch."}
                 },
                 "required": ["path"]
             }
@@ -1071,11 +1070,10 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "github_list_directory",
-            "description": "List files and folders at a path in a connected GitHub repo.",
+            "description": "List files and folders at a path in the GitHub repo bound to this project.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string"},
                     "path": {"type": "string", "description": "Directory path; '' for repo root.", "default": ""},
                     "ref": {"type": "string"}
                 },
@@ -1086,12 +1084,41 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "github_create_branch",
-            "description": "Create a new branch off the default branch (or a named base branch) in a connected GitHub repo. Use before making changes the user will review via PR.",
+            "name": "github_list_branches",
+            "description": "List all branches in the GitHub repo bound to this project. Returns names, head shas, and protected flags. Use to discover iteration_loop branches, find PR candidates, or audit branch sprawl.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string"},
+                    "name_prefix": {"type": "string", "description": "Optional case-sensitive prefix filter, e.g. 'iteration/' to find iteration_loop branches."}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_list_pulls",
+            "description": "List pull requests in the GitHub repo bound to this project. Filter by state (open/closed/all) and optionally by head or base branch.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {"type": "string", "enum": ["open", "closed", "all"], "default": "open"},
+                    "head": {"type": "string", "description": "Filter by head branch, e.g. 'owner:feature-x' or 'feature-x'."},
+                    "base": {"type": "string", "description": "Filter by base branch, e.g. 'main'."}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_create_branch",
+            "description": "Create a new branch off the default branch (or a named base branch) in the GitHub repo bound to this project.",
+            "parameters": {
+                "type": "object",
+                "properties": {
                     "new_branch": {"type": "string"},
                     "base_branch": {"type": "string", "description": "Optional base branch; defaults to repo default."}
                 },
@@ -1102,12 +1129,25 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
-            "name": "github_write_files",
-            "description": "Atomically commit one or more files to a branch via the GitHub Trees API. Use after github_create_branch to land changes the user will review.",
+            "name": "github_delete_branch",
+            "description": "Delete a branch from the GitHub repo bound to this project. Use to clean up merged or obsolete branches. Will refuse to delete the repo's default branch.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string"},
+                    "branch": {"type": "string", "description": "Branch name to delete (no 'refs/heads/' prefix)."}
+                },
+                "required": ["branch"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "github_write_files",
+            "description": "Atomically commit one or more files to a branch in the GitHub repo bound to this project. Use after github_create_branch to land changes the user will review.",
+            "parameters": {
+                "type": "object",
+                "properties": {
                     "branch": {"type": "string"},
                     "message": {"type": "string", "description": "Commit message"},
                     "files": {
@@ -1131,11 +1171,10 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "github_create_pr",
-            "description": "Open a pull request from one branch into another in a connected GitHub repo.",
+            "description": "Open a pull request in the GitHub repo bound to this project.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string"},
                     "title": {"type": "string"},
                     "head": {"type": "string", "description": "Branch with the changes"},
                     "base": {"type": "string", "description": "Branch to merge into; defaults to repo default."},
@@ -1150,11 +1189,10 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "github_merge_pr",
-            "description": "Merge a previously-opened pull request. Use only when the user explicitly approves merging.",
+            "description": "Merge a previously-opened pull request in the GitHub repo bound to this project. Use only when the user explicitly approves merging. Defaults to squash to keep main linear.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "connection_id": {"type": "string"},
                     "pr_number": {"type": "integer"},
                     "merge_method": {"type": "string", "enum": ["merge", "squash", "rebase"], "default": "squash"}
                 },
@@ -2707,23 +2745,20 @@ async def execute_tool(
                 ) if binding else f"\nProject {effective_project} has no repo bound."
                 return "GitHub connections:\n" + ("\n".join(items) if items else "(none)") + bound_line
 
-            # Resolve which repo this project should act on
-            connection_id = tool_args.get("connection_id")
-            if connection_id:
-                # Explicit connection — caller picked owner/repo themselves
-                conn_row = get_connection(connection_id)
-                owner = (tool_args.get("owner") or (conn_row or {}).get("owner") or "")
-                repo = (tool_args.get("repo") or (conn_row or {}).get("repo") or "")
-            else:
-                spec = get_project_repo_for_tools(effective_project)
-                if not spec:
-                    return (
-                        f"No repo bound to project {effective_project}. Bind one "
-                        f"in Settings → Connections (add a PAT) then in the "
-                        f"Projects page pick a repo for this project."
-                    )
-                conn_row = get_connection(spec["connection_id"])
-                owner = spec["owner"]; repo = spec["repo"]
+            # Resolve which repo this project should act on. The project's
+            # repo binding is authoritative for owner/repo; the connection
+            # only supplies the auth token. Agent-passed connection_id is
+            # ignored — single repo per project.
+            spec = get_project_repo_for_tools(effective_project)
+            if not spec:
+                return (
+                    f"No repo bound to project {effective_project}. Bind one "
+                    f"in Settings → Connections (add a PAT) then in the "
+                    f"Projects page pick a repo for this project."
+                )
+            conn_row = get_connection(spec["connection_id"])
+            owner = spec["owner"]
+            repo = spec["repo"]
             if not conn_row:
                 return (
                     "Connection not found. Re-add the GitHub PAT in "
@@ -2743,6 +2778,38 @@ async def execute_tool(
                     mark_used(conn_row["id"])
                     lines = [f"{i.get('type','?')[0]} {i.get('name')} ({i.get('size','?')}b)" for i in items]
                     return f"{owner}/{repo}:{tool_args.get('path','')}\n" + "\n".join(lines)
+                if tool_name == "github_list_branches":
+                    branches = await client.list_branches(owner, repo)
+                    mark_used(conn_row["id"])
+                    prefix = tool_args.get("name_prefix") or ""
+                    if prefix:
+                        branches = [b for b in branches if (b.get("name") or "").startswith(prefix)]
+                    lines = [
+                        f"{b['name']} (sha={(b.get('commit_sha') or '')[:8]}"
+                        + (", protected" if b.get("protected") else "")
+                        + ")"
+                        for b in branches
+                    ]
+                    header = f"{owner}/{repo} — {len(branches)} branch(es)"
+                    if prefix:
+                        header += f" matching '{prefix}'"
+                    return header + "\n" + ("\n".join(lines) if lines else "(none)")
+                if tool_name == "github_list_pulls":
+                    pulls = await client.list_pulls(
+                        owner, repo,
+                        state=tool_args.get("state", "open"),
+                        head=tool_args.get("head"),
+                        base=tool_args.get("base"),
+                    )
+                    mark_used(conn_row["id"])
+                    lines = [
+                        f"#{p['number']} [{p['state']}] {p['head']} → {p['base']} — {p['title']}"
+                        + (" (draft)" if p.get("draft") else "")
+                        + f"\n  {p['html_url']}"
+                        for p in pulls
+                    ]
+                    header = f"{owner}/{repo} — {len(pulls)} pull(s) (state={tool_args.get('state','open')})"
+                    return header + "\n" + ("\n".join(lines) if lines else "(none)")
                 if tool_name == "github_create_branch":
                     res = await client.create_branch(
                         owner, repo,
@@ -2751,6 +2818,13 @@ async def execute_tool(
                     )
                     mark_used(conn_row["id"])
                     return f"Branch created: {tool_args['new_branch']} (sha={res.get('object',{}).get('sha','?')[:8]})"
+                if tool_name == "github_delete_branch":
+                    branch_name = tool_args["branch"]
+                    if branch_name == conn_row.get("default_branch") or branch_name == spec.get("default_branch"):
+                        return f"Refusing to delete the default branch '{branch_name}'."
+                    await client.delete_branch(owner, repo, branch_name)
+                    mark_used(conn_row["id"])
+                    return f"Branch deleted: {branch_name}"
                 if tool_name == "github_write_files":
                     res = await client.write_files(
                         owner, repo,
