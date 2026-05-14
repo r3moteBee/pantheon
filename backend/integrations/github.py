@@ -316,3 +316,32 @@ class GitHubClient:
             json={"merge_method": merge_method},
         )
         return resp.json()
+
+    async def list_pulls(
+        self, owner: str, repo: str, *, state: str = "open",
+        head: str | None = None, base: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"state": state, "per_page": 100}
+        if head:
+            params["head"] = head
+        if base:
+            params["base"] = base
+        rows = await self._paginate(f"/repos/{owner}/{repo}/pulls", params=params)
+        out = []
+        for r in rows:
+            out.append({
+                "number": r.get("number"),
+                "title": r.get("title"),
+                "state": r.get("state"),
+                "head": (r.get("head") or {}).get("ref"),
+                "base": (r.get("base") or {}).get("ref"),
+                "html_url": r.get("html_url"),
+                "draft": r.get("draft", False),
+            })
+        return out
+
+    async def delete_branch(self, owner: str, repo: str, branch: str) -> None:
+        """Delete a branch ref. 422 from GitHub if it's the default branch."""
+        await self._request(
+            "DELETE", f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+        )
