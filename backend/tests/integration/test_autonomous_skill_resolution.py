@@ -68,19 +68,31 @@ def test_scheduler_signature_accepts_skill_name():
         "_enqueue_autonomous_job missing skill_name param"
 
 
-def test_enqueue_payload_carries_skill_name():
+async def test_enqueue_payload_carries_skill_name(monkeypatch):
     """The payload dict that _enqueue_autonomous_job passes to
-    JobStore.create() includes skill_name."""
-    src = _read("tasks/scheduler.py")
-    # Find the get_store().create(...) call inside _enqueue_autonomous_job.
-    m = re.search(
-        r'async def _enqueue_autonomous_job.*?get_store\(\)\.create\((.*?)\)',
-        src, re.DOTALL,
+    JobStore.create() includes skill_name. Runtime check — resilient
+    to refactors of how the payload literal is constructed."""
+    pytest.importorskip("sqlalchemy", reason="sqlalchemy not installed in test env")
+    from tasks import scheduler
+    from jobs import store as jobs_store
+
+    captured: dict = {}
+
+    class FakeStore:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return "fake-job-id"
+
+    monkeypatch.setattr(jobs_store, "get_store", lambda: FakeStore())
+
+    await scheduler._enqueue_autonomous_job(
+        task_id="t1", task_name="smoke", description="d",
+        skill_name="my-skill",
     )
-    assert m, "_enqueue_autonomous_job's store.create call not found"
-    payload_block = m.group(1)
-    assert '"skill_name": skill_name' in payload_block, \
-        "payload dict missing skill_name forwarding"
+
+    assert "payload" in captured, "no payload kwarg passed to store.create"
+    assert captured["payload"].get("skill_name") == "my-skill", \
+        f"skill_name not forwarded into payload; got {captured['payload']}"
 
 
 def test_handler_resolves_skill_with_underscore_tolerance():
