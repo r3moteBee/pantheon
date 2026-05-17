@@ -162,6 +162,8 @@ async def list_folders(project_id: str = Query("default")) -> dict[str, Any]:
 
 @router.get("/artifacts/tags")
 async def list_tags(project_id: str = Query("default")) -> dict[str, Any]:
+    if project_id in ("all", ""):
+        return {"tags": get_store().tag_counts_all()}
     return {"tags": get_store().tag_counts(project_id)}
 
 

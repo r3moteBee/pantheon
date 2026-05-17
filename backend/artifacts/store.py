@@ -587,6 +587,18 @@ class ArtifactStore:
                 counts[t] = counts.get(t, 0) + 1
         return counts
 
+    def tag_counts_all(self) -> dict[str, int]:
+        """Tag counts across all projects, for the 'All projects' UI toggle."""
+        counts: dict[str, int] = {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tags FROM artifacts WHERE deleted_at IS NULL"
+            ).fetchall()
+        for r in rows:
+            for t in json.loads(r["tags"] or "[]"):
+                counts[t] = counts.get(t, 0) + 1
+        return counts
+
 
 def _path_to_title(path: str) -> str:
     leaf = path.rsplit("/", 1)[-1]
