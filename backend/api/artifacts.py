@@ -60,6 +60,13 @@ class BulkIdsRequest(BaseModel):
     ids: list[str]
 
 
+class BulkMoveRequest(BaseModel):
+    ids: list[str]
+    dest_project_id: str | None = None
+    dest_folder: str = ""
+    mode: str = "move"
+
+
 # ── CRUD ────────────────────────────────────────────────────
 
 @router.post("/artifacts")
@@ -156,6 +163,62 @@ async def list_folders(project_id: str = Query("default")) -> dict[str, Any]:
 @router.get("/artifacts/tags")
 async def list_tags(project_id: str = Query("default")) -> dict[str, Any]:
     return {"tags": get_store().tag_counts(project_id)}
+
+
+@router.post("/artifacts/bulk/move")
+async def bulk_move(req: BulkMoveRequest) -> dict[str, Any]:
+    store = get_store()
+    if req.mode not in ("move", "duplicate"):
+        raise HTTPException(status_code=400, detail=f"invalid mode: {req.mode}")
+    results: list[dict[str, Any]] = []
+    for aid in req.ids:
+        try:
+            src = store.get(aid)
+            if not src:
+                results.append({"id": aid, "error": "artifact not found"})
+                continue
+            dest_project = req.dest_project_id or src["project_id"]
+            cross = dest_project != src["project_id"]
+            if req.mode == "duplicate":
+                new_row = store.duplicate(aid, dest_project, req.dest_folder)
+                try:
+                    from memory.manager import create_memory_manager
+                    mgr = create_memory_manager(project_id=dest_project)
+                    await mgr.index_artifact(new_row["id"], force=True)
+                except Exception as e:
+                    logger.warning("index_artifact failed for dup %s: %s", new_row["id"], e)
+                results.append({
+                    "id": new_row["id"],
+                    "src_id": aid,
+                    "old_path": src["path"],
+                    "new_path": new_row["path"],
+                    "new_project_id": new_row["project_id"],
+                    "mode": "duplicate",
+                })
+            else:
+                updated = store.move(aid, dest_project, req.dest_folder)
+                if cross:
+                    try:
+                        from memory.graph import GraphMemory
+                        from memory.semantic import SemanticMemory
+                        await GraphMemory(project_id=src["project_id"]).strip_artifact(aid)
+                        await SemanticMemory(project_id=src["project_id"]).strip_artifact(aid)
+                        from memory.manager import create_memory_manager
+                        mgr = create_memory_manager(project_id=dest_project)
+                        await mgr.index_artifact(aid, force=True)
+                    except Exception as e:
+                        logger.warning("memory steps failed for move %s: %s", aid, e)
+                results.append({
+                    "id": aid,
+                    "old_path": src["path"],
+                    "new_path": updated["path"],
+                    "new_project_id": updated["project_id"],
+                    "mode": "move",
+                })
+        except Exception as e:
+            logger.exception("bulk_move row failed")
+            results.append({"id": aid, "error": str(e)})
+    return {"results": results}
 
 
 @router.get("/artifacts/{artifact_id}")
