@@ -91,7 +91,9 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     return () => clearTimeout(t)
   }, [toast])
 
+  const refreshSeq = useRef(0)
   const refresh = async () => {
+    const seq = ++refreshSeq.current
     setLoading(true); setError(null)
     try {
       const params = {}
@@ -106,12 +108,17 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
         artifactsApi.folders(projectId),
         artifactsApi.tags(projectId),
       ])
+      // Drop stale responses — a newer refresh has superseded this one.
+      if (seq !== refreshSeq.current) return
       setItems(list.data.artifacts || [])
       setFolders(foldersRes.data.folders || [])
       setTagCounts(tagsRes.data.tags || {})
     } catch (e) {
+      if (seq !== refreshSeq.current) return
       setError(e?.response?.data?.detail || e.message)
-    } finally { setLoading(false) }
+    } finally {
+      if (seq === refreshSeq.current) setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -125,8 +132,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     ;(async () => {
       try {
         const projRes = await projectsApi.list()
-        // /api/projects returns a {id: {...}} dict; convert to array.
-        const projects = Object.values(projRes.data || {})
+        const projects = projRes.data?.projects || []
         if (cancelled) return
         setAllProjects(projects)
         const folderEntries = await Promise.all(projects.map(async (p) => {
