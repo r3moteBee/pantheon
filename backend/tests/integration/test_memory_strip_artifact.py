@@ -52,3 +52,37 @@ def test_strip_artifact_is_idempotent(graph):
         await graph.strip_artifact("art-1")
         await graph.strip_artifact("art-1")  # second call must not raise
     asyncio.run(run())
+
+
+from memory.semantic import SemanticMemory  # noqa: E402
+
+
+@pytest.fixture
+def semantic(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    # SemanticMemory uses ChromaDB under DATA_DIR/chroma; using tmp_path
+    # gives each test an isolated collection.
+    return SemanticMemory(project_id="p1")
+
+
+def test_strip_artifact_deletes_matching_chunks(semantic):
+    async def run():
+        await semantic.store(
+            content="chunk-1 from artifact A",
+            metadata={"artifact_id": "art-1", "kind": "artifact_chunk"},
+        )
+        await semantic.store(
+            content="chunk-2 from artifact A",
+            metadata={"artifact_id": "art-1", "kind": "artifact_chunk"},
+        )
+        await semantic.store(
+            content="chunk from artifact B",
+            metadata={"artifact_id": "art-2", "kind": "artifact_chunk"},
+        )
+        n = await semantic.strip_artifact("art-1")
+        assert n == 2
+        # Only the surviving artifact's chunks remain.
+        remaining = await semantic.list_memories(limit=10)
+        assert len(remaining) == 1
+        assert remaining[0]["metadata"]["artifact_id"] == "art-2"
+    asyncio.run(run())

@@ -216,6 +216,28 @@ class SemanticMemory:
             logger.error(f"Failed to delete semantic memory {doc_id}: {e}")
             return False
 
+    async def strip_artifact(self, artifact_id: str) -> int:
+        """Delete all semantic chunks whose metadata.artifact_id matches.
+
+        Returns the number of chunks deleted.
+        """
+        try:
+            collection = await self._get_collection_async()
+            # Chroma's where filter supports metadata equality.
+            existing = await _asyncio.to_thread(
+                collection.get,
+                where={"artifact_id": {"$eq": artifact_id}},
+                include=[],
+            )
+            ids = existing.get("ids") if existing else []
+            if not ids:
+                return 0
+            await _asyncio.to_thread(collection.delete, ids=ids)
+            return len(ids)
+        except Exception as e:
+            logger.error(f"strip_artifact({artifact_id}) failed: {e}")
+            return 0
+
     async def list_memories(
         self,
         limit: int = 100,
