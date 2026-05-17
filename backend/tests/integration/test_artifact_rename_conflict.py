@@ -46,3 +46,16 @@ def test_unique_path_handles_no_extension(store):
 def test_unique_path_scoped_per_project(store):
     store.create(project_id="p1", path="p1/foo.md", content="a", content_type="text/markdown")
     assert store._unique_path("p2", "p2/foo.md") == "p2/foo.md"
+
+
+def test_rename_auto_suffixes_on_collision(store):
+    a = store.create(project_id="p1", path="p1/foo.md", content="first", content_type="text/markdown")
+    b = store.create(project_id="p1", path="p1/bar.md", content="second", content_type="text/markdown")
+    result = store.rename(b["id"], "p1/foo.md")
+    assert result["path"] == "p1/foo-1.md"
+
+
+def test_rename_no_collision_returns_requested(store):
+    a = store.create(project_id="p1", path="p1/foo.md", content="x", content_type="text/markdown")
+    result = store.rename(a["id"], "p1/bar.md")
+    assert result["path"] == "p1/bar.md"

@@ -358,9 +358,13 @@ class ArtifactStore:
         raise RuntimeError(f"_unique_path: exhausted suffixes for {desired_path}")
 
     def rename(self, artifact_id: str, new_path: str) -> dict[str, Any]:
+        cur = self.get(artifact_id)
+        if not cur:
+            raise ValueError(f"artifact not found: {artifact_id}")
+        final_path = self._unique_path(cur["project_id"], new_path)
         with self._connect() as conn:
             conn.execute("UPDATE artifacts SET path = ?, updated_at = ? WHERE id = ?",
-                         (new_path, _now(), artifact_id))
+                         (final_path, _now(), artifact_id))
         return self.get(artifact_id)
 
     def pin(self, artifact_id: str, pinned: bool) -> dict[str, Any]:
