@@ -211,6 +211,10 @@ export const artifactsApi = {
   },
   update: (id, body) => api.patch(`/api/artifacts/${id}`, body),
   rename: (id, new_path) => api.post(`/api/artifacts/${id}/rename`, { new_path }),
+  move: (id, dest_folder, { dest_project_id = null, mode = 'move' } = {}) =>
+    api.post(`/api/artifacts/${id}/move`, { dest_folder, dest_project_id, mode }),
+  moveBulk: (ids, dest_folder, { dest_project_id = null, mode = 'move' } = {}) =>
+    api.post('/api/artifacts/bulk/move', { ids, dest_folder, dest_project_id, mode }),
   pin: (id, pinned) => api.post(`/api/artifacts/${id}/pin`, { pinned }),
   delete: (id) => api.delete(`/api/artifacts/${id}`),
   restore: (id) => api.post(`/api/artifacts/${id}/restore`),
