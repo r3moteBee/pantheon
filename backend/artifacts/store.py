@@ -367,6 +367,46 @@ class ArtifactStore:
                          (final_path, _now(), artifact_id))
         return self.get(artifact_id)
 
+    def duplicate(
+        self,
+        artifact_id: str,
+        dest_project_id: str,
+        dest_folder: str,
+    ) -> dict[str, Any]:
+        """Create an independent copy of the artifact in dest_project / dest_folder.
+
+        The new artifact has a fresh id and is a deep-copy of the source's
+        content + metadata + tags. Memory (graph + semantic) is NOT copied;
+        callers should index_artifact on the returned row in the dest project.
+        """
+        src = self.get(artifact_id)
+        if not src:
+            raise ValueError(f"artifact not found: {artifact_id}")
+        basename = src["path"].rsplit("/", 1)[-1]
+        folder = dest_folder.rstrip("/")
+        desired = f"{folder}/{basename}" if folder else basename
+        final_path = self._unique_path(dest_project_id, desired)
+
+        # Materialize content: text artifacts store text inline; binary uses blob_path.
+        content: str | bytes
+        if src.get("content") is not None:
+            content = src["content"]
+        elif src.get("blob_path"):
+            content = self._load_blob(src["blob_path"])
+        else:
+            content = b""
+
+        new_row = self.create(
+            project_id=dest_project_id,
+            path=final_path,
+            content=content,
+            content_type=src.get("content_type") or "text/plain",
+            title=src.get("title"),
+            tags=list(src.get("tags") or []),
+            source=src.get("source"),
+        )
+        return new_row
+
     def pin(self, artifact_id: str, pinned: bool) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("UPDATE artifacts SET pinned = ?, updated_at = ? WHERE id = ?",
