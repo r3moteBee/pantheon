@@ -78,6 +78,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const [allFoldersByProject, setAllFoldersByProject] = useState({})
   const [allProjects, setAllProjects] = useState([])
 
+  const [crossProjectMove, setCrossProjectMove] = useState(null)
+  // crossProjectMove shape: { id, source, dest: { project_id, folder }, mode: 'move'|'duplicate' }
+  const [toast, setToast] = useState(null)
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 3500)
+    return () => clearTimeout(t)
+  }, [toast])
+
   const refresh = async () => {
     setLoading(true); setError(null)
     try {
@@ -163,6 +173,39 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     }
   }
 
+  const handleArtifactDrop = async ({ project_id, folder }, event) => {
+    let payload
+    try {
+      payload = JSON.parse(event.dataTransfer.getData('application/pantheon-artifact'))
+    } catch { return }
+    if (!payload || !payload.id) return
+    const mode = event.altKey ? 'duplicate' : 'move'
+    if (payload.project_id !== project_id) {
+      setCrossProjectMove({
+        id: payload.id,
+        source: payload,
+        dest: { project_id, folder: folder || '' },
+        mode,
+      })
+      return
+    }
+    await performMove(payload.id, project_id, folder || '', mode, payload)
+  }
+
+  const performMove = async (id, dest_project_id, dest_folder, mode, payload) => {
+    try {
+      const res = await artifactsApi.move(id, dest_folder, { dest_project_id, mode })
+      await refresh()
+      const basename = (payload?.path || '').split('/').pop()
+      const newPath = res.data?.path || ''
+      const renamed = basename && newPath && !newPath.endsWith(basename)
+      const verb = mode === 'duplicate' ? 'Duplicated' : 'Moved'
+      setToast(`${verb} ${basename} → ${newPath}${renamed ? ' (renamed to avoid conflict)' : ''}`)
+    } catch (e) {
+      setToast(`${mode === 'duplicate' ? 'Duplicate' : 'Move'} failed: ${e?.response?.data?.detail || e.message}`)
+    }
+  }
+
   return (
     <div className="h-full flex">
       {/* Left rail: folders + tags (collapsible; hidden on mobile when an artifact is open) */}
@@ -229,6 +272,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             }
             selected={{ project_id: projectId, folder: filterFolder }}
             onSelect={({ folder }) => setFilterFolder(folder || '')}
+            onDrop={handleArtifactDrop}
             collapsedKey="pan_artifacts_rail_collapsed"
             showProjects="multi-only"
           />
@@ -382,6 +426,15 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <div
                 key={a.id}
                 onClick={() => setActiveId(a.id)}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('application/pantheon-artifact', JSON.stringify({
+                    id: a.id,
+                    project_id: a.project_id,
+                    path: a.path,
+                  }))
+                  e.dataTransfer.effectAllowed = 'copyMove'
+                }}
                 className={`p-2 border-b border-gray-900 cursor-pointer hover:bg-gray-900 ${activeId === a.id ? 'bg-gray-900' : ''}`}
               >
                 <div className="flex items-start gap-2">
@@ -432,6 +485,29 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           </div>
         )}
       </div>
+
+      {crossProjectMove && (
+        <CrossProjectMoveConfirm
+          info={crossProjectMove}
+          projects={allProjects}
+          onCancel={() => setCrossProjectMove(null)}
+          onConfirm={async () => {
+            await performMove(
+              crossProjectMove.id,
+              crossProjectMove.dest.project_id,
+              crossProjectMove.dest.folder,
+              crossProjectMove.mode,
+              crossProjectMove.source
+            )
+            setCrossProjectMove(null)
+          }}
+        />
+      )}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded px-3 py-2 shadow-lg">
+          {toast}
+        </div>
+      )}
     </div>
   )
 }
@@ -705,6 +781,32 @@ function PreviewBody({ artifact, preview }) {
     <div className="p-6 text-xs text-gray-500">
       Preview unavailable: {preview.reason || preview.type}.{' '}
       <a href={`/api/artifacts/${artifact.id}/raw`} download className="text-brand-400 underline">Download original</a>
+    </div>
+  )
+}
+
+
+function CrossProjectMoveConfirm({ info, projects, onCancel, onConfirm }) {
+  const sourceName = (projects.find((p) => p.id === info.source.project_id) || {}).name || info.source.project_id
+  const destName = (projects.find((p) => p.id === info.dest.project_id) || {}).name || info.dest.project_id
+  const basename = (info.source.path || '').split('/').pop()
+  const verb = info.mode === 'duplicate' ? 'Duplicate' : 'Move'
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center" onClick={onCancel}>
+      <div className="bg-gray-950 border border-gray-800 rounded-lg p-4 max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-semibold text-gray-100 mb-2">
+          {verb} "{basename}" from {sourceName} to {destName}?
+        </div>
+        <div className="text-xs text-gray-400 mb-4">
+          {info.mode === 'move'
+            ? `This removes the artifact and its memory (graph + embeddings) from ${sourceName}. ${destName}'s recall will gain it.`
+            : `This creates an independent copy in ${destName}. The original in ${sourceName} stays put.`}
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200">Cancel</button>
+          <button onClick={onConfirm} className="px-3 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 text-white">{verb}</button>
+        </div>
+      </div>
     </div>
   )
 }
