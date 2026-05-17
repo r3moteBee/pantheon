@@ -11,7 +11,8 @@ import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
 import { javascript } from '@codemirror/lang-javascript'
-import { artifactsApi } from '../api/client'
+import { artifactsApi, projectsApi } from '../api/client'
+import FolderTree from '../components/FolderTree'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
 import { mermaidMarkdownComponents } from '../components/markdownComponents'
@@ -74,6 +75,9 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const [selected, setSelected] = useState(new Set()) // ids checked in list
   const [activeId, setActiveId] = useState(null)
 
+  const [allFoldersByProject, setAllFoldersByProject] = useState({})
+  const [allProjects, setAllProjects] = useState([])
+
   const refresh = async () => {
     setLoading(true); setError(null)
     try {
@@ -102,6 +106,28 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     return () => clearTimeout(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, projectScope, filterFolder, filterTag, filterPinned, search, sort])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const projRes = await projectsApi.list()
+        // /api/projects returns a {id: {...}} dict; convert to array.
+        const projects = Object.values(projRes.data || {})
+        if (cancelled) return
+        setAllProjects(projects)
+        const folderEntries = await Promise.all(projects.map(async (p) => {
+          const res = await artifactsApi.folders(p.id)
+          return [p.id, res.data?.folders || []]
+        }))
+        if (cancelled) return
+        setAllFoldersByProject(Object.fromEntries(folderEntries))
+      } catch (e) {
+        console.warn('failed to load projects/folders for tree', e)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   const toggleSelect = (id) => {
     const next = new Set(selected)
@@ -187,19 +213,25 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           >
             All
           </button>
-          {folders.map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilterFolder(f)}
-              className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-1 ${
-                filterFolder === f ? 'bg-brand-600 text-white' : 'hover:bg-gray-900 text-gray-400'
-              }`}
-              style={{ paddingLeft: 8 + (f.split('/').length - 1) * 12 }}
-            >
-              <Folder className="w-3 h-3" />
-              {f.split('/').pop()}
-            </button>
-          ))}
+          <FolderTree
+            nodes={
+              projectId === 'all'
+                ? allProjects.map((p) => ({
+                    project_id: p.id,
+                    project_name: p.name,
+                    folders: allFoldersByProject[p.id] || [],
+                  }))
+                : [{
+                    project_id: projectId,
+                    project_name: (allProjects.find((p) => p.id === projectId) || {}).name || projectId,
+                    folders,
+                  }]
+            }
+            selected={{ project_id: projectId, folder: filterFolder }}
+            onSelect={({ folder }) => setFilterFolder(folder || '')}
+            collapsedKey="pan_artifacts_rail_collapsed"
+            showProjects="multi-only"
+          />
         </div>
 
         <div>
