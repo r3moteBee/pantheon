@@ -50,9 +50,31 @@ CREATE TABLE subscriptions (
 );
 ```
 
-Read queries (list, search, recall) get a project predicate that unions `project_id = :p` with `project_id IN (SELECT publisher_project_id FROM subscriptions WHERE subscriber_project_id = :p)`.
+### Two layers: canonical content vs. per-project graph
 
-Writes (`save_to_artifact`, edits, deletes, moves) stay strictly scoped to `project_id = :p` — subscribers can never mutate canonical state.
+**Layer 1: canonical content (shared).** The artifact's content blob, metadata, path, version history live in the publisher's project. Subscribers read it directly — no duplication. Read queries (list, search, content-fetch) get a project predicate that unions `project_id = :p` with `project_id IN (SELECT publisher_project_id FROM subscriptions WHERE subscriber_project_id = :p)`.
+
+**Layer 2: graph projection (strictly per-project).** Graph nodes and edges are NEVER shared across projects. Each subscriber maintains its own graph projection of the canonical artifact, derived by running the file-indexer/extractor in the subscriber's context. The result reflects how the artifact relates to *that subscriber's* existing knowledge graph — its neighboring concepts, its similarity edges, its topic-merge candidates. The same artifact yields different graphs in different projects, by design.
+
+Semantic chunks (chroma embeddings) follow the same rule as the graph: per-project, derived from canonical content. A subscriber's recall surfaces the canonical content via the subscriber's own embeddings and graph relationships.
+
+### Subscribe / unsubscribe lifecycle
+
+- **Subscribe.** Insert a `subscriptions` row + enqueue `file_indexing` jobs in the subscriber's project for every in-scope canonical artifact. Re-extraction populates the subscriber's graph and semantic memory.
+- **Unsubscribe.** Delete the `subscriptions` row + run `strip_artifact` (the same primitive from Phase 1) in the subscriber's project for every previously-subscribed artifact. Subscriber's graph cleanly loses the projections; canonical content untouched.
+- **Publisher modifies a subscribed artifact.** Subscribers' projections become stale. Either auto-rebuild on the next access, or batch re-index. Decision pending — see open question 6.
+
+### What stays strictly per-project
+
+- All writes (`save_to_artifact`, edits, deletes, moves) — subscribers can never mutate canonical state.
+- All graph nodes and edges.
+- All semantic embeddings.
+- Topic-merge proposals (no cross-project merges).
+- Skills and personas.
+
+### What is shared
+
+- Artifact rows (read-only from subscribers): content, path, version history, frontmatter, tags.
 
 ## Open decisions (the usage questions Phase 2 must answer)
 
@@ -92,31 +114,33 @@ User triggers `ingest_source` in a subscriber project for a URL/video already pu
 
 ### 4. Memory recall: how do subscribed artifacts surface?
 
-When a subscriber project recalls something whose match lives in a publisher's library:
+Recall in the subscriber's project surfaces canonical content via the subscriber's own embeddings + graph (per-project layer, see model section above). The artifact's content is reached through the subscriber's own derived nodes — meaning the match comes through naturally as a regular recall hit, just with `metadata.artifact_owner_project=<publisher>` so the UI can surface provenance.
 
-- **Provenance tag.** Result tagged `[from publisher: SEC Filings]` so the user sees the source.
-- **Identical surfacing.** No distinction between owned and subscribed in recall output. Cleanest UX, but obscures source.
-- **Configurable.** Per-subscription flag: "include in recall" yes/no.
+**Provenance tag:** result tagged `[from publisher: <project_name>]` in recall output.
 
-**Recommended:** provenance tag, always-on inclusion. (Filtering can come later.)
+This is now a UI question only — the recall mechanism is unchanged from today (project-scoped query against project-scoped graph + semantic stores). Resolved.
 
-### 5. Similarity / topic-merge across publisher boundaries
+### 5. Similarity / topic-merge: ~~across publisher boundaries~~ → not applicable
 
-The similarity pipeline runs `SEMANTICALLY_SIMILAR_TO` edges between artifact topics. With subscriptions, should it traverse publisher-subscriber boundaries?
+Originally this asked whether `SEMANTICALLY_SIMILAR_TO` edges should cross publisher/subscriber boundaries. With the per-project graph model: **no cross-boundary edges exist.** Each subscriber's own graph projection of a canonical artifact contributes nodes that participate in *that subscriber's* similarity pipeline normally. The publisher's graph stays the publisher's.
 
-- **Yes.** Subscriber's "REIT cap rate" links to publisher's "capitalization rate". Cross-project topic clustering becomes possible.
-- **No.** Subscribed content's graph stays parallel to subscriber's own — siloed.
+This question is dissolved — there is no cross-boundary similarity to design.
 
-**Cross-project edges** are doable but need a flag (`cross_project: true`) so they're traversable but distinguishable from intra-project edges.
+### 6. Re-index on publisher modification
 
-**Recommended:** yes, with the flag. Topic-merge proposals across boundaries should be reviewable, not auto-applied.
+Publisher updates a subscribed artifact (re-ingest, edit, new version). Subscriber's graph projection now reflects the prior content. Options:
 
-### 6. Delete and unsubscribe semantics
+- **Lazy: stale until accessed.** Mark the subscriber's projection stale; rebuild on next recall hit or next list view. Simplest, but recall could surface outdated context for a window.
+- **Eager: enqueue re-extraction on publish.** Publisher's modification triggers `file_indexing` jobs in every subscriber's project. Always current, but every publisher write fans out work to N subscribers.
+- **Manual: notify, user rebuilds.** Subscriber sees a "needs rebuild" indicator; user clicks "refresh subscription."
 
-- **Publisher deletes a published artifact.** All subscribers immediately lose access. Show a "removed by publisher" tombstone? Silent disappearance? Quietly drop with a notification?
-- **Subscriber unsubscribes.** All publisher artifacts vanish from subscriber's lists, recall, search. Their graph references (if any cross-boundary edges exist) get the cross-project flag cleared or the edges purged.
+**Recommended:** eager — auto-enqueue. The fan-out is fine for typical scales (1–5 subscribers per publisher in a single-user system) and avoids stale-context bugs.
 
-**Recommended:** silent disappearance on publisher delete (with the artifact's existence as memory if the subscriber forked it before). Unsubscribe is a clean break.
+### 6b. Delete and unsubscribe semantics
+
+- **Publisher deletes a published artifact.** Subscribers' projections become orphaned. Run `strip_artifact` in each subscriber to clean their graph + semantic rows. Subscribers see the artifact disappear from their lists with a brief toast or notification.
+- **Subscriber unsubscribes.** Drop the `subscriptions` row + run `strip_artifact` in subscriber for each previously-in-scope artifact. Clean break.
+- **Publisher project deleted entirely.** All subscriptions referencing it auto-cancel; subscriber-side cleanup runs as above.
 
 ### 7. Discovery UI
 
@@ -153,10 +177,11 @@ When this ships, existing single-user installs already have several projects. No
 
 When the Phase 2 brainstorm happens, consider sub-phasing:
 
-- **2a.** Subscriptions at project granularity, read-only inclusion in `list_artifacts` / `read_artifact` / `recall`, provenance tags, discovery via settings panel. No annotations, no cross-boundary similarity.
-- **2b.** Cross-boundary similarity edges + topic-merge proposals.
-- **2c.** Annotation layer (if friction shows up — may turn out to be unneeded).
-- **2d.** Folder/tag-scoped subscriptions.
+- **2a.** Subscriptions at project granularity, read-only inclusion in `list_artifacts` / `read_artifact`, provenance tags, per-subscriber graph projection (extraction runs in subscriber context), discovery via settings panel. Eager re-extraction on publisher modification.
+- **2b.** Annotation layer (if friction shows up — may turn out to be unneeded since the subscriber's own graph nodes already provide a place to anchor subscriber-side context).
+- **2c.** Folder/tag-scoped subscriptions.
+
+(Note: "cross-boundary similarity edges" was a Phase 2b candidate in an earlier draft; it's been dropped from scope because the per-project graph model makes it unnecessary by construction.)
 
 ## Next step
 
