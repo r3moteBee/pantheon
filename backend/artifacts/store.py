@@ -329,6 +329,34 @@ class ArtifactStore:
         )
         return "".join(diff)
 
+    def _unique_path(self, project_id: str, desired_path: str) -> str:
+        """Return desired_path if free; otherwise suffix the basename: foo.md → foo-1.md."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM artifacts WHERE project_id = ? AND path = ? AND deleted_at IS NULL",
+                (project_id, desired_path),
+            ).fetchone()
+            if not row:
+                return desired_path
+            # Split into stem + extension. "foo.md" -> ("foo", ".md"); "README" -> ("README", "").
+            last_slash = desired_path.rfind("/")
+            dir_part = desired_path[: last_slash + 1] if last_slash >= 0 else ""
+            base = desired_path[last_slash + 1 :]
+            dot = base.rfind(".")
+            if dot > 0:
+                stem, ext = base[:dot], base[dot:]
+            else:
+                stem, ext = base, ""
+            for n in range(1, 1001):
+                candidate = f"{dir_part}{stem}-{n}{ext}"
+                row = conn.execute(
+                    "SELECT 1 FROM artifacts WHERE project_id = ? AND path = ? AND deleted_at IS NULL",
+                    (project_id, candidate),
+                ).fetchone()
+                if not row:
+                    return candidate
+        raise RuntimeError(f"_unique_path: exhausted suffixes for {desired_path}")
+
     def rename(self, artifact_id: str, new_path: str) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("UPDATE artifacts SET path = ?, updated_at = ? WHERE id = ?",
