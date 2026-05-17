@@ -40,6 +40,12 @@ class RenameRequest(BaseModel):
     new_path: str
 
 
+class MoveRequest(BaseModel):
+    dest_project_id: str | None = None  # None ⇒ current project
+    dest_folder: str = ""
+    mode: str = "move"  # "move" | "duplicate"
+
+
 class PinRequest(BaseModel):
     pinned: bool
 
@@ -224,6 +230,51 @@ async def rename_artifact(artifact_id: str, req: RenameRequest) -> dict[str, Any
         return get_store().rename(artifact_id, req.new_path)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/artifacts/{artifact_id}/move")
+async def move_artifact(artifact_id: str, req: MoveRequest) -> dict[str, Any]:
+    store = get_store()
+    src = store.get(artifact_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    if req.mode not in ("move", "duplicate"):
+        raise HTTPException(status_code=400, detail=f"invalid mode: {req.mode}")
+    dest_project = req.dest_project_id or src["project_id"]
+
+    if req.mode == "duplicate":
+        new_row = store.duplicate(artifact_id, dest_project, req.dest_folder)
+        # Re-extract in dest (best-effort).
+        try:
+            from memory.manager import create_memory_manager
+            mgr = create_memory_manager(project_id=dest_project)
+            await mgr.index_artifact(new_row["id"], force=True)
+        except Exception as e:
+            logger.warning("index_artifact failed for duplicate %s: %s", new_row["id"], e)
+        return new_row
+
+    # mode == "move"
+    cross_project = dest_project != src["project_id"]
+    updated = store.move(artifact_id, dest_project, req.dest_folder)
+    if cross_project:
+        # Strip source project's memory for this artifact.
+        try:
+            from memory.graph import GraphMemory
+            from memory.semantic import SemanticMemory
+            src_graph = GraphMemory(project_id=src["project_id"])
+            src_sem = SemanticMemory(project_id=src["project_id"])
+            await src_graph.strip_artifact(artifact_id)
+            await src_sem.strip_artifact(artifact_id)
+        except Exception as e:
+            logger.warning("memory strip failed on move %s: %s", artifact_id, e)
+        # Re-extract in dest project.
+        try:
+            from memory.manager import create_memory_manager
+            mgr = create_memory_manager(project_id=dest_project)
+            await mgr.index_artifact(artifact_id, force=True)
+        except Exception as e:
+            logger.warning("index_artifact failed for moved %s: %s", artifact_id, e)
+    return updated
 
 
 @router.post("/artifacts/{artifact_id}/pin")
