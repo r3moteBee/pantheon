@@ -150,6 +150,11 @@ async def list_artifacts(
             path_prefix=path_prefix, pinned_only=pinned_only, search=search,
             sort=sort, limit=limit, offset=offset,
         )
+    # Strip heavy fields the list UI never reads — keeps the payload from
+    # ballooning to multiple MB on large projects.
+    for item in items:
+        item.pop("content", None)
+        item.pop("blob_path", None)
     return {"artifacts": items, "count": len(items)}
 
 
