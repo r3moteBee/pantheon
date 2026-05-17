@@ -482,6 +482,36 @@ class GraphMemory:
             conn.commit()
         return cursor.rowcount > 0
 
+    async def strip_artifact(self, artifact_id: str) -> int:
+        """Delete graph nodes whose metadata.artifact_id matches.
+
+        Used to clean up an artifact's 1:1 contributions (source + content nodes)
+        when the artifact moves to another project or is duplicated/removed.
+        Shared topic/concept nodes referenced by other artifacts are preserved.
+
+        Returns the number of nodes deleted.
+        """
+        deleted = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, metadata FROM graph_nodes WHERE project_id = ?",
+                (self.project_id,),
+            ).fetchall()
+            target_ids: list[str] = []
+            for row in rows:
+                try:
+                    meta = json.loads(row["metadata"] or "{}")
+                except json.JSONDecodeError:
+                    continue
+                if meta.get("artifact_id") == artifact_id:
+                    target_ids.append(row["id"])
+            for node_id in target_ids:
+                # FK ON DELETE CASCADE removes incident edges.
+                conn.execute("DELETE FROM graph_nodes WHERE id = ?", (node_id,))
+                deleted += 1
+            conn.commit()
+        return deleted
+
     async def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge."""
         with self._connect() as conn:
