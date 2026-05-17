@@ -407,6 +407,40 @@ class ArtifactStore:
         )
         return new_row
 
+    def move(
+        self,
+        artifact_id: str,
+        dest_project_id: str,
+        dest_folder: str,
+    ) -> dict[str, Any]:
+        """Move an artifact to dest_project / dest_folder.
+
+        Intra-project: changes `path` only. The artifact id is stable.
+        Cross-project: updates `project_id` + `path`. Memory cleanup
+        (graph + semantic) in source project must be performed by the
+        CALLER via graph.strip_artifact + semantic.strip_artifact;
+        re-extraction in dest must be triggered via
+        MemoryManager.index_artifact(id) — those primitives live above
+        the store layer.
+
+        Returns the updated artifact dict.
+        """
+        src = self.get(artifact_id)
+        if not src:
+            raise ValueError(f"artifact not found: {artifact_id}")
+        basename = src["path"].rsplit("/", 1)[-1]
+        folder = dest_folder.rstrip("/")
+        desired = f"{folder}/{basename}" if folder else basename
+        final_path = self._unique_path(dest_project_id, desired)
+
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE artifacts SET project_id = ?, path = ?, updated_at = ? WHERE id = ?",
+                (dest_project_id, final_path, _now(), artifact_id),
+            )
+            conn.commit()
+        return self.get(artifact_id)
+
     def pin(self, artifact_id: str, pinned: bool) -> dict[str, Any]:
         with self._connect() as conn:
             conn.execute("UPDATE artifacts SET pinned = ?, updated_at = ? WHERE id = ?",
