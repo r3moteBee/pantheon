@@ -3,7 +3,7 @@ import {
   FolderOpen, Folder, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
   Save, Download, X, Tag, Edit3, Eye, History, Pin, MoreVertical, FileCode,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, Move, Copy,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -13,6 +13,7 @@ import { python } from '@codemirror/lang-python'
 import { javascript } from '@codemirror/lang-javascript'
 import { artifactsApi, projectsApi } from '../api/client'
 import FolderTree from '../components/FolderTree'
+import MoveModal from '../components/MoveModal'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
 import { mermaidMarkdownComponents } from '../components/markdownComponents'
@@ -80,6 +81,8 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
 
   const [crossProjectMove, setCrossProjectMove] = useState(null)
   // crossProjectMove shape: { id, source, dest: { project_id, folder }, mode: 'move'|'duplicate' }
+  const [moveModal, setMoveModal] = useState(null)
+  // moveModal shape: { ids: string[], mode: 'move' | 'duplicate' }
   const [toast, setToast] = useState(null)
 
   useEffect(() => {
@@ -381,6 +384,18 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <button onClick={handleBulkExport} className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1">
                 <Download className="w-3 h-3" /> Download zip
               </button>
+              <button
+                onClick={() => setMoveModal({ ids: Array.from(selected), mode: 'move' })}
+                className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
+              >
+                <Move className="w-3 h-3" /> Move
+              </button>
+              <button
+                onClick={() => setMoveModal({ ids: Array.from(selected), mode: 'duplicate' })}
+                className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
+              >
+                <Copy className="w-3 h-3" /> Duplicate
+              </button>
               <button onClick={handleBulkDelete} className="px-2 py-1 rounded bg-red-900 hover:bg-red-800 flex items-center gap-1">
                 <Trash2 className="w-3 h-3" /> Delete
               </button>
@@ -478,6 +493,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             id={activeId}
             onChanged={refresh}
             onClose={() => setActiveId(null)}
+            onRequestMove={(mode) => setMoveModal({ ids: [activeId], mode })}
           />
         ) : (
           <div className="h-full flex items-center justify-center text-xs text-gray-500">
@@ -503,6 +519,23 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           }}
         />
       )}
+      {moveModal && (
+        <MoveModal
+          ids={moveModal.ids}
+          mode={moveModal.mode}
+          projects={allProjects}
+          foldersByProject={allFoldersByProject}
+          currentProjectId={projectId === 'all' ? (allProjects[0]?.id || 'default') : projectId}
+          onClose={() => setMoveModal(null)}
+          onComplete={async (response) => {
+            await refresh()
+            const verb = moveModal.mode === 'duplicate' ? 'Duplicated' : 'Moved'
+            const n = response.results?.length || 0
+            setToast(`${verb} ${n} artifact${n === 1 ? '' : 's'}`)
+            setSelected(new Set())
+          }}
+        />
+      )}
       {toast && (
         <div className="fixed bottom-4 right-4 z-50 bg-gray-900 border border-gray-700 text-gray-200 text-xs rounded px-3 py-2 shadow-lg">
           {toast}
@@ -513,7 +546,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
 }
 
 
-function ArtifactDetail({ id, onChanged, onClose }) {
+function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
   const [artifact, setArtifact] = React.useState(null)
   const [preview, setPreview] = React.useState(null)
   const [versions, setVersions] = React.useState([])
@@ -604,6 +637,24 @@ function ArtifactDetail({ id, onChanged, onClose }) {
         <a href={artifactsApi.rawUrl(id)} download className="text-gray-400 hover:text-gray-200" title="Download original">
           <Download className="w-4 h-4" />
         </a>
+        {onRequestMove && (
+          <>
+            <button
+              onClick={() => onRequestMove('move')}
+              className="text-gray-400 hover:text-gray-200"
+              title="Move to another folder / project"
+            >
+              <Move className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => onRequestMove('duplicate')}
+              className="text-gray-400 hover:text-gray-200"
+              title="Make an independent copy in another folder / project"
+            >
+              <Copy className="w-4 h-4" />
+            </button>
+          </>
+        )}
         <button onClick={remove} className="text-gray-400 hover:text-red-400" title="Delete">
           <Trash2 className="w-4 h-4" />
         </button>
