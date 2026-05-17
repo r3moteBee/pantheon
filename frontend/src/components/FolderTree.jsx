@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, ChevronDown, Folder, FolderOpen, Box } from 'lucide-react'
+import { ChevronRight, ChevronDown, Folder, Box } from 'lucide-react'
 
 /**
  * Project-aware folder tree.
@@ -68,7 +68,7 @@ export default function FolderTree({
     onDrop(target, e)
   }
 
-  const renderFolder = (project_id, folderPath, displayName, depth) => {
+  const renderFolder = (project_id, folderPath, displayName) => {
     const key = `folder:${project_id}:${folderPath}`
     const isSelected = selected.project_id === project_id && selected.folder === folderPath
     const hover = dropHover === JSON.stringify({ project_id, folder: folderPath })
@@ -83,7 +83,6 @@ export default function FolderTree({
         className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-1 ${
           isSelected ? 'bg-brand-600 text-white' : hover ? 'bg-brand-600/30 text-white' : 'hover:bg-gray-900 text-gray-400'
         }`}
-        style={{ paddingLeft: 12 + depth * 12 }}
       >
         <Folder className="w-3 h-3" />
         <span>{displayName}</span>
@@ -183,7 +182,7 @@ function renderTreeRows(treeNode, project_id, collapsed, toggle, renderFolder, b
             <span style={{ marginLeft: 4 + depth * 12, width: 16 }} />
           )}
           <div className="flex-1 min-w-0">
-            {renderFolder(project_id, child.path, child.name, 0)}
+            {renderFolder(project_id, child.path, child.name)}
           </div>
         </div>
       )
