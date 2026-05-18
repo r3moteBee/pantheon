@@ -269,3 +269,26 @@ def test_feed_empty_poll_uses_index(store):
         ).fetchall()
     plan_text = " | ".join(row["detail"] for row in plan)
     assert "idx_artifacts_project_updated" in plan_text, plan_text
+
+
+def test_feed_concurrent_write_during_walk_is_picked_up(store):
+    # Two rows; walk page 1, write a row, walk page 2 — the new row appears.
+    a = store.create(project_id="p_conc_1", path="p_conc_1/a.md",
+                     content="x", content_type="text/markdown")
+    b = store.create(project_id="p_conc_1", path="p_conc_1/b.md",
+                     content="x", content_type="text/markdown")
+    page1 = store.feed(project_id="p_conc_1", limit=2)
+    assert [r["id"] for r in page1] == [a["id"], b["id"]]
+
+    # New write happens "during" the walk (between pages).
+    c = store.create(project_id="p_conc_1", path="p_conc_1/c.md",
+                     content="x", content_type="text/markdown")
+
+    last = page1[-1]
+    page2 = store.feed(
+        project_id="p_conc_1",
+        updated_since=last["updated_at"],
+        after_id=last["id"],
+        limit=2,
+    )
+    assert [r["id"] for r in page2] == [c["id"]]
