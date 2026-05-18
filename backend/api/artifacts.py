@@ -172,6 +172,52 @@ async def list_tags(project_id: str = Query("default")) -> dict[str, Any]:
     return {"tags": get_store().tag_counts(project_id)}
 
 
+@router.get("/artifacts/feed")
+async def feed(
+    project_id: str = Query("default"),
+    updated_since: str | None = Query(None),
+    after_id: str | None = Query(None),
+    include_deleted: bool = Query(False),
+    tag: str | None = Query(None),
+    content_type: str | None = Query(None),
+    path_prefix: str | None = Query(None),
+    limit: int = Query(500, ge=1, le=5000),
+) -> dict[str, Any]:
+    try:
+        rows = get_store().feed(
+            project_id=project_id,
+            updated_since=updated_since,
+            after_id=after_id,
+            include_deleted=include_deleted,
+            tag=tag,
+            content_type=content_type,
+            path_prefix=path_prefix,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Strip heavy fields the feed never returns (spec).
+    for row in rows:
+        row.pop("content", None)
+        row.pop("blob_path", None)
+    if len(rows) >= limit:
+        last = rows[-1]
+        next_cursor = {
+            "updated_since": last["updated_at"],
+            "after_id": last["id"],
+        }
+        has_more = True
+    else:
+        next_cursor = None
+        has_more = False
+    return {
+        "artifacts": rows,
+        "next_cursor": next_cursor,
+        "has_more": has_more,
+        "count": len(rows),
+    }
+
+
 @router.post("/artifacts/bulk/move")
 async def bulk_move(req: BulkMoveRequest) -> dict[str, Any]:
     store = get_store()

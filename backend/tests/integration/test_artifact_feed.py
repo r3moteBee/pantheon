@@ -145,3 +145,38 @@ def test_feed_cross_project_returns_rows_from_all_projects(store):
 def test_feed_after_id_without_updated_since_raises(store):
     with pytest.raises(ValueError):
         store.feed(project_id="p1", after_id="abc", limit=10)
+
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from main import app  # noqa: E402
+from artifacts.store import get_store  # noqa: E402
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+def _seed(project_id, path, content="x", content_type="text/markdown",
+          tags=None):
+    return get_store().create(
+        project_id=project_id, path=path, content=content,
+        content_type=content_type, tags=tags or [],
+    )
+
+
+def test_feed_endpoint_returns_envelope_with_artifacts(client):
+    a = _seed("p_api_1", "p_api_1/a.md")
+    b = _seed("p_api_1", "p_api_1/b.md")
+    r = client.get("/api/artifacts/feed", params={"project_id": "p_api_1", "limit": 10})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert "artifacts" in data
+    assert "next_cursor" in data
+    assert "has_more" in data
+    assert "count" in data
+    ids = [row["id"] for row in data["artifacts"]]
+    assert a["id"] in ids and b["id"] in ids
+    # `content` is stripped from list responses (spec).
+    assert all("content" not in row for row in data["artifacts"])
