@@ -200,6 +200,8 @@ async def feed(
     for row in rows:
         row.pop("content", None)
         row.pop("blob_path", None)
+    # has_more uses len(rows) >= limit; may produce one spurious extra call on
+    # the exact-limit last page (acceptable — caller's next request returns empty).
     if len(rows) >= limit:
         last = rows[-1]
         next_cursor = {

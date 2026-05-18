@@ -629,7 +629,9 @@ class ArtifactStore:
         if path_prefix is not None:
             clauses.append("path LIKE ?")
             args.append(path_prefix + "%")
-        # tag filtering stays in Python because tags is a JSON column.
+        if tag is not None:
+            clauses.append("tags LIKE ?")
+            args.append(f'%"{tag}"%')
         if updated_since is not None and after_id is not None:
             clauses.append(
                 "(updated_at > ? OR (updated_at = ? AND id > ?))"
@@ -647,8 +649,6 @@ class ArtifactStore:
                 (*args, limit),
             ).fetchall()
         results = [self._hydrate_artifact(r) for r in rows]
-        if tag:
-            results = [r for r in results if tag in (r.get("tags") or [])]
         return results
 
 

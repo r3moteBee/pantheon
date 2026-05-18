@@ -179,4 +179,5 @@ def test_feed_endpoint_returns_envelope_with_artifacts(client):
     ids = [row["id"] for row in data["artifacts"]]
     assert a["id"] in ids and b["id"] in ids
     # `content` is stripped from list responses (spec).
-    assert all("content" not in row for row in data["artifacts"])
+    assert all("content" not in row and "blob_path" not in row
+               for row in data["artifacts"])
