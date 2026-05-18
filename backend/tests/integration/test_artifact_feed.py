@@ -82,3 +82,27 @@ def test_feed_paginates_with_cursor_tiebreak(store):
     assert sorted(seen) == sorted(r["id"] for r in rows_in)
     assert len(seen) == len(set(seen))
     assert seen == expected_order
+
+
+def test_feed_excludes_tombstones_by_default(store):
+    a = store.create(project_id="p1", path="p1/keep.md", content="x",
+                     content_type="text/markdown")
+    b = store.create(project_id="p1", path="p1/gone.md", content="x",
+                     content_type="text/markdown")
+    store.soft_delete(b["id"])
+    rows = store.feed(project_id="p1", limit=10)
+    ids = [r["id"] for r in rows]
+    assert a["id"] in ids
+    assert b["id"] not in ids
+
+
+def test_feed_include_deleted_surfaces_tombstones(store):
+    a = store.create(project_id="p1", path="p1/keep.md", content="x",
+                     content_type="text/markdown")
+    b = store.create(project_id="p1", path="p1/gone.md", content="x",
+                     content_type="text/markdown")
+    store.soft_delete(b["id"])
+    rows = store.feed(project_id="p1", include_deleted=True, limit=10)
+    by_id = {r["id"]: r for r in rows}
+    assert a["id"] in by_id and by_id[a["id"]]["deleted_at"] is None
+    assert b["id"] in by_id and by_id[b["id"]]["deleted_at"] is not None
