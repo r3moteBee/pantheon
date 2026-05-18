@@ -627,6 +627,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_project_path
     ON artifacts(project_id, path) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_artifacts_project_created
     ON artifacts(project_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_project_updated
+    ON artifacts(project_id, updated_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_artifacts_pinned
     ON artifacts(project_id, pinned) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact
