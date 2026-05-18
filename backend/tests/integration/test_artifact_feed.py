@@ -252,3 +252,20 @@ def test_feed_last_page_has_no_cursor(client):
     assert data["count"] == 1
     assert data["has_more"] is False
     assert data["next_cursor"] is None
+
+
+def test_feed_empty_poll_uses_index(store):
+    # Seed a few rows so SQLite's planner has stats to work with.
+    for i in range(20):
+        store.create(project_id="p_idx_1", path=f"p_idx_1/f{i}.md",
+                     content="x", content_type="text/markdown")
+    with store._connect() as conn:
+        plan = conn.execute(
+            "EXPLAIN QUERY PLAN "
+            "SELECT * FROM artifacts "
+            "WHERE project_id = ? AND deleted_at IS NULL AND updated_at > ? "
+            "ORDER BY updated_at ASC, id ASC LIMIT 500",
+            ("p_idx_1", "2099-01-01T00:00:00Z"),
+        ).fetchall()
+    plan_text = " | ".join(row["detail"] for row in plan)
+    assert "idx_artifacts_project_updated" in plan_text, plan_text
