@@ -628,6 +628,7 @@ class ArtifactStore:
             clauses.append(
                 "(updated_at > ? OR (updated_at = ? AND id > ?))"
             )
+            # updated_since binds twice: once for `updated_at > ?` and once for `updated_at = ?`.
             args.extend([updated_since, updated_since, after_id])
         elif updated_since is not None:
             clauses.append("updated_at > ?")

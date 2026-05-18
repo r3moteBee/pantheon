@@ -50,6 +50,15 @@ def test_feed_paginates_with_cursor_tiebreak(store):
             (collision_ts, rows_in[3]["id"]),
         )
 
+    with store._connect() as conn:
+        expected_order = [
+            r["id"] for r in conn.execute(
+                "SELECT id FROM artifacts WHERE project_id = ? "
+                "ORDER BY updated_at ASC, id ASC",
+                ("p1",),
+            ).fetchall()
+        ]
+
     seen: list[str] = []
     cursor_updated = None
     cursor_id = None
@@ -72,3 +81,4 @@ def test_feed_paginates_with_cursor_tiebreak(store):
     # Every row appears exactly once, in (updated_at, id) order.
     assert sorted(seen) == sorted(r["id"] for r in rows_in)
     assert len(seen) == len(set(seen))
+    assert seen == expected_order
