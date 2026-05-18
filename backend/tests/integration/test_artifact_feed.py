@@ -127,3 +127,21 @@ def test_feed_respects_filters(store):
     # path_prefix filter
     rows = store.feed(project_id="p1", path_prefix="p1/notes/", limit=10)
     assert {r["path"] for r in rows} == {"p1/notes/a.md", "p1/notes/b.md"}
+
+
+def test_feed_cross_project_returns_rows_from_all_projects(store):
+    a = store.create(project_id="p1", path="p1/a.md", content="x",
+                     content_type="text/markdown")
+    b = store.create(project_id="p2", path="p2/b.md", content="x",
+                     content_type="text/markdown")
+    c = store.create(project_id="p3", path="p3/c.md", content="x",
+                     content_type="text/markdown")
+    rows = store.feed(project_id="all", limit=10)
+    assert {r["id"] for r in rows} == {a["id"], b["id"], c["id"]}
+    # Globally ordered ascending by updated_at.
+    assert [r["id"] for r in rows] == [a["id"], b["id"], c["id"]]
+
+
+def test_feed_after_id_without_updated_since_raises(store):
+    with pytest.raises(ValueError):
+        store.feed(project_id="p1", after_id="abc", limit=10)
