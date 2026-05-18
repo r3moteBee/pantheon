@@ -599,6 +599,40 @@ class ArtifactStore:
                 counts[t] = counts.get(t, 0) + 1
         return counts
 
+    def feed(
+        self,
+        *,
+        project_id: str | None,
+        updated_since: str | None = None,
+        after_id: str | None = None,
+        include_deleted: bool = False,
+        tag: str | None = None,
+        content_type: str | None = None,
+        path_prefix: str | None = None,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Chronological forward-walk over artifacts. See spec
+        docs/superpowers/specs/2026-05-17-agent-list-api-design.md.
+        """
+        clauses: list[str] = []
+        args: list[Any] = []
+        if project_id not in (None, "all", ""):
+            clauses.append("project_id = ?")
+            args.append(project_id)
+        if not include_deleted:
+            clauses.append("deleted_at IS NULL")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM artifacts{where} "
+                f"ORDER BY updated_at ASC, id ASC LIMIT ?",
+                (*args, limit),
+            ).fetchall()
+        results = [self._hydrate_artifact(r) for r in rows]
+        if tag:
+            results = [r for r in results if tag in (r.get("tags") or [])]
+        return results
+
 
 def _path_to_title(path: str) -> str:
     leaf = path.rsplit("/", 1)[-1]
