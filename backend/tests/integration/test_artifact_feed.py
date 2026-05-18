@@ -183,13 +183,6 @@ def test_feed_endpoint_returns_envelope_with_artifacts(client):
                for row in data["artifacts"])
 
 
-ALLOWED_FIELDS = {
-    "id", "project_id", "path", "title", "content_type", "size_bytes",
-    "sha256", "tags", "source", "pinned", "current_version_id",
-    "created_at", "updated_at", "deleted_at",
-}
-
-
 def test_feed_fields_projection_drops_columns(client):
     _seed("p_proj_1", "p_proj_1/a.md")
     r = client.get("/api/artifacts/feed", params={

@@ -16,6 +16,15 @@ from artifacts import embedder, preview as preview_mod
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Columns the /artifacts/feed endpoint allows in `?fields=` projection.
+# `id` and `updated_at` are always present in the response regardless of
+# projection so callers can advance the cursor.
+FEED_FIELDS = frozenset({
+    "id", "project_id", "path", "title", "content_type", "size_bytes",
+    "sha256", "tags", "source", "pinned", "current_version_id",
+    "created_at", "updated_at", "deleted_at",
+})
+
 
 class CreateArtifactRequest(BaseModel):
     project_id: str = "default"
@@ -203,12 +212,7 @@ async def feed(
         row.pop("blob_path", None)
     if fields is not None:
         requested = {f.strip() for f in fields.split(",") if f.strip()}
-        allowed = {
-            "id", "project_id", "path", "title", "content_type", "size_bytes",
-            "sha256", "tags", "source", "pinned", "current_version_id",
-            "created_at", "updated_at", "deleted_at",
-        }
-        unknown = requested - allowed
+        unknown = requested - FEED_FIELDS
         if unknown:
             raise HTTPException(
                 status_code=400,

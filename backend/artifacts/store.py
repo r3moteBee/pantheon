@@ -630,8 +630,18 @@ class ArtifactStore:
             clauses.append("path LIKE ?")
             args.append(path_prefix + "%")
         if tag is not None:
-            clauses.append("tags LIKE ?")
-            args.append(f'%"{tag}"%')
+            # Tags are stored as a JSON array like ["foo","bar"]; the surrounding
+            # quotes prevent substring false-positives ("alpha" vs "alphabeta").
+            # Escape SQL-LIKE wildcards so tags containing %, _, or \ behave
+            # literally. Tag values containing `"` will not match (intentional —
+            # those tags are malformed for this representation).
+            escaped = (
+                tag.replace("\\", "\\\\")
+                   .replace("%", "\\%")
+                   .replace("_", "\\_")
+            )
+            clauses.append("tags LIKE ? ESCAPE '\\'")
+            args.append(f'%"{escaped}"%')
         if updated_since is not None and after_id is not None:
             clauses.append(
                 "(updated_at > ? OR (updated_at = ? AND id > ?))"
