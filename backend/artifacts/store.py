@@ -614,6 +614,8 @@ class ArtifactStore:
         """Chronological forward-walk over artifacts. See spec
         docs/superpowers/specs/2026-05-17-agent-list-api-design.md.
         """
+        if after_id is not None and updated_since is None:
+            raise ValueError("after_id requires updated_since")
         clauses: list[str] = []
         args: list[Any] = []
         if project_id not in (None, "all", ""):
@@ -621,6 +623,15 @@ class ArtifactStore:
             args.append(project_id)
         if not include_deleted:
             clauses.append("deleted_at IS NULL")
+        # content_type and path_prefix are still pending — wired in Task 4.
+        if updated_since is not None and after_id is not None:
+            clauses.append(
+                "(updated_at > ? OR (updated_at = ? AND id > ?))"
+            )
+            args.extend([updated_since, updated_since, after_id])
+        elif updated_since is not None:
+            clauses.append("updated_at > ?")
+            args.append(updated_since)
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         with self._connect() as conn:
             rows = conn.execute(

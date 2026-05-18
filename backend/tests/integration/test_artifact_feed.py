@@ -32,3 +32,43 @@ def test_feed_returns_rows_ordered_by_updated_at_asc(store):
                      content_type="text/markdown")
     rows = store.feed(project_id="p1", limit=10)
     assert [r["id"] for r in rows] == [a["id"], b["id"], c["id"]]
+
+
+def test_feed_paginates_with_cursor_tiebreak(store):
+    # Insert 5 rows then force two of them to share an updated_at to
+    # exercise the (updated_at, id) tiebreak.
+    rows_in = [
+        store.create(project_id="p1", path=f"p1/f{i}.md", content="x",
+                     content_type="text/markdown")
+        for i in range(5)
+    ]
+    # Force the middle two rows to collide on updated_at.
+    collision_ts = rows_in[2]["updated_at"]
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE artifacts SET updated_at = ? WHERE id = ?",
+            (collision_ts, rows_in[3]["id"]),
+        )
+
+    seen: list[str] = []
+    cursor_updated = None
+    cursor_id = None
+    while True:
+        page = store.feed(
+            project_id="p1",
+            updated_since=cursor_updated,
+            after_id=cursor_id,
+            limit=2,
+        )
+        if not page:
+            break
+        seen.extend(r["id"] for r in page)
+        last = page[-1]
+        cursor_updated = last["updated_at"]
+        cursor_id = last["id"]
+        if len(page) < 2:
+            break
+
+    # Every row appears exactly once, in (updated_at, id) order.
+    assert sorted(seen) == sorted(r["id"] for r in rows_in)
+    assert len(seen) == len(set(seen))
