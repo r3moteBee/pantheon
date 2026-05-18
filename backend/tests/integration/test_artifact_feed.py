@@ -218,3 +218,37 @@ def test_feed_after_id_without_updated_since_400(client):
         "after_id": "deadbeef",
     })
     assert r.status_code == 400, r.text
+
+
+def test_feed_cursor_round_trip_walks_all_pages(client):
+    for i in range(7):
+        _seed("p_cursor_1", f"p_cursor_1/f{i}.md")
+
+    seen: list[str] = []
+    params: dict = {"project_id": "p_cursor_1", "limit": 3}
+    while True:
+        r = client.get("/api/artifacts/feed", params=params)
+        assert r.status_code == 200, r.text
+        data = r.json()
+        seen.extend(row["id"] for row in data["artifacts"])
+        if not data["has_more"]:
+            break
+        params = {
+            "project_id": "p_cursor_1",
+            "limit": 3,
+            "updated_since": data["next_cursor"]["updated_since"],
+            "after_id": data["next_cursor"]["after_id"],
+        }
+
+    assert len(seen) == 7
+    assert len(set(seen)) == 7  # no dupes
+
+
+def test_feed_last_page_has_no_cursor(client):
+    _seed("p_lastpage_1", "p_lastpage_1/only.md")
+    r = client.get("/api/artifacts/feed", params={"project_id": "p_lastpage_1", "limit": 10})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["count"] == 1
+    assert data["has_more"] is False
+    assert data["next_cursor"] is None
