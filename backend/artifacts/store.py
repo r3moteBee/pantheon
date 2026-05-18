@@ -623,7 +623,13 @@ class ArtifactStore:
             args.append(project_id)
         if not include_deleted:
             clauses.append("deleted_at IS NULL")
-        # content_type and path_prefix are still pending — wired in Task 4.
+        if content_type is not None:
+            clauses.append("content_type = ?")
+            args.append(content_type)
+        if path_prefix is not None:
+            clauses.append("path LIKE ?")
+            args.append(path_prefix + "%")
+        # tag filtering stays in Python because tags is a JSON column.
         if updated_since is not None and after_id is not None:
             clauses.append(
                 "(updated_at > ? OR (updated_at = ? AND id > ?))"

@@ -106,3 +106,24 @@ def test_feed_include_deleted_surfaces_tombstones(store):
     by_id = {r["id"]: r for r in rows}
     assert a["id"] in by_id and by_id[a["id"]]["deleted_at"] is None
     assert b["id"] in by_id and by_id[b["id"]]["deleted_at"] is not None
+
+
+def test_feed_respects_filters(store):
+    store.create(project_id="p1", path="p1/notes/a.md", content="x",
+                 content_type="text/markdown", tags=["alpha"])
+    store.create(project_id="p1", path="p1/notes/b.md", content="x",
+                 content_type="text/markdown", tags=["beta"])
+    store.create(project_id="p1", path="p1/code/c.py", content="x",
+                 content_type="text/x-python", tags=["alpha"])
+
+    # tag filter
+    rows = store.feed(project_id="p1", tag="alpha", limit=10)
+    assert {r["path"] for r in rows} == {"p1/notes/a.md", "p1/code/c.py"}
+
+    # content_type filter
+    rows = store.feed(project_id="p1", content_type="text/x-python", limit=10)
+    assert {r["path"] for r in rows} == {"p1/code/c.py"}
+
+    # path_prefix filter
+    rows = store.feed(project_id="p1", path_prefix="p1/notes/", limit=10)
+    assert {r["path"] for r in rows} == {"p1/notes/a.md", "p1/notes/b.md"}
