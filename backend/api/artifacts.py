@@ -181,6 +181,7 @@ async def feed(
     tag: str | None = Query(None),
     content_type: str | None = Query(None),
     path_prefix: str | None = Query(None),
+    fields: str | None = Query(None),
     limit: int = Query(500, ge=1, le=5000),
 ) -> dict[str, Any]:
     try:
@@ -200,6 +201,22 @@ async def feed(
     for row in rows:
         row.pop("content", None)
         row.pop("blob_path", None)
+    if fields is not None:
+        requested = {f.strip() for f in fields.split(",") if f.strip()}
+        allowed = {
+            "id", "project_id", "path", "title", "content_type", "size_bytes",
+            "sha256", "tags", "source", "pinned", "current_version_id",
+            "created_at", "updated_at", "deleted_at",
+        }
+        unknown = requested - allowed
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown fields: {sorted(unknown)}",
+            )
+        # `id` and `updated_at` are always present so agents can advance the cursor.
+        keep = requested | {"id", "updated_at"}
+        rows = [{k: v for k, v in row.items() if k in keep} for row in rows]
     # has_more uses len(rows) >= limit; may produce one spurious extra call on
     # the exact-limit last page (acceptable — caller's next request returns empty).
     if len(rows) >= limit:

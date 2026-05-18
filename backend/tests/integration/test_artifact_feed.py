@@ -181,3 +181,40 @@ def test_feed_endpoint_returns_envelope_with_artifacts(client):
     # `content` is stripped from list responses (spec).
     assert all("content" not in row and "blob_path" not in row
                for row in data["artifacts"])
+
+
+ALLOWED_FIELDS = {
+    "id", "project_id", "path", "title", "content_type", "size_bytes",
+    "sha256", "tags", "source", "pinned", "current_version_id",
+    "created_at", "updated_at", "deleted_at",
+}
+
+
+def test_feed_fields_projection_drops_columns(client):
+    _seed("p_proj_1", "p_proj_1/a.md")
+    r = client.get("/api/artifacts/feed", params={
+        "project_id": "p_proj_1",
+        "fields": "id,sha256",
+        "limit": 10,
+    })
+    assert r.status_code == 200, r.text
+    row = r.json()["artifacts"][0]
+    # Requested fields + always-forced cursor fields.
+    assert set(row.keys()) == {"id", "sha256", "updated_at"}
+
+
+def test_feed_fields_projection_unknown_column_400(client):
+    _seed("p_proj_2", "p_proj_2/a.md")
+    r = client.get("/api/artifacts/feed", params={
+        "project_id": "p_proj_2",
+        "fields": "id,not_a_column",
+    })
+    assert r.status_code == 400, r.text
+
+
+def test_feed_after_id_without_updated_since_400(client):
+    r = client.get("/api/artifacts/feed", params={
+        "project_id": "p_proj_3",
+        "after_id": "deadbeef",
+    })
+    assert r.status_code == 400, r.text
