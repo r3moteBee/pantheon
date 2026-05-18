@@ -87,6 +87,7 @@ Required fields:
 
 - Web UI + API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
+- Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md) — cursor-paginated artifact stream for change-detection polling and bulk enumeration
 
 **Docker mode:**
 
@@ -99,6 +100,7 @@ make logs      # tail logs for all services
 
 - Web UI: http://localhost (port 80 by default)
 - API Docs: http://localhost/docs
+- Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md)
 
 > **Note:** The `make` commands are Docker-only. If you installed in local mode, use `start.sh` / `stop.sh` instead.
 
