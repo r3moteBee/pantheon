@@ -185,3 +185,56 @@ def test_handler_topic_labels_with_special_chars_produce_valid_yaml():
     labels = [t["label"] for t in fm["topics"]]
     assert "ratio: 16:9" in labels
     assert "Bob's prototype" in labels
+
+
+def test_handler_skips_svg_content_type():
+    """SVG artifacts should be skipped, not sent to vision model."""
+    import uuid as _uuid
+    uid = _uuid.uuid4().hex[:8]
+    store = get_artifact_store()
+    svg_bytes = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+    a = store.create(
+        project_id="default",
+        path=f"chat-attachments/2026-05-19/icon-{uid}.svg",
+        content=svg_bytes,
+        content_type="image/svg+xml",
+        title="icon.svg",
+        tags=["chat-attachment"],
+        edited_by="user",
+    )
+    handler = get_handler("image_extraction")
+    # No mock needed — handler should short-circuit before calling vision
+    result = asyncio.run(handler.fn(_build_ctx(a["id"])))
+    assert result["status"] == "skipped"
+    assert "not vision-compatible" in result["reason"]
+
+
+def test_handler_filename_with_colon_produces_valid_yaml():
+    """Filename with colon (macOS screenshot pattern) must not break frontmatter."""
+    import uuid as _uuid
+    import yaml as _yaml
+    uid = _uuid.uuid4().hex[:8]
+    store = get_artifact_store()
+    a = store.create(
+        project_id="default",
+        path=f"chat-attachments/2026-05-19/screenshot 14:30 {uid}.png",
+        content=_png_bytes(),
+        content_type="image/png",
+        title="screenshot 14:30.png",
+        tags=["chat-attachment"],
+        edited_by="user",
+    )
+    fake = {"caption": "shot", "ocr_text": "", "topics": []}
+    handler = get_handler("image_extraction")
+    with patch("jobs.handlers.image_extraction._call_vision_extractor",
+               new=AsyncMock(return_value=fake)):
+        result = asyncio.run(handler.fn(_build_ctx(a["id"])))
+    assert result["status"] == "completed"
+
+    sibling = store.get_by_path("default", a["path"] + ".extraction.md")
+    body = sibling["content"] or ""
+    parts = body.split("---", 2)
+    assert len(parts) >= 3
+    fm = _yaml.safe_load(parts[1])
+    assert isinstance(fm, dict)
+    assert ":" in fm["source_image"]  # filename's colon preserved

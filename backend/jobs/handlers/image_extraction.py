@@ -23,6 +23,8 @@ from jobs.handlers import register
 
 logger = logging.getLogger(__name__)
 
+_VISION_MIME_ALLOWED = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}
+
 _VISION_SYSTEM_PROMPT = (
     "You are a visual analysis assistant. Given an image, produce a "
     "JSON object with three fields:\n"
@@ -102,7 +104,7 @@ def _build_extraction_markdown(*, image_path: str, parent_id: str,
         "---\n"
         f"parent_artifact_id: {parent_id}\n"
         f"parent_sha256: {parent_sha}\n"
-        f"source_image: {image_path}\n"
+        f"source_image: {_yaml_str(image_path)}\n"
         "extraction_kind: image_vision\n"
         "topics:\n"
         f"{topics_yaml}\n"
@@ -129,6 +131,11 @@ async def handle_image_extraction(ctx: JobContext) -> dict[str, Any]:
     artifact = store.get(artifact_id)
     if not artifact:
         return {"status": "skipped", "reason": "artifact not found", "artifact_id": artifact_id}
+
+    artifact_ct = (artifact.get("content_type") or "").lower()
+    if artifact_ct not in _VISION_MIME_ALLOWED:
+        return {"status": "skipped", "reason": f"content_type {artifact_ct!r} not vision-compatible",
+                "artifact_id": artifact_id}
 
     image_path: str = artifact["path"]
     parent_sha: str = artifact.get("sha256") or ""
