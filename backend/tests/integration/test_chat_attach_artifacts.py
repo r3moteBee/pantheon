@@ -83,3 +83,20 @@ def test_attach_same_filename_twice_same_day_gets_unique_path(client):
     assert body1["path"] != body2["path"]
     # Second upload should be suffixed -1
     assert body2["path"].endswith("dup-1.png")
+
+
+def test_attach_threads_parent_session_id(client):
+    files = {"file": ("test2.png", io.BytesIO(_png_bytes()), "image/png")}
+    res = client.post(
+        "/api/chat/attach",
+        files=files,
+        params={"project_id": "default", "session_id": "sess-abc-123"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert "extraction_job_id" in body
+
+    # Job payload includes parent_session_id
+    from jobs.store import get_store as get_job_store
+    job = get_job_store().get(body["extraction_job_id"])
+    assert job["payload"].get("parent_session_id") == "sess-abc-123"

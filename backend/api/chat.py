@@ -547,6 +547,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
 async def attach_file_to_chat(
     file: UploadFile = File(...),
     project_id: str = Query(default="default"),
+    session_id: str | None = Query(default=None),
 ) -> dict[str, Any]:
     """Upload a chat attachment into the artifact store.
 
@@ -599,13 +600,16 @@ async def attach_file_to_chat(
     ext = Path(filename).suffix.lower()
     if ext in _IMAGE_EXTENSIONS:
         # Enqueue background extraction — vision call decoupled from chat SSE
+        payload_dict: dict[str, Any] = {"artifact_id": artifact["id"]}
+        if session_id:
+            payload_dict["parent_session_id"] = session_id
         try:
             job = get_job_store().create(
                 job_type="image_extraction",
                 project_id=project_id,
                 title=f"Extract: {filename}",
                 description=f"Vision + OCR + topics for {path}",
-                payload={"artifact_id": artifact["id"]},
+                payload=payload_dict,
                 timeout_seconds=300,
             )
             result["extraction_job_id"] = job["id"]

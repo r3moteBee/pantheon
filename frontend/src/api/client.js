@@ -54,11 +54,13 @@ export const chatApi = {
    *   { status, artifact_id, path, content_type, size, filename,
    *     indexing, extraction_job_id? }
    */
-  attachFile: (file, projectId) => {
+  attachFile: (file, projectId, sessionId = null) => {
     const formData = new FormData()
     formData.append('file', file)
+    const params = { project_id: projectId }
+    if (sessionId) params.session_id = sessionId
     return api.post('/api/chat/attach', formData, {
-      params: { project_id: projectId },
+      params,
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },

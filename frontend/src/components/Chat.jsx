@@ -500,7 +500,7 @@ export default function Chat() {
     const results = []
     for (const file of files) {
       try {
-        const res = await chatApi.attachFile(file, projectId)
+        const res = await chatApi.attachFile(file, projectId, sessionId)
         results.push({
           name: res.data.filename || file.name,
           path: res.data.path,
