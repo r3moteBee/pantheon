@@ -14,7 +14,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 
 2. **Source adapters.** The ingestion pipeline that turns "a URL or video_id" into a typed-topics-frontmatter markdown artifact + graph nodes/edges. Adapters live in `backend/sources/adapters/` and self-register at import time. Currently 28 adapters across 9 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`). Each adapter declares its `source_type`, `bucket_aliases`, `extractor_strategy`, `auto_extract`, and `auto_link_similarity`. See `backend/sources/SOURCE_ADAPTERS.md` for the full design.
 
-3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `scheduled_job`, `coding_task`, `extraction`, `file_indexing`. APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
+3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `scheduled_job`, `coding_task`, `extraction`, `file_indexing`, `image_extraction`, `iteration_loop`. APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
 
 ## Directory layout
 
@@ -80,7 +80,9 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │       ├── scheduled_job.py      Lightweight scheduled prompts
 │   │       ├── coding_task.py        Github sub-agent for PR-shaped coding work
 │   │       ├── extraction.py         Memory extractor
-│   │       └── file_indexing.py      Workspace file indexer
+│   │       ├── file_indexing.py      Workspace file indexer
+│   │       ├── image_extraction.py   Vision + OCR + topic extraction for uploaded image artifacts
+│   │       └── iteration_loop.py     Multi-turn execute/review loop with per-turn artifacts
 │   ├── skills/                  Skill system (callable recipes, distinct from scheduled tasks)
 │   │   ├── registry.py          SkillRegistry — bundled skills + user skills
 │   │   ├── resolver.py          resolve_explicit (/slug) + resolve_auto (keyword scoring)

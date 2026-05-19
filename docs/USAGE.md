@@ -37,12 +37,13 @@ The agent can execute multiple tools per turn. *"Search for X, then save a summa
 
 ## 4. Memory tiers
 
-Pantheon has four memory stores the agent can read and write:
+Pantheon has five memory stores the agent can read and write:
 
 - **Working** — short-term scratch within a single conversation
 - **Episodic** — conversational facts, who said what, when
 - **Semantic** — key insights, facts, distilled knowledge
 - **Graph** — entities and their relationships
+- **Archival** — reserved for whole-document storage (mostly unused today)
 
 When you want the agent to remember something across sessions, ask it to `remember` in the appropriate tier. *"Remember in semantic memory that…"* is more durable than just *"remember that…"*.
 
