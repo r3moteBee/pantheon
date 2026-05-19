@@ -1,5 +1,7 @@
 # Messaging Gateway — Implementation Plan
 
+> ⚠️ **Proposed — not yet implemented.** This is a forward-looking design doc. The codebase still ships Telegram only via `backend/telegram_bot/`; no `backend/messaging/` gateway, Discord adapter, or `/api/messaging/*` routes exist yet. Treat this as a roadmap, not a description of current behavior.
+
 **Date:** 2026-04-13  
 **Version:** 1.0  
 **Status:** Proposed
