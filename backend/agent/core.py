@@ -241,13 +241,16 @@ class AgentCore:
                 if not a or not a.get("blob_path"):
                     logger.debug("Artifact %s not found or has no blob", artifact_id)
                     continue
-                if not (a.get("content_type") or "").startswith("image/"):
-                    logger.debug("Artifact %s is not an image", artifact_id)
+                ct = (a.get("content_type") or "").lower()
+                # Vision models accept these MIME types; SVG and exotic types are skipped.
+                if ct not in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"}:
+                    logger.debug("Artifact %s content_type %r not vision-compatible", artifact_id, ct)
+                    continue
+                if (a.get("size_bytes") or 0) > _MAX_IMAGE_SIZE:
+                    logger.debug("Artifact %s exceeds inline size (%d bytes)",
+                                 artifact_id, a.get("size_bytes") or 0)
                     continue
                 raw = artifact_store._load_blob(a["blob_path"])
-                if len(raw) > _MAX_IMAGE_SIZE:
-                    logger.debug("Artifact %s exceeds inline size", artifact_id)
-                    continue
                 b64 = base64.b64encode(raw).decode("utf-8")
                 image_blocks.append({
                     "type": "image_url",
