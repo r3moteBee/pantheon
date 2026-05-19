@@ -96,4 +96,4 @@ class pinger_for:
         if self._task:
             self._task.cancel()
             try: await self._task
-            except Exception: pass
+            except BaseException: pass
