@@ -42,6 +42,10 @@ def bootstrap_handlers() -> None:
     except Exception as e:
         logger.debug("file_indexing handler unavailable: %s", e)
     try:
+        from jobs.handlers import image_extraction   # noqa: F401
+    except Exception as e:
+        logger.debug("image_extraction handler unavailable: %s", e)
+    try:
         from jobs.handlers import iteration_loop    # noqa: F401
     except Exception as e:
         logger.debug("iteration_loop handler unavailable: %s", e)

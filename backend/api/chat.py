@@ -31,8 +31,8 @@ router = APIRouter()
 # Track message counts per session for interval-based extraction
 _session_message_counts: dict[str, int] = {}
 
-# Image extensions that get vision-described
-from utils.vision import IMAGE_EXTENSIONS as _IMAGE_EXTENSIONS, describe_image as _describe_image
+# Image extensions used to route attachments to the extraction pipeline
+from utils.vision import IMAGE_EXTENSIONS as _IMAGE_EXTENSIONS
 
 
 class ChatRequest(BaseModel):
@@ -549,102 +549,72 @@ async def attach_file_to_chat(
     file: UploadFile = File(...),
     project_id: str = Query(default="default"),
 ) -> dict[str, Any]:
-    """Upload a file as a chat attachment.
+    """Upload a chat attachment into the artifact store.
 
-    Saves to workspace/uploads/, auto-indexes into semantic memory,
-    and for images generates a text description via the prefill model.
+    Images: stored as binary artifact under chat-attachments/YYYY-MM-DD/,
+    AND an `image_extraction` job is enqueued for offline vision + OCR +
+    topic extraction. The job survives chat SSE drops.
+
+    Non-images: stored as artifact; if text-y, embedder schedules a
+    semantic embed.
+
+    Returns {artifact_id, path, content_type, size, filename, indexing,
+             extraction_job_id?}.
     """
-    filename = file.filename or "attachment"
-    filename = Path(filename).name  # Strip path components
+    from datetime import datetime, timezone
+    from artifacts.store import get_store as get_artifact_store, is_text_type
+    from artifacts import embedder
+    from jobs.store import get_store as get_job_store
 
-    # Determine workspace uploads directory
-    if project_id and project_id != "default":
-        base = settings.projects_dir / project_id / "workspace"
-    else:
-        base = settings.workspace_dir
-    uploads_dir = base / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-
-    dest_path = uploads_dir / filename
-    # Handle conflicts
-    if dest_path.exists():
-        stem = dest_path.stem
-        suffix = dest_path.suffix
-        counter = 1
-        while dest_path.exists():
-            dest_path = uploads_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-
+    filename = Path(file.filename or "attachment").name
     content = await file.read()
-    async with aiofiles.open(dest_path, "wb") as f:
-        await f.write(content)
+    content_type = file.content_type or "application/octet-stream"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    path = f"chat-attachments/{today}/{filename}"
 
-    rel_path = str(dest_path.relative_to(base))
+    artifact_store = get_artifact_store()
+    try:
+        artifact = artifact_store.create(
+            project_id=project_id,
+            path=path,
+            content=content,
+            content_type=content_type,
+            title=filename,
+            tags=["chat-attachment"],
+            source={"kind": "chat-attach", "filename": filename},
+            edited_by="user",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     result: dict[str, Any] = {
         "status": "uploaded",
-        "filename": dest_path.name,
-        "path": rel_path,
-        "size": len(content),
+        "artifact_id": artifact["id"],
+        "path": artifact["path"],
+        "content_type": artifact["content_type"],
+        "size": artifact["size_bytes"],
+        "filename": filename,
         "indexing": False,
-        "description": None,
     }
 
-    # For images: generate a text description via the prefill/vision model
-    ext = dest_path.suffix.lower()
+    ext = Path(filename).suffix.lower()
     if ext in _IMAGE_EXTENSIONS:
-        try:
-            description = await _describe_image(dest_path, content)
-            if description:
-                result["description"] = description
-                # Store description as semantic memory
-                memory = create_memory_manager(project_id=project_id)
-                await memory.semantic.store(
-                    content=f"Image '{dest_path.name}': {description}",
-                    metadata={
-                        "type": "image_description",
-                        "source_file": dest_path.name,
-                        "source_path": rel_path,
-                        "project_id": project_id,
-                    },
-                )
-                result["indexing"] = True
-        except Exception as e:
-            logger.warning("Image description failed for %s: %s", filename, e)
-
-    # For documents: auto-index if enabled
-    if ext not in _IMAGE_EXTENSIONS and settings.auto_index_uploads:
-        asyncio.ensure_future(_index_attachment(dest_path, project_id))
+        # Enqueue background extraction — vision call decoupled from chat SSE
+        job = get_job_store().create(
+            job_type="image_extraction",
+            project_id=project_id,
+            title=f"Extract: {filename}",
+            description=f"Vision + OCR + topics for {path}",
+            payload={"artifact_id": artifact["id"]},
+            timeout_seconds=300,
+        )
+        result["extraction_job_id"] = job["id"]
+        result["indexing"] = True
+    elif is_text_type(content_type):
+        embedder.schedule_embed(artifact["id"], project_id)
         result["indexing"] = True
 
     return result
-
-
-# _describe_image is now imported from utils.vision
-
-
-async def _index_attachment(file_path: Path, project_id: str) -> None:
-    """Background task to index a chat attachment into semantic memory."""
-    try:
-        from memory.file_indexer import SUPPORTED_EXTENSIONS
-        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-            return
-
-        memory = create_memory_manager(project_id=project_id)
-        from memory.file_indexer import FileIndexer
-        indexer = FileIndexer(
-            memory_manager=memory,
-            project_id=project_id,
-            chunk_size=settings.file_chunk_size,
-            chunk_overlap=settings.file_chunk_overlap,
-        )
-        result = await indexer.index_file(file_path)
-        if not result.get("skipped"):
-            logger.info(
-                "Indexed chat attachment %s: %d chunks",
-                file_path.name, result.get("chunks_stored", 0),
-            )
-    except Exception as e:
-        logger.warning("Attachment indexing failed for %s: %s", file_path.name, e)
 
 
 async def _run_background_extraction(
