@@ -67,3 +67,19 @@ def test_attach_non_image_skips_extraction(client):
     jobs = job_store.list(job_type="image_extraction", limit=10)
     assert not any(j.get("payload", {}).get("artifact_id") == body["artifact_id"]
                    for j in jobs)
+
+
+def test_attach_same_filename_twice_same_day_gets_unique_path(client):
+    files1 = {"file": ("dup.png", io.BytesIO(_png_bytes()), "image/png")}
+    res1 = client.post("/api/chat/attach", files=files1, params={"project_id": "default"})
+    assert res1.status_code == 200
+
+    files2 = {"file": ("dup.png", io.BytesIO(_png_bytes()), "image/png")}
+    res2 = client.post("/api/chat/attach", files=files2, params={"project_id": "default"})
+    assert res2.status_code == 200, res2.text
+
+    body1, body2 = res1.json(), res2.json()
+    assert body1["artifact_id"] != body2["artifact_id"]
+    assert body1["path"] != body2["path"]
+    # Second upload should be suffixed -1
+    assert body2["path"].endswith("dup-1.png")

@@ -12,7 +12,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-import aiofiles
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 
@@ -570,9 +569,9 @@ async def attach_file_to_chat(
     content = await file.read()
     content_type = file.content_type or "application/octet-stream"
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    path = f"chat-attachments/{today}/{filename}"
-
+    desired_path = f"chat-attachments/{today}/{filename}"
     artifact_store = get_artifact_store()
+    path = artifact_store._unique_path(project_id, desired_path)
     try:
         artifact = artifact_store.create(
             project_id=project_id,
@@ -600,16 +599,23 @@ async def attach_file_to_chat(
     ext = Path(filename).suffix.lower()
     if ext in _IMAGE_EXTENSIONS:
         # Enqueue background extraction — vision call decoupled from chat SSE
-        job = get_job_store().create(
-            job_type="image_extraction",
-            project_id=project_id,
-            title=f"Extract: {filename}",
-            description=f"Vision + OCR + topics for {path}",
-            payload={"artifact_id": artifact["id"]},
-            timeout_seconds=300,
-        )
-        result["extraction_job_id"] = job["id"]
-        result["indexing"] = True
+        try:
+            job = get_job_store().create(
+                job_type="image_extraction",
+                project_id=project_id,
+                title=f"Extract: {filename}",
+                description=f"Vision + OCR + topics for {path}",
+                payload={"artifact_id": artifact["id"]},
+                timeout_seconds=300,
+            )
+            result["extraction_job_id"] = job["id"]
+            result["indexing"] = True
+        except Exception as e:
+            logger.warning(
+                "image_extraction job enqueue failed for artifact %s: %s",
+                artifact["id"], e,
+            )
+            # Artifact is durable; user can retry extraction via the Jobs panel later.
     elif is_text_type(content_type):
         embedder.schedule_embed(artifact["id"], project_id)
         result["indexing"] = True
