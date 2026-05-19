@@ -45,6 +45,15 @@ export const chatApi = {
     api.get('/api/chat/history', { params: { session_id: sessionId, project_id: projectId, limit } }),
   getSessions: (projectId, limit = 20) =>
     api.get('/api/chat/sessions', { params: { project_id: projectId, limit } }),
+  /**
+   * Upload a file as a chat attachment. Backend stores it in ArtifactStore
+   * under chat-attachments/YYYY-MM-DD/ and, for images, enqueues a
+   * background image_extraction job.
+   *
+   * Response shape:
+   *   { status, artifact_id, path, content_type, size, filename,
+   *     indexing, extraction_job_id? }
+   */
   attachFile: (file, projectId) => {
     const formData = new FormData()
     formData.append('file', file)

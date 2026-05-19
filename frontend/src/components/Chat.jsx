@@ -502,11 +502,13 @@ export default function Chat() {
       try {
         const res = await chatApi.attachFile(file, projectId)
         results.push({
-          name: file.name,
+          name: res.data.filename,
           path: res.data.path,
           size: res.data.size,
-          indexed: res.data.indexing || false,
-          description: res.data.description || null,
+          artifactId: res.data.artifact_id,
+          contentType: res.data.content_type,
+          indexing: res.data.indexing || false,
+          extractionJobId: res.data.extraction_job_id || null,
         })
       } catch (err) {
         addNotification({ type: 'error', message: `Failed to upload ${file.name}: ${err.message}` })
@@ -646,12 +648,20 @@ export default function Chat() {
     // Build message with attachment context
     let fullMessage = msg
     if (uploadedFiles.length > 0) {
-      const fileList = uploadedFiles.map((f) => {
-        const descLine = f.description ? ` — ${f.description}` : ''
-        return `- ${f.name} (saved to workspace: ${f.path}${descLine})`
+      const lines = uploadedFiles.map((f) => {
+        const isImage = (f.contentType || '').startsWith('image/')
+        if (isImage) {
+          // Marker the backend agent's _build_user_content regex picks up:
+          //   [image: <path> (artifact:<id>)]
+          const status = f.extractionJobId
+            ? '_extracting in background…_'
+            : '_no extraction queued_'
+          return `- [image: ${f.path} (artifact:${f.artifactId})] ${status}`
+        }
+        return `- ${f.name} (artifact:${f.artifactId} — ${f.path})`
       }).join('\n')
-      const attachmentNote = `\n\n[Attached files — uploaded to workspace/uploads/ and indexed into memory]\n${fileList}`
-      fullMessage = msg ? msg + attachmentNote : `Please review the attached files:\n${fileList}`
+      const note = `\n\n[Attached files — saved as artifacts]\n${lines}`
+      fullMessage = msg ? msg + note : `Please review the attached files:\n${lines}`
     }
 
     addMessage({
