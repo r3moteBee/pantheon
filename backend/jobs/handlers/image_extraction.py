@@ -29,7 +29,7 @@ _VISION_SYSTEM_PROMPT = (
     '  - "caption": one or two sentences describing the image\n'
     '  - "ocr_text": any visible text in the image, verbatim (empty string if none)\n'
     '  - "topics": an array of {label, type} where type is one of: '
-    "concept, technology, vendor, organization, person, market_segment, framework, product\n"
+    "concept, technology, vendor, organization, person, market_segment, framework\n"
     "Return ONLY the JSON object, no preamble. Topics: 3-7 items, lowercase labels."
 )
 
@@ -64,12 +64,16 @@ async def _call_vision_extractor(image_bytes: bytes, mime: str) -> dict[str, Any
             provider = get_prov()
             resp = await provider.chat_complete(messages)
             text = (resp.get("content") or "").strip()
-            # Strip code fences if present
-            if text.startswith("```"):
-                text = text.split("```", 2)[1]
-                if text.startswith("json"):
-                    text = text[4:]
-                text = text.strip().rstrip("`").strip()
+            # Strip code fences if present (handle leading preamble text)
+            if "```" in text:
+                # Take content between first and last fence
+                first = text.find("```")
+                last = text.rfind("```")
+                if last > first:
+                    text = text[first + 3 : last]
+                    if text.startswith("json"):
+                        text = text[4:]
+                    text = text.strip()
             data = json.loads(text)
             return {
                 "caption": str(data.get("caption", "")).strip(),
@@ -87,8 +91,11 @@ async def _call_vision_extractor(image_bytes: bytes, mime: str) -> dict[str, Any
 def _build_extraction_markdown(*, image_path: str, parent_id: str,
                                parent_sha: str, vision: dict[str, Any]) -> str:
     """Render the .extraction.md sibling artifact body."""
+    def _yaml_str(s: str) -> str:
+        # Single-quote YAML string with internal quote escaping
+        return "'" + str(s).replace("'", "''") + "'"
     topics_yaml = "\n".join(
-        f"  - label: {t['label']}\n    type: {t.get('type', 'concept')}"
+        f"  - label: {_yaml_str(t['label'])}\n    type: {_yaml_str(t.get('type', 'concept'))}"
         for t in vision["topics"]
     )
     return (
@@ -172,21 +179,32 @@ async def handle_image_extraction(ctx: JobContext) -> dict[str, Any]:
         edited_by="image_extraction",
     )
 
-    # 2. Create sibling extraction artifact (text/markdown → embedder picks it up)
+    # 2. Create or update sibling extraction artifact
     body = _build_extraction_markdown(
         image_path=image_path, parent_id=artifact_id,
         parent_sha=parent_sha, vision=vision,
     )
-    sibling = store.create(
-        project_id=artifact["project_id"],
-        path=sibling_path,
-        content=body,
-        content_type="text/markdown",
-        title=f"Extraction: {image_path.rsplit('/', 1)[-1]}",
-        tags=["image-extraction", "chat-attachment"] + topic_tags,
-        source={"kind": "image_extraction", "parent_artifact_id": artifact_id},
-        edited_by="image_extraction",
-    )
+    sibling_tags = ["image-extraction", "chat-attachment"] + topic_tags
+    if existing:
+        # Sibling exists but parent_sha mismatched — replace content (versioned update)
+        sibling = store.update(
+            existing["id"],
+            content=body,
+            tags=sibling_tags,
+            edit_summary="re-extracted (image content changed)",
+            edited_by="image_extraction",
+        )
+    else:
+        sibling = store.create(
+            project_id=artifact["project_id"],
+            path=sibling_path,
+            content=body,
+            content_type="text/markdown",
+            title=f"Extraction: {image_path.rsplit('/', 1)[-1]}",
+            tags=sibling_tags,
+            source={"kind": "image_extraction", "parent_artifact_id": artifact_id},
+            edited_by="image_extraction",
+        )
 
     # 3. Optional: schedule semantic embed for the new sibling so RAG can find it
     try:

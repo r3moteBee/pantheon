@@ -95,5 +95,7 @@ class pinger_for:
     async def __aexit__(self, exc_type, exc, tb):
         if self._task:
             self._task.cancel()
-            try: await self._task
-            except BaseException: pass
+            try:
+                await self._task
+            except (Exception, asyncio.CancelledError):
+                pass

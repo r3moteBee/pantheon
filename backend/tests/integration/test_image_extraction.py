@@ -108,3 +108,80 @@ def test_handler_idempotent_on_same_sha():
     assert first["status"] == "completed"
     assert second["status"] == "skipped"
     assert second["reason"] == "already extracted"
+
+
+def test_handler_replaces_sibling_when_sha_changes():
+    """Re-extraction with different image content should update the sibling, not crash."""
+    store = get_artifact_store()
+
+    # Seed image v1
+    import uuid as _uuid
+    uid = _uuid.uuid4().hex[:8]
+    path = f"chat-attachments/2026-05-19/resha-{uid}.png"
+    v1 = store.create(
+        project_id="default", path=path, content=_png_bytes(),
+        content_type="image/png", title="resha.png",
+        tags=["chat-attachment"], edited_by="user",
+    )
+
+    handler = get_handler("image_extraction")
+    fake_v1 = {"caption": "v1 caption", "ocr_text": "VONE", "topics": []}
+    with patch("jobs.handlers.image_extraction._call_vision_extractor",
+               new=AsyncMock(return_value=fake_v1)):
+        first = asyncio.run(handler.fn(_build_ctx(v1["id"])))
+    assert first["status"] == "completed"
+
+    # Replace image content (different bytes → different sha)
+    new_bytes = _png_bytes() + b"\x00"  # any modification produces a new sha
+    store.update(v1["id"], content=new_bytes, edited_by="user")
+    v2 = store.get(v1["id"])
+    assert v2["sha256"] != v1["sha256"]
+
+    # Re-run extraction
+    fake_v2 = {"caption": "v2 caption", "ocr_text": "VTWO", "topics": []}
+    with patch("jobs.handlers.image_extraction._call_vision_extractor",
+               new=AsyncMock(return_value=fake_v2)):
+        second = asyncio.run(handler.fn(_build_ctx(v1["id"])))
+    assert second["status"] == "completed", second
+
+    # Sibling at <path>.extraction.md has the v2 content (was updated, not duplicated)
+    sibling = store.get_by_path("default", path + ".extraction.md")
+    assert sibling is not None
+    assert "VTWO" in (sibling["content"] or "")
+    assert "VONE" not in (sibling["content"] or "")
+
+
+def test_handler_topic_labels_with_special_chars_produce_valid_yaml():
+    """Labels containing ':' or quotes must not break YAML frontmatter."""
+    import yaml as _yaml
+
+    artifact_id = _seed_image_artifact()
+    ctx = _build_ctx(artifact_id)
+    fake = {
+        "caption": "img",
+        "ocr_text": "",
+        "topics": [
+            {"label": "ratio: 16:9", "type": "concept"},
+            {"label": "Bob's prototype", "type": "concept"},
+        ],
+    }
+    handler = get_handler("image_extraction")
+    with patch("jobs.handlers.image_extraction._call_vision_extractor",
+               new=AsyncMock(return_value=fake)):
+        result = asyncio.run(handler.fn(ctx))
+    assert result["status"] == "completed"
+
+    # Sibling frontmatter must be valid YAML
+    store = get_artifact_store()
+    image_path = store.get(artifact_id)["path"]
+    sibling = store.get_by_path("default", image_path + ".extraction.md")
+    assert sibling is not None
+    body = sibling["content"]
+    # Parse frontmatter (between leading --- and next ---)
+    parts = body.split("---", 2)
+    assert len(parts) >= 3
+    fm = _yaml.safe_load(parts[1])
+    assert isinstance(fm, dict)
+    labels = [t["label"] for t in fm["topics"]]
+    assert "ratio: 16:9" in labels
+    assert "Bob's prototype" in labels
