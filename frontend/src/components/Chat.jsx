@@ -502,7 +502,7 @@ export default function Chat() {
       try {
         const res = await chatApi.attachFile(file, projectId)
         results.push({
-          name: res.data.filename,
+          name: res.data.filename || file.name,
           path: res.data.path,
           size: res.data.size,
           artifactId: res.data.artifact_id,
