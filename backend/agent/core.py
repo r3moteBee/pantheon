@@ -206,58 +206,91 @@ class AgentCore:
         self.working_memory.append({"role": role, "content": content})
 
     def _build_user_content(self, message: str) -> str | list[dict]:
-        """Build multimodal content blocks if the message references image attachments.
+        """Build multimodal content blocks if the message references images.
 
-        If image files are found in workspace/uploads/, they're inlined as
-        base64 image_url blocks alongside the text — enabling vision models
-        to actually see the images rather than just reading their filenames.
+        Two supported reference forms:
+          1. New (artifact-backed):
+             "[image: <path> (artifact:<artifact_id>)]"
+             — bytes loaded from ArtifactStore._load_blob
+          2. Legacy (workspace-backed, pre-2026.05.19):
+             "uploads/<filename>.png"
+             — bytes loaded from workspace/uploads/
+
+        Returns the original string when no images are found, otherwise a
+        list of content blocks (text + image_url).
         """
-        # Look for image file references in the attachment note
-        # Filenames may contain spaces (e.g. "Screenshot 2026-03-24 at 3.04.17 AM.png")
-        image_paths: list[Path] = []
-        pattern = re.compile(
+        image_blocks: list[dict] = []
+
+        # ── Form 1: artifact references ────────────────────────────────
+        artifact_pattern = re.compile(
+            r"\[image:[^\]]*?\(artifact:([a-zA-Z0-9_\-]+)\)\]",
+            re.IGNORECASE,
+        )
+        seen_artifacts: set[str] = set()
+        artifact_store = None
+        for match in artifact_pattern.finditer(message):
+            artifact_id = match.group(1)
+            if artifact_id in seen_artifacts:
+                continue
+            seen_artifacts.add(artifact_id)
+            try:
+                if artifact_store is None:
+                    from artifacts.store import get_store as _gs
+                    artifact_store = _gs()
+                a = artifact_store.get(artifact_id)
+                if not a or not a.get("blob_path"):
+                    logger.debug("Artifact %s not found or has no blob", artifact_id)
+                    continue
+                if not (a.get("content_type") or "").startswith("image/"):
+                    logger.debug("Artifact %s is not an image", artifact_id)
+                    continue
+                raw = artifact_store._load_blob(a["blob_path"])
+                if len(raw) > _MAX_IMAGE_SIZE:
+                    logger.debug("Artifact %s exceeds inline size", artifact_id)
+                    continue
+                b64 = base64.b64encode(raw).decode("utf-8")
+                image_blocks.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{a['content_type']};base64,{b64}"},
+                })
+                logger.info("Inlined artifact image %s (%d KB)", artifact_id, len(raw) // 1024)
+            except Exception as e:
+                logger.warning("Failed to inline artifact %s: %s", artifact_id, e)
+
+        # ── Form 2: legacy workspace uploads ──────────────────────────
+        workspace_pattern = re.compile(
             r"uploads/(.+?\.(?:png|jpe?g|gif|webp|bmp))",
             re.IGNORECASE,
         )
-
-        # Resolve workspace base once
         if self.project_id and self.project_id != "default":
             base = settings.projects_dir / self.project_id / "workspace"
         else:
             base = settings.workspace_dir
-
-        seen: set[str] = set()
-        for match in pattern.finditer(message):
+        seen_files: set[str] = set()
+        for match in workspace_pattern.finditer(message):
             filename = match.group(1)
-            if filename in seen:
+            if filename in seen_files:
                 continue
-            seen.add(filename)
+            seen_files.add(filename)
             candidate = base / "uploads" / filename
             if candidate.exists() and candidate.stat().st_size <= _MAX_IMAGE_SIZE:
-                image_paths.append(candidate)
-            else:
-                logger.debug("Image not found or too large: %s", candidate)
+                try:
+                    raw = candidate.read_bytes()
+                    b64 = base64.b64encode(raw).decode("utf-8")
+                    ext = candidate.suffix.lower().lstrip(".")
+                    mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
+                    image_blocks.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    })
+                    logger.info("Inlined workspace image %s (%d KB)", candidate.name, len(raw) // 1024)
+                except Exception as e:
+                    logger.warning("Failed to inline workspace image %s: %s", filename, e)
 
-        if not image_paths:
-            return message  # Plain text — no images found
+        if not image_blocks:
+            return message
 
-        # Build multimodal content array
-        content_blocks: list[dict] = [{"type": "text", "text": message}]
-        for img_path in image_paths:
-            try:
-                raw = img_path.read_bytes()
-                b64 = base64.b64encode(raw).decode("utf-8")
-                ext = img_path.suffix.lower().lstrip(".")
-                mime = f"image/{ext}" if ext != "jpg" else "image/jpeg"
-                content_blocks.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                })
-                logger.info("Inlined image for vision: %s (%d KB)", img_path.name, len(raw) // 1024)
-            except Exception as e:
-                logger.warning("Failed to inline image %s: %s", img_path.name, e)
-
-        return content_blocks
+        return [{"type": "text", "text": message}, *image_blocks]
 
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
