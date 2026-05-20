@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import io
 import logging
+import mimetypes
 import zipfile
+from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import Response, StreamingResponse, FileResponse
@@ -305,16 +308,41 @@ async def get_artifact(artifact_id: str) -> dict[str, Any]:
     return a
 
 
+def _download_filename(artifact: dict[str, Any]) -> str:
+    """Pick a download filename for an artifact: basename of its stored path,
+    falling back to ``artifact-<id>`` with an extension guessed from content_type.
+    Without this, the browser uses the URL path (``/raw``) plus the response
+    content-type and produces names like ``raw.json``."""
+    name = PurePosixPath(artifact.get("path") or "").name
+    if not name:
+        name = f"artifact-{(artifact.get('id') or '')[:8] or 'unknown'}"
+    if "." not in name:
+        ct = (artifact.get("content_type") or "").split(";")[0].strip()
+        ext = mimetypes.guess_extension(ct) if ct else None
+        if ext:
+            name = name + ext
+    return name
+
+
+def _content_disposition(filename: str) -> str:
+    """Build an RFC 6266 Content-Disposition header with both an ASCII fallback
+    and a UTF-8 form so non-ASCII filenames survive the round-trip."""
+    ascii_name = filename.encode("ascii", "ignore").decode("ascii").strip() or "artifact"
+    ascii_name = ascii_name.replace('"', "")
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
+
+
 @router.get("/artifacts/{artifact_id}/raw")
 async def raw_artifact(artifact_id: str):
     store = get_store()
     a = store.get(artifact_id)
     if not a:
         raise HTTPException(status_code=404, detail="not found")
+    headers = {"Content-Disposition": _content_disposition(_download_filename(a))}
     if a.get("content") is not None:
-        return Response(content=(a["content"] or ""), media_type=a["content_type"])
+        return Response(content=(a["content"] or ""), media_type=a["content_type"], headers=headers)
     if a.get("blob_path"):
-        return Response(content=store._load_blob(a["blob_path"]), media_type=a["content_type"])
+        return Response(content=store._load_blob(a["blob_path"]), media_type=a["content_type"], headers=headers)
     raise HTTPException(status_code=500, detail="artifact has no content")
 
 
