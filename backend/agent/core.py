@@ -48,7 +48,7 @@ def _build_recent_jobs_block(project_id: str | None) -> str:
             statuses=["queued", "running", "failed", "stalled", "completed", "cancelled"],
             started_within=timedelta(hours=24),
             include_system=False,
-            limit=15,
+            limit=5,
         )
     except Exception:
         return ""

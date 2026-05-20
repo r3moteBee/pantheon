@@ -32,8 +32,10 @@ def _db_path() -> str:
 
 
 def _connect() -> sqlite3.Connection:
+    from db_utils import apply_sqlite_pragmas
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
+    apply_sqlite_pragmas(conn)
     sql_path = Path(__file__).resolve().parent.parent / "data" / "migrations" / "002_phase_g.sql"
     if sql_path.exists():
         conn.executescript(sql_path.read_text())

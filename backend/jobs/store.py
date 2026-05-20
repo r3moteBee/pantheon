@@ -82,9 +82,10 @@ class JobStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
+        from db_utils import apply_sqlite_pragmas
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode = WAL")
+        apply_sqlite_pragmas(conn)
         return conn
 
     def _init_db(self) -> None:

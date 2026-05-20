@@ -67,7 +67,9 @@ class EpisodicMemory:
 
     def _init_db(self) -> None:
         """Initialize database schema."""
+        from db_utils import apply_sqlite_pragmas
         with sqlite3.connect(self.db_path) as conn:
+            apply_sqlite_pragmas(conn)
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
@@ -118,8 +120,10 @@ class EpisodicMemory:
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
+        from db_utils import apply_sqlite_pragmas
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        apply_sqlite_pragmas(conn)
         return conn
 
     # ── Vector index (ChromaDB) for semantic episodic search ─────────────

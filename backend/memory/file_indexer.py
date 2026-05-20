@@ -395,8 +395,14 @@ class FileIndex:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
+    def _connect(self) -> sqlite3.Connection:
+        from db_utils import apply_sqlite_pragmas
+        conn = sqlite3.connect(self.db_path)
+        apply_sqlite_pragmas(conn)
+        return conn
+
     def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS indexed_files (
                     id TEXT PRIMARY KEY,
@@ -414,7 +420,7 @@ class FileIndex:
 
     def is_indexed(self, project_id: str, file_path: str, content_hash: str) -> bool:
         """Check if a file with this hash is already indexed."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 "SELECT content_hash FROM indexed_files WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path)
@@ -430,7 +436,7 @@ class FileIndex:
         file_size: int = 0,
         metadata: dict | None = None,
     ) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 INSERT INTO indexed_files (id, project_id, file_path, content_hash, chunk_count, indexed_at, file_size, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -448,7 +454,7 @@ class FileIndex:
             conn.commit()
 
     def remove_indexed(self, project_id: str, file_path: str) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute(
                 "DELETE FROM indexed_files WHERE project_id = ? AND file_path = ?",
                 (project_id, file_path)
@@ -456,7 +462,7 @@ class FileIndex:
             conn.commit()
 
     def list_indexed(self, project_id: str) -> list[dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 "SELECT * FROM indexed_files WHERE project_id = ? ORDER BY indexed_at DESC",

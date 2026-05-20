@@ -242,6 +242,26 @@ The 5 role-getter functions in `models/provider.py` (`get_provider`, `get_prefil
 
 **DB path canonical location.** ALL SQLite stores live under `settings.db_dir` which resolves to `data/db/`. Don't use relative `data/foo.db` paths — they'll resolve to CWD-relative which on the dev box ends up at `backend/data/`.
 
+**SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
+
+## Design rationale (decisions outside reviewers often misread)
+
+These are deliberate architectural calls. If a code review recommends reversing one, the burden is on the recommendation, not the code.
+
+**Memory recall is unconditional, not pattern-gated.** Every chat turn runs `mgr.recall` across episodic/semantic/graph. Reviewers sometimes suggest gating it on phrases like "what did we discuss" to save latency — don't. The whole product premise is implicit continuity: the user should be able to refer to last week's work without saying the magic words. Pattern-gating silently breaks the exact cases that matter most. If recall latency is the actual concern, lower `limit_per_tier` or cache within a turn — don't gate on phrasing.
+
+**Skills are markdown recipes, not executable code.** A "skill" is `skill.json` + `instructions.md` that the agent reads as prompt context. There is no executor, no subprocess, no sandbox to harden. Recommendations to add WASM/process isolation for skills are confusing skills with arbitrary user code. See `backend/skills/`.
+
+**No in-app conversation summarization.** Claude/Anthropic harness handles context compaction; the FastAPI app does not maintain its own summary turn. Adding a second layer in `AgentCore.from_session` duplicates work and risks lossy double-summarization. Persistent context lives in episodic memory + the recent-jobs block, not in a synthesized summary.
+
+**Skill resolver is keyword-based, deliberately.** `skills/resolver.py` uses keyword scoring against installed-skill triggers — not per-turn similarity search. The reason: an embedding call per chat turn costs more latency than a static skill list does in tokens, and the keyword resolver gives deterministic, debuggable matches. The available-skills block in the system prompt is the right shape.
+
+**Recent-jobs block is capped low.** `_build_recent_jobs_block` shows the last 5 jobs (24h window) — enough for "you started X earlier" continuity without bloating the system prompt. Don't raise it without a concrete reason; the value is anti-confabulation, not exhaustive history.
+
+**Frontend settings is already componentized.** `frontend/src/components/settings/` contains EndpointCard, AddEndpointForm, EndpointList, RoleMapping, RoleMappingRow. Reviewers who recommend "extract settings into separate files" are looking at stale state — verify against the current tree before acting.
+
+**Single-user, single-process.** Pantheon does not have multi-tenant request fan-out, separate workers, or horizontal scaling. APScheduler + JobWorker share the FastAPI process by design. Recommendations that assume Pantheon needs the patterns of a multi-tenant SaaS (request-scoped DB pools, per-tenant isolation, queue/worker split) are misapplying tuatha's architecture here.
+
 ## Memory tier semantics
 
 - **Episodic** — chat history + task logs. Searchable by content/timestamp. Persistent.

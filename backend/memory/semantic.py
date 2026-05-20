@@ -308,10 +308,15 @@ class SemanticMemory:
             logger.error(f"Failed to list semantic memories by model: {e}")
             return []
 
-    async def reembed_stale(self) -> dict[str, int]:
+    async def reembed_stale(self, batch_size: int = 200) -> dict[str, int]:
         """Re-embed every vector whose embedding_model metadata differs from
         the currently configured model. Returns counts of scanned/re-embedded.
         Requires self._embedding_fn to be configured.
+
+        Two-pass: collect stale docs and embed them, then upsert in
+        ``batch_size``-sized chunks. One ChromaDB write per chunk instead
+        of one per document — the meaningful win when the collection has
+        thousands of stale vectors.
         """
         if not self._embedding_fn:
             logger.warning("reembed_stale called without an embedding_fn; nothing to do")
@@ -324,6 +329,29 @@ class SemanticMemory:
         )
         ids = results.get("ids") or []
         scanned = len(ids)
+
+        pending_ids: list[str] = []
+        pending_docs: list[str] = []
+        pending_metas: list[dict] = []
+        pending_embs: list[list[float]] = []
+
+        async def flush() -> int:
+            if not pending_ids:
+                return 0
+            await _asyncio.to_thread(
+                collection.upsert,
+                ids=list(pending_ids),
+                documents=list(pending_docs),
+                metadatas=list(pending_metas),
+                embeddings=list(pending_embs),
+            )
+            n = len(pending_ids)
+            pending_ids.clear()
+            pending_docs.clear()
+            pending_metas.clear()
+            pending_embs.clear()
+            return n
+
         reembedded = 0
         for i, doc_id in enumerate(ids):
             md = (results.get("metadatas") or [])[i] or {}
@@ -335,18 +363,28 @@ class SemanticMemory:
                 continue
             try:
                 new_emb = await self._embedding_fn(content)
-                new_md = {**md, "embedding_model": self._embedding_model, "embedded_at": _now_iso()}
-                # ChromaDB metadata values must be strings
-                new_md = {k: str(v) for k, v in new_md.items()}
-                await _asyncio.to_thread(
-                    collection.upsert,
-                    ids=[doc_id],
-                    documents=[content],
-                    metadatas=[new_md],
-                    embeddings=[new_emb],
-                )
-                reembedded += 1
             except Exception as e:
                 logger.error(f"Re-embed failed for {doc_id}: {e}")
+                continue
+            new_md = {**md, "embedding_model": self._embedding_model, "embedded_at": _now_iso()}
+            # ChromaDB metadata values must be strings
+            new_md = {k: str(v) for k, v in new_md.items()}
+            pending_ids.append(doc_id)
+            pending_docs.append(content)
+            pending_metas.append(new_md)
+            pending_embs.append(new_emb)
+            if len(pending_ids) >= batch_size:
+                try:
+                    reembedded += await flush()
+                except Exception as e:
+                    logger.error(f"Batch upsert failed (size={len(pending_ids)}): {e}")
+                    pending_ids.clear(); pending_docs.clear()
+                    pending_metas.clear(); pending_embs.clear()
+
+        try:
+            reembedded += await flush()
+        except Exception as e:
+            logger.error(f"Final batch upsert failed: {e}")
+
         logger.info("reembed_stale: scanned=%d reembedded=%d", scanned, reembedded)
         return {"scanned": scanned, "reembedded": reembedded}

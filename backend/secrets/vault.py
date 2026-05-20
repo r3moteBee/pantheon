@@ -44,9 +44,15 @@ class SecretsVault:
         derived = kdf.derive(key_bytes)
         return Fernet(base64.urlsafe_b64encode(derived))
 
+    def _connect(self) -> sqlite3.Connection:
+        from db_utils import apply_sqlite_pragmas
+        conn = sqlite3.connect(self.db_path)
+        apply_sqlite_pragmas(conn)
+        return conn
+
     def _init_db(self) -> None:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS secrets (
                     key TEXT PRIMARY KEY,
@@ -61,7 +67,7 @@ class SecretsVault:
         """Encrypt and store a secret."""
         encrypted = self._fernet.encrypt(value.encode("utf-8"))
         now = time.time()
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             conn.execute("""
                 INSERT INTO secrets (key, encrypted_value, created_at, updated_at)
                 VALUES (?, ?, ?, ?)
@@ -82,7 +88,7 @@ class SecretsVault:
             else:
                 del _cache[key]
 
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 "SELECT encrypted_value FROM secrets WHERE key = ?", (key,)
             ).fetchone()
@@ -100,7 +106,7 @@ class SecretsVault:
 
     def delete_secret(self, key: str) -> bool:
         """Delete a secret. Returns True if it existed."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             cursor = conn.execute("DELETE FROM secrets WHERE key = ?", (key,))
             conn.commit()
         if key in _cache:
@@ -109,7 +115,7 @@ class SecretsVault:
 
     def list_secrets(self) -> list[str]:
         """Return all secret keys (never values)."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._connect() as conn:
             rows = conn.execute("SELECT key FROM secrets ORDER BY key").fetchall()
         return [r[0] for r in rows]
 
