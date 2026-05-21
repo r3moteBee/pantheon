@@ -837,7 +837,7 @@ function PreviewBody({ artifact, preview }) {
   return (
     <div className="p-6 text-xs text-gray-500">
       Preview unavailable: {preview.reason || preview.type}.{' '}
-      <a href={`/api/artifacts/${artifact.id}/raw`} download className="text-brand-400 underline">Download original</a>
+      <a href={artifactsApi.rawUrl(artifact.id)} download className="text-brand-400 underline">Download original</a>
     </div>
   )
 }

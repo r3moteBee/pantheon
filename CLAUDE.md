@@ -242,6 +242,8 @@ The 5 role-getter functions in `models/provider.py` (`get_provider`, `get_prefil
 
 **DB path canonical location.** ALL SQLite stores live under `settings.db_dir` which resolves to `data/db/`. Don't use relative `data/foo.db` paths — they'll resolve to CWD-relative which on the dev box ends up at `backend/data/`.
 
+**Direct-URL download endpoints need `?token=` support.** Any endpoint reached via a bare HTML tag (`<a href download>`, `<img src>`, `<embed>`, WebSocket) cannot carry the `Authorization` header — the browser doesn't include axios's bearer token on those requests. The auth middleware in `backend/main.py` whitelists such paths to accept `?token=` from the query string as a fallback (currently `/ws/`, `/api/files/view`, `/api/files/download`, and `/api/artifacts/<id>/raw`). When adding a new endpoint of this shape: extend the middleware AND make the frontend URL builder append the token, like `artifactsApi.rawUrl` and `filesApi.downloadUrl` do. Symptom of forgetting: download saves as `raw.json` (the 401 JSON body) and the browser reports "wasn't available on site".
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)

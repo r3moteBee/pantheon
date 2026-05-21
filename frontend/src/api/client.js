@@ -207,7 +207,11 @@ export const artifactsApi = {
   tags: (projectId) =>
     api.get('/api/artifacts/tags', { params: { project_id: projectId } }),
   get: (id) => api.get(`/api/artifacts/${id}`),
-  rawUrl: (id) => `/api/artifacts/${id}/raw`,
+  rawUrl: (id) => {
+    const token = localStorage.getItem('auth_token')
+    const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
+    return `${BASE_URL}/api/artifacts/${id}/raw${tokenParam}`
+  },
   preview: (id) => api.get(`/api/artifacts/${id}/preview`),
   create: ({ project_id, path, content, content_type = 'text/markdown', title, tags, source }) =>
     api.post('/api/artifacts', { project_id, path, content, content_type, title, tags, source }),

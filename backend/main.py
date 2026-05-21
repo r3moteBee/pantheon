@@ -204,13 +204,22 @@ async def auth_middleware(request: Request, call_next):
     if _FRONTEND_DIR.is_dir() and not path.startswith(("/api/", "/ws/")):
         return await call_next(request)
 
-    # WebSocket and direct-URL endpoints (file view/download, used by
-    # <img src>, <embed>, etc.) carry the token as a query parameter
-    # because neither the WebSocket API nor bare HTML tags support
-    # arbitrary request headers.
+    # WebSocket and direct-URL endpoints (file view/download, artifact
+    # raw download, used by <img src>, <embed>, <a download>, etc.) carry
+    # the token as a query parameter because neither the WebSocket API nor
+    # bare HTML tags support arbitrary request headers. Fall back to the
+    # Authorization header so axios callers still work too.
     _QUERY_TOKEN_PREFIXES = ("/ws/", "/api/files/view", "/api/files/download")
-    if request.url.path.startswith(_QUERY_TOKEN_PREFIXES):
+    path = request.url.path
+    accepts_query_token = (
+        path.startswith(_QUERY_TOKEN_PREFIXES)
+        or (path.startswith("/api/artifacts/") and path.endswith("/raw"))
+    )
+    if accepts_query_token:
         token = request.query_params.get("token", "")
+        if not token:
+            auth_header = request.headers.get("Authorization", "")
+            token = auth_header.removeprefix("Bearer ").strip()
     else:
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
