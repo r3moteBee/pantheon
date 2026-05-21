@@ -85,7 +85,7 @@ Required fields:
 ~/pantheon/stop.sh    # stop all processes
 ```
 
-- Web UI + API: http://localhost:8000
+- Web UI + API: **http://localhost:8000**
 - API Docs: http://localhost:8000/docs
 - Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md) — cursor-paginated artifact stream for change-detection polling and bulk enumeration
 
@@ -98,13 +98,33 @@ make down      # stop all services
 make logs      # tail logs for all services
 ```
 
-- Web UI: http://localhost (port 80 by default)
-- API Docs: http://localhost/docs
+- Web UI: **http://localhost:8000** (default)
+- API Docs: http://localhost:8000/docs
 - Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md)
+
+> **Note:** The default Docker setup exposes port 8000. To map to port 80, either:
+> 1. Modify `docker-compose.yml` and change Nginx port mapping from `8000:80` to `80:80`
+> 2. Set up Caddy with your domain (see HTTPS section below) — Caddy will handle port 80/443 and TLS
+> 3. Access directly on 8000 for development
 
 > **Note:** The `make` commands are Docker-only. If you installed in local mode, use `start.sh` / `stop.sh` instead.
 
-### HTTPS with Caddy
+### Onboarding Walkthrough
+
+After starting Pantheon for the first time, you'll see the onboarding flow:
+
+1. **Welcome** — Set your display name and choose your LLM provider preference
+2. **LLM Configuration** — Select provider (OpenAI, Anthropic, Ollama, custom) and enter API credentials (if not pre-configured in `.env`). Test the connection.
+3. **First Project** — Name your first project (e.g., "General Tasks") and choose an agent persona (professional, creative, technical, etc.)
+4. **Agent Verification** — Send a test message to verify the agent works. Review the 5-tier memory system.
+
+Once onboarding is complete, you can:
+- Create additional projects and agents via **Settings > Projects**
+- Configure tools and integrations in **Settings > Integrations**
+- Manage LLM providers in **Settings > LLM Configuration**
+- Review and customize agent personality in **Settings > Agent Personality**
+
+To skip onboarding and proceed to the main dashboard, click **Skip** on any screen. You'll need to configure your LLM provider in Settings before creating agents.
 
 The installer can automatically set up [Caddy](https://caddyserver.com) as a reverse proxy with free Let's Encrypt HTTPS certificates. During installation, enter your domain when prompted, or pass it as a flag:
 
