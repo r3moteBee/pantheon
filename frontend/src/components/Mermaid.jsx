@@ -10,6 +10,13 @@ function ensureInit() {
     theme: 'dark',
     securityLevel: 'strict',
     fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+    // htmlLabels: false renders text as plain <text> instead of
+    // <foreignObject> + <div xhtml>. This is what makes the SVG
+    // self-contained — foreignObject breaks SVG viewers, taints
+    // <canvas> on rasterize, and is unsupported by svg2pdf.js.
+    flowchart: { htmlLabels: false, useMaxWidth: true },
+    class: { htmlLabels: false },
+    state: { htmlLabels: false },
     themeVariables: {
       background: '#0f172a',
       primaryColor: '#1f2937',

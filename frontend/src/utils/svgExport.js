@@ -9,6 +9,11 @@ function serializeSvg(svgEl) {
   if (!clone.getAttribute('xmlns:xlink')) {
     clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
   }
+  // Ensure explicit width/height so standalone viewers and jsPDF can
+  // size the canvas. Mermaid often only sets viewBox.
+  const { w, h } = getSvgSize(svgEl)
+  if (!clone.getAttribute('width')) clone.setAttribute('width', String(w))
+  if (!clone.getAttribute('height')) clone.setAttribute('height', String(h))
   return new XMLSerializer().serializeToString(clone)
 }
 
