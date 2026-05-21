@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import mermaid from 'mermaid'
+import ExportMenu from './ExportMenu'
 
 let _initialized = false
 function ensureInit() {
@@ -28,21 +29,28 @@ function nextId() {
   return `mermaid-${Date.now().toString(36)}-${_idCounter}`
 }
 
-export default function Mermaid({ code }) {
-  const [svg, setSvg] = useState('')
+export default function Mermaid({ code, basename = 'mermaid-diagram' }) {
   const [error, setError] = useState(null)
+  const [hasSvg, setHasSvg] = useState(false)
+  const containerRef = useRef(null)
+  const svgRef = useRef(null)
   const idRef = useRef(nextId())
 
   useEffect(() => {
     let cancelled = false
     ensureInit()
     setError(null)
-    setSvg('')
+    setHasSvg(false)
+    svgRef.current = null
+    if (containerRef.current) containerRef.current.innerHTML = ''
     if (!code || !code.trim()) return
     mermaid
       .render(idRef.current, code)
       .then((result) => {
-        if (!cancelled) setSvg(result.svg)
+        if (cancelled || !containerRef.current) return
+        containerRef.current.innerHTML = result.svg
+        svgRef.current = containerRef.current.querySelector('svg')
+        setHasSvg(!!svgRef.current)
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message || String(err))
@@ -62,16 +70,17 @@ export default function Mermaid({ code }) {
     )
   }
 
-  if (!svg) {
-    return (
-      <div className="my-4 text-xs text-gray-500 italic">Rendering diagram…</div>
-    )
-  }
-
   return (
-    <div
-      className="my-4 flex justify-center overflow-x-auto rounded border border-gray-800 bg-gray-950/40 p-3"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div className="my-4 group relative rounded border border-gray-800 bg-gray-950/40 p-3">
+      <div ref={containerRef} className="flex justify-center overflow-x-auto" />
+      {!hasSvg && (
+        <div className="text-xs text-gray-500 italic text-center">Rendering diagram…</div>
+      )}
+      {hasSvg && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">
+          <ExportMenu getSvgEl={() => svgRef.current} basename={basename} />
+        </div>
+      )}
+    </div>
   )
 }

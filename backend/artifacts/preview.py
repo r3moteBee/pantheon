@@ -62,6 +62,9 @@ async def render_preview(artifact: dict[str, Any], blob: bytes | None) -> dict[s
     if is_text_type(ct):
         if ct == "image/svg+xml":
             return {"type": "svg", "content": sanitize_svg(artifact.get("content") or "")}
+        path_lower = (artifact.get("path") or "").lower()
+        if ct in ("text/x-mermaid", "text/vnd.mermaid") or path_lower.endswith(".mmd"):
+            return {"type": "mermaid", "content": artifact.get("content") or ""}
         return {"type": "text", "content": artifact.get("content") or ""}
 
     if blob is None:

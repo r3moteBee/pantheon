@@ -17,6 +17,8 @@ import MoveModal from '../components/MoveModal'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
 import { mermaidMarkdownComponents } from '../components/markdownComponents'
+import Mermaid from '../components/Mermaid'
+import ExportMenu from '../components/ExportMenu'
 
 function iconForType(ct) {
   if (!ct) return FileText
@@ -785,6 +787,30 @@ function cleanMarkdownForPreview(raw) {
   return s
 }
 
+function SvgPreview({ svgContent, basename }) {
+  const containerRef = useRef(null)
+  const svgRef = useRef(null)
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    setReady(false)
+    svgRef.current = null
+    if (!containerRef.current) return
+    containerRef.current.innerHTML = svgContent || ''
+    svgRef.current = containerRef.current.querySelector('svg')
+    setReady(!!svgRef.current)
+  }, [svgContent])
+  return (
+    <div className="relative w-full h-full">
+      <div ref={containerRef} className="p-6 flex items-center justify-center" />
+      {ready && (
+        <div className="absolute top-3 right-3">
+          <ExportMenu getSvgEl={() => svgRef.current} basename={basename || 'svg'} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PreviewBody({ artifact, preview }) {
   const ct = artifact.content_type || ''
 
@@ -803,7 +829,16 @@ function PreviewBody({ artifact, preview }) {
     return <pre className="p-6 text-xs whitespace-pre-wrap font-mono text-gray-200">{preview.content}</pre>
   }
   if (preview.type === 'svg') {
-    return <div className="p-6 flex items-center justify-center" dangerouslySetInnerHTML={{ __html: preview.content }} />
+    const basename = ((artifact.path || '').split('/').pop() || 'svg').replace(/\.[^.]+$/, '') || 'svg'
+    return <SvgPreview svgContent={preview.content || ''} basename={basename} />
+  }
+  if (preview.type === 'mermaid') {
+    const basename = ((artifact.path || '').split('/').pop() || 'diagram').replace(/\.[^.]+$/, '') || 'diagram'
+    return (
+      <div className="p-6 flex items-center justify-center">
+        <Mermaid code={preview.content || ''} basename={basename} />
+      </div>
+    )
   }
   if (preview.type === 'image') {
     return <div className="p-6 flex items-center justify-center"><img src={preview.url} alt={artifact.title || ''} className="max-w-full max-h-full" /></div>
