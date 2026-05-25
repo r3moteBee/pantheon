@@ -1,721 +1,431 @@
 # Pantheon
 
-Pantheon is a self-hosted, agentic AI framework with a 5-tier memory system, project isolation, autonomous task scheduling, and a polished web UI.
+A **single-user, self-hosted agent harness** with persistent multi-tier memory, a source-adapter ingestion pipeline, autonomous scheduled tasks, and a knowledge-graph substrate for long-running research workflows.
 
-## Features
+You run Pantheon locally (or on your own box), point it at a few MCP servers and an LLM endpoint, and it accumulates context over time — daily ingests, schedules, graph queries — so the agent can pick up where you left off across sessions.
 
-- **Self-Hosted**: Run entirely on your own infrastructure with full data privacy
-- **Multi-Agent Architecture**: Support for concurrent agents with independent memory and state
-- **5-Tier Memory System**: Episodic, Semantic, Procedural, Emotional, and Personality layers
-- **Project Isolation**: Each agent runs in a sandboxed project environment
-- **Task Scheduling**: Autonomous task scheduling with cron-like expressions
-- **Web Dashboard**: Modern, responsive React UI for monitoring and control
-- **LLM Flexibility**: Support for OpenAI, Anthropic, Ollama, and custom providers
-- **Vector Search**: ChromaDB integration for semantic memory retrieval
-- **WebSocket Communication**: Real-time agent status and message streaming
-- **Telegram Integration**: Optional Telegram bot for remote agent control
+## What's in the box
 
-## System Requirements
+- **Five-tier memory** — working (in-process), episodic (SQLite chat history), semantic (ChromaDB embeddings), graph (typed nodes + edges in SQLite), archival (reserved for whole documents). All tiers queried in a single `recall()` call.
+- **Source adapters** — 28 plug-in adapters across 9 mechanisms (youtube, blog, pdf, web, forum, podcast, github, CFR, MA Legislature) that turn a URL or video ID into a typed-topics artifact + graph nodes/edges in one call.
+- **Knowledge graph** — typed nodes (concept, technology, person, organization, market…) + relationships (DISCUSSES, PRODUCES, FEATURES_SPEAKER, SEMANTICALLY_SIMILAR_TO). Cross-artifact similarity surfaces mergeable duplicates for review.
+- **Artifacts store** — versioned, indexed, searchable. Markdown / HTML / PDF / images / Office docs all preview in-browser; SVG + Mermaid diagrams export to SVG / PNG / PDF.
+- **Jobs system** — unified async worker. Job types: autonomous task, scheduled job, coding task, extraction, file indexing, image extraction, iteration loop. APScheduler-driven; stall watchdog catches stuck jobs.
+- **Skills** — `slug + instructions.md` recipes the agent reads as prompt context. Invoked via `/skill-name` in chat, or bound to scheduled tasks. Auto-discovery is keyword-scored, not embedding-based (deterministic + debuggable).
+- **MCP** — full **MCP 2025-11-25** client over Streamable HTTP. Supports static API-key auth **and** OAuth 2.1 with Protected Resource Metadata (RFC 9728), Dynamic Client Registration (RFC 7591), PKCE, OIDC discovery fallback, and structured tool outputs.
+- **LLM flexibility** — named endpoints + role mapping (chat / prefill / vision / embed / rerank). Mix OpenAI, Anthropic, Ollama, or any OpenAI-compatible API per role.
+- **Web UI** — chat, memory browser, artifact tree, personality editor, scheduled tasks, MCP connections, settings — all served from FastAPI; no separate frontend server in normal use.
+- **Encrypted secrets vault** — Fernet + PBKDF2; per-key entries for LLM keys, MCP API keys, OAuth tokens, integrations.
 
-**Docker mode** (recommended for servers):
+## System requirements
+
+**Local mode (default — no Docker):**
+- Git
+- Python 3.11+
+- Node.js 18+ and npm
+- ~2 GB free disk for the install + accumulated memory
+
+**Docker mode:**
 - Docker 24+ with the Compose plugin
 - Git
-- Any modern 64-bit OS (Linux, macOS, Windows with WSL2)
 
-**Local mode** (no Docker needed):
-- Git
-- Python 3.11+ — available natively on Ubuntu 22.04+, Debian 12+, Fedora 37+, macOS 13+ (Homebrew), Alpine 3.17+
-- Node.js 18+ and npm
+The installer auto-installs Python and Node via your system package manager (Homebrew, apt, dnf, yum, pacman, apk) if they're missing.
 
-> The installer will attempt to install Python and Node automatically using your system's package manager (Homebrew, apt, dnf, yum, pacman, or apk) if they are not already present.
+## Quick start
 
-## Quick Start
-
-The easiest way to install is with the one-line installer, which handles cloning, dependencies, and configuration automatically. It will ask whether you want **local mode** (no Docker) or **Docker mode** at the start.
+One-line installer. Asks whether you want **local mode** (default) or **Docker mode** at the start.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash
 ```
 
-To skip the prompt, pass `--mode` directly:
+Skip the prompt by passing `--mode`:
 
 ```bash
-# Local mode (no Docker required)
-curl -fsSL .../deploy.sh | bash -s -- --mode local
+# Local mode
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --mode local
 
 # Docker mode
-curl -fsSL .../deploy.sh | bash -s -- --mode docker
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --mode docker
 ```
+
+The installer:
+1. Clones the repo to `~/pantheon` (override with `--dir`)
+2. Installs system deps (Python, Node, optional Caddy / LibreOffice / Ollama / SearXNG / Playwright)
+3. Creates a Python venv at `~/pantheon/.venv` and installs `backend/requirements.txt`
+4. Builds the frontend (`npm run build`)
+5. Writes `.env` (asks interactively for LLM endpoint + API key + model choice, agent name, web-UI password)
+6. Starts the backend with `./start.sh` and verifies `/api/health`
 
 ### Zero-config demo extras
 
-Bundle a local LLM (Ollama + Nemotron-3-Nano-4B) and/or a self-hosted SearXNG search backend in one shot. These flags run `demo_setup.sh` after install and restart Pantheon automatically — no manual `.env` editing needed.
+Bundle optional components with the install. Each flag runs `demo_setup.sh` post-install and restarts Pantheon automatically.
+
+| Flag | What it adds |
+|---|---|
+| `--with-ollama` | Installs Ollama + Nemotron-3-Nano-4B as the default LLM |
+| `--with-searxng` | Runs a local SearXNG container as the default web-search backend (needs Docker) |
+| `--with-office` | Installs LibreOffice + poppler so Word / Excel / PowerPoint / PDF artifacts render in the preview pane |
+| `--with-browser` | Installs Playwright chromium for the agent's browser tools |
+
+Example — full offline-friendly demo:
 
 ```bash
-# Local Ollama LLM only
-curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama
-
-# Self-hosted SearXNG search only (requires Docker)
-curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-searxng
-
-# LibreOffice for Word/Excel/PowerPoint/PDF artifact previews
-curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-office
-
-# Full offline-friendly demo: Ollama + SearXNG + Office previews
-curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | bash -s -- --yes --with-ollama --with-searxng --with-office
+curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh | \
+  bash -s -- --yes --with-ollama --with-searxng --with-office
 ```
 
-Once installed, edit `.env` in your install directory and set your LLM credentials:
+After install, your config lives at `~/pantheon/.env`. Override or extend it later — most LLM / endpoint config is also editable in the web UI under **Settings → LLM Endpoints**.
 
-```bash
-nano ~/pantheon/.env
-```
-
-Required fields:
-- `LLM_API_KEY`: Your API key (OpenAI, Anthropic, etc.)
-- `LLM_BASE_URL`: Your LLM provider endpoint (or http://ollama:11434/v1 for local)
-- `LLM_MODEL`: Model name (gpt-4o, claude-3-sonnet, llama3, etc.)
-
-### Starting and Stopping
+### Starting and stopping
 
 **Local mode:**
 
 ```bash
-~/pantheon/start.sh   # start backend + frontend
-~/pantheon/stop.sh    # stop all processes
+~/pantheon/start.sh   # boots backend; serves frontend at the same port
+~/pantheon/stop.sh    # graceful stop
 ```
 
-- Web UI + API: **http://localhost:8000**
-- API Docs: http://localhost:8000/docs
-- Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md) — cursor-paginated artifact stream for change-detection polling and bulk enumeration
+- Web UI + API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- Health check (returns running version): `curl -s http://localhost:8000/api/health`
 
 **Docker mode:**
 
 ```bash
 cd ~/pantheon
-make up        # build images and start all services
-make down      # stop all services
-make logs      # tail logs for all services
+make up         # build + start all services
+make down       # stop all services
+make logs       # tail logs
+make ps         # show running services
 ```
 
-- Web UI: **http://localhost:8000** (default)
-- API Docs: http://localhost:8000/docs
-- Agent feed reference: [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md)
+- Web UI: `http://localhost:8000` (Docker maps `8000:8000` by default)
+- API docs: `http://localhost:8000/docs`
 
-> **Note:** The default Docker setup exposes port 8000. To map to port 80, either:
-> 1. Modify `docker-compose.yml` and change Nginx port mapping from `8000:80` to `80:80`
-> 2. Set up Caddy with your domain (see HTTPS section below) — Caddy will handle port 80/443 and TLS
-> 3. Access directly on 8000 for development
+To bind Docker mode to port 80 instead, either edit the `backend.ports` mapping in `docker-compose.yml` to `"80:8000"`, or front it with Caddy via the HTTPS section below (recommended for public deployments).
 
-> **Note:** The `make` commands are Docker-only. If you installed in local mode, use `start.sh` / `stop.sh` instead.
+`make` targets are Docker-only — they're no-ops in local mode. Use `start.sh` / `stop.sh` for local.
 
-### Onboarding Walkthrough
+### First-run setup
 
-After starting Pantheon for the first time, you'll see the onboarding flow:
+The actual "onboarding" is the interactive CLI flow in `deploy.sh`. When run without `--yes`, the installer:
 
-1. **Welcome** — Set your display name and choose your LLM provider preference
-2. **LLM Configuration** — Select provider (OpenAI, Anthropic, Ollama, custom) and enter API credentials (if not pre-configured in `.env`). Test the connection.
-3. **First Project** — Name your first project (e.g., "General Tasks") and choose an agent persona (professional, creative, technical, etc.)
-4. **Agent Verification** — Send a test message to verify the agent works. Review the 5-tier memory system.
+1. Asks whether you want local mode or Docker mode (defaults to Docker)
+2. Asks for your LLM endpoint URL and API key
+3. Probes the endpoint and lets you pick your **primary** (chat), **prefill**, and **embedding** models from the live model list
+4. Asks for an agent name (written into the default persona's `soul.md`)
+5. Asks for a web-UI password (`AUTH_PASSWORD` — leave empty to disable auth, fine for local-only use)
+6. Optionally installs Caddy if you pass `--domain`
 
-Once onboarding is complete, you can:
-- Create additional projects and agents via **Settings > Projects**
-- Configure tools and integrations in **Settings > Integrations**
-- Manage LLM providers in **Settings > LLM Configuration**
-- Review and customize agent personality in **Settings > Agent Personality**
+When Pantheon boots, you land directly on the chat page. There's no in-app wizard — every setting (LLM endpoints + role mapping, projects, personas, personality, MCP connections, skills) is editable from the **Settings** page or its dedicated sub-page in the sidebar at any time. The first piece you'll want to confirm is **Settings → LLM Endpoints + Role Mapping** if you skipped the CLI prompts.
 
-To skip onboarding and proceed to the main dashboard, click **Skip** on any screen. You'll need to configure your LLM provider in Settings before creating agents.
+### HTTPS with Caddy
 
-The installer can automatically set up [Caddy](https://caddyserver.com) as a reverse proxy with free Let's Encrypt HTTPS certificates. During installation, enter your domain when prompted, or pass it as a flag:
+For public deployments, the installer can set up [Caddy](https://caddyserver.com) as a reverse proxy with automatic Let's Encrypt certificates.
 
 ```bash
 curl -fsSL .../deploy.sh | bash -s -- --mode local --domain agent.example.com
 ```
 
-Prerequisites: your domain's DNS must point to the server, and ports 80 + 443 must be open in your firewall or cloud security group.
+Prerequisites: your domain's DNS points to the server, and ports 80 + 443 are open.
 
-To set up HTTPS after an existing install:
+To add HTTPS to an existing install:
 
 ```bash
-# Install Caddy (Ubuntu/Debian)
+# Ubuntu / Debian
 sudo apt-get install -y caddy
-
-# Copy and edit the included Caddyfile
 sudo cp ~/pantheon/Caddyfile /etc/caddy/Caddyfile
-# Edit /etc/caddy/Caddyfile and replace {$DOMAIN:localhost} with your domain
-
-# Start Caddy
+# Edit /etc/caddy/Caddyfile — replace {$DOMAIN:localhost} with your domain
 sudo systemctl enable caddy && sudo systemctl start caddy
 ```
 
-Caddy will automatically obtain and renew TLS certificates. No manual cert management needed.
+Caddy auto-renews certificates; no manual cert management.
 
-## Architecture Overview
+### Updating after install
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Browser / Client                         │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-              ┌────────────────────────┐
-              │   Nginx (Reverse Proxy)│
-              │   Port 80 / 443        │
-              └──┬──────────────────┬──┘
-                 │                  │
-         ┌───────▼────────┐  ┌──────▼────────┐
-         │  React Frontend │  │  FastAPI      │
-         │  (static, served│  │  Backend      │
-         │   by backend)   │  │  Port 8000    │
-         └────────────────┘  └────┬──────┬──┘
-                                  │      │
-                        ┌─────────┴─┬────┴──────────┐
-                        │           │               │
-                    ┌───▼──┐  ┌─────▼────┐  ┌──────▼───┐
-                    │SQLite│  │ ChromaDB  │  │ File     │
-                    │ DB   │  │ Vector DB │  │ Storage  │
-                    │      │  │           │  │          │
-                    └──────┘  └───────────┘  └──────────┘
+```bash
+cd ~/pantheon && git pull
+~/pantheon/.venv/bin/pip install -r backend/requirements.txt   # if backend deps changed
+cd frontend && VITE_API_URL="" npm run build && cd ..          # if frontend changed
+./stop.sh && ./start.sh
+curl -s http://localhost:8000/api/health    # confirm version bumped
 ```
 
-### Component Details
+For Docker mode, `make down && make build && make up`.
 
-- **Nginx**: Reverse proxy routing API requests and WebSocket connections
-- **FastAPI Backend**: Core application logic, agent orchestration, API endpoints
-- **React Frontend**: User interface for project, agent, and task management
-- **ChromaDB**: Vector database for semantic memory and retrieval-augmented generation
-- **SQLite**: Relational database for episodic memory and application state
-- **File Storage**: Persistent storage for project artifacts and knowledge bases
+## Architecture
 
-## Memory System
+```
+                       ┌─────────────────────────┐
+                       │  Browser / Agent client │
+                       └────────────┬────────────┘
+                                    │
+                            (optional Caddy
+                             for HTTPS only)
+                                    │
+                       ┌────────────▼────────────┐
+                       │  FastAPI (uvicorn)      │
+                       │  Serves the React UI    │
+                       │  + 19 API routers       │
+                       │  + APScheduler          │
+                       │  + JobWorker (asyncio)  │
+                       └────┬────────────────┬───┘
+                            │                │
+              ┌─────────────┴──┐    ┌────────┴─────────────┐
+              │                │    │                      │
+       ┌──────▼──────┐  ┌──────▼─────────┐         ┌───────▼────────┐
+       │  Memory     │  │  Source        │         │  MCP servers   │
+       │  Manager    │  │  adapters      │         │  (external)    │
+       │             │  │  (28 across    │         │  YouTube,      │
+       │ • episodic  │  │   9 mechs)     │         │  GitHub,       │
+       │   (SQLite)  │  │                │         │  Tavily,       │
+       │ • semantic  │  │  ingest URL →  │         │  Notion, …     │
+       │   (Chroma)  │  │  typed-topics  │         │                │
+       │ • graph     │  │  artifact +    │         │  static API    │
+       │   (SQLite)  │  │  graph nodes   │         │  key OR        │
+       │ • working   │  └────────────────┘         │  OAuth 2.1     │
+       │   (memory)  │                             │  (PKCE+DCR)    │
+       │ • archival  │  ┌────────────────┐         └────────────────┘
+       └─────────────┘  │  Artifacts     │
+                        │  (SQLite +     │
+              ┌─────────┤  blob)         │
+              │         └────────────────┘
+       ┌──────▼─────────────────┐
+       │  Encrypted vault       │
+       │  (Fernet/PBKDF2 SQLite)│
+       │  LLM keys, OAuth       │
+       │  tokens, MCP secrets   │
+       └────────────────────────┘
+```
 
-Pantheon implements a comprehensive 5-tier memory architecture:
+**Single process.** APScheduler and `JobWorker` run as asyncio tasks inside the FastAPI process. There is no separate queue worker, no Nginx, no message broker. This is intentional — Pantheon is a single-user harness, not a multi-tenant SaaS.
 
-### 1. Episodic Memory
+**No "file storage" tier.** Artifacts (the durable, indexed, searchable kind) are SQLite rows with blob storage. Workspace files (ephemeral scratch the agent reads/writes) live on disk under `data/projects/<slug>/`. Both are accessed via different agent tools — don't conflate them.
 
-Stores specific events, interactions, and conversation history tied to timestamps and contexts.
+### Memory tiers (the real ones)
 
-- **Implementation**: SQLite with indexed timestamps
-- **Storage Location**: `/data/db/episodic.db`
-- **Features**:
-  - Full conversation history
-  - Context-tagged interactions
-  - Time-series queries
-  - Automatic retention policies
+| Tier | Backend | Purpose |
+|---|---|---|
+| **Working** | in-process | Per-conversation scratch — not persisted |
+| **Episodic** | SQLite (`data/db/episodic.db`) | Chat history + task logs, searchable by content + timestamp |
+| **Semantic** | ChromaDB (`data/chroma/`) | Embedded chunks from artifacts and workspace files, topic-label embeddings |
+| **Graph** | SQLite (`data/db/graph.db`) | Typed nodes + edges; idempotent inserts; powers cross-artifact similarity |
+| **Archival** | SQLite (mostly unused) | Reserved for whole-document storage |
 
-### 2. Semantic Memory
+`mgr.recall(query, tiers=[…])` searches across them in a single call and returns provenance-tagged hits.
 
-Stores generalized knowledge, facts, and conceptual understanding extracted from experiences.
+### Source adapters in one paragraph
 
-- **Implementation**: ChromaDB vector embeddings
-- **Features**:
-  - Semantic similarity search
-  - Knowledge extraction from conversations
-  - Multi-modal support
-  - Automatic summarization
+Drop a file under `backend/sources/adapters/`, subclass `SourceAdapter`, set `source_type` / `bucket_aliases` / `extractor_strategy`, and call `register_adapter(YourClass())`. The pipeline runs fetch → extract topics → save artifact (dedup'd on canonical path) → embed → graph insert → optional cross-artifact similarity. See [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) for the full design.
 
-### 3. Procedural Memory
+## Configuration
 
-Stores learned skills, workflows, and execution procedures.
+`~/pantheon/.env` is the source of truth for boot-time config. Most LLM settings are also editable in **Settings → LLM Endpoints** in the web UI (and stored in the vault — UI changes win over the .env after first read).
 
-- **Implementation**: Code-based skill repository
-- **Storage Location**: `/data/skills/`
-- **Features**:
-  - Skill definitions in YAML/JSON
-  - Executable procedures
-  - Parameter validation
-  - Skill chaining
-
-### 4. Emotional Memory
-
-Stores sentiment, preferences, and relational context about interactions.
-
-- **Implementation**: SQLite + vector embeddings
-- **Features**:
-  - Sentiment analysis per interaction
-  - User preference tracking
-  - Relationship context
-  - Tone and communication style adaptation
-
-### 5. Personality Memory
-
-Stores the agent's core identity, values, and behavioral patterns.
-
-- **Implementation**: Markdown personality profiles
-- **Storage Location**: `/data/personality/`
-- **Features**:
-  - Customizable personality templates
-  - Behavior guidelines
-  - Communication style presets
-  - Role-specific configurations
-
-## Configuration Guide
-
-### Core LLM Configuration
+### Core LLM
 
 ```env
-# OpenAI (default)
 LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-your-key-here
+LLM_API_KEY=sk-your-key
 LLM_MODEL=gpt-4o
 
-# Anthropic Claude
-LLM_BASE_URL=https://api.anthropic.com/v1
-LLM_API_KEY=sk-ant-your-key-here
-LLM_MODEL=claude-3-5-sonnet-20241022
+# Optional cheaper/faster model used for summarization, prefill, background tasks
+LLM_PREFILL_MODEL=gpt-4o-mini
 
-# Local Ollama
-LLM_BASE_URL=http://ollama:11434/v1
-LLM_API_KEY=ollama
-LLM_MODEL=llama3
-```
+# Optional dedicated vision model (otherwise uses LLM_MODEL if vision-capable)
+LLM_VISION_MODEL=
 
-### Embedding Configuration
-
-By default, embeddings use your configured LLM provider. To use a different provider:
-
-```env
-# OpenAI embeddings
+# Embeddings
 EMBEDDING_MODEL=text-embedding-3-small
-
-# Ollama embeddings
-EMBEDDING_MODEL=nomic-embed-text
-EMBEDDING_BASE_URL=http://ollama:11434/v1
 ```
 
-### Security Configuration
+### Security
 
 ```env
-# Generate secure keys:
-# VAULT_MASTER_KEY: openssl rand -hex 16
-# SECRET_KEY: python -c "import secrets; print(secrets.token_hex(32))"
+# Generate with: openssl rand -hex 32
+VAULT_MASTER_KEY=...
+SECRET_KEY=...
 
-VAULT_MASTER_KEY=your-32-char-hex-string
-SECRET_KEY=your-64-char-hex-string
-APP_ENV=production
+# Web UI password. Empty = no auth (don't do this on public servers).
+AUTH_PASSWORD=...
 ```
 
-### CORS Configuration
+### CORS / logging
 
 ```env
-# Allow specific origins
-CORS_ORIGINS=http://localhost:8000,http://localhost:80,https://yourdomain.com
+CORS_ORIGINS=http://localhost:8000,https://yourdomain.com
+LOG_LEVEL=INFO
 ```
 
-### Logging Configuration
+### LLM endpoints + role mapping (recommended)
 
-```env
-LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-```
+Instead of the flat `LLM_*` vars, configure named endpoints in the **Settings** UI:
 
-### ChromaDB Configuration
+1. Add an endpoint (name + base URL + API key + provider type)
+2. Map each role (chat, prefill, vision, embed, rerank) to an endpoint + model
 
-```env
-# Docker network communication (default for containerized setup)
-CHROMA_HOST=chromadb
-CHROMA_PORT=8001
+Legacy `.env` flat-config keys are auto-migrated to the new shape on first read. The migration is idempotent; the flat keys still work for backward compat.
 
-# For direct host communication
-# CHROMA_HOST=localhost
-# CHROMA_PORT=8001
-```
+## MCP connections
 
-## How to Add a New LLM Provider
+Pantheon implements **MCP spec 2025-11-25** over Streamable HTTP.
 
-### Step 1: Create Provider Adapter
+Add a server in **MCP Connections** → choose **API key** auth (paste a token) or **OAuth 2.1** (browser sign-in). For OAuth, Pantheon handles the full flow:
 
-Create a new file in `backend/llm_providers/`:
+1. Probes for `WWW-Authenticate: Bearer resource_metadata=…`
+2. Fetches the Protected Resource Metadata doc
+3. Discovers the AS via `/.well-known/oauth-authorization-server` (or OIDC `/.well-known/openid-configuration` as fallback)
+4. Registers a public client via Dynamic Client Registration
+5. Opens the browser for sign-in with PKCE S256
+6. Catches the callback at `http://localhost:8000/api/mcp/oauth/callback`, exchanges code, persists tokens
+7. Refreshes tokens on a 60s pre-expiry window; auto-retries once on 401
 
-```python
-# backend/llm_providers/custom_provider.py
+Connections that publish structured tool outputs (spec 2025-06-18+) come through as both human-readable text and a typed JSON payload the LLM can parse deterministically.
 
-from typing import AsyncIterator, Optional
-from backend.llm_providers.base import BaseLLMProvider
+## Adding things
 
-class CustomProvider(BaseLLMProvider):
-    """Adapter for Custom LLM Provider"""
+### A new LLM endpoint
 
-    def __init__(self, api_key: str, base_url: str, model: str):
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model
+Use the **Settings → LLM Endpoints** UI — paste base URL + key, click **Probe** to fetch the model list, then assign the endpoint to whichever roles you want. No code change needed.
 
-    async def generate(
-        self,
-        messages: list,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-    ) -> str:
-        """Generate a single completion"""
-        # Implement provider-specific API call
-        pass
+### A new agent tool
 
-    async def stream(
-        self,
-        messages: list,
-        temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
-    ) -> AsyncIterator[str]:
-        """Stream tokens as they arrive"""
-        # Implement streaming logic
-        pass
+Tools are JSON Schema entries + a dispatch branch in one file. Edit `backend/agent/tools.py`:
 
-    async def embed(self, text: str) -> list[float]:
-        """Generate embeddings"""
-        # Implement embedding logic
-        pass
-```
+1. Add a schema entry to `TOOL_SCHEMAS`
+2. Add an `elif` branch to the dispatch block at the bottom
 
-### Step 2: Register Provider
+Bump the version in `frontend/package.json`, restart, and the tool shows up in the agent's tool list.
 
-Update `backend/llm_providers/__init__.py`:
+### A new source adapter
 
-```python
-from backend.llm_providers.custom_provider import CustomProvider
+1. Create `backend/sources/adapters/<name>.py`
+2. Subclass `SourceAdapter` (or one of the `_*AdapterBase` classes for common patterns), set the class attrs, implement `fetch()`
+3. Call `register_adapter(YourClass())` at module import
+4. Import the module in `backend/sources/adapters/__init__.py`
 
-PROVIDERS = {
-    "openai": OpenAIProvider,
-    "anthropic": AnthropicProvider,
-    "custom": CustomProvider,  # Add your provider
-    "ollama": OllamaProvider,
-}
-```
+See [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) for extractor strategies and the full lifecycle.
 
-### Step 3: Update Configuration
+### A new skill
 
-Add environment variables for your provider:
-
-```env
-# In .env
-LLM_BASE_URL=https://api.customprovider.com/v1
-LLM_API_KEY=your-api-key
-LLM_MODEL=custom-model-name
-```
-
-### Step 4: Test Integration
-
-```bash
-# Backend shell
-make shell-backend
-
-# Test the provider
-python
->>> from backend.llm import get_llm_provider
->>> provider = get_llm_provider()
->>> response = await provider.generate([{"role": "user", "content": "Hello"}])
->>> print(response)
-```
-
-## How to Add a New Tool
-
-### Step 1: Define Tool Specification
-
-Create a tool definition in `backend/tools/`:
-
-```python
-# backend/tools/my_tool.py
-
-from typing import Any, Dict
-from backend.tools.base import BaseTool, ToolParameter
-
-class MyTool(BaseTool):
-    """Description of what your tool does"""
-
-    name = "my_tool"
-    description = "Detailed description of tool functionality"
-
-    parameters = [
-        ToolParameter(
-            name="input_text",
-            type="string",
-            description="Text input for the tool",
-            required=True,
-        ),
-        ToolParameter(
-            name="option",
-            type="string",
-            description="Optional parameter",
-            required=False,
-            enum=["option1", "option2"],
-        ),
-    ]
-
-    async def execute(self, **kwargs) -> Dict[str, Any]:
-        """Execute the tool with given parameters"""
-        input_text = kwargs.get("input_text")
-        option = kwargs.get("option", "option1")
-
-        # Implement tool logic
-        result = f"Processed: {input_text} with {option}"
-
-        return {
-            "status": "success",
-            "result": result,
-            "metadata": {
-                "tokens_used": 42,
-                "execution_time_ms": 123,
-            },
-        }
-```
-
-### Step 2: Register Tool
-
-Update `backend/tools/__init__.py`:
-
-```python
-from backend.tools.my_tool import MyTool
-
-AVAILABLE_TOOLS = {
-    "web_search": WebSearchTool,
-    "file_read": FileReadTool,
-    "my_tool": MyTool,  # Add your tool
-}
-```
-
-### Step 3: Add Tool to Agent
-
-In agent configuration or via API:
-
-```python
-agent = Agent(
-    name="my-agent",
-    tools=["web_search", "file_read", "my_tool"],  # Include your tool
-)
-```
-
-### Step 4: Use Tool in Prompts
-
-Tools are automatically available to the agent. The LLM will call them when appropriate:
-
-```
-Agent: "I'll use my_tool to help you with that task."
-Agent calls: my_tool(input_text="sample", option="option1")
-Agent: "Here are the results..."
-```
-
-## Telegram Setup
-
-### Prerequisites
-
-- Telegram bot token (create via @BotFather)
-- Chat IDs where the bot is authorized (create test group)
-
-### Configuration
-
-1. Create your Telegram bot:
-   - Chat with @BotFather on Telegram
-   - Use `/newbot` command
-   - Follow prompts to create a bot
-   - Copy the bot token
-
-2. Update `.env`:
-
-```env
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyzABCDEfg
-TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321
-```
-
-3. Add bot to your chat:
-   - Search for your bot in Telegram
-   - Click "Start"
-   - Get your chat ID using `/start` in the chat
-   - Add chat ID to `TELEGRAM_ALLOWED_CHAT_IDS`
-
-4. Test the connection:
-
-```bash
-make logs-backend | grep -i telegram
-```
-
-### Telegram Commands
-
-Once configured, use these commands in any authorized chat:
-
-```
-/status        - Get agent status and stats
-/list          - List all active agents
-/project <id>  - Get project details
-/tasks         - Show pending tasks
-/stop <id>     - Stop a running agent
-```
+In chat: ask the agent to create a skill (e.g. *"create a skill that summarizes a YouTube video into a one-page brief"*). The `create_skill` tool scaffolds the manifest + `instructions.md` and registers it. Or hand-author `data/skills/<slug>/skill.json` + `instructions.md`.
 
 ## Development
 
-### Backend Development
-
-Start backend with hot reload:
+### Backend with hot reload
 
 ```bash
-make dev-backend
+cd ~/pantheon/backend
+~/pantheon/.venv/bin/uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-This runs FastAPI with auto-reload on code changes.
-
-### Frontend Development
-
-Start frontend with Vite dev server:
+### Frontend with Vite
 
 ```bash
-make dev-frontend
+cd ~/pantheon/frontend
+npm run dev      # http://localhost:5173, proxies API calls to :8000
 ```
 
-Frontend will auto-reload on file changes.
-
-### Running Tests
+### Tests
 
 ```bash
-make test
+cd ~/pantheon/backend
+~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-### Code Quality
+Coverage is sparse — expand it as you go. The autonomous-skill-resolution test is the canary for the autonomous-job code path.
 
-Format code:
-```bash
-make format
-```
+### Docker dev commands
 
-Run linter:
-```bash
-make lint
-```
-
-## Project Structure
+Available targets (`make help` for the full list):
 
 ```
-pantheon/
+make up               # start all services
+make down             # stop all services
+make logs             # tail all logs
+make logs-backend     # tail backend only
+make restart-backend  # restart backend container
+make dev-backend      # backend with hot reload (Docker)
+make dev-frontend     # frontend with Vite (Docker)
+make shell-backend    # shell inside the backend container
+make shell-db         # sqlite3 against episodic.db
+make test             # pytest inside backend container
+make format / lint    # ruff
+make ps               # docker compose ps
+make clean            # nuke containers, volumes, images
+```
+
+### Versioning
+
+Single source of truth: `frontend/package.json` `"version"` field, format `YYYY.MM.DD.HXX` (e.g. `2026.05.24.H3`). The backend reads it at startup and surfaces it at `GET /api/health`. Bump on every push so the health check confirms the deploy picked up new code.
+
+## Repository layout
+
+```
+~/pantheon/
 ├── backend/
-│   ├── main.py                 # FastAPI application entry point
-│   ├── requirements.txt         # Python dependencies
-│   ├── Dockerfile              # Backend container definition
-│   ├── llm_providers/           # LLM provider implementations
-│   │   ├── base.py
-│   │   ├── openai.py
-│   │   ├── anthropic.py
-│   │   └── ollama.py
-│   ├── tools/                  # Executable tools for agents
-│   │   ├── base.py
-│   │   ├── web_search.py
-│   │   └── file_operations.py
-│   ├── models/                 # Data models and schemas
-│   │   ├── agent.py
-│   │   ├── project.py
-│   │   └── memory.py
-│   ├── memory/                 # 5-tier memory system
-│   │   ├── episodic.py
-│   │   ├── semantic.py
-│   │   ├── procedural.py
-│   │   ├── emotional.py
-│   │   └── personality.py
-│   ├── api/                    # API route handlers
-│   │   ├── agents.py
-│   │   ├── projects.py
-│   │   ├── tasks.py
-│   │   ├── memory.py
-│   │   └── websocket.py
-│   ├── services/               # Business logic
-│   │   ├── agent_service.py
-│   │   ├── task_scheduler.py
-│   │   └── vector_store.py
-│   ├── data/                   # Template and configuration files
-│   │   └── personality/        # Personality templates
-│   │       └── soul.md
-│   └── tests/                  # Test suite
-│       ├── test_agents.py
-│       └── test_memory.py
+│   ├── main.py                FastAPI app entry — reads version from frontend/package.json
+│   ├── config.py              Pydantic v2 Settings; settings.db_dir is canonical
+│   ├── db_utils.py            Shared SQLite PRAGMA helper (WAL + synchronous=NORMAL)
+│   ├── agent/                 AgentCore + tool dispatch (single tools.py file) + prompts
+│   ├── api/                   FastAPI routers (one per resource — 19 routers)
+│   ├── sources/               Source-adapter plugin registry + adapters/
+│   ├── memory/                Tier implementations + extraction + topic embeddings
+│   ├── artifacts/             Versioned artifact store (SQLite + blob)
+│   ├── jobs/                  Unified async job system + handlers/
+│   ├── skills/                Skill registry + resolver + editor
+│   ├── tasks/                 APScheduler integration
+│   ├── mcp_client/            MCP client + OAuth module + manager
+│   ├── llm_config/            Named endpoints + role mapping
+│   ├── models/                ModelProvider + per-role getters
+│   ├── secrets/               Fernet-encrypted vault
+│   ├── plugins/               Plugin loader (sources + tools)
+│   ├── integrations/          External-service integrations
+│   ├── data/                  BUNDLED defaults (personas, personality) — in git
+│   ├── tests/integration/     pytest tests
+│   └── requirements.txt
 │
-├── frontend/
+├── frontend/                  Vite + React. package.json's "version" drives backend version
 │   ├── src/
-│   │   ├── App.jsx             # Main React component
-│   │   ├── main.jsx            # Vite entry point
-│   │   ├── api/                # API client functions
-│   │   │   └── client.js
-│   │   ├── components/         # React components
-│   │   │   ├── AgentDashboard.jsx
-│   │   │   ├── ProjectManager.jsx
-│   │   │   └── MemoryExplorer.jsx
-│   │   ├── pages/              # Page components
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── Projects.jsx
-│   │   │   └── Settings.jsx
-│   │   ├── hooks/              # Custom React hooks
-│   │   └── styles/             # CSS styles
-│   ├── package.json
-│   ├── vite.config.js
-│   └── Dockerfile
+│   │   ├── pages/             Top-level page components
+│   │   ├── components/        Chat, ChatTabs, Layout, Settings/, chat-tabs/
+│   │   ├── api/client.js      Axios wrappers (chat, llmApi, mcpApi, …)
+│   │   └── store/index.js     Zustand
+│   └── package.json
 │
-├── nginx/
-│   └── nginx.conf              # Nginx reverse proxy config
+├── data/                      RUNTIME data — NOT in git
+│   ├── db/                    SQLite stores + projects.json + vault
+│   ├── chroma/                ChromaDB collections
+│   ├── projects/              Per-project workspace files
+│   ├── skills/                User-installed skills
+│   └── personality/           User-overridden soul.md / agent.md
 │
-├── data/                        # Persistent data (gitignored)
-│   ├── db/
-│   │   └── episodic.db         # SQLite database
-│   ├── chroma/                 # ChromaDB vector store
-│   ├── personality/            # Agent personality files
-│   └── projects/               # Agent project directories
-│
-├── docker-compose.yml          # Multi-container orchestration
-├── .env.example                # Environment template
-├── .gitignore                  # Git ignore rules
-├── Makefile                    # Development commands
-└── README.md                   # This file
+├── docs/                      Design docs + usage guides
+├── CLAUDE.md                  Working context for AI assistants (read this first if hacking)
+├── deploy.sh                  One-command installer
+├── demo_setup.sh              Optional component installer (Ollama, SearXNG, etc.)
+├── start.sh / stop.sh         Local-mode lifecycle
+├── Makefile                   Docker-mode lifecycle
+├── docker-compose.yml         Multi-container orchestration
+├── Caddyfile                  Reverse proxy + HTTPS config
+└── .env.example
 ```
+
+## Further reading
+
+- [`CLAUDE.md`](CLAUDE.md) — working context for the codebase: design rationale, common dev tasks, gotchas, the "things explicitly not done yet" list
+- [`docs/USAGE.md`](docs/USAGE.md) — using the agent effectively: projects, personalities, anaphora, source ingestion, scheduled tasks
+- [`backend/README.md`](backend/README.md) — backend layout + API surface + LLM config + memory tiers
+- [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) — adapter plugin protocol
+- [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md) — cursor-paginated artifact stream for agent-to-agent / RAG consumers
+- [`docs/SECURITY_FEATURES.md`](docs/SECURITY_FEATURES.md) — vault, auth, sandboxing
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes and test thoroughly
-4. Commit with clear messages (`git commit -m 'Add amazing feature'`)
-5. Push to your branch (`git push origin feature/amazing-feature`)
-6. Open a Pull Request
+MIT — see [LICENSE](LICENSE).
 
 ## Support
 
 - Issues: GitHub Issues
 - Discussions: GitHub Discussions
-
-## Roadmap
-
-### Shipped
-
-- [x] 5-tier memory system (working, episodic, semantic, graph, archival)
-- [x] Cross-tier memory recall with optional reranker
-- [x] Session consolidation via prefill model
-- [x] ChromaDB vector search for semantic memory
-- [x] Project isolation with per-project workspaces and personalities
-- [x] Real-time WebSocket chat streaming with tool-call visualization
-- [x] Autonomous task scheduling (one-shot, interval, and cron)
-- [x] Multi-file upload, download, and in-browser text editing
-- [x] Telegram bot integration for remote control
-- [x] LLM flexibility — any OpenAI-compatible provider (OpenAI, Anthropic, Ollama, etc.)
-- [x] Encrypted secrets vault (Fernet + PBKDF2)
-- [x] Full web dashboard — chat, memory browser, files, personality editor, tasks, settings, projects
-
-### In Progress
-
-- [ ] Multi-agent orchestration — coordinated agents with inter-agent communication
-- [ ] Role-based access control (RBAC) and multi-user auth
-- [ ] Advanced memory consolidation — automatic cross-session summarization and decay
-- [ ] **Skills system** — extensible skill library with AI-assisted editor ([design doc](docs/SKILLS_FEATURE_PLAN.md))
-  - [ ] Skill registry — load, enable/disable, and manage user-authored skills at runtime
-  - [ ] Security scanner — 3-layer pipeline (static analysis, capability analysis, AI review) with quarantine
-  - [ ] Hub import — fetch skills from Smithery (MCP), ClawHub, SkillsMP/SkillsLLM, GitHub, or local upload
-  - [ ] AI-assisted skill editor — scaffold, refine, and test skills in the browser
-  - [ ] Explicit invocation (`/skill-name`) and toggle-controlled auto-discovery (off / suggest / auto)
-  - [ ] Pantheon extensions — memory-tier integration, project context awareness, autonomous scheduling, granular permissions
-  - [ ] Skill telemetry — activation tracking, satisfaction scoring, periodic AI effectiveness reviews
-  - [ ] Skill evolution — opt-in per-skill self-improvement with version control and rollback
-  - [ ] Task-level skill policies — per-task control over skill access for autonomous execution
-
-### Planned
-
-- [ ] Multi-modal input (images, audio, documents in chat)
-- [ ] GPU-accelerated local embeddings
-- [ ] Distributed agent deployment and horizontal scaling
-- [ ] Custom fine-tuning pipeline integration

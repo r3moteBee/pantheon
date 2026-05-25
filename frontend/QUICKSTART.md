@@ -30,10 +30,9 @@ The app will be available at `http://localhost:5173`
 
 3. **Configure LLM**:
    - Click "Settings" in the sidebar
-   - Enter your LLM API endpoint (e.g., `https://api.openai.com/v1`)
-   - Paste your API key
-   - Click "Test Connection"
-   - Select a model from the dropdown (click "Fetch Models" to refresh)
+   - Under **Endpoints**, click **Add Endpoint** — give it a name (e.g. `openai`), paste your base URL (e.g. `https://api.openai.com/v1`) and API key, choose the provider type
+   - Click **Probe** on the endpoint card to fetch the model list
+   - Under **Role Mapping**, assign endpoint + model for each role: `chat`, `prefill`, `vision`, `embed`, `rerank` (you can map them all to the same endpoint to start)
 
 4. **Start Chatting**:
    - Click "Chat" in the sidebar
@@ -47,8 +46,8 @@ frontend/
 ├── src/
 │   ├── api/client.js          # All API endpoints
 │   ├── store/index.js         # Global state (Zustand)
-│   ├── components/            # 8 main components
-│   ├── pages/                 # 7 page wrappers
+│   ├── components/            # Chat, Layout, MCPConnections, Skills, settings/, chat-tabs/, …
+│   ├── pages/                 # 14 page wrappers (Chat, Artifacts, Memory, MCP, Skills, …)
 │   ├── App.jsx               # Router setup
 │   └── index.css             # Tailwind styles
 ├── package.json              # Dependencies
@@ -122,8 +121,9 @@ docker run -p 80:80 my-frontend  # Run in Docker
 
 ### Chat isn't working
 - Check if WebSocket connection is open in DevTools Network tab
-- Verify LLM settings are correct (Settings page)
-- Test connection button should show green checkmark
+- Verify LLM settings are correct (Settings → Endpoints + Role Mapping)
+- Probe button on the endpoint card should return a model list — if it errors, the base URL or API key is wrong
+- Confirm a model is assigned to the `chat` role
 
 ### Styles look broken
 - Clear browser cache (Ctrl+Shift+Delete)
