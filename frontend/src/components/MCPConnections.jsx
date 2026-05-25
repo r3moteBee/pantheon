@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw, ShieldAlert } from 'lucide-react'
+import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw, ShieldAlert, Pencil, X, Save, Power } from 'lucide-react'
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
 
@@ -359,13 +359,160 @@ function DevRateLimitControl({ conn, onUpdate }) {
   )
 }
 
+// ── Connection Edit Form (inline panel inside expanded card) ──────────────
+
+function ConnectionEditForm({ conn, onSave, onCancel }) {
+  const isOAuth = conn.auth_type === 'oauth2'
+  const [url, setUrl] = useState(conn.url || '')
+  const [apiKey, setApiKey] = useState('')
+  const [showKey, setShowKey] = useState(false)
+  const [enabled, setEnabled] = useState(conn.enabled !== false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const urlChanged = url.trim() !== (conn.url || '').trim()
+  const enabledChanged = enabled !== (conn.enabled !== false)
+  const apiKeyChanged = apiKey.length > 0
+  const hasChanges = urlChanged || enabledChanged || apiKeyChanged
+
+  const handleSave = async () => {
+    if (!url.trim()) {
+      setError('URL cannot be empty')
+      return
+    }
+    setError(null)
+    setSaving(true)
+    const update = {}
+    if (urlChanged) update.url = url.trim()
+    if (enabledChanged) update.enabled = enabled
+    if (apiKeyChanged) update.api_key = apiKey
+    try {
+      await onSave(conn.name, update)
+    } catch (err) {
+      setError(err?.response?.data?.detail || err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="border border-blue-800/60 rounded-md bg-gray-900/60 p-3 space-y-3">
+      <h4 className="text-xs font-medium text-blue-300 flex items-center gap-1.5">
+        <Pencil className="w-3 h-3" /> Edit connection
+      </h4>
+
+      <div>
+        <label className="block text-[10px] text-gray-400 mb-1">Server URL</label>
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+        />
+        {isOAuth && urlChanged && (
+          <p className="text-[10px] text-amber-400 mt-1">
+            Changing the URL on an OAuth connection may invalidate the
+            current token. Click <b>Re-auth</b> after saving if requests
+            start returning 401.
+          </p>
+        )}
+      </div>
+
+      {!isOAuth && (
+        <div>
+          <label className="block text-[10px] text-gray-400 mb-1">
+            API Key <span className="text-gray-600">(leave empty to keep current)</span>
+          </label>
+          <div className="flex gap-2">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={conn.has_api_key ? '••• current key set, leave empty to keep' : 'No API key set'}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="px-2 text-gray-500 hover:text-gray-300"
+            >
+              {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Power className={`w-3.5 h-3.5 ${enabled ? 'text-emerald-400' : 'text-gray-600'}`} />
+          <span className="text-xs text-gray-300">
+            {enabled ? 'Enabled — connects on startup' : 'Disabled — skipped on startup'}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setEnabled(!enabled)}
+          className={`relative w-9 h-5 rounded-full transition-colors ${
+            enabled ? 'bg-emerald-600' : 'bg-gray-600'
+          }`}
+          title={enabled ? 'Disable connection' : 'Enable connection'}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+            enabled ? 'translate-x-4' : ''
+          }`} />
+        </button>
+      </div>
+
+      {error && (
+        <p className="text-[10px] text-red-400 bg-red-950/40 border border-red-900 rounded px-2 py-1">
+          {error}
+        </p>
+      )}
+
+      <div className="flex gap-2 pt-1">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!hasChanges || saving}
+          className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-medium disabled:opacity-40 flex items-center gap-1"
+        >
+          <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={saving}
+          className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 text-[11px] flex items-center gap-1"
+        >
+          <X className="w-3 h-3" /> Cancel
+        </button>
+        {!hasChanges && (
+          <span className="text-[10px] text-gray-500 self-center">No changes to save</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Connection Card ────────────────────────────────────────────────────────
 
-function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefresh, allTools }) {
+function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefresh, allTools, onAuthorize, onRevokeOauth }) {
   const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const addNotification = useStore((s) => s.addNotification)
+
+  const openEditor = () => {
+    setEditing(true)
+    setExpanded(true)
+  }
+
+  const handleSaveEdit = async (name, update) => {
+    await onUpdate(name, update)
+    addNotification({ type: 'success', message: `${name} updated` })
+    setEditing(false)
+  }
 
   // Tools belonging to this connection
   const connTools = (allTools || []).filter((t) => t.connection === conn.name)
@@ -411,10 +558,40 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
           </div>
           <p className="text-xs text-gray-500 mt-0.5 truncate">{conn.url}</p>
           <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-600">
-            {conn.has_api_key && <span className="flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> API key set</span>}
+            {conn.auth_type === 'oauth2' ? (
+              conn.oauth_status === 'ok' ? (
+                <span className="flex items-center gap-0.5 text-emerald-500">
+                  <CheckCircle className="w-2.5 h-2.5" /> OAuth authorized
+                </span>
+              ) : (
+                <span className="flex items-center gap-0.5 text-amber-500">
+                  <ShieldAlert className="w-2.5 h-2.5" /> OAuth — needs sign-in
+                </span>
+              )
+            ) : (
+              conn.has_api_key && <span className="flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" /> API key set</span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {conn.auth_type === 'oauth2' && conn.oauth_status !== 'ok' && (
+            <button
+              onClick={() => onAuthorize(conn.name)}
+              title="Open authorization in browser"
+              className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-semibold"
+            >
+              Authorize
+            </button>
+          )}
+          {conn.auth_type === 'oauth2' && conn.oauth_status === 'ok' && (
+            <button
+              onClick={() => onAuthorize(conn.name)}
+              title="Re-authorize (e.g., after revocation)"
+              className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-[10px]"
+            >
+              Re-auth
+            </button>
+          )}
           <button
             onClick={handleTest}
             disabled={testing}
@@ -429,6 +606,13 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
             className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
           >
             <Plug className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={openEditor}
+            title="Edit connection"
+            className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+          >
+            <Pencil className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => onRemove(conn.name)}
@@ -457,6 +641,13 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
 
       {expanded && (
         <div className="border-t border-gray-700 px-4 py-3 bg-gray-850 space-y-3">
+          {editing && (
+            <ConnectionEditForm
+              conn={conn}
+              onSave={handleSaveEdit}
+              onCancel={() => setEditing(false)}
+            />
+          )}
           {connTools.length > 0 ? (
             <div>
               <h4 className="text-xs font-medium text-gray-400 mb-2">Tools</h4>
@@ -520,13 +711,14 @@ function AddConnectionForm({ onAdd, onCancel }) {
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
+  const [authType, setAuthType] = useState('api_key')
   const [submitting, setSubmitting] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!name.trim() || !url.trim()) return
     setSubmitting(true)
-    await onAdd(name.trim(), url.trim(), apiKey.trim())
+    await onAdd(name.trim(), url.trim(), apiKey.trim(), authType)
     setSubmitting(false)
   }
 
@@ -556,31 +748,68 @@ function AddConnectionForm({ onAdd, onCancel }) {
         />
       </div>
       <div>
-        <label className="block text-xs text-gray-400 mb-1">API Key (optional)</label>
-        <div className="flex gap-2">
-          <input
-            type={showKey ? 'text' : 'password'}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="Server API key"
-            className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
-          />
-          <button
-            type="button"
-            onClick={() => setShowKey(!showKey)}
-            className="px-2 text-gray-500 hover:text-gray-300"
-          >
-            {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+        <label className="block text-xs text-gray-400 mb-1">Authentication</label>
+        <div className="flex gap-3 text-xs text-gray-300">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="radio"
+              name="authType"
+              value="api_key"
+              checked={authType === 'api_key'}
+              onChange={() => setAuthType('api_key')}
+              className="accent-blue-500"
+            />
+            API key
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="radio"
+              name="authType"
+              value="oauth2"
+              checked={authType === 'oauth2'}
+              onChange={() => setAuthType('oauth2')}
+              className="accent-blue-500"
+            />
+            OAuth 2.1 (browser sign-in)
+          </label>
         </div>
+        {authType === 'oauth2' && (
+          <p className="text-[10px] text-gray-500 mt-1.5">
+            After adding, click <b>Authorize</b> on the connection card —
+            a browser tab will open for sign-in.
+          </p>
+        )}
       </div>
+      {authType === 'api_key' && (
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">API Key (optional)</label>
+          <div className="flex gap-2">
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Server API key"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="px-2 text-gray-500 hover:text-gray-300"
+            >
+              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex gap-2 pt-1">
         <button
           type="submit"
           disabled={!name.trim() || !url.trim() || submitting}
           className="px-4 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium disabled:opacity-50 transition-colors"
         >
-          {submitting ? 'Connecting...' : 'Add & Connect'}
+          {submitting
+            ? (authType === 'oauth2' ? 'Adding...' : 'Connecting...')
+            : (authType === 'oauth2' ? 'Add (Authorize next)' : 'Add & Connect')}
         </button>
         <button
           type="button"
@@ -621,18 +850,65 @@ export default function MCPConnections() {
     loadConnections()
   }, [])
 
-  const handleAdd = async (name, url, apiKey) => {
+  const handleAdd = async (name, url, apiKey, authType = 'api_key') => {
     try {
-      const res = await mcpApi.addConnection(name, url, apiKey)
+      const res = await mcpApi.addConnection(name, url, apiKey, {}, true, authType)
       const status = res.data.status
       if (status === 'connected') {
         addNotification({ type: 'success', message: `${name} connected — ${res.data.tools?.length || 0} tools discovered` })
       } else if (status === 'added_but_connection_failed') {
         addNotification({ type: 'error', message: `${name} added but connection failed: ${res.data.error}` })
+      } else if (status === 'added' && res.data.next === 'start_oauth') {
+        addNotification({ type: 'success', message: `${name} added — starting OAuth…` })
+        setShowAdd(false)
+        await loadConnections()
+        await handleAuthorize(name)
+        return
       } else {
         addNotification({ type: 'success', message: `${name} added` })
       }
       setShowAdd(false)
+      await loadConnections()
+    } catch (err) {
+      addNotification({ type: 'error', message: err.response?.data?.detail || err.message })
+    }
+  }
+
+  const handleAuthorize = async (name) => {
+    try {
+      const res = await mcpApi.startOauth(name)
+      const url = res.data.authorize_url
+      if (!url) throw new Error('No authorize_url returned')
+      // Open in a new tab — the callback completes the exchange server-side.
+      const popup = window.open(url, '_blank', 'noopener,noreferrer')
+      if (!popup) {
+        addNotification({
+          type: 'error',
+          message: 'Browser blocked the OAuth popup — please allow popups and try again.',
+        })
+        return
+      }
+      addNotification({ type: 'success', message: `Authorizing ${name} — finish sign-in in the new tab.` })
+      // Poll the connections list so the UI reflects the new auth status
+      // as soon as the callback completes (typically within seconds).
+      let elapsed = 0
+      const interval = setInterval(async () => {
+        elapsed += 2000
+        await loadConnections()
+        if (elapsed >= 60000) clearInterval(interval)
+      }, 2000)
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        message: `OAuth start failed: ${err.response?.data?.detail || err.message}`,
+      })
+    }
+  }
+
+  const handleRevokeOauth = async (name) => {
+    try {
+      await mcpApi.revokeOauth(name)
+      addNotification({ type: 'success', message: `OAuth tokens revoked for ${name}` })
       await loadConnections()
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
@@ -731,6 +1007,8 @@ export default function MCPConnections() {
                 onReconnect={handleReconnect}
                 onUpdate={handleUpdate}
                 onRefresh={loadConnections}
+                onAuthorize={handleAuthorize}
+                onRevokeOauth={handleRevokeOauth}
                 allTools={allTools}
               />
             ))}

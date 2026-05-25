@@ -5,8 +5,9 @@ Implements the client side of the MCP Streamable HTTP transport:
   - Accept both application/json and text/event-stream responses
   - Track Mcp-Session-Id for stateful sessions
   - initialize → tools/list → tools/call lifecycle
+  - Optional OAuth 2.1 bearer tokens via a token_getter callback
 
-Reference: MCP Specification 2025-03-26 — Streamable HTTP Transport
+Reference: MCP Specification 2025-11-25 — Streamable HTTP Transport
 """
 from __future__ import annotations
 
@@ -15,13 +16,13 @@ import json
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-MCP_PROTOCOL_VERSION = "2025-03-26"
+MCP_PROTOCOL_VERSION = "2025-11-25"
 
 # Retry settings for rate-limited requests
 MAX_RETRIES = 3
@@ -39,14 +40,22 @@ class MCPClient:
         headers: dict[str, str] | None = None,
         timeout: float = 30.0,
         request_interval_ms: int = 1000,
+        token_getter: Callable[..., Awaitable[str | None]] | None = None,
     ) -> None:
         self.name = name
         self.url = url  # Preserve URL as-is (trailing slash matters for some servers)
         self.api_key = api_key
         self.extra_headers = headers or {}
         self.timeout = timeout
+        # When set, called for every request to obtain a Bearer token. The
+        # callback receives one kw-arg `force_refresh: bool` so the client
+        # can force a refresh after a 401. Returning None falls back to the
+        # static api_key (if any).
+        self._token_getter = token_getter
+        self._cached_bearer: str | None = None
 
         self.session_id: str | None = None
+        self.negotiated_protocol_version: str | None = None
         self.server_info: dict[str, Any] = {}
         self.server_capabilities: dict[str, Any] = {}
         self.tools: list[dict[str, Any]] = []
@@ -60,20 +69,41 @@ class MCPClient:
         return self._request_id
 
     def _build_headers(self) -> dict[str, str]:
-        """Build request headers for MCP Streamable HTTP transport."""
+        """Build request headers for MCP Streamable HTTP transport.
+
+        Bearer token resolution order:
+          1. OAuth access token from cache (refreshed via _resolve_bearer)
+          2. Static api_key
+        Only one Authorization header is sent.
+        """
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
-        # API key auth — try Bearer header first
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        bearer = self._cached_bearer or (self.api_key or None)
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
         # Session tracking
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
+        # Required on every post-initialize request since spec 2025-06-18.
+        # Strict servers reject requests missing this header.
+        if self.negotiated_protocol_version:
+            headers["MCP-Protocol-Version"] = self.negotiated_protocol_version
         # Extra headers (e.g., DEFAULT_PARAMETERS for Tavily)
         headers.update(self.extra_headers)
         return headers
+
+    async def _resolve_bearer(self, *, force_refresh: bool = False) -> None:
+        """Populate self._cached_bearer from the token_getter (if any)."""
+        if not self._token_getter:
+            return
+        try:
+            token = await self._token_getter(force_refresh=force_refresh)
+        except Exception as e:
+            logger.warning("MCP '%s' token_getter raised: %s", self.name, e)
+            token = None
+        self._cached_bearer = token or None
 
     def _build_url(self) -> str:
         """Build the endpoint URL, appending API key for services that need it."""
@@ -111,7 +141,11 @@ class MCPClient:
             payload["params"] = params
 
         url = self._build_url()
+        # Pre-emptively resolve OAuth bearer (no-op if no token_getter).
+        await self._resolve_bearer()
         headers = self._build_headers()
+        # Track 401 refresh-and-retry — only attempt once per request.
+        oauth_retried = False
 
         # Debug logging — mask API key in URL and headers
         safe_url = url
@@ -134,6 +168,9 @@ class MCPClient:
             )
 
         max_attempts = MAX_RETRIES if retry_on_429 else 1
+        # Give OAuth-enabled clients one extra attempt for the 401 refresh.
+        if self._token_getter is not None:
+            max_attempts += 1
 
         for attempt in range(max_attempts):
             await self._throttle()
@@ -159,6 +196,23 @@ class MCPClient:
                         for r in resp.history
                     )
                     logger.warning("MCP '%s' redirect chain: %s → %d (final)", self.name, chain, resp.status_code)
+
+                # Handle HTTP 401 — force-refresh OAuth token and retry once.
+                # Only fires if we have a token_getter; api_key-only clients
+                # treat 401 as a hard error.
+                if (
+                    resp.status_code == 401
+                    and self._token_getter is not None
+                    and not oauth_retried
+                ):
+                    oauth_retried = True
+                    logger.info(
+                        "MCP '%s' got 401 — forcing token refresh and retrying",
+                        self.name,
+                    )
+                    await self._resolve_bearer(force_refresh=True)
+                    headers = self._build_headers()
+                    continue
 
                 # Handle HTTP-level 429
                 if resp.status_code == 429 and retry_on_429 and attempt < max_attempts - 1:
@@ -232,6 +286,11 @@ class MCPClient:
 
         self.server_info = result.get("serverInfo", {})
         self.server_capabilities = result.get("capabilities", {})
+        # Server echoes back the version it actually accepted — that's what
+        # we must send on every subsequent request, not our requested version.
+        self.negotiated_protocol_version = (
+            result.get("protocolVersion") or MCP_PROTOCOL_VERSION
+        )
         self._initialized = True
 
         logger.info(
@@ -283,16 +342,26 @@ class MCPClient:
         )
         return self.tools
 
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None = None) -> str:
-        """Call a tool on the remote MCP server and return the text result.
+    async def call_tool(
+        self, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Call a tool on the remote MCP server.
+
+        Returns:
+            {"text": str, "structured": dict | list | None, "is_error": bool}
+
+        - "text" — concatenated text blocks for display / LLM context
+        - "structured" — typed result from spec 2025-06-18+ `structuredContent`
+          field. None if the server didn't provide one (most servers today).
+        - "is_error" — true if server returned isError=true on the tool result
 
         Retries on HTTP 429 with exponential backoff. Also detects rate-limit
-        errors embedded in tool result content (e.g. Tavily returns 429 errors
-        as tool output) and retries those too.
+        errors embedded in tool result content and retries those too.
         """
         if not self._initialized:
             await self.initialize()
 
+        last: dict[str, Any] = {"text": "", "structured": None, "is_error": False}
         for attempt in range(MAX_RETRIES):
             result = await self._send_jsonrpc(
                 "tools/call",
@@ -300,7 +369,6 @@ class MCPClient:
                 retry_on_429=True,
             )
 
-            # Extract text content from the MCP response
             content_blocks = result.get("content", [])
             texts = []
             for block in content_blocks:
@@ -314,10 +382,17 @@ class MCPClient:
                 else:
                     texts.append(str(block))
 
-            text_result = "\n".join(texts) if texts else str(result)
+            text_result = "\n".join(texts) if texts else ""
+            structured = result.get("structuredContent")
+            is_error = bool(result.get("isError", False))
 
-            # Check for rate-limit errors embedded in the result content
-            # (e.g. Tavily returns {"error":...,"status":429,...} as tool text)
+            # Fall back to raw envelope string if neither text nor structured present
+            if not text_result and structured is None:
+                text_result = str(result)
+
+            last = {"text": text_result, "structured": structured, "is_error": is_error}
+
+            # Check for rate-limit errors embedded in result content
             if self._is_rate_limited_result(text_result) and attempt < MAX_RETRIES - 1:
                 delay = RETRY_BASE_DELAY * (2 ** attempt)
                 logger.warning(
@@ -328,9 +403,9 @@ class MCPClient:
                 await asyncio.sleep(delay)
                 continue
 
-            return text_result
+            return last
 
-        return text_result  # Return last result even if still rate-limited
+        return last
 
     @staticmethod
     def _is_rate_limited_result(text: str) -> bool:

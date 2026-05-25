@@ -20,6 +20,7 @@ from api.personality import router as personality_router
 from api.projects import router as projects_router
 from api.settings import router as settings_router
 from api.mcp import router as mcp_router
+from api.mcp_oauth import router as mcp_oauth_router
 from api.skills import router as skills_router
 from api.tasks import router as tasks_router
 from api.personas import router as personas_router
@@ -49,6 +50,11 @@ _PUBLIC_PATHS = {
     "/openapi.json",
     "/api/auth/login",
     "/api/auth/config",
+    # The OAuth callback is the redirect_uri an external authorization
+    # server hits on the user's browser — it cannot carry Pantheon's
+    # Bearer token. Security comes from the PKCE code_verifier + state
+    # parameter, not Pantheon's auth_password.
+    "/api/mcp/oauth/callback",
 }
 
 # Resolve frontend dist directory (used by auth middleware and SPA serving)
@@ -245,6 +251,7 @@ app.include_router(personality_router, prefix="/api", tags=["personality"])
 app.include_router(projects_router,    prefix="/api", tags=["projects"])
 app.include_router(settings_router,    prefix="/api", tags=["settings"])
 app.include_router(mcp_router,         prefix="/api", tags=["mcp"])
+app.include_router(mcp_oauth_router,   prefix="/api", tags=["mcp-oauth"])
 app.include_router(skills_router,      prefix="/api", tags=["skills"])
 app.include_router(tasks_router,       prefix="/api", tags=["tasks"])
 app.include_router(personas_router,    prefix="/api", tags=["personas"])

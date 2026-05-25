@@ -17,6 +17,88 @@ logger = logging.getLogger(__name__)
 # Vault key prefix for MCP connection configs
 _VAULT_KEY = "mcp_connections"
 
+# Cap structured content payload sent to the LLM so a giant tool result
+# doesn't blow the context window. Server can still return huge structured
+# results — we just truncate the rendered block.
+_MAX_STRUCTURED_CHARS = 50_000
+
+
+def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
+    """Return an async callable that yields the current access token.
+
+    Refreshes on demand if the cached token is near expiry, or if the
+    caller passes force_refresh=True (used after a 401 from the MCP
+    server). Returns None when there are no usable tokens at all — the
+    caller will fall back to the static api_key or send no Authorization.
+    """
+    async def getter(*, force_refresh: bool = False) -> str | None:
+        from mcp_client import oauth as oauth_mod
+
+        tokens = oauth_mod.load_tokens(name)
+        if not tokens:
+            return None
+
+        if force_refresh or not oauth_mod.is_token_fresh(tokens):
+            refresh = tokens.get("refresh_token")
+            if not refresh:
+                logger.warning(
+                    "MCP '%s' OAuth token expired and no refresh_token stored — "
+                    "user must reauthorize",
+                    name,
+                )
+                return tokens.get("access_token") or None
+            try:
+                new_raw = await oauth_mod.refresh_tokens(
+                    token_endpoint=oauth_cfg["token_endpoint"],
+                    client_id=oauth_cfg["client_id"],
+                    refresh_token=refresh,
+                    resource=oauth_cfg.get("resource", ""),
+                    scopes=oauth_cfg.get("scopes") or None,
+                    client_secret=oauth_mod.load_client_secret(name),
+                )
+                tokens = oauth_mod.save_tokens(name, new_raw)
+            except Exception as e:
+                logger.warning(
+                    "MCP '%s' OAuth refresh failed: %s — returning stale token",
+                    name, e,
+                )
+
+        return tokens.get("access_token") or None
+
+    return getter
+
+
+def _format_tool_result(call_result: dict[str, Any]) -> str:
+    """Render an MCP call_tool dict as a single string for the LLM.
+
+    Per MCP spec 2025-06-18+, a tool result may carry `structuredContent`
+    (typed JSON) alongside `content` (text/image blocks). We render the
+    text first and, if structured content is present, append it inside a
+    delimited block so the model can parse it deterministically without
+    losing the human-readable summary.
+    """
+    text = call_result.get("text") or ""
+    structured = call_result.get("structured")
+    is_error = bool(call_result.get("is_error"))
+
+    parts: list[str] = []
+    if text:
+        parts.append(text)
+
+    if structured is not None:
+        try:
+            payload = json.dumps(structured, indent=2, default=str)
+        except (TypeError, ValueError):
+            payload = str(structured)
+        if len(payload) > _MAX_STRUCTURED_CHARS:
+            payload = payload[:_MAX_STRUCTURED_CHARS] + "\n…[truncated]"
+        parts.append(f"<structured-output>\n{payload}\n</structured-output>")
+
+    if is_error:
+        parts.append("[server reported isError=true on this tool result]")
+
+    return "\n\n".join(parts) if parts else ""
+
 
 class MCPManager:
     """Manages multiple MCP server connections."""
@@ -74,7 +156,17 @@ class MCPManager:
         logger.info("MCP manager: %d/%d connections active", connected, len(self._configs))
 
     def _create_client(self, cfg: dict[str, Any]) -> MCPClient:
-        """Create an MCPClient from a config dict."""
+        """Create an MCPClient from a config dict.
+
+        If the connection's auth_type is "oauth2", wire a token_getter that
+        refreshes the persisted OAuth token on demand.
+        """
+        token_getter = None
+        if cfg.get("auth_type") == "oauth2":
+            name = cfg["name"]
+            oauth_cfg = cfg.get("oauth") or {}
+            token_getter = _make_oauth_token_getter(name, oauth_cfg)
+
         return MCPClient(
             name=cfg["name"],
             url=cfg["url"],
@@ -82,22 +174,49 @@ class MCPManager:
             headers=cfg.get("headers", {}),
             timeout=cfg.get("timeout", 30.0),
             request_interval_ms=cfg.get("request_interval_ms", 1000),
+            token_getter=token_getter,
         )
 
     # ── Connection CRUD ──────────────────────────────────────────────────
 
     def list_connections(self) -> list[dict[str, Any]]:
         """List all configured connections (no secrets)."""
+        from mcp_client import oauth as oauth_mod
+
         result = []
         for cfg in self._configs:
+            name = cfg["name"]
+            auth_type = cfg.get("auth_type", "api_key")
+            oauth_status = None
+            oauth_meta = None
+            if auth_type == "oauth2":
+                tokens = oauth_mod.load_tokens(name)
+                if not tokens:
+                    oauth_status = "needs_auth"
+                elif tokens.get("expires_at") and not oauth_mod.is_token_fresh(tokens):
+                    # Stale tokens with refresh available are still "ok" — getter
+                    # will refresh on the next request. Only flag if there's no
+                    # refresh token to recover with.
+                    oauth_status = "ok" if tokens.get("refresh_token") else "needs_auth"
+                else:
+                    oauth_status = "ok"
+                oc = cfg.get("oauth") or {}
+                oauth_meta = {
+                    "issuer": oc.get("issuer"),
+                    "client_id": oc.get("client_id"),
+                    "scopes": oc.get("scopes", []),
+                }
             entry = {
-                "name": cfg["name"],
+                "name": name,
                 "url": cfg["url"],
                 "enabled": cfg.get("enabled", True),
+                "auth_type": auth_type,
                 "has_api_key": bool(cfg.get("api_key")),
+                "oauth_status": oauth_status,
+                "oauth": oauth_meta,
                 "headers": {k: "***" for k in cfg.get("headers", {})},
-                "connected": cfg["name"] in self._clients,
-                "tools_count": len(self._clients[cfg["name"]].tools) if cfg["name"] in self._clients else 0,
+                "connected": name in self._clients,
+                "tools_count": len(self._clients[name].tools) if name in self._clients else 0,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
                 "excluded_tools": cfg.get("excluded_tools", []),
             }
@@ -112,8 +231,15 @@ class MCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         request_interval_ms: int = 1000,
+        auth_type: str = "api_key",
     ) -> dict[str, Any]:
-        """Add a new MCP connection and attempt to connect."""
+        """Add a new MCP connection.
+
+        For auth_type="api_key" we immediately try to connect. For
+        auth_type="oauth2" the caller must follow up with start_oauth() —
+        we just persist the bare config so the user can complete auth in
+        a second step.
+        """
         # Check for duplicate name
         for cfg in self._configs:
             if cfg["name"] == name:
@@ -126,9 +252,15 @@ class MCPManager:
             "headers": headers or {},
             "enabled": enabled,
             "request_interval_ms": request_interval_ms,
+            "auth_type": auth_type,
         }
         self._configs.append(cfg)
         self._save_configs()
+
+        # OAuth connections need a separate /start-oauth call before they can
+        # connect; just confirm we saved the config.
+        if auth_type == "oauth2":
+            return {"name": name, "status": "added", "next": "start_oauth"}
 
         # Try to connect
         result = {"name": name, "status": "added"}
@@ -197,10 +329,17 @@ class MCPManager:
             return {"name": name, "status": "disabled"}
 
     async def remove_connection(self, name: str) -> dict[str, str]:
-        """Remove an MCP connection."""
+        """Remove an MCP connection and any associated OAuth tokens."""
+        from mcp_client import oauth as oauth_mod
+
         self._clients.pop(name, None)
         self._configs = [c for c in self._configs if c["name"] != name]
         self._save_configs()
+        # Best-effort cleanup — safe to call even if there are no tokens.
+        try:
+            oauth_mod.delete_tokens(name)
+        except Exception:
+            pass
         return {"name": name, "status": "removed"}
 
     async def test_connection(self, name: str) -> dict[str, Any]:
@@ -215,6 +354,132 @@ class MCPManager:
 
         client = self._create_client(cfg)
         return await client.test_connection()
+
+    # ── OAuth flow ───────────────────────────────────────────────────────
+
+    async def start_oauth(self, name: str) -> dict[str, Any]:
+        """Begin the OAuth dance for a connection: probe → PRM → AS → DCR → URL.
+
+        Returns the authorization URL the user must visit. Persists the
+        DCR client_id (and secret, if the AS forced a confidential client)
+        and updates the connection config with auth_type=oauth2 + oauth meta.
+        """
+        from mcp_client import oauth as oauth_mod
+
+        cfg = self._get_cfg(name)
+        if not cfg:
+            raise ValueError(f"Connection '{name}' not found")
+
+        prm_url = await oauth_mod.probe_for_oauth(cfg["url"])
+        if not prm_url:
+            raise RuntimeError(
+                f"MCP server at {cfg['url']} did not advertise OAuth "
+                "(no 401 + WWW-Authenticate). Use api_key auth instead."
+            )
+
+        prm = await oauth_mod.fetch_resource_metadata(prm_url)
+        if not prm.authorization_servers:
+            raise RuntimeError(f"PRM at {prm_url} listed no authorization_servers")
+
+        # Use first AS; ASes are listed in server-preference order per RFC 9728.
+        issuer = prm.authorization_servers[0]
+        as_meta = await oauth_mod.fetch_auth_server_metadata(issuer)
+
+        client = await oauth_mod.register_client(
+            as_meta=as_meta,
+            redirect_uri=oauth_mod.DEFAULT_CALLBACK_URL,
+            client_name=f"Pantheon ({name})",
+            scopes=prm.scopes_supported or as_meta.scopes_supported,
+        )
+        if client.client_secret:
+            oauth_mod.save_client_secret(name, client.client_secret)
+
+        resource = prm.resource or oauth_mod._resource_id_for(cfg["url"])
+        scopes = prm.scopes_supported or as_meta.scopes_supported
+
+        auth_url = oauth_mod.build_authorize_url(
+            name=name,
+            as_meta=as_meta,
+            client_id=client.client_id,
+            redirect_uri=oauth_mod.DEFAULT_CALLBACK_URL,
+            scopes=scopes,
+            resource=resource,
+        )
+
+        # Persist OAuth metadata onto the connection.
+        cfg["auth_type"] = "oauth2"
+        cfg["oauth"] = {
+            "issuer": as_meta.issuer,
+            "authorization_endpoint": as_meta.authorization_endpoint,
+            "token_endpoint": as_meta.token_endpoint,
+            "registration_endpoint": as_meta.registration_endpoint,
+            "client_id": client.client_id,
+            "scopes": scopes,
+            "resource": resource,
+            "prm_url": prm_url,
+            "registered_at": __import__("time").time(),
+        }
+        self._save_configs()
+
+        return {"name": name, "authorize_url": auth_url}
+
+    async def complete_oauth(self, code: str, state: str) -> dict[str, Any]:
+        """Finish the OAuth dance after the browser redirects to our callback."""
+        from mcp_client import oauth as oauth_mod
+
+        pending = oauth_mod.take_pending(state)
+        if not pending:
+            raise RuntimeError(
+                "Unknown or expired OAuth state. Restart the Authorize flow."
+            )
+
+        cfg = self._get_cfg(pending.name)
+        if not cfg:
+            raise RuntimeError(f"Connection '{pending.name}' disappeared during auth")
+
+        client_secret = oauth_mod.load_client_secret(pending.name)
+        token_response = await oauth_mod.exchange_code(
+            pending=pending,
+            code=code,
+            client_secret=client_secret,
+        )
+        oauth_mod.save_tokens(pending.name, token_response)
+
+        # Reconnect using the freshly-issued token.
+        self._clients.pop(pending.name, None)
+        try:
+            client = self._create_client(cfg)
+            await client.initialize()
+            await client.discover_tools()
+            self._clients[pending.name] = client
+            return {
+                "name": pending.name,
+                "status": "connected",
+                "tools_count": len(client.tools),
+            }
+        except Exception as e:
+            logger.warning(
+                "Token saved for '%s' but reconnect failed: %s", pending.name, e
+            )
+            return {
+                "name": pending.name,
+                "status": "token_saved_but_connect_failed",
+                "error": str(e),
+            }
+
+    async def revoke_oauth(self, name: str) -> dict[str, str]:
+        """Wipe persisted OAuth tokens (and DCR secret) for a connection."""
+        from mcp_client import oauth as oauth_mod
+
+        oauth_mod.delete_tokens(name)
+        self._clients.pop(name, None)
+        return {"name": name, "status": "tokens_revoked"}
+
+    def _get_cfg(self, name: str) -> dict[str, Any] | None:
+        for c in self._configs:
+            if c["name"] == name:
+                return c
+        return None
 
     async def reconnect(self, name: str) -> dict[str, Any]:
         """Force reconnect a specific connection."""
@@ -338,7 +603,8 @@ class MCPManager:
 
         # ── Execute the tool ─────────────────────────────────────────
         try:
-            result = await client.call_tool(tool_name, arguments)
+            call_result = await client.call_tool(tool_name, arguments)
+            result = _format_tool_result(call_result)
 
             # Record Tavily credit usage after successful call
             if self._is_tavily_tool(prefixed_name):
@@ -376,6 +642,9 @@ class MCPManager:
                     "prefixed_name": f"mcp_{client.name}_{tool_name}",
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("inputSchema", {}),
+                    # Preserved from spec 2025-06-18+ for UI inspection and
+                    # future adapter use; the LLM tool schema doesn't need it.
+                    "output_schema": tool.get("outputSchema") or None,
                     "excluded": tool_name in excluded,
                 })
         return result

@@ -20,6 +20,7 @@ class AddConnectionRequest(BaseModel):
     headers: dict[str, str] = {}
     enabled: bool = True
     request_interval_ms: int = 1000  # Throttle between requests (ms). Use ~3000 for dev-tier API keys.
+    auth_type: str = "api_key"  # "api_key" or "oauth2"
 
 
 class UpdateConnectionRequest(BaseModel):
@@ -64,6 +65,7 @@ async def add_connection(req: AddConnectionRequest) -> dict[str, Any]:
             headers=req.headers,
             enabled=req.enabled,
             request_interval_ms=req.request_interval_ms,
+            auth_type=req.auth_type,
         )
         return result
     except ValueError as e:

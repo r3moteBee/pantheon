@@ -210,6 +210,34 @@ The 5 role-getter functions in `models/provider.py` (`get_provider`, `get_prefil
 
 **Adding a new role.** Update both `llm_config.models.ROLES` (Python tuple) and `frontend/src/components/settings/RoleMapping.jsx` (`ROLES` array). Then add a getter in `models/provider.py` and any caller. Migration's `_ROLE_TO_LEGACY` only matters if the new role has legacy flat keys.
 
+## MCP — protocol version + OAuth + structured outputs
+
+**Protocol version.** `backend/mcp_client/client.py` advertises **`2025-11-25`** in the `initialize` handshake. Whatever version the server echoes back gets stored on `self.negotiated_protocol_version` and sent on every subsequent request as the `MCP-Protocol-Version` header (required by strict servers since spec 2025-06-18). If you bump the constant, also update the docstring at the top of the file.
+
+**OAuth 2.1 (Protected Resource Metadata + DCR + PKCE + OIDC fallback).** Add a connection with `auth_type="oauth2"` and the manager persists a bare config; the user then clicks **Authorize** in the UI, which triggers `POST /api/mcp/connections/{name}/start-oauth`:
+
+1. Unauth probe of the MCP URL — expects 401 with `WWW-Authenticate: Bearer resource_metadata="<url>"`
+2. Fetch the PRM document (RFC 9728) for `authorization_servers` + `resource`
+3. Fetch AS metadata: tries `/.well-known/oauth-authorization-server` (RFC 8414) first, falls back to `/.well-known/openid-configuration` (added to MCP in spec 2025-11-25 for OIDC providers)
+4. Dynamic Client Registration (RFC 7591) — register a public client with `token_endpoint_auth_method=none`, redirect URI `http://localhost:8000/api/mcp/oauth/callback`. The AS may force-downgrade to a confidential client and return a `client_secret`; we honor it and store it in the vault.
+5. Build authorize URL with PKCE S256 and the `resource` indicator (RFC 8707); state is stashed in `_pending` in `backend/mcp_client/oauth.py` with 10-min TTL
+6. Frontend opens it in a new tab → user signs in → AS redirects to `/api/mcp/oauth/callback?code=…&state=…`
+7. Callback handler matches state → exchanges code → persists tokens → reconnects MCP client
+
+The callback path is in `_PUBLIC_PATHS` in `backend/main.py` because external authorization servers obviously can't carry Pantheon's `auth_password` Bearer token. Security comes from the PKCE `code_verifier` + `state` parameter, not Pantheon's auth layer.
+
+Tokens live in the vault keyed by:
+- `mcp_oauth_tokens__<name>` — `{access_token, refresh_token, expires_at, token_type, scope, issued_at}`
+- `mcp_oauth_client_secret__<name>` — present only if DCR forced a confidential client
+
+Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endpoint, client_id, scopes, resource, registration_endpoint, prm_url). Connection list output includes `oauth_status: "ok" | "needs_auth"` so the frontend can decide whether to show the **Authorize** badge.
+
+**Refresh.** Each OAuth-enabled `MCPClient` receives a `token_getter` async callback. It runs once before every request to populate `Authorization: Bearer …`. On HTTP 401, `_send_jsonrpc` calls the getter with `force_refresh=True` and retries the request once (the loop's `max_attempts` is bumped by 1 when a token_getter is present). The getter also pre-emptively refreshes when `expires_at` is within 60s of now. If refresh fails (no `refresh_token`, or AS rejects), the connection's `oauth_status` flips to `needs_auth` and the user has to click **Re-auth**.
+
+**Structured tool outputs (spec 2025-06-18+).** `MCPClient.call_tool` now returns a dict: `{"text": str, "structured": dict|list|None, "is_error": bool}`. The manager's `_format_tool_result` renders text first, then appends any `structuredContent` inside a `<structured-output>…</structured-output>` block (capped at 50 KB) so the LLM gets both the human-readable summary and the typed payload. `outputSchema` from `tools/list` is preserved on `get_discovered_tools()` for UI inspection but is not forwarded to the LLM (OpenAI's function-call schema has no equivalent slot).
+
+**Adding a connection that needs OAuth.** Frontend Add form has a radio: **API key** vs **OAuth 2.1**. Picking OAuth hides the API-key field; submitting creates the bare config and immediately calls `start-oauth`. After the user authorizes, the connection card shows "OAuth authorized ✓" and the user can run tools as normal.
+
 ## Conventions and gotchas
 
 **Storage layers.** Two distinct things, NOT interchangeable:
