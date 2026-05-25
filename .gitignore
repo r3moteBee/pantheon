@@ -48,6 +48,13 @@ data/projects/
 !data/personality/
 !data/personality/*.md
 
+# Manual local backups (e.g. data.backup-YYYYMMDD-HHMM/ from migrations)
+*.backup-*/
+*.backup-*
+
+# Runtime files
+.pids
+
 # Logs
 *.log
 logs/
@@ -71,22 +78,14 @@ Thumbs.db
 .Trashes
 ehthumbs.db
 
-# Agent-generated meta files (not part of project)
+# Stray "build complete" scaffolding artifacts from initial scaffolding.
+# The original ones were deleted on 2026-05-24; keep these patterns to
+# prevent agent-generated noise from sneaking back in.
 BACKEND_*.txt
-BACKEND_*.md
 DELIVERY_CHECKLIST.md
 FILES_CREATED.txt
-backend/BUILD_SUMMARY.txt
-backend/INDEX.md
-backend/QUICK_REFERENCE.md
-backend/BACKEND_BUILD_COMPLETE.md
-backend/memory/INDEX.md
-backend/memory/MANIFEST.md
-backend/memory/QUICK_START.md
-backend/memory/SUMMARY.md
-backend/memory/VERIFICATION_REPORT.txt
-frontend/BUILD_SUMMARY.txt
-frontend/COMPLETION_REPORT.md
-frontend/INDEX.md
-frontend/QUICKSTART.md
+**/BUILD_SUMMARY.txt
+**/COMPLETION_REPORT.md
+**/BACKEND_BUILD_COMPLETE.md
+**/VERIFICATION_REPORT.txt
 backend/data/

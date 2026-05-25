@@ -45,7 +45,9 @@ Runtime data (databases, projects, user skills, Chroma collections) lives under 
 
 19 routers mounted under `/api` from `main.py`:
 
-`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `skills` · `tasks` · `personas` · `system` · `sources` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints` · `project_export` / `project_import`
+`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `mcp-oauth` · `skills` · `tasks` · `personas` · `system` · `sources` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints`
+
+`project_export` / `project_import` mount on the `projects` router.
 
 Notable endpoints:
 - `GET /api/health` — version string (drives deploy verification)

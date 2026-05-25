@@ -2,10 +2,12 @@
 
 Two resolution strategies:
   1. Explicit:  User prefixes message with `/skill-name`
-  2. Auto:      Keyword + embedding matching against triggers and tags
+  2. Auto:      Keyword scoring against installed-skill triggers + tags
 
-Phase 1 uses keyword matching. Embedding-based matching will be added
-in Phase 2 when the resolver gets access to the embedding provider.
+Keyword-only by design — not embedding-based. See CLAUDE.md "Design
+rationale" → "Skill resolver is keyword-based, deliberately". Embedding
+similarity per chat turn costs more latency than a static skill list
+costs in tokens, and keyword scoring stays deterministic + debuggable.
 """
 from __future__ import annotations
 
