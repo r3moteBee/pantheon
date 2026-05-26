@@ -62,12 +62,12 @@ def _db_path() -> Path:
 
 
 def _connect() -> sqlite3.Connection:
-    from db_utils import apply_sqlite_pragmas
+    from db_utils import apply_sqlite_pragmas, ClosingConnection
     conn = sqlite3.connect(str(_db_path()))
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
     conn.executescript(_DDL)
-    return conn
+    return ClosingConnection(conn)  # type: ignore
 
 
 def _now() -> str:

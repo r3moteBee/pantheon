@@ -396,10 +396,10 @@ class FileIndex:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        from db_utils import apply_sqlite_pragmas
+        from db_utils import apply_sqlite_pragmas, ClosingConnection
         conn = sqlite3.connect(self.db_path)
         apply_sqlite_pragmas(conn)
-        return conn
+        return ClosingConnection(conn)  # type: ignore
 
     def _init_db(self):
         with self._connect() as conn:

@@ -120,11 +120,11 @@ class EpisodicMemory:
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
-        from db_utils import apply_sqlite_pragmas
+        from db_utils import apply_sqlite_pragmas, ClosingConnection
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         apply_sqlite_pragmas(conn)
-        return conn
+        return ClosingConnection(conn)  # type: ignore
 
     # ── Vector index (ChromaDB) for semantic episodic search ─────────────
 

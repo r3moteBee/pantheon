@@ -107,10 +107,21 @@ class SearchProviderManager:
             if raw:
                 providers = json.loads(raw)
                 if isinstance(providers, list) and providers:
+                    if _settings.search_url:
+                        for p in providers:
+                            if p.get("name") == "searxng":
+                                p["url"] = _settings.search_url
                     return providers
         except Exception as e:
             logger.debug("Could not load search provider config from vault: %s", e)
-        return DEFAULT_PROVIDERS.copy()
+        
+        providers = []
+        for p in DEFAULT_PROVIDERS:
+            p_copy = p.copy()
+            if p_copy["name"] == "searxng" and _settings.search_url:
+                p_copy["url"] = _settings.search_url
+            providers.append(p_copy)
+        return providers
 
     def set_providers(self, providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Persist a new provider chain to the vault."""

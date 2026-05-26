@@ -21,3 +21,23 @@ def apply_sqlite_pragmas(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
+
+
+class ClosingConnection:
+    """Wrapper that automatically closes a sqlite3 connection on exit from context block."""
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def __enter__(self) -> sqlite3.Connection:
+        self.conn.__enter__()
+        return self.conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self.conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.conn.close()
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+

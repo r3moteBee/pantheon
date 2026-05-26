@@ -39,11 +39,7 @@ frontend/dist/
 .vite/
 
 # Data (persisted volumes — don't commit runtime data)
-data/db/*.db
-data/*.db
-data/chroma/
-data/workspace/
-data/projects/
+data/*
 # Keep default personality templates
 !data/personality/
 !data/personality/*.md

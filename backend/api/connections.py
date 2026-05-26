@@ -42,10 +42,11 @@ def _db_path() -> str:
 
 
 def _connect() -> sqlite3.Connection:
-    from db_utils import apply_sqlite_pragmas
+    from db_utils import apply_sqlite_pragmas, ClosingConnection
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
+    return ClosingConnection(conn)  # type: ignore
     # github_connections (existing) + project_repo_bindings (new in Phase G)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_connections (

@@ -82,11 +82,11 @@ class JobStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        from db_utils import apply_sqlite_pragmas
+        from db_utils import apply_sqlite_pragmas, ClosingConnection
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.row_factory = sqlite3.Row
         apply_sqlite_pragmas(conn)
-        return conn
+        return ClosingConnection(conn)  # type: ignore
 
     def _init_db(self) -> None:
         sql_path = Path(__file__).resolve().parent.parent / "data" / "migrations" / "003_jobs.sql"
