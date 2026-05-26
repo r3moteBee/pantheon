@@ -2,7 +2,11 @@ version: '3.9'
 
 services:
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        - INSTALL_OFFICE=${INSTALL_OFFICE:-false}
+        - INSTALL_BROWSER=${INSTALL_BROWSER:-false}
     container_name: pantheon-backend
     ports:
       - "8000:8000"

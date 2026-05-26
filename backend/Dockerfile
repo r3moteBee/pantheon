@@ -2,6 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Build args to conditionally install heavy optional components
+ARG INSTALL_OFFICE=false
+ARG INSTALL_BROWSER=false
+
 # Install system dependencies
 # gcc/g++: compile native Python extensions (chromadb, etc.)
 # poppler-utils: PDF page rendering for scanned PDF OCR (pdf2image fallback)
@@ -9,6 +13,14 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     poppler-utils \
+    && if [ "$INSTALL_OFFICE" = "true" ]; then \
+        apt-get install -y --no-install-recommends libreoffice; \
+    fi \
+    && if [ "$INSTALL_BROWSER" = "true" ]; then \
+        pip install --no-cache-dir playwright && \
+        playwright install chromium && \
+        playwright install-deps chromium; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

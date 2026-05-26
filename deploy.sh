@@ -186,12 +186,70 @@ if [[ "$MODE" == "docker" ]]; then
   if ! command -v docker &>/dev/null; then
     warn "Docker is required for Docker mode, but it is not installed."
     DOCKER_OK=false
-  elif ! docker compose version &>/dev/null 2>&1 && ! command -v docker-compose &>/dev/null; then
-    warn "Docker Compose is required for Docker mode, but it is not installed."
-    DOCKER_OK=false
-  elif ! docker info &>/dev/null; then
+    if [[ "$SKIP_CONFIRM" == "false" ]]; then
+      if [[ "$OS" == "linux" ]]; then
+        read -rp "  Would you like to automatically install Docker now? [y/N]: " install_docker </dev/tty
+        if [[ "${install_docker}" =~ ^[Yy]$ ]]; then
+          info "Installing Docker via official script (curl -fsSL https://get.docker.com | sh)..."
+          curl -fsSL https://get.docker.com | sh || true
+          if command -v docker &>/dev/null; then
+            success "Docker installed successfully"
+            if [[ -n "${USER:-}" ]]; then
+              info "Adding current user (${USER}) to docker group..."
+              $SUDO usermod -aG docker "$USER" || true
+              warn "You may need to log out and log back in (or run 'newgrp docker') for docker group permissions to take effect."
+            fi
+            DOCKER_OK=true
+          else
+            error "Docker installation failed."
+          fi
+        fi
+      elif [[ "$OS" == "macos" ]] && command -v brew &>/dev/null; then
+        read -rp "  Would you like to install Docker Desktop via Homebrew Cask? [y/N]: " install_docker </dev/tty
+        if [[ "${install_docker}" =~ ^[Yy]$ ]]; then
+          info "Installing Docker Cask via Homebrew..."
+          brew install --cask docker
+          DOCKER_OK=true
+        fi
+      fi
+    fi
+  fi
+
+  if [[ "$DOCKER_OK" == "true" ]] && ! docker info &>/dev/null; then
     warn "Docker daemon is not running."
     DOCKER_OK=false
+    if [[ "$OS" == "linux" && "$SKIP_CONFIRM" == "false" ]] && command -v systemctl &>/dev/null; then
+      read -rp "  Would you like to try starting the Docker daemon? [Y/n]: " start_daemon </dev/tty
+      if [[ "${start_daemon:-Y}" =~ ^[Yy]$ ]]; then
+        info "Starting Docker daemon..."
+        $SUDO systemctl start docker || true
+        sleep 2
+        if docker info &>/dev/null; then
+          DOCKER_OK=true
+        fi
+      fi
+    fi
+  fi
+
+  # Check Docker Compose (plugin or standalone)
+  if [[ "$DOCKER_OK" == "true" ]]; then
+    if docker compose version &>/dev/null 2>&1; then
+      success "docker compose (plugin) found"
+    elif command -v docker-compose &>/dev/null; then
+      success "docker-compose (standalone) found"
+    else
+      # Try installing compose plugin if on apt system
+      if [[ "$OS" == "linux" && "$PKG_MANAGER" == "apt" ]]; then
+        info "Installing docker-compose-plugin..."
+        $SUDO apt-get update -qq && $SUDO apt-get install -y docker-compose-plugin -qq || true
+      fi
+      if docker compose version &>/dev/null 2>&1 || command -v docker-compose &>/dev/null; then
+        success "Docker Compose found"
+      else
+        warn "Docker Compose is required but it is not installed."
+        DOCKER_OK=false
+      fi
+    fi
   fi
 
   if [[ "$DOCKER_OK" == "false" ]]; then
@@ -423,6 +481,22 @@ if [[ "$WITH_SEARXNG" == "true" ]]; then
   fi
   success "Configured SEARCH_URL in .env"
 fi
+
+# Configure build-args for optional Docker packages in .env
+if [[ "$WITH_OFFICE" == "true" ]]; then
+  update_env "INSTALL_OFFICE" "true"
+else
+  update_env "INSTALL_OFFICE" "false"
+fi
+
+if [[ "$WITH_BROWSER" == "true" ]]; then
+  update_env "INSTALL_BROWSER" "true"
+  update_env "BROWSER_ENABLED" "true"
+  update_env "BROWSER_HEADLESS" "true"
+else
+  update_env "INSTALL_BROWSER" "false"
+fi
+
 
 # ── Interactive LLM configuration ────────────────────────────────────────────
 # Fetch models from an OpenAI-compatible /v1/models endpoint and display a
@@ -1083,7 +1157,7 @@ if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" =
   DEMO_ARGS=()
   [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "$OLLAMA_TAG")
   [[ "$WITH_SEARXNG" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-searxng)
-  [[ "$WITH_BROWSER" == "true" ]] && DEMO_ARGS+=(--with-browser)
+  [[ "$WITH_BROWSER" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-browser)
 
   if [[ -x "${INSTALL_DIR}/demo_setup.sh" ]]; then
     ( cd "$INSTALL_DIR" && ./demo_setup.sh "${DEMO_ARGS[@]}" ) || warn "demo_setup.sh exited non-zero — continuing"
