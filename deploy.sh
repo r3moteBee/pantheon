@@ -15,20 +15,21 @@ INSTALL_DIR="${PANTHEON_DIR:-$HOME/pantheon}"
 HTTP_PORT="${PANTHEON_PORT:-80}"
 BACKEND_PORT="8000"
 FRONTEND_PORT="3000"
-LLM_BASE_URL="${LLM_BASE_URL:-}"
-LLM_API_KEY="${LLM_API_KEY:-}"
-LLM_MODEL="${LLM_MODEL:-gpt-4o}"
+LLM_BASE_URL="${LLM_BASE_URL:-http://localhost:11434/v1}"
+LLM_API_KEY="${LLM_API_KEY:-ollama}"
+LLM_MODEL="${LLM_MODEL:-qwen2.5:3b}"
 BRANCH="main"
 SKIP_CONFIRM=false
 MODE=""   # "local" or "docker" — prompted if not set
 DOMAIN=""         # domain for HTTPS via Caddy — prompted if not set
 AGENT_NAME=""     # agent name written into soul.md — prompted if not set
 AUTH_PASSWORD=""  # web interface password — prompted if not set
-WITH_OLLAMA=false   # run demo_setup.sh --with-ollama after install
+WITH_OLLAMA=true    # run demo_setup.sh --with-ollama after install
 WITH_SEARXNG=""     # run demo_setup.sh --with-searxng after install (empty to detect default)
 WITH_BROWSER=false  # run demo_setup.sh --with-browser after install
 WITH_OFFICE=false   # install LibreOffice for Office/PDF preview rendering
-OLLAMA_TAG="4b"     # Nemotron model tag passed to demo_setup.sh
+OLLAMA_TAG="3b"     # Qwen model tag passed to demo_setup.sh
+
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -604,13 +605,15 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
   header "LLM Provider Configuration"
   echo ""
   echo "  Pantheon works with any OpenAI-compatible API endpoint."
-  echo "  Common providers: OpenAI, Ollama (local), Groq, Together.ai, vLLM, LiteLLM"
+  echo "  Common providers: Ollama (local), OpenAI, Groq, Together.ai, vLLM, LiteLLM"
+  echo -e "  ${YELLOW}Note: You can easily switch models and providers at any time after install${RESET}"
+  echo -e "        ${YELLOW}directly inside the Web UI (Settings → LLM Endpoints).${RESET}"
   echo ""
 
   # ── Provider Selection ────────────────────────────────────────────────────
   echo -e "  ${BOLD}Select your LLM Provider:${RESET}"
-  echo "    1) OpenAI [default]"
-  echo "    2) Ollama (local)"
+  echo "    1) Ollama (local) [default]"
+  echo "    2) OpenAI"
   echo "    3) Groq"
   echo "    4) OpenRouter"
   echo "    5) Custom (OpenAI-compatible)"
@@ -619,24 +622,38 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
   provider_choice="${provider_choice:-1}"
 
   case "${provider_choice}" in
-    2)
+    1)
       LLM_BASE_URL="http://localhost:11434/v1"
+      WITH_OLLAMA=true
+      ;;
+    2)
+      LLM_BASE_URL="https://api.openai.com/v1"
+      WITH_OLLAMA=false
       ;;
     3)
       LLM_BASE_URL="https://api.groq.com/openai/v1"
+      WITH_OLLAMA=false
       ;;
     4)
       LLM_BASE_URL="https://openrouter.ai/api/v1"
+      WITH_OLLAMA=false
       ;;
     5)
-      read -rp "  LLM Base URL [${CURRENT_BASE_URL:-https://api.openai.com/v1}]: " input_url </dev/tty
-      LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-https://api.openai.com/v1}}"
+      read -rp "  LLM Base URL [${CURRENT_BASE_URL:-http://localhost:11434/v1}]: " input_url </dev/tty
+      LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-http://localhost:11434/v1}}"
+      if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"11434"* ]]; then
+        WITH_OLLAMA=true
+      else
+        WITH_OLLAMA=false
+      fi
       ;;
     *)
-      LLM_BASE_URL="https://api.openai.com/v1"
+      LLM_BASE_URL="http://localhost:11434/v1"
+      WITH_OLLAMA=true
       ;;
   esac
   update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+
 
 
   # ── API Key ───────────────────────────────────────────────────────────────
@@ -1222,10 +1239,11 @@ else
   echo -e "  ${BOLD}Restart${RESET}      →  ${INSTALL_DIR}/start.sh"
 fi
 echo ""
-echo -e "  ${YELLOW}Next step:${RESET} Open Settings in the UI and configure your LLM provider."
+echo -e "  ${YELLOW}Next step:${RESET} Open the Web UI and start chatting. You can customize models"
+echo -e "             and providers at any time in Settings → LLM Endpoints."
 echo ""
 echo -e "  ${CYAN}Optional extras:${RESET}"
 echo -e "    ${BOLD}Browser tools${RESET}  →  ./demo_setup.sh --with-browser  (Playwright + headless Chromium)"
-echo -e "    ${BOLD}Local LLM${RESET}      →  ./demo_setup.sh --with-ollama   (Ollama + Nemotron)"
+echo -e "    ${BOLD}Local LLM${RESET}      →  ./demo_setup.sh --with-ollama   (Ollama + Qwen 2.5)"
 echo -e "    ${BOLD}Private search${RESET} →  ./demo_setup.sh --with-searxng  (SearXNG search engine)"
 echo ""

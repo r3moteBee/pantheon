@@ -44,7 +44,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WITH_OLLAMA=false
 WITH_SEARXNG=false
 WITH_BROWSER=false
-MODEL_TAG="4b"
+MODEL_TAG="3b"
 EMBEDDING_MODEL="nomic-embed-text"
 SEARXNG_PORT="8888"
 
@@ -70,7 +70,7 @@ if [[ "$WITH_OLLAMA" == "false" && "$WITH_SEARXNG" == "false" && "$WITH_BROWSER"
   WITH_SEARXNG=true
 fi
 
-OLLAMA_MODEL="nemotron-3-nano:${MODEL_TAG}"
+OLLAMA_MODEL="qwen2.5:${MODEL_TAG}"
 
 echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════╗${RESET}"
@@ -361,14 +361,12 @@ echo ""
 
 if [[ "$WITH_OLLAMA" == "true" ]]; then
   echo -e "  ${BOLD}Model info:${RESET}"
-  echo -e "    NVIDIA Nemotron-3-Nano-4B is a Mamba-2 hybrid model"
-  echo -e "    (4 attention + Mamba-2/MLP layers) with 262K context."
-  echo -e "    The Ollama build uses Q4_K_M GGUF quantisation (2.8 GB)."
-  echo -e "    Original FP8 weights:"
-  echo -e "    ${CYAN}https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8${RESET}"
+  echo -e "    Qwen 2.5 (3B) is a highly capable language model developed by Alibaba Cloud"
+  echo -e "    with strong tool-calling, reasoning, and multi-language support."
+  echo -e "    The Ollama build uses Q4_K_M GGUF quantization (~2.2 GB download)."
   echo ""
   echo -e "  ${BOLD}Alternative Ollama tags:${RESET}"
-  echo -e "    ./demo_setup.sh --with-ollama --tag 4b-q8_0   # 8-bit (4.2 GB)"
-  echo -e "    ./demo_setup.sh --with-ollama --tag 4b-bf16   # full precision (8.0 GB)"
+  echo -e "    ./demo_setup.sh --with-ollama --tag 1.5b       # Ultra-lightweight (1.6 GB RAM)"
+  echo -e "    ./demo_setup.sh --with-ollama --tag 7b         # Powerful, requires 8-12 GB RAM"
   echo ""
 fi
