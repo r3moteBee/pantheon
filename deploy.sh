@@ -241,8 +241,11 @@ if [[ "$MODE" == "docker" ]]; then
     else
       # Try installing compose plugin if on apt system
       if [[ "$OS" == "linux" && "$PKG_MANAGER" == "apt" ]]; then
-        info "Installing docker-compose-plugin..."
-        $SUDO apt-get update -qq && $SUDO apt-get install -y docker-compose-plugin -qq || true
+        info "Installing docker-compose-plugin or docker-compose-v2..."
+        $SUDO apt-get update -qq && (
+          $SUDO apt-get install -y docker-compose-plugin -qq || \
+          $SUDO apt-get install -y docker-compose-v2 -qq
+        ) || true
       fi
       if docker compose version &>/dev/null 2>&1 || command -v docker-compose &>/dev/null; then
         success "Docker Compose found"
