@@ -35,6 +35,15 @@ cd "$DIR/backend"
 uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" --log-level info >> "$DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" >> "$DIR/.pids"
+
+# Verify that the backend started successfully and didn't crash immediately
+sleep 2
+if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+  echo -e "${RED}[error]${RESET} Backend process crashed immediately! Last 15 lines of backend.log:" >&2
+  tail -n 15 "$DIR/backend.log" >&2
+  rm -f "$PID_FILE"
+  exit 1
+fi
 success "Backend started (PID ${BACKEND_PID}) — logs: $DIR/backend.log"
 
 # The backend serves frontend static files directly when frontend/dist exists,

@@ -182,21 +182,35 @@ SUDO=""
 [[ "$(id -u)" == "0" ]] || SUDO="sudo"
 
 if [[ "$MODE" == "docker" ]]; then
-  check_cmd docker "Install from https://docs.docker.com/get-docker/"
-
-  if docker compose version &>/dev/null 2>&1; then
-    success "docker compose (plugin) found"
-  elif command -v docker-compose &>/dev/null; then
-    success "docker-compose (standalone) found"
-  else
-    die "Docker Compose is required. Install from https://docs.docker.com/compose/install/"
+  DOCKER_OK=true
+  if ! command -v docker &>/dev/null; then
+    warn "Docker is required for Docker mode, but it is not installed."
+    DOCKER_OK=false
+  elif ! docker compose version &>/dev/null 2>&1 && ! command -v docker-compose &>/dev/null; then
+    warn "Docker Compose is required for Docker mode, but it is not installed."
+    DOCKER_OK=false
+  elif ! docker info &>/dev/null; then
+    warn "Docker daemon is not running."
+    DOCKER_OK=false
   fi
 
-  if ! docker info &>/dev/null; then
-    die "Docker daemon is not running. Start Docker and try again."
+  if [[ "$DOCKER_OK" == "false" ]]; then
+    if [[ "$SKIP_CONFIRM" == "false" ]]; then
+      read -rp "  Would you like to fall back to Local mode instead? [Y/n]: " fallback_choice </dev/tty
+      if [[ "${fallback_choice:-Y}" =~ ^[Yy]$ ]]; then
+        MODE="local"
+        info "Falling back to Local mode..."
+      else
+        die "Docker installation/daemon issues must be resolved to use Docker mode."
+      fi
+    else
+      die "Docker installation/daemon issues detected. Cannot run in Docker mode in non-interactive session."
+    fi
   fi
-  success "Docker daemon is running"
+fi
 
+if [[ "$MODE" == "docker" ]]; then
+  success "Docker requirements satisfied"
 else  # local mode
 
   if [[ -z "$PKG_MANAGER" && "$OS" == "macos" ]]; then
@@ -497,10 +511,37 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
   echo "  Common providers: OpenAI, Ollama (local), Groq, Together.ai, vLLM, LiteLLM"
   echo ""
 
-  # ── Endpoint ──────────────────────────────────────────────────────────────
-  read -rp "  LLM Base URL [${CURRENT_BASE_URL:-https://api.openai.com/v1}]: " input_url </dev/tty
-  LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-https://api.openai.com/v1}}"
+  # ── Provider Selection ────────────────────────────────────────────────────
+  echo -e "  ${BOLD}Select your LLM Provider:${RESET}"
+  echo "    1) OpenAI [default]"
+  echo "    2) Ollama (local)"
+  echo "    3) Groq"
+  echo "    4) OpenRouter"
+  echo "    5) Custom (OpenAI-compatible)"
+  echo ""
+  read -rp "  Enter choice [1-5]: " provider_choice </dev/tty
+  provider_choice="${provider_choice:-1}"
+
+  case "${provider_choice}" in
+    2)
+      LLM_BASE_URL="http://localhost:11434/v1"
+      ;;
+    3)
+      LLM_BASE_URL="https://api.groq.com/openai/v1"
+      ;;
+    4)
+      LLM_BASE_URL="https://openrouter.ai/api/v1"
+      ;;
+    5)
+      read -rp "  LLM Base URL [${CURRENT_BASE_URL:-https://api.openai.com/v1}]: " input_url </dev/tty
+      LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-https://api.openai.com/v1}}"
+      ;;
+    *)
+      LLM_BASE_URL="https://api.openai.com/v1"
+      ;;
+  esac
   update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+
 
   # ── API Key ───────────────────────────────────────────────────────────────
   if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"localhost:11434"* ]]; then
