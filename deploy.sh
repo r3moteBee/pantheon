@@ -272,8 +272,30 @@ if [[ "$MODE" == "docker" ]]; then
 else  # local mode
 
   if [[ -z "$PKG_MANAGER" && "$OS" == "macos" ]]; then
-    warn "Homebrew not found. Install it first: https://brew.sh"
-    die  "Homebrew is required to auto-install dependencies on macOS."
+    warn "Homebrew is not installed."
+    if [[ "$SKIP_CONFIRM" == "false" ]]; then
+      read -rp "  Would you like to automatically install Homebrew now? [y/N]: " install_brew </dev/tty
+      if [[ "${install_brew}" =~ ^[Yy]$ ]]; then
+        info "Installing Homebrew (this may take a few minutes and require your sudo password)..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || true
+        # Re-check brew path and add it to the shell environment (Apple Silicon or Intel paths)
+        if [[ -x "/opt/homebrew/bin/brew" ]]; then
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [[ -x "/usr/local/bin/brew" ]]; then
+          eval "$(/usr/local/bin/brew shellenv)"
+        fi
+        if command -v brew &>/dev/null; then
+          PKG_MANAGER="brew"
+          success "Homebrew installed successfully"
+        else
+          die "Homebrew installation failed. Please install manually: https://brew.sh"
+        fi
+      else
+        die "Homebrew is required to auto-install dependencies on macOS."
+      fi
+    else
+      die "Homebrew is required but not installed. Cannot install in non-interactive session."
+    fi
   fi
 
   pkg_install() {
