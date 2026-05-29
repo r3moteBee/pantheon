@@ -19,6 +19,8 @@ services:
     depends_on:
       - chromadb
       - searxng
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - agent-net
