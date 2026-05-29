@@ -21,6 +21,9 @@ services:
       - searxng
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 100.100.100.100
+      - 8.8.8.8
     restart: unless-stopped
     networks:
       - agent-net
@@ -100,6 +103,8 @@ services:
 networks:
   agent-net:
     driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1420"
 
 volumes:
   # ollama_data:
