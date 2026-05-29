@@ -12,6 +12,7 @@ services:
     environment:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8001
+      - DATA_DIR=/app/data
     volumes:
       - ./data:/app/data
     depends_on:
