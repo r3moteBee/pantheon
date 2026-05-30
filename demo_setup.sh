@@ -152,7 +152,7 @@ if [[ "$WITH_OLLAMA" == "true" ]]; then
     else
       ollama serve &>/dev/null &
     fi
-    for i in $(seq 1 30); do
+    for ((i=1; i<=30; i++)); do
       _ollama_ready && break
       sleep 1
     done
@@ -259,7 +259,7 @@ EOF
   _searxng_ready() {
     curl -sf "http://localhost:${SEARXNG_PORT}/search?q=test&format=json" >/dev/null 2>&1
   }
-  for i in $(seq 1 30); do
+  for ((i=1; i<=30; i++)); do
     _searxng_ready && break
     sleep 1
   done

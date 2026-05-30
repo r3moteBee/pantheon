@@ -390,7 +390,24 @@ else  # local mode
   if [[ "$NEED_BUILD_DEPS" == true ]]; then
     info "Installing build dependencies for native Python packages..."
     case "$PKG_MANAGER" in
-      brew)   ;; # Xcode command line tools handle this on macOS
+      brew)
+        if ! xcode-select -p &>/dev/null; then
+          warn "Xcode Command Line Tools are missing or broken."
+          if [[ "$SKIP_CONFIRM" == "false" || "$SKIP_CONFIRM" == false ]]; then
+            read -rp "  Would you like to install Xcode Command Line Tools now? [Y/n]: " install_xcode </dev/tty
+            if [[ "${install_xcode:-Y}" =~ ^[Yy]$ ]]; then
+              info "Running xcode-select --install..."
+              xcode-select --install
+              info "Please complete the installation dialog that opened, then press Enter to continue..."
+              read -r </dev/tty
+            else
+              die "Xcode Command Line Tools are required to build native Python packages (e.g. ChromaDB)."
+            fi
+          else
+            die "Xcode Command Line Tools are missing. Run 'xcode-select --install' to install them, then re-run the installer."
+          fi
+        fi
+        ;;
       apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y build-essential "python${PYTHON_VERSION}-dev" ;;
       dnf)    $SUDO dnf install -y gcc-c++ "python${PYTHON_VERSION}-devel" ;;
       yum)    $SUDO yum install -y gcc-c++ "python${PYTHON_VERSION}-devel" ;;
@@ -864,7 +881,7 @@ EOF
 
   header "Waiting for backend to be healthy..."
   MAX_TRIES=30; WAIT=2
-  for i in $(seq 1 $MAX_TRIES); do
+  for ((i=1; i<=MAX_TRIES; i++)); do
     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${HTTP_PORT}/health" 2>/dev/null || echo "000")
     if [[ "$STATUS" == "200" ]]; then
       success "Backend is healthy (HTTP 200)"; break
@@ -956,7 +973,7 @@ else
   # ── Health check ────────────────────────────────────────────────────────────
   header "Waiting for backend to be healthy..."
   MAX_TRIES=20; WAIT=2
-  for i in $(seq 1 $MAX_TRIES); do
+  for ((i=1; i<=MAX_TRIES; i++)); do
     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${BACKEND_PORT}/health" 2>/dev/null || echo "000")
     if [[ "$STATUS" == "200" ]]; then
       success "Backend is healthy (HTTP 200)"; break
@@ -1033,6 +1050,12 @@ setup_caddy() {
 
   # ── Write the Caddyfile ─────────────────────────────────────────────────
   local caddy_file="$INSTALL_DIR/Caddyfile"
+  local log_dir="/var/log/caddy"
+  local log_file="/var/log/caddy/pantheon.log"
+  if [[ "$OS" == "macos" ]]; then
+    log_dir="$INSTALL_DIR/data/logs"
+    log_file="$log_dir/caddy.log"
+  fi
   info "Configuring Caddy for ${domain}..."
 
   # Determine backend ports based on mode
@@ -1092,7 +1115,7 @@ ${domain} {
 ${frontend_handle}
 
 	log {
-		output file /var/log/caddy/pantheon.log {
+		output file ${log_file} {
 			roll_size 10mb
 			roll_keep 5
 		}
@@ -1102,8 +1125,12 @@ CADDYEOF
   success "Caddyfile written to ${caddy_file}"
 
   # ── Create log directory ────────────────────────────────────────────────
-  $SUDO mkdir -p /var/log/caddy
-  $SUDO chown caddy:caddy /var/log/caddy 2>/dev/null || true
+  if [[ "$OS" == "macos" ]]; then
+    mkdir -p "$log_dir"
+  else
+    $SUDO mkdir -p "$log_dir"
+    $SUDO chown caddy:caddy "$log_dir" 2>/dev/null || true
+  fi
 
   # ── Validate config ─────────────────────────────────────────────────────
   if caddy validate --config "$caddy_file" --adapter caddyfile &>/dev/null; then
@@ -1141,8 +1168,8 @@ CADDYEOF
     fi
   else
     # macOS or non-systemd: just print instructions
-    info "To start Caddy manually:"
-    echo "  caddy run --config ${caddy_file} --adapter caddyfile"
+    info "To start Caddy manually (requires administrator privileges for ports 80/443):"
+    echo "  sudo caddy run --config ${caddy_file} --adapter caddyfile"
   fi
 }
 
