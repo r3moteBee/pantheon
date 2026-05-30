@@ -15,6 +15,11 @@ Projects are Pantheon's unit of isolation. Each project has its own:
 
 Switch projects from the sidebar in the web UI, or via `/project <name>` in Telegram.
 
+### Example Project Setup
+* **Project 1: `semiconductor-research`**: Dedicated to market research on chip manufacturing. Contains spec sheets, company filings, and news articles.
+* **Project 2: `fitness-coach`**: Dedicated to personal health and training.
+If you ask the agent in `fitness-coach` for a workout plan, it will not recall any information about chip manufacturing from `semiconductor-research`, keeping context perfectly clean.
+
 ## 2. Personalities and personas
 
 Every project has a `soul.md` file that defines the agent's identity in that project. Personas (in the Persona Library) are reusable templates — applying one is a **one-time copy** into the project. Edits you make after applying stay in the project; they do not flow back to the library.
@@ -62,6 +67,21 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
   - *"Save the last response as a bulleted action-items list to `todos.md`"* (`mode=custom` with your own transform prompt)
 - For .md files, a YAML frontmatter block (title, date, tags, mode, source_messages) is added automatically.
 
+### Example Chat Exchange
+> **User**: *Provide a high-level summary of the architectural tiers of Pantheon.*
+> **Agent**: *(Outputs the detailed memory and runtime architecture...)*
+> **User**: *Save that response verbatim to docs/memory_tiers.md with title 'Memory Tiers Overview' and tags 'architecture, docs'*
+> 
+> *The agent calls `save_last_response` with path=`docs/memory_tiers.md` and generates a markdown file in the workspace with automatic frontmatter:*
+> ```markdown
+> ---
+> title: Memory Tiers Overview
+> date: 2026-05-30
+> tags: [architecture, docs]
+> ---
+> (The detailed architectural breakdown is written here verbatim)
+> ```
+
 ## 6. Web search and the browser
 
 ### Search provider chain
@@ -94,6 +114,14 @@ Use `create_task` (or `/task <description>` in Telegram) to schedule the agent t
 
 Long-running tasks should call `send_telegram` at key checkpoints so you stay in the loop.
 
+### Examples of Autonomous Tasks
+* **Weekly Market Briefing**
+  * **Description**: *"Every Monday, search for recent updates on High Bandwidth Memory (HBM) supply chains, summarize the top 3 news items, write the report to `research/weekly-hbm-report.md`, and notify me on Telegram with the summary."*
+  * **Schedule**: `"0 9 * * 1"` (Cron expression for every Monday at 9 AM)
+* **Daily Release Watch**
+  * **Description**: *"Check the releases page of GitHub repository 'ollama/ollama', ingest any new release notes via the github/release adapter, index it into memory, and alert me if a new version is released."*
+  * **Schedule**: `"interval:1440"` (every 24 hours/1440 minutes)
+
 ## 8. Telegram integration
 
 After setting `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_IDS` in `.env`, your bot supports:
@@ -125,6 +153,15 @@ All notes are also indexed into semantic memory so you can recall them later via
 Drop files into the project workspace and tell the agent: *"index the workspace"* (or call `index_workspace` directly). This ingests Markdown (with frontmatter), text, CSV, PDF, and code files into semantic + graph memory. After indexing, recall and chat become much richer.
 
 Re-index with `force: true` when you edit files.
+
+### Ingestion Example
+If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/pantheon/data/projects/<project-slug>/workspace/`, you can query the agent:
+> **User**: *Index the workspace.*
+> 
+> *The agent will call `index_workspace`, extract the text from the PDF, chunk it, embed it, and insert it into ChromaDB. Once finished, you can query information from that file across sessions:*
+> 
+> **User**: *What are the pin configurations for HBM3 based on the specs in the workspace?*
+> **Agent**: *(Automatically recalls relevant sections of the PDF from semantic memory and answers the question with source provenance.)*
 
 ## 10. Operational tips
 
