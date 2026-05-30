@@ -59,10 +59,16 @@ from memory.semantic import SemanticMemory  # noqa: E402
 
 @pytest.fixture
 def semantic(tmp_path, monkeypatch):
+    from config import get_settings
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CHROMA_HOST", "")
+    get_settings.cache_clear()
+    get_settings()
     # SemanticMemory uses ChromaDB under DATA_DIR/chroma; using tmp_path
     # gives each test an isolated collection.
-    return SemanticMemory(project_id="p1")
+    sm = SemanticMemory(project_id="p1")
+    get_settings.cache_clear()
+    return sm
 
 
 def test_strip_artifact_deletes_matching_chunks(semantic):

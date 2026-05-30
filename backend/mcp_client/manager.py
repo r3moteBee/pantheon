@@ -562,6 +562,23 @@ class MCPManager:
         """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
+            # Degrade gracefully if Tavily connection is missing / not defined
+            if "tavily" in prefixed_name.lower():
+                if "search" in prefixed_name.lower():
+                    fallback_query = arguments.get("query", "")
+                    if fallback_query:
+                        from agent.tools import _web_search
+                        fallback_result = await _web_search(fallback_query)
+                        return (
+                            f"[Tavily MCP connection is not configured or offline. "
+                            f"Falling back to built-in web search.]\n\n"
+                            f"{fallback_result}"
+                        )
+                return (
+                    f"[Tavily MCP connection is not configured or offline. "
+                    f"Please add a connection named 'tavily' in the Connections tab "
+                    f"with your Tavily API key to enable this capability.]"
+                )
             return f"Unknown MCP tool: {prefixed_name}"
 
         client, tool_name = resolved
