@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import {
   MessageSquare, FolderOpen, User, Settings,
-  Briefcase, Menu, X, Bot, LogOut, Zap, Github, Users,
+  Briefcase, Menu, X, Bot, LogOut, Zap, Plug, Users,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { useStore } from '../store'
@@ -22,7 +22,7 @@ const NAV_ITEMS = [
   { to: '/artifacts', icon: FolderOpen, label: 'Artifacts' },
   { to: '/skills', icon: Zap, label: 'Skills' },
   { to: '/personas', icon: Users, label: 'Personas' },
-  { to: '/connections', icon: Github, label: 'Connections' },
+  { to: '/connections', icon: Plug, label: 'Connections' },
   { to: '/projects', icon: Briefcase, label: 'Projects' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]

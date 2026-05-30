@@ -436,6 +436,22 @@ else  # local mode
   else
     success "poppler-utils already available"
   fi
+
+  if ! command -v pandoc &>/dev/null; then
+    info "Installing pandoc (document conversions)..."
+    case "$PKG_MANAGER" in
+      brew)   brew install pandoc ;;
+      apt)    $SUDO apt-get install -y pandoc ;;
+      dnf)    $SUDO dnf install -y pandoc ;;
+      yum)    $SUDO yum install -y pandoc ;;
+      pacman) $SUDO pacman -S --noconfirm pandoc-cli || $SUDO pacman -S --noconfirm pandoc ;;
+      apk)    $SUDO apk add pandoc ;;
+      *)      warn "Could not install pandoc — markdown to DOCX conversion will be unavailable" ;;
+    esac
+    success "pandoc installed"
+  else
+    success "pandoc already available"
+  fi
 fi
 
 # ── Confirmation ──────────────────────────────────────────────────────────────
@@ -941,13 +957,13 @@ else
       warn "No package manager detected — skipping LibreOffice install."
     else
       case "$PKG_MANAGER" in
-        apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y libreoffice poppler-utils ;;
-        dnf)    $SUDO dnf install -y libreoffice poppler-utils ;;
-        yum)    $SUDO yum install -y libreoffice poppler-utils ;;
-        pacman) $SUDO pacman -S --noconfirm libreoffice-fresh poppler ;;
-        brew)   brew install --cask libreoffice && brew install poppler ;;
-        apk)    $SUDO apk add libreoffice poppler-utils ;;
-        *)      warn "Package manager $PKG_MANAGER unsupported — install libreoffice + poppler-utils manually." ;;
+        apt)    $SUDO apt-get update -qq && $SUDO apt-get install -y libreoffice poppler-utils pandoc ;;
+        dnf)    $SUDO dnf install -y libreoffice poppler-utils pandoc ;;
+        yum)    $SUDO yum install -y libreoffice poppler-utils pandoc ;;
+        pacman) $SUDO pacman -S --noconfirm libreoffice-fresh poppler pandoc-cli || $SUDO pacman -S --noconfirm libreoffice-fresh poppler pandoc ;;
+        brew)   brew install --cask libreoffice && brew install poppler pandoc ;;
+        apk)    $SUDO apk add libreoffice poppler-utils pandoc ;;
+        *)      warn "Package manager $PKG_MANAGER unsupported — install libreoffice + poppler-utils + pandoc manually." ;;
       esac
       success "LibreOffice installed (artifact previews for .docx/.xlsx/.pptx/.pdf will work)"
     fi

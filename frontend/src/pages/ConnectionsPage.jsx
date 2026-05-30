@@ -6,13 +6,13 @@ import HelpDrawer from '../components/help/HelpDrawer'
 import SearchProvidersTab from '../components/connections/SearchProvidersTab'
 
 const TABS = [
-  { id: 'github', label: 'GitHub', icon: Github },
   { id: 'mcp',    label: 'MCP servers', icon: Plug },
+  { id: 'github', label: 'GitHub', icon: Github },
   { id: 'search', label: 'Web search', icon: Search },
 ]
 
 export default function ConnectionsPage() {
-  const [tab, setTab] = useState('github')
+  const [tab, setTab] = useState('mcp')
 
   return (
     <div className="h-full flex flex-col">

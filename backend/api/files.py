@@ -432,3 +432,182 @@ async def _index_uploaded_file(file_path: Path, project_id: str) -> None:
             )
     except Exception as e:
         logger.warning("Auto-indexing failed for %s: %s", file_path.name, e)
+
+
+# ── Document Conversion Endpoints ────────────────────────────
+
+from pydantic import BaseModel
+import glob
+from utils.document_converter import DocumentConverter, BinaryMissingError
+
+class FileConvertRequest(BaseModel):
+    paths: list[str]
+    target_format: str
+    out_dir: str | None = None
+    save_as_artifact: bool = False
+
+class ConversionResult(BaseModel):
+    source_path: str
+    target_path: str | None = None
+    success: bool
+    error: str | None = None
+    size_bytes: int | None = None
+
+class BatchConvertResponse(BaseModel):
+    converted: list[ConversionResult]
+    total_files: int
+    successful_count: int
+    failed_count: int
+
+@router.post("/files/convert", response_model=BatchConvertResponse)
+async def convert_files(
+    req: FileConvertRequest,
+    project_id: str = Query(default="default"),
+) -> BatchConvertResponse:
+    """Batch-convert files matching wildcards, folders, or individual paths."""
+    base = _get_workspace(project_id)
+    converter = DocumentConverter()
+    
+    # 1. Expand paths safely
+    expanded_paths: list[Path] = []
+    for pattern in req.paths:
+        if ".." in pattern:
+            raise HTTPException(status_code=400, detail=f"Path traversal not allowed: {pattern}")
+        
+        if any(char in pattern for char in ["*", "?", "[", "]"]):
+            search_pattern = str(base / pattern)
+            for matched_str in glob.glob(search_pattern, recursive=True):
+                matched_path = Path(matched_str).resolve()
+                if str(matched_path).startswith(str(base)) and matched_path.is_file():
+                    expanded_paths.append(matched_path)
+        else:
+            try:
+                target = _safe_path(pattern, project_id)
+            except HTTPException:
+                raise HTTPException(status_code=400, detail=f"Invalid path: {pattern}")
+                
+            if target.is_file():
+                expanded_paths.append(target)
+            elif target.is_dir():
+                for p in target.rglob("*"):
+                    if p.is_file():
+                        expanded_paths.append(p)
+            else:
+                raise HTTPException(status_code=404, detail=f"Path not found: {pattern}")
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_paths = []
+    for p in expanded_paths:
+        if p not in seen:
+            seen.add(p)
+            unique_paths.append(p)
+
+    if not unique_paths:
+        return BatchConvertResponse(
+            converted=[],
+            total_files=0,
+            successful_count=0,
+            failed_count=0
+        )
+
+    # 2. Setup output directory
+    out_dir_path: Path | None = None
+    if req.out_dir:
+        out_dir_path = _safe_path(req.out_dir, project_id)
+        out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    results: list[ConversionResult] = []
+    success_count = 0
+    fail_count = 0
+
+    for source_path in unique_paths:
+        source_rel = str(source_path.relative_to(base))
+        try:
+            # Determine target filename and path
+            target_name = f"{source_path.stem}.{req.target_format.lower()}"
+            if out_dir_path:
+                target_path = out_dir_path / target_name
+            else:
+                target_path = source_path.parent / target_name
+
+            # Run conversion in a thread pool to avoid blocking the async event loop
+            await asyncio.to_thread(
+                converter.convert_file,
+                source_path,
+                target_path,
+                req.target_format
+            )
+
+            # Ingest as artifact if requested
+            if req.save_as_artifact:
+                import mimetypes
+                from artifacts.store import get_store, is_text_type
+                from artifacts import embedder
+                
+                content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+                is_txt = is_text_type(content_type)
+                if is_txt:
+                    try:
+                        content = target_path.read_text(encoding="utf-8")
+                    except Exception:
+                        content = target_path.read_bytes()
+                        is_txt = False
+                else:
+                    content = target_path.read_bytes()
+
+                store = get_store()
+                target_rel = str(target_path.relative_to(base))
+                a = store.create(
+                    project_id=project_id,
+                    path=target_rel,
+                    content=content,
+                    content_type=content_type,
+                    title=target_path.name,
+                    tags=["converted", req.target_format.lower()],
+                    source={
+                        "kind": "conversion",
+                        "source_file": source_rel
+                    },
+                    edited_by="agent",
+                )
+                if is_txt:
+                    embedder.schedule_embed(a["id"], project_id)
+
+            size_bytes = target_path.stat().st_size if target_path.exists() else None
+            results.append(
+                ConversionResult(
+                    source_path=source_rel,
+                    target_path=str(target_path.relative_to(base)),
+                    success=True,
+                    size_bytes=size_bytes
+                )
+            )
+            success_count += 1
+
+        except BinaryMissingError as e:
+            results.append(
+                ConversionResult(
+                    source_path=source_rel,
+                    success=False,
+                    error=str(e)
+                )
+            )
+            fail_count += 1
+        except Exception as e:
+            results.append(
+                ConversionResult(
+                    source_path=source_rel,
+                    success=False,
+                    error=str(e)
+                )
+            )
+            fail_count += 1
+
+    return BatchConvertResponse(
+        converted=results,
+        total_files=len(results),
+        successful_count=success_count,
+        failed_count=fail_count
+    )
+

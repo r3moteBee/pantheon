@@ -1325,6 +1325,65 @@ TOOL_SCHEMAS = [
                 "required": []
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_document",
+            "description": "Convert a single document in the workspace from one format to another (e.g. .md to .html, .docx to .pdf, .pdf to .txt). Note: High-fidelity conversions to PDF require LibreOffice, and Markdown-to-DOCX requires Pandoc.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "source_path": {
+                        "type": "string",
+                        "description": "Relative path to the source file in the workspace (e.g., 'reports/doc.md')"
+                    },
+                    "target_format": {
+                        "type": "string",
+                        "description": "The desired target format extension (e.g. 'html', 'pdf', 'docx', 'md', 'txt')"
+                    },
+                    "out_dir": {
+                        "type": "string",
+                        "description": "Optional relative output directory. If omitted, target will be placed in the same folder as the source file."
+                    },
+                    "save_as_artifact": {
+                        "type": "boolean",
+                        "description": "Whether to also ingest the converted file as a permanent artifact in the store (default: false)."
+                    }
+                },
+                "required": ["source_path", "target_format"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "batch_convert_documents",
+            "description": "Batch-convert multiple files matching wildcards, folder names, or specific paths in the workspace into another format.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of relative paths, folders, or wildcards to match (e.g., ['reports/*.docx', 'data/txt/'])"
+                    },
+                    "target_format": {
+                        "type": "string",
+                        "description": "The desired target format extension (e.g. 'html', 'pdf', 'docx', 'md', 'txt')"
+                    },
+                    "out_dir": {
+                        "type": "string",
+                        "description": "Optional relative output directory. If omitted, target will be placed in the same folder as the source file."
+                    },
+                    "save_as_artifact": {
+                        "type": "boolean",
+                        "description": "Whether to also ingest each converted file as a permanent artifact in the store (default: false)."
+                    }
+                },
+                "required": ["paths", "target_format"]
+            }
+        }
     }
 ]
 
@@ -1481,6 +1540,190 @@ async def execute_tool(
                 return f"Download failed: {type(e).__name__}: {e}"
             except Exception as e:
                 return f"Download failed: {e}"
+
+        elif tool_name == "convert_document":
+            source_path_str = tool_args["source_path"]
+            target_format = tool_args["target_format"]
+            out_dir = tool_args.get("out_dir")
+            save_as_artifact = tool_args.get("save_as_artifact", False)
+            
+            try:
+                source_path = _safe_workspace_path(source_path_str, project_id)
+                base = _get_workspace_base(project_id)
+                
+                # Setup output path
+                target_name = f"{source_path.stem}.{target_format.lower()}"
+                if out_dir:
+                    out_dir_path = _safe_workspace_path(out_dir, project_id)
+                    out_dir_path.mkdir(parents=True, exist_ok=True)
+                    target_path = out_dir_path / target_name
+                else:
+                    target_path = source_path.parent / target_name
+                    
+                from utils.document_converter import DocumentConverter, BinaryMissingError
+                converter = DocumentConverter()
+                
+                # Run conversion (blocking call, so run in thread using to_thread)
+                await asyncio.to_thread(converter.convert_file, source_path, target_path, target_format)
+                
+                # Ingest as artifact if requested
+                if save_as_artifact:
+                    import mimetypes
+                    from artifacts.store import get_store, is_text_type
+                    from artifacts import embedder
+                    
+                    content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+                    is_txt = is_text_type(content_type)
+                    if is_txt:
+                        try:
+                            content = target_path.read_text(encoding="utf-8")
+                        except Exception:
+                            content = target_path.read_bytes()
+                            is_txt = False
+                    else:
+                        content = target_path.read_bytes()
+
+                    store = get_store()
+                    target_rel = str(target_path.relative_to(base))
+                    source_rel = str(source_path.relative_to(base))
+                    a = store.create(
+                        project_id=effective_project,
+                        path=target_rel,
+                        content=content,
+                        content_type=content_type,
+                        title=target_path.name,
+                        tags=["converted", target_format.lower()],
+                        source={"kind": "conversion", "source_file": source_rel},
+                        edited_by="agent",
+                    )
+                    if is_txt:
+                        embedder.schedule_embed(a["id"], effective_project)
+                        
+                size_kb = target_path.stat().st_size / 1024
+                return (
+                    f"Successfully converted document {source_path_str} to format {target_format} "
+                    f"({size_kb:.1f}KB). Target file is saved at: {target_path.relative_to(base)}."
+                )
+            except BinaryMissingError as e:
+                return f"Conversion failed: {e}"
+            except Exception as e:
+                return f"Conversion failed: {e}"
+
+        elif tool_name == "batch_convert_documents":
+            paths = tool_args["paths"]
+            target_format = tool_args["target_format"]
+            out_dir = tool_args.get("out_dir")
+            save_as_artifact = tool_args.get("save_as_artifact", False)
+            
+            try:
+                import glob
+                base = _get_workspace_base(project_id)
+                
+                # 1. Expand paths safely
+                expanded_paths: list[Path] = []
+                for pattern in paths:
+                    if ".." in pattern:
+                        return f"Error: Path traversal not allowed: {pattern}"
+                    
+                    if any(char in pattern for char in ["*", "?", "[", "]"]):
+                        search_pattern = str(base / pattern)
+                        for matched_str in glob.glob(search_pattern, recursive=True):
+                            matched_path = Path(matched_str).resolve()
+                            if str(matched_path).startswith(str(base)) and matched_path.is_file():
+                                expanded_paths.append(matched_path)
+                    else:
+                        target = _safe_workspace_path(pattern, project_id)
+                        if target.is_file():
+                            expanded_paths.append(target)
+                        elif target.is_dir():
+                            for p in target.rglob("*"):
+                                if p.is_file():
+                                    expanded_paths.append(p)
+                        else:
+                            return f"Error: Path not found: {pattern}"
+
+                # Deduplicate
+                seen = set()
+                unique_paths = []
+                for p in expanded_paths:
+                    if p not in seen:
+                        seen.add(p)
+                        unique_paths.append(p)
+
+                if not unique_paths:
+                    return "No matching files found for batch conversion."
+
+                # 2. Setup output directory
+                out_dir_path: Path | None = None
+                if out_dir:
+                    out_dir_path = _safe_workspace_path(out_dir, project_id)
+                    out_dir_path.mkdir(parents=True, exist_ok=True)
+
+                from utils.document_converter import DocumentConverter, BinaryMissingError
+                converter = DocumentConverter()
+                
+                converted_files = []
+                failed_files = []
+                
+                for source_path in unique_paths:
+                    source_rel = str(source_path.relative_to(base))
+                    try:
+                        target_name = f"{source_path.stem}.{target_format.lower()}"
+                        if out_dir_path:
+                            target_path = out_dir_path / target_name
+                        else:
+                            target_path = source_path.parent / target_name
+
+                        await asyncio.to_thread(converter.convert_file, source_path, target_path, target_format)
+
+                        # Ingest as artifact if requested
+                        if save_as_artifact:
+                            import mimetypes
+                            from artifacts.store import get_store, is_text_type
+                            from artifacts import embedder
+                            
+                            content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
+                            is_txt = is_text_type(content_type)
+                            if is_txt:
+                                try:
+                                    content = target_path.read_text(encoding="utf-8")
+                                except Exception:
+                                    content = target_path.read_bytes()
+                                    is_txt = False
+                            else:
+                                content = target_path.read_bytes()
+
+                            store = get_store()
+                            target_rel = str(target_path.relative_to(base))
+                            a = store.create(
+                                project_id=effective_project,
+                                path=target_rel,
+                                content=content,
+                                content_type=content_type,
+                                title=target_path.name,
+                                tags=["converted", target_format.lower()],
+                                source={"kind": "conversion", "source_file": source_rel},
+                                edited_by="agent",
+                            )
+                            if is_txt:
+                                embedder.schedule_embed(a["id"], effective_project)
+
+                        converted_files.append(f"{source_rel} -> {target_path.relative_to(base)}")
+                    except Exception as e:
+                        failed_files.append(f"{source_rel}: {e}")
+
+                summary = []
+                if converted_files:
+                    summary.append("Successfully converted:")
+                    summary.extend(f"  - {f}" for f in converted_files)
+                if failed_files:
+                    summary.append("Failed conversions:")
+                    summary.extend(f"  - {f}" for f in failed_files)
+                    
+                return "\n".join(summary)
+                
+            except Exception as e:
+                return f"Batch conversion process failed: {e}"
 
         elif tool_name == "read_file":
             safe_path = _safe_workspace_path(tool_args["path"], project_id)
