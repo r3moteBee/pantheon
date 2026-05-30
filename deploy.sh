@@ -140,7 +140,7 @@ if [[ -z "$MODE" ]]; then
 fi
 
 # Normalize + validate
-MODE="${MODE,,}"  # lowercase
+MODE=$(echo "$MODE" | tr '[:upper:]' '[:lower:]')  # lowercase
 [[ "$MODE" == "local" || "$MODE" == "docker" ]] || die "Invalid --mode '${MODE}'. Must be 'local' or 'docker'."
 echo ""
 success "Mode: ${MODE}"
