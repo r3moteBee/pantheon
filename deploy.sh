@@ -22,7 +22,6 @@ BRANCH="main"
 SKIP_CONFIRM=false
 MODE=""   # "local" or "docker" — prompted if not set
 DOMAIN=""         # domain for HTTPS via Caddy — prompted if not set
-AGENT_NAME=""     # agent name written into soul.md — prompted if not set
 AUTH_PASSWORD=""  # web interface password — prompted if not set
 WITH_OLLAMA=""    # run setup_options.sh --with-ollama after install
 WITH_SEARXNG=""     # run setup_options.sh --with-searxng after install (empty to detect default)
@@ -54,7 +53,6 @@ while [[ $# -gt 0 ]]; do
     --branch)     BRANCH="$2";         shift 2 ;;
     --mode)       MODE="$2";           shift 2 ;;
     --domain)     DOMAIN="$2";         shift 2 ;;
-    --agent-name)    AGENT_NAME="$2";     shift 2 ;;
     --auth-password) AUTH_PASSWORD="$2";  shift 2 ;;
     --with-ollama)  WITH_OLLAMA=true;  shift ;;
     --with-searxng) WITH_SEARXNG=true; shift ;;
@@ -75,7 +73,6 @@ while [[ $# -gt 0 ]]; do
       echo "  --base-url URL   LLM provider base URL (default: OpenAI)"
       echo "  --branch NAME    Git branch to deploy (default: main)"
       echo "  --domain DOMAIN      Domain name for HTTPS via Caddy (e.g. agent.example.com)"
-      echo "  --agent-name NAME        Name for the agent (default: Pan)"
       echo "  --auth-password PASS     Web interface password (prompted if omitted)"
       echo "  --with-ollama        Install Ollama + Nemotron-3-Nano-4B as the default LLM"
       echo "  --with-searxng       Run a local SearXNG container as the default search backend"
@@ -864,37 +861,13 @@ header "Preparing data directories..."
 mkdir -p data/db data/chroma data/personality data/projects data/workspace
 success "Data directories ready"
 
-# ── Agent name ────────────────────────────────────────────────────────────────
+# ── Agent Personality ──────────────────────────────────────────────────────────
 SOUL_SRC="$INSTALL_DIR/backend/data/personality/soul.md"
 SOUL_DEST="$INSTALL_DIR/data/personality/soul.md"
 
-# Detect the current name baked into soul.md (default: Pan)
-CURRENT_AGENT_NAME=$(grep -o "^You are [A-Za-z0-9_-]*" "$SOUL_SRC" 2>/dev/null | awk '{print $3}' || echo "Pan")
-
-if [[ "$SKIP_CONFIRM" == false ]]; then
-  echo ""
-  header "Agent Identity"
-  echo ""
-  echo "  Your agent introduces itself by name. You can choose any name you like."
-  echo "  Leave blank to keep the default."
-  echo ""
-  read -rp "  Agent name [${CURRENT_AGENT_NAME}]: " input_agent_name </dev/tty
-  AGENT_NAME="${input_agent_name:-$CURRENT_AGENT_NAME}"
-else
-  AGENT_NAME="${AGENT_NAME:-$CURRENT_AGENT_NAME}"
-fi
-
-# Write soul.md to the data directory, replacing the name throughout
-if [[ "$AGENT_NAME" != "$CURRENT_AGENT_NAME" ]]; then
-  # Escape special chars for sed
-  OLD_ESC=$(printf '%s\n' "$CURRENT_AGENT_NAME" | sed 's/[\/&]/\\&/g')
-  NEW_ESC=$(printf '%s\n' "$AGENT_NAME"          | sed 's/[\/&]/\\&/g')
-  sed "s/${OLD_ESC}/${NEW_ESC}/g" "$SOUL_SRC" > "$SOUL_DEST"
-  success "Agent named \"${AGENT_NAME}\" (soul.md written to data/personality/)"
-else
-  # Just copy as-is if name unchanged
+if [[ -f "$SOUL_SRC" ]]; then
   cp "$SOUL_SRC" "$SOUL_DEST"
-  success "Agent personality copied (name: ${AGENT_NAME})"
+  success "Agent personality copied (default: Pan)"
 fi
 
 # Always copy agent.md template to data dir (safe to overwrite — it's config, not user data)
