@@ -59,7 +59,7 @@ The installer:
 
 ### Zero-config demo extras
 
-Bundle optional components with the install. Each flag runs `demo_setup.sh` post-install and restarts Pantheon automatically.
+Bundle optional components with the install. Each flag runs `setup_options.sh` post-install and restarts Pantheon automatically.
 
 | Flag | What it adds |
 |---|---|
@@ -404,7 +404,7 @@ Single source of truth: `frontend/package.json` `"version"` field, format `YYYY.
 ├── docs/                      Design docs + usage guides
 ├── CLAUDE.md                  Working context for AI assistants (read this first if hacking)
 ├── deploy.sh                  One-command installer
-├── demo_setup.sh              Optional component installer (Ollama, SearXNG, etc.)
+├── setup_options.sh            Optional component installer (Ollama, SearXNG, etc.)
 ├── start.sh / stop.sh         Local-mode lifecycle
 ├── Makefile                   Docker-mode lifecycle
 ├── docker-compose.yml         Multi-container orchestration

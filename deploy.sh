@@ -24,11 +24,12 @@ MODE=""   # "local" or "docker" — prompted if not set
 DOMAIN=""         # domain for HTTPS via Caddy — prompted if not set
 AGENT_NAME=""     # agent name written into soul.md — prompted if not set
 AUTH_PASSWORD=""  # web interface password — prompted if not set
-WITH_OLLAMA=true    # run demo_setup.sh --with-ollama after install
-WITH_SEARXNG=""     # run demo_setup.sh --with-searxng after install (empty to detect default)
-WITH_BROWSER=false  # run demo_setup.sh --with-browser after install
-WITH_OFFICE=false   # install LibreOffice for Office/PDF preview rendering
-OLLAMA_TAG="3b"     # Qwen model tag passed to demo_setup.sh
+WITH_OLLAMA=""    # run setup_options.sh --with-ollama after install
+WITH_SEARXNG=""     # run setup_options.sh --with-searxng after install (empty to detect default)
+WITH_BROWSER=""  # run setup_options.sh --with-browser after install
+WITH_OFFICE=""   # install LibreOffice for Office/PDF preview rendering
+OLLAMA_TAG=""     # Qwen model tag passed to setup_options.sh
+SKIPPED_LLM=false
 
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -145,13 +146,71 @@ MODE=$(echo "$MODE" | tr '[:upper:]' '[:lower:]')  # lowercase
 echo ""
 success "Mode: ${MODE}"
 
-# Resolve dynamic default for SearXNG based on docker availability
-if [[ -z "$WITH_SEARXNG" ]]; then
-  if command -v docker &>/dev/null && docker info &>/dev/null; then
+# ── Optional components configuration ──────────────────────────────────────────
+if [[ "$SKIP_CONFIRM" == "false" ]]; then
+  header "Optional Component Configuration"
+  echo "  Configure optional features for your Pantheon installation."
+  echo "  (Defaults are selected to steer novices toward a fully working local setup)"
+  echo ""
+
+  # 1. Ollama (local LLM)
+  read -rp "  Would you like to install Ollama locally? (Provides a free, private, offline LLM) [Y/n]: " ollama_choice </dev/tty
+  ollama_choice="${ollama_choice:-Y}"
+  if [[ "$ollama_choice" =~ ^[Yy]$ ]]; then
+    WITH_OLLAMA=true
+  else
+    WITH_OLLAMA=false
+  fi
+
+  # 2. SearXNG (Private Web Search)
+  if [[ "$MODE" == "docker" ]]; then
+    read -rp "  Would you like to install SearXNG for private web search? (Runs in Docker) [Y/n]: " searxng_choice </dev/tty
+    searxng_choice="${searxng_choice:-Y}"
+  else
+    echo "  Note: SearXNG requires Docker."
+    read -rp "  Would you like to install SearXNG? (Needs Docker) [y/N]: " searxng_choice </dev/tty
+    searxng_choice="${searxng_choice:-N}"
+  fi
+  if [[ "$searxng_choice" =~ ^[Yy]$ ]]; then
     WITH_SEARXNG=true
-    info "Docker detected: defaulting SearXNG search backend to enabled"
   else
     WITH_SEARXNG=false
+  fi
+
+  # 3. LibreOffice (document preview)
+  read -rp "  Would you like to install LibreOffice for document previews? (Renders Word/PDF files in UI) [y/N]: " office_choice </dev/tty
+  office_choice="${office_choice:-N}"
+  if [[ "$office_choice" =~ ^[Yy]$ ]]; then
+    WITH_OFFICE=true
+  else
+    WITH_OFFICE=false
+  fi
+
+  # 4. Playwright Browser (agent search/crawl tool)
+  read -rp "  Would you like to enable Playwright browser automation? (Allows agent to view JS-heavy pages) [y/N]: " browser_choice </dev/tty
+  browser_choice="${browser_choice:-N}"
+  if [[ "$browser_choice" =~ ^[Yy]$ ]]; then
+    WITH_BROWSER=true
+  else
+    WITH_BROWSER=false
+  fi
+  
+  # 5. Host port for Docker mode
+  if [[ "$MODE" == "docker" && "$HTTP_PORT" == "80" ]]; then
+    echo ""
+    read -rp "  Which host port should the Pantheon web interface bind to? [default: 80]: " input_port </dev/tty
+    HTTP_PORT="${input_port:-80}"
+  fi
+  
+  echo ""
+else
+  # Resolve dynamic default for SearXNG based on docker availability in non-interactive mode
+  if [[ -z "$WITH_SEARXNG" ]]; then
+    if command -v docker &>/dev/null && docker info &>/dev/null; then
+      WITH_SEARXNG=true
+    else
+      WITH_SEARXNG=false
+    fi
   fi
 fi
 
@@ -636,7 +695,7 @@ CURRENT_MODEL=$(grep "^LLM_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
 CURRENT_EMBEDDING=$(grep "^EMBEDDING_MODEL=" .env 2>/dev/null | cut -d= -f2- || true)
 
 if [[ "$WITH_OLLAMA" == "true" ]]; then
-  info "--with-ollama flag set — skipping LLM provider prompts (demo_setup.sh will configure)"
+  info "--with-ollama flag set — skipping LLM provider prompts (setup_options.sh will configure)"
 elif [[ "$SKIP_CONFIRM" == false ]]; then
   header "LLM Provider Configuration"
   echo ""
@@ -653,8 +712,9 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
   echo "    3) Groq"
   echo "    4) OpenRouter"
   echo "    5) Custom (OpenAI-compatible)"
+  echo "    6) Skip configuration (configure later in the Web UI)"
   echo ""
-  read -rp "  Enter choice [1-5]: " provider_choice </dev/tty
+  read -rp "  Enter choice [1-6]: " provider_choice </dev/tty
   provider_choice="${provider_choice:-1}"
 
   case "${provider_choice}" in
@@ -683,81 +743,95 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
         WITH_OLLAMA=false
       fi
       ;;
+    6)
+      info "Skipping LLM configuration. You must configure it later in the Web UI."
+      LLM_BASE_URL=""
+      LLM_API_KEY=""
+      LLM_MODEL=""
+      EMBEDDING_MODEL=""
+      WITH_OLLAMA=false
+      SKIPPED_LLM=true
+      update_env "LLM_BASE_URL" ""
+      update_env "LLM_API_KEY" ""
+      update_env "LLM_MODEL" ""
+      update_env "EMBEDDING_MODEL" ""
+      ;;
     *)
       LLM_BASE_URL="http://localhost:11434/v1"
       WITH_OLLAMA=true
       ;;
   esac
-  update_env "LLM_BASE_URL" "$LLM_BASE_URL"
 
+  if [[ "$SKIPPED_LLM" != "true" ]]; then
+    update_env "LLM_BASE_URL" "$LLM_BASE_URL"
 
-
-  # ── API Key ───────────────────────────────────────────────────────────────
-  if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"localhost:11434"* ]]; then
-    LLM_API_KEY="${CURRENT_API_KEY:-ollama}"
-    info "Ollama detected — using placeholder API key"
-  else
-    # Mask the current key for display
-    if [[ -n "$CURRENT_API_KEY" && "$CURRENT_API_KEY" != "sk-your"* ]]; then
-      MASKED_KEY="${CURRENT_API_KEY:0:8}...${CURRENT_API_KEY: -4}"
-      read -rp "  API Key [${MASKED_KEY}]: " input_key </dev/tty
-      LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+    # ── API Key ───────────────────────────────────────────────────────────────
+    if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"localhost:11434"* ]]; then
+      LLM_API_KEY="${CURRENT_API_KEY:-ollama}"
+      info "Ollama detected — using placeholder API key"
     else
-      read -rp "  API Key: " input_key </dev/tty
-      LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+      # Mask the current key for display
+      if [[ -n "$CURRENT_API_KEY" && "$CURRENT_API_KEY" != "sk-your"* ]]; then
+        MASKED_KEY="${CURRENT_API_KEY:0:8}...${CURRENT_API_KEY: -4}"
+        read -rp "  API Key [${MASKED_KEY}]: " input_key </dev/tty
+        LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+      else
+        read -rp "  API Key: " input_key </dev/tty
+        LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+      fi
     fi
-  fi
-  update_env "LLM_API_KEY" "$LLM_API_KEY"
+    update_env "LLM_API_KEY" "$LLM_API_KEY"
 
-  # ── Fetch available models ────────────────────────────────────────────────
-  info "Fetching available models from ${LLM_BASE_URL}..."
-  MODEL_LIST=$(fetch_models "$LLM_BASE_URL" "$LLM_API_KEY" 2>/dev/null) || MODEL_LIST=""
+    # ── Fetch available models ────────────────────────────────────────────────
+    info "Fetching available models from ${LLM_BASE_URL}..."
+    MODEL_LIST=$(fetch_models "$LLM_BASE_URL" "$LLM_API_KEY" 2>/dev/null) || MODEL_LIST=""
 
-  if [[ -n "$MODEL_LIST" ]]; then
-    MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
-    success "Found ${MODEL_COUNT} models"
+    if [[ -n "$MODEL_LIST" ]]; then
+      MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
+      success "Found ${MODEL_COUNT} models"
 
-    # ── Primary chat model ────────────────────────────────────────────────
-    CHOSEN_MODEL=$(pick_model "Select primary chat model:" "$MODEL_LIST" "${CURRENT_MODEL:-gpt-4o}")
-    update_env "LLM_MODEL" "$CHOSEN_MODEL"
-    success "Primary model: ${CHOSEN_MODEL}"
+      # ── Primary chat model ────────────────────────────────────────────────
+      CHOSEN_MODEL=$(pick_model "Select primary chat model:" "$MODEL_LIST" "${CURRENT_MODEL:-gpt-4o}")
+      update_env "LLM_MODEL" "$CHOSEN_MODEL"
+      success "Primary model: ${CHOSEN_MODEL}"
 
-    # ── Prefill / fast model (optional) ───────────────────────────────────
-    echo ""
-    echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for tasks like${RESET}"
-    echo -e "  ${CYAN}summarization, memory consolidation, and background processing.${RESET}"
-    echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
-    CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
-    if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
-      update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
-      success "Prefill model: ${CHOSEN_PREFILL}"
+      # ── Prefill / fast model (optional) ───────────────────────────────────
+      echo ""
+      echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for tasks like${RESET}"
+      echo -e "  ${CYAN}summarization, memory consolidation, and background processing.${RESET}"
+      echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
+      CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
+      if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
+        update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
+        success "Prefill model: ${CHOSEN_PREFILL}"
+      else
+        info "Prefill model: same as primary (${CHOSEN_MODEL})"
+      fi
+
+      # ── Embedding model ───────────────────────────────────────────────────
+      # Filter model list for likely embedding models, but show all as fallback
+      EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
+      if [[ -z "$EMBED_MODELS" ]]; then
+        EMBED_MODELS="$MODEL_LIST"
+      fi
+      CHOSEN_EMBED=$(pick_model "Select embedding model:" "$EMBED_MODELS" "${CURRENT_EMBEDDING:-text-embedding-3-small}")
+      update_env "EMBEDDING_MODEL" "$CHOSEN_EMBED"
+      success "Embedding model: ${CHOSEN_EMBED}"
+
     else
-      info "Prefill model: same as primary (${CHOSEN_MODEL})"
+      warn "Could not fetch model list from ${LLM_BASE_URL}"
+      warn "This can happen if the endpoint is not yet running or the API key is invalid."
+      echo ""
+
+      read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
+      update_env "LLM_MODEL" "${input_model:-${CURRENT_MODEL:-gpt-4o}}"
+
+      read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
+      [[ -n "$input_prefill" ]] && update_env "LLM_PREFILL_MODEL" "$input_prefill"
+
+      read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
+      update_env "EMBEDDING_MODEL" "${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
     fi
-
-    # ── Embedding model ───────────────────────────────────────────────────
-    # Filter model list for likely embedding models, but show all as fallback
-    EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
-    if [[ -z "$EMBED_MODELS" ]]; then
-      EMBED_MODELS="$MODEL_LIST"
-    fi
-    CHOSEN_EMBED=$(pick_model "Select embedding model:" "$EMBED_MODELS" "${CURRENT_EMBEDDING:-text-embedding-3-small}")
-    update_env "EMBEDDING_MODEL" "$CHOSEN_EMBED"
-    success "Embedding model: ${CHOSEN_EMBED}"
-
-  else
-    warn "Could not fetch model list from ${LLM_BASE_URL}"
-    warn "This can happen if the endpoint is not yet running or the API key is invalid."
-    echo ""
-
-    read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
-    update_env "LLM_MODEL" "${input_model:-${CURRENT_MODEL:-gpt-4o}}"
-
-    read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
-    [[ -n "$input_prefill" ]] && update_env "LLM_PREFILL_MODEL" "$input_prefill"
-
-    read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
-    update_env "EMBEDDING_MODEL" "${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
   fi
 else
   # --yes mode: just apply flag values or keep existing
@@ -887,6 +961,7 @@ EOF
   fi
 
   header "Building Docker images (this may take a few minutes on first run)..."
+  cp frontend/package.json backend/package.json 2>/dev/null || true
   docker compose pull chromadb 2>/dev/null || true
   docker compose build --parallel
   success "Images built"
@@ -1237,15 +1312,16 @@ fi
 # =============================================================================
 # ── Optional demo extras (Ollama / SearXNG) ──────────────────────────────────
 # =============================================================================
-if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" == "true" ]]; then
-  header "Running demo_setup.sh for optional extras"
+if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" == "true" || "$WITH_OFFICE" == "true" ]]; then
+  header "Running setup_options.sh for optional extras"
   DEMO_ARGS=()
   [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "$OLLAMA_TAG")
   [[ "$WITH_SEARXNG" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-searxng)
   [[ "$WITH_BROWSER" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-browser)
+  [[ "$WITH_OFFICE" == "true" && "$MODE" == "local" ]]  && DEMO_ARGS+=(--with-office)
 
-  if [[ -x "${INSTALL_DIR}/demo_setup.sh" ]]; then
-    ( cd "$INSTALL_DIR" && ./demo_setup.sh "${DEMO_ARGS[@]}" ) || warn "demo_setup.sh exited non-zero — continuing"
+  if [[ -x "${INSTALL_DIR}/setup_options.sh" ]]; then
+    ( cd "$INSTALL_DIR" && ./setup_options.sh "${DEMO_ARGS[@]}" ) || warn "setup_options.sh exited non-zero — continuing"
 
     # Restart Pantheon so it picks up the new .env configuration
     if [[ "$MODE" == "local" ]]; then
@@ -1258,7 +1334,7 @@ if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" =
       ( cd "$INSTALL_DIR" && docker compose restart backend ) || warn "Docker restart failed"
     fi
   else
-    warn "demo_setup.sh not found at ${INSTALL_DIR}/demo_setup.sh — skipping extras"
+    warn "setup_options.sh not found at ${INSTALL_DIR}/setup_options.sh — skipping extras"
   fi
 fi
 
@@ -1285,11 +1361,18 @@ else
   echo -e "  ${BOLD}Restart${RESET}      →  ${INSTALL_DIR}/start.sh"
 fi
 echo ""
-echo -e "  ${YELLOW}Next step:${RESET} Open the Web UI and start chatting. You can customize models"
-echo -e "             and providers at any time in Settings → LLM Endpoints."
+if [[ "$SKIPPED_LLM" == "true" ]]; then
+  echo -e "  ${RED}${BOLD}CRITICAL NEXT STEP:${RESET} You skipped LLM endpoint configuration. The agent will NOT"
+  echo -e "                      work until you add an endpoint and map roles in the Web UI"
+  echo -e "                      under ${BOLD}Settings → LLM Endpoints${RESET}."
+else
+  echo -e "  ${YELLOW}Next step:${RESET} Open the Web UI and start chatting. You can customize models"
+  echo -e "             and providers at any time in Settings → LLM Endpoints."
+fi
 echo ""
 echo -e "  ${CYAN}Optional extras:${RESET}"
-echo -e "    ${BOLD}Browser tools${RESET}  →  ./demo_setup.sh --with-browser  (Playwright + headless Chromium)"
-echo -e "    ${BOLD}Local LLM${RESET}      →  ./demo_setup.sh --with-ollama   (Ollama + Qwen 2.5)"
-echo -e "    ${BOLD}Private search${RESET} →  ./demo_setup.sh --with-searxng  (SearXNG search engine)"
+echo -e "    ${BOLD}Browser tools${RESET}  →  ./setup_options.sh --with-browser  (Playwright + headless Chromium)"
+echo -e "    ${BOLD}Local LLM${RESET}      →  ./setup_options.sh --with-ollama   (Ollama + Qwen 2.5)"
+echo -e "    ${BOLD}Private search${RESET} →  ./setup_options.sh --with-searxng  (SearXNG search engine)"
+echo -e "    ${BOLD}LibreOffice${RESET}    →  ./setup_options.sh --with-office    (Document preview rendering)"
 echo ""
