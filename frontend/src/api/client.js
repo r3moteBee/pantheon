@@ -8,6 +8,10 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+export function setBackendUrl(url) {
+  api.defaults.baseURL = url
+}
+
 // Request interceptor — attach auth token if present
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('auth_token')
@@ -570,7 +574,8 @@ export function createChatSocket(onMessage, onClose) {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = localStorage.getItem('auth_token') || ''
   const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
-  const wsUrl = `${proto}//${window.location.host}/ws/chat${tokenParam}`
+  const host = window.BACKEND_WS_URL || `${proto}//${window.location.host}`
+  const wsUrl = `${host}/ws/chat${tokenParam}`
   const socket = new WebSocket(wsUrl)
 
   socket.onmessage = (event) => {
