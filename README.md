@@ -70,20 +70,20 @@ Your primary configuration resides in `~/pantheon/.env`. You can also configure 
 ### Common `.env` Settings:
 ```env
 # Primary LLM Connection
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-your-key-here
-LLM_MODEL=gpt-4o
+LLM_BASE_URL=insert-llm-base-url-here
+LLM_API_KEY=insert-llm-api-key-here
+LLM_MODEL=insert-llm-model-name-here
 
 # Optional Fast/Prefill Model (for summarization/background tasks)
-LLM_PREFILL_MODEL=gpt-4o-mini
+LLM_PREFILL_MODEL=insert-optional-prefill-model-here
 
 # Embedding Model Configuration
-EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_MODEL=insert-embedding-model-here
 
 # Security & Secrets (Vault keys are auto-generated on install)
 VAULT_MASTER_KEY=...
 SECRET_KEY=...
-AUTH_PASSWORD=your-web-ui-password  # Leave empty to disable authentication
+AUTH_PASSWORD=insert-auth-password-here  # Leave empty to disable authentication
 ```
 
 ---
