@@ -100,10 +100,8 @@ done
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}"
-echo "  ╔═══════════════════════════════════════════╗"
-echo "  ║        Pantheon  Installer           ║"
-echo "  ║  Self-hosted AI Agent Framework 2026-04-10 ║"
-echo "  ╚═══════════════════════════════════════════╝"
+echo "  Pantheon Installer"
+echo "  Self-hosted AI Agent Framework — v2026.06.02"
 echo -e "${RESET}"
 
 # ── OS detection ──────────────────────────────────────────────────────────────
