@@ -2,8 +2,14 @@
 # Agent Harness — .gitignore
 # ============================================================
 
-# Environment / Secrets
+# Environment / Secrets / Backups
 .env
+.env.bak
+.env.bak.*
+.env.backup
+.env.backup.*
+*.bak
+*.backup
 !.env.example
 *.pem
 *.key
@@ -85,3 +91,4 @@ FILES_CREATED.txt
 **/BACKEND_BUILD_COMPLETE.md
 **/VERIFICATION_REPORT.txt
 backend/data/
+backend/package.json
