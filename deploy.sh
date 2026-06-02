@@ -510,7 +510,11 @@ else
   echo -e "  Backend   : ${BOLD}http://localhost:${BACKEND_PORT}${RESET}"
   echo -e "  Frontend  : ${BOLD}http://localhost:${FRONTEND_PORT}${RESET}"
 fi
-echo -e "  LLM Model : ${BOLD}${LLM_MODEL}${RESET}"
+if [[ "$SKIP_CONFIRM" == false ]]; then
+  echo -e "  LLM Model : ${BOLD}${LLM_MODEL}${RESET} (can customize or skip during setup)"
+else
+  echo -e "  LLM Model : ${BOLD}${LLM_MODEL}${RESET}"
+fi
 echo ""
 
 if [[ "$SKIP_CONFIRM" == false ]]; then
