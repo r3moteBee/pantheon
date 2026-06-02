@@ -148,15 +148,16 @@ success "Mode: ${MODE}"
 if [[ "$SKIP_CONFIRM" == "false" ]]; then
   header "Optional Component Configuration"
   echo "  Configure optional features for your Pantheon installation."
-  echo "  (Defaults are selected to steer novices toward a fully working local setup)"
   echo ""
 
   # 2. SearXNG (Private Web Search)
+  echo "  SearXNG is a free, privacy-respecting metasearch engine that aggregates"
+  echo "  results from over 70 search engines without tracking your queries."
   if [[ "$MODE" == "docker" ]]; then
-    read -rp "  Would you like to install SearXNG for private web search? (Runs in Docker) [Y/n]: " searxng_choice </dev/tty
+    read -rp "  Would you like to install SearXNG? (Runs locally via Docker) [Y/n]: " searxng_choice </dev/tty
     searxng_choice="${searxng_choice:-Y}"
   else
-    echo "  Note: SearXNG requires Docker."
+    echo "  Note: SearXNG requires Docker to run."
     read -rp "  Would you like to install SearXNG? (Needs Docker) [y/N]: " searxng_choice </dev/tty
     searxng_choice="${searxng_choice:-N}"
   fi

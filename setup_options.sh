@@ -140,10 +140,10 @@ if [[ "$INTERACTIVE" == "true" ]]; then
     # 2. SearXNG
     if [[ "$WITH_SEARXNG" == "true" ]]; then
       echo -e "  [${GREEN}✓${RESET}] ${BOLD}2) SearXNG Private Search${RESET} (requires Docker)"
-      echo -e "        • Enable private search queries without limits/API keys."
+      echo -e "        • Free, self-hosted search engine aggregating results from over 70 sources privately."
     else
       echo -e "  [ ] 2) SearXNG Private Search (requires Docker)"
-      echo -e "        • Enable private search queries without limits/API keys."
+      echo -e "        • Free, self-hosted search engine aggregating results from over 70 sources privately."
     fi
     echo ""
 
