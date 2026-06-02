@@ -151,15 +151,6 @@ if [[ "$SKIP_CONFIRM" == "false" ]]; then
   echo "  (Defaults are selected to steer novices toward a fully working local setup)"
   echo ""
 
-  # 1. Ollama (local LLM)
-  read -rp "  Would you like to install Ollama locally? (Provides a free, private, offline LLM) [Y/n]: " ollama_choice </dev/tty
-  ollama_choice="${ollama_choice:-Y}"
-  if [[ "$ollama_choice" =~ ^[Yy]$ ]]; then
-    WITH_OLLAMA=true
-  else
-    WITH_OLLAMA=false
-  fi
-
   # 2. SearXNG (Private Web Search)
   if [[ "$MODE" == "docker" ]]; then
     read -rp "  Would you like to install SearXNG for private web search? (Runs in Docker) [Y/n]: " searxng_choice </dev/tty
@@ -697,132 +688,174 @@ if [[ "$WITH_OLLAMA" == "true" ]]; then
 elif [[ "$SKIP_CONFIRM" == false ]]; then
   header "LLM Provider Configuration"
   echo ""
-  echo "  Pantheon works with any OpenAI-compatible API endpoint."
-  echo "  Common providers: Ollama (local), OpenAI, Groq, Together.ai, vLLM, LiteLLM"
-  echo -e "  ${YELLOW}Note: You can easily switch models and providers at any time after install${RESET}"
-  echo -e "        ${YELLOW}directly inside the Web UI (Settings → LLM Endpoints).${RESET}"
-  echo ""
-
-  # ── Provider Selection ────────────────────────────────────────────────────
-  echo -e "  ${BOLD}Select your LLM Provider:${RESET}"
-  echo "    1) Ollama (local) [default]"
-  echo "    2) OpenAI"
-  echo "    3) Groq"
-  echo "    4) OpenRouter"
-  echo "    5) Custom (OpenAI-compatible)"
-  echo "    6) Skip configuration (configure later in the Web UI)"
-  echo ""
-  read -rp "  Enter choice [1-6]: " provider_choice </dev/tty
-  provider_choice="${provider_choice:-1}"
-
-  case "${provider_choice}" in
-    1)
-      LLM_BASE_URL="http://localhost:11434/v1"
-      ;;
-    2)
-      LLM_BASE_URL="https://api.openai.com/v1"
-      ;;
-    3)
-      LLM_BASE_URL="https://api.groq.com/openai/v1"
-      ;;
-    4)
-      LLM_BASE_URL="https://openrouter.ai/api/v1"
-      ;;
-    5)
-      read -rp "  LLM Base URL [${CURRENT_BASE_URL:-http://localhost:11434/v1}]: " input_url </dev/tty
-      LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-http://localhost:11434/v1}}"
-      ;;
-    6)
-      info "Skipping LLM configuration. You must configure it later in the Web UI."
-      LLM_BASE_URL=""
-      LLM_API_KEY=""
-      LLM_MODEL=""
-      EMBEDDING_MODEL=""
-      SKIPPED_LLM=true
-      update_env "LLM_BASE_URL" ""
-      update_env "LLM_API_KEY" ""
-      update_env "LLM_MODEL" ""
-      update_env "EMBEDDING_MODEL" ""
-      ;;
-    *)
-      LLM_BASE_URL="http://localhost:11434/v1"
-      ;;
-  esac
-
-  if [[ "$SKIPPED_LLM" != "true" ]]; then
-    update_env "LLM_BASE_URL" "$LLM_BASE_URL"
-
-    # ── API Key ───────────────────────────────────────────────────────────────
-    if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"localhost:11434"* ]]; then
-      LLM_API_KEY="${CURRENT_API_KEY:-ollama}"
-      info "Ollama detected — using placeholder API key"
-    else
-      # Mask the current key for display
-      if [[ -n "$CURRENT_API_KEY" && "$CURRENT_API_KEY" != "sk-your"* ]]; then
-        MASKED_KEY="${CURRENT_API_KEY:0:8}...${CURRENT_API_KEY: -4}"
-        read -rp "  API Key [${MASKED_KEY}]: " input_key </dev/tty
-        LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
-      else
-        read -rp "  API Key: " input_key </dev/tty
-        LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
-      fi
-    fi
-    update_env "LLM_API_KEY" "$LLM_API_KEY"
-
-    # ── Fetch available models ────────────────────────────────────────────────
-    info "Fetching available models from ${LLM_BASE_URL}..."
-    MODEL_LIST=$(fetch_models "$LLM_BASE_URL" "$LLM_API_KEY" 2>/dev/null) || MODEL_LIST=""
-
-    if [[ -n "$MODEL_LIST" ]]; then
-      MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
-      success "Found ${MODEL_COUNT} models"
-
-      # ── Primary chat model ────────────────────────────────────────────────
-      CHOSEN_MODEL=$(pick_model "Select primary chat model:" "$MODEL_LIST" "${CURRENT_MODEL:-gpt-4o}")
-      update_env "LLM_MODEL" "$CHOSEN_MODEL"
-      success "Primary model: ${CHOSEN_MODEL}"
-
-      # ── Prefill / fast model (optional) ───────────────────────────────────
-      echo ""
-      echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for tasks like${RESET}"
-      echo -e "  ${CYAN}summarization, memory consolidation, and background processing.${RESET}"
-      echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
-      CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
-      if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
-        update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
-        success "Prefill model: ${CHOSEN_PREFILL}"
-      else
-        info "Prefill model: same as primary (${CHOSEN_MODEL})"
-      fi
-
-      # ── Embedding model ───────────────────────────────────────────────────
-      # Filter model list for likely embedding models, but show all as fallback
-      EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
-      if [[ -z "$EMBED_MODELS" ]]; then
-        EMBED_MODELS="$MODEL_LIST"
-      fi
-      CHOSEN_EMBED=$(pick_model "Select embedding model:" "$EMBED_MODELS" "${CURRENT_EMBEDDING:-text-embedding-3-small}")
-      update_env "EMBEDDING_MODEL" "$CHOSEN_EMBED"
-      success "Embedding model: ${CHOSEN_EMBED}"
-
-    else
-      warn "Could not fetch model list from ${LLM_BASE_URL}"
-      warn "This can happen if the endpoint is not yet running or the API key is invalid."
-      echo ""
-
-      read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
-      update_env "LLM_MODEL" "${input_model:-${CURRENT_MODEL:-gpt-4o}}"
-
-      read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
-      [[ -n "$input_prefill" ]] && update_env "LLM_PREFILL_MODEL" "$input_prefill"
-
-      read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
-      update_env "EMBEDDING_MODEL" "${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
-    fi
+  
+  # Ask the user if they want to configure LLM now
+  read -rp "  Would you like to configure an LLM Endpoint and Model now?
+  (If you decline, you can easily configure LLM Endpoints in the Web UI Settings menu after installation) [Y/n]: " configure_llm </dev/tty
+  configure_llm="${configure_llm:-Y}"
+  
+  if [[ ! "$configure_llm" =~ ^[Yy]$ ]]; then
+    # User declined configuration
+    info "Skipping LLM configuration. You must configure it later in the Web UI under Settings."
+    LLM_BASE_URL=""
+    LLM_API_KEY=""
+    LLM_MODEL=""
+    EMBEDDING_MODEL=""
+    WITH_OLLAMA=false
+    SKIPPED_LLM=true
+    update_env "LLM_BASE_URL" ""
+    update_env "LLM_API_KEY" ""
+    update_env "LLM_MODEL" ""
+    update_env "EMBEDDING_MODEL" ""
+    update_env "LLM_PREFILL_MODEL" ""
+  else
+    # User agreed to configure LLM
+    echo ""
+    echo -e "  ${BOLD}How would you like to set up your LLM?${RESET}"
+    echo ""
+    echo "    1) Install Ollama locally and download the default model (qwen2.5:3b) [default]"
+    echo "    2) Install Ollama locally and download a custom Hugging Face model"
+    echo "    3) Connect to a cloud API (OpenAI, Groq, OpenRouter, or Custom API)"
+    echo ""
+    read -rp "  Enter choice [1-3, default: 1]: " llm_setup_choice </dev/tty
+    llm_setup_choice="${llm_setup_choice:-1}"
+    
+    case "${llm_setup_choice}" in
+      1)
+        WITH_OLLAMA=true
+        LLM_BASE_URL="http://localhost:11434/v1"
+        LLM_API_KEY="ollama"
+        LLM_MODEL="qwen2.5:3b"
+        EMBEDDING_MODEL="nomic-embed-text"
+        OLLAMA_TAG="3b"
+        
+        update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+        update_env "LLM_API_KEY" "$LLM_API_KEY"
+        update_env "LLM_MODEL" "$LLM_MODEL"
+        update_env "EMBEDDING_MODEL" "$EMBEDDING_MODEL"
+        update_env "LLM_PREFILL_MODEL" ""
+        success "Configured local Ollama with default qwen2.5:3b model"
+        ;;
+        
+      2)
+        WITH_OLLAMA=true
+        LLM_BASE_URL="http://localhost:11434/v1"
+        LLM_API_KEY="ollama"
+        EMBEDDING_MODEL="nomic-embed-text"
+        
+        echo ""
+        warn "Note: Ensure your system has sufficient RAM/VRAM before downloading large models."
+        warn "Minimum recommended RAM: 8GB for 3B models, 16GB for 7B/8B models."
+        echo ""
+        read -rp "  Enter the Hugging Face model tag to pull via Ollama [default: qwen2.5:3b]: " custom_tag </dev/tty
+        custom_tag="${custom_tag:-qwen2.5:3b}"
+        
+        LLM_MODEL="$custom_tag"
+        # Parse the tag (anything after the colon, if present, else use full model name)
+        if [[ "$custom_tag" == *":"* ]]; then
+          OLLAMA_TAG="${custom_tag#*:}"
+        else
+          OLLAMA_TAG="latest"
+        fi
+        
+        update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+        update_env "LLM_API_KEY" "$LLM_API_KEY"
+        update_env "LLM_MODEL" "$LLM_MODEL"
+        update_env "EMBEDDING_MODEL" "$EMBEDDING_MODEL"
+        update_env "LLM_PREFILL_MODEL" ""
+        success "Configured local Ollama with custom model: ${LLM_MODEL}"
+        ;;
+        
+      3)
+        # Cloud/Custom Provider prompts
+        WITH_OLLAMA=false
+        echo ""
+        echo -e "  ${BOLD}Select your Cloud LLM Provider:${RESET}"
+        echo "    1) OpenAI [default]"
+        echo "    2) Groq"
+        echo "    3) OpenRouter"
+        echo "    4) Custom (OpenAI-compatible)"
+        echo ""
+        read -rp "  Enter choice [1-4]: " provider_choice </dev/tty
+        provider_choice="${provider_choice:-1}"
+        
+        case "${provider_choice}" in
+          1) LLM_BASE_URL="https://api.openai.com/v1" ;;
+          2) LLM_BASE_URL="https://api.groq.com/openai/v1" ;;
+          3) LLM_BASE_URL="https://openrouter.ai/api/v1" ;;
+          4)
+            read -rp "  LLM Base URL [${CURRENT_BASE_URL:-http://localhost:11434/v1}]: " input_url </dev/tty
+            LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-http://localhost:11434/v1}}"
+            ;;
+          *) LLM_BASE_URL="https://api.openai.com/v1" ;;
+        esac
+        
+        update_env "LLM_BASE_URL" "$LLM_BASE_URL"
+        
+        # API Key
+        # Mask the current key for display
+        if [[ -n "$CURRENT_API_KEY" && "$CURRENT_API_KEY" != "sk-your"* && "$CURRENT_API_KEY" != "ollama" ]]; then
+          MASKED_KEY="${CURRENT_API_KEY:0:8}...${CURRENT_API_KEY: -4}"
+          read -rp "  API Key [${MASKED_KEY}]: " input_key </dev/tty
+          LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+        else
+          read -rp "  API Key: " input_key </dev/tty
+          LLM_API_KEY="${input_key:-$CURRENT_API_KEY}"
+        fi
+        update_env "LLM_API_KEY" "$LLM_API_KEY"
+        
+        # Fetch models
+        info "Fetching available models from ${LLM_BASE_URL}..."
+        MODEL_LIST=$(fetch_models "$LLM_BASE_URL" "$LLM_API_KEY" 2>/dev/null) || MODEL_LIST=""
+        
+        if [[ -n "$MODEL_LIST" ]]; then
+          MODEL_COUNT=$(echo "$MODEL_LIST" | wc -l | tr -d ' ')
+          success "Found ${MODEL_COUNT} models"
+          
+          CHOSEN_MODEL=$(pick_model "Select primary chat model:" "$MODEL_LIST" "${CURRENT_MODEL:-gpt-4o}")
+          update_env "LLM_MODEL" "$CHOSEN_MODEL"
+          success "Primary model: ${CHOSEN_MODEL}"
+          
+          echo ""
+          echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for background tasks.${RESET}"
+          echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
+          CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
+          if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
+            update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
+            success "Prefill model: ${CHOSEN_PREFILL}"
+          else
+            info "Prefill model: same as primary (${CHOSEN_MODEL})"
+            update_env "LLM_PREFILL_MODEL" ""
+          fi
+          
+          EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
+          if [[ -z "$EMBED_MODELS" ]]; then
+            EMBED_MODELS="$MODEL_LIST"
+          fi
+          CHOSEN_EMBED=$(pick_model "Select embedding model:" "$EMBED_MODELS" "${CURRENT_EMBEDDING:-text-embedding-3-small}")
+          update_env "EMBEDDING_MODEL" "$CHOSEN_EMBED"
+          success "Embedding model: ${CHOSEN_EMBED}"
+        else
+          warn "Could not fetch model list from ${LLM_BASE_URL}"
+          echo ""
+          read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
+          LLM_MODEL="${input_model:-${CURRENT_MODEL:-gpt-4o}}"
+          update_env "LLM_MODEL" "$LLM_MODEL"
+          
+          read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
+          if [[ -n "$input_prefill" ]]; then
+            update_env "LLM_PREFILL_MODEL" "$input_prefill"
+          else
+            update_env "LLM_PREFILL_MODEL" ""
+          fi
+          
+          read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
+          EMBEDDING_MODEL="${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
+          update_env "EMBEDDING_MODEL" "$EMBEDDING_MODEL"
+        fi
+        ;;
+    esac
   fi
-else
-  # --yes mode: just apply flag values or keep existing
-  info "Skipping interactive model selection (--yes mode)"
 fi
 
 # ── Create data directories ───────────────────────────────────────────────────
