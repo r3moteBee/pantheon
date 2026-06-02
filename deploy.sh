@@ -530,7 +530,10 @@ if [[ -d "$INSTALL_DIR/.git" ]]; then
   info "Existing installation found at ${INSTALL_DIR}. Updating..."
   git -C "$INSTALL_DIR" fetch origin
   git -C "$INSTALL_DIR" checkout "$BRANCH"
-  git -C "$INSTALL_DIR" pull origin "$BRANCH"
+  if ! git -C "$INSTALL_DIR" pull origin "$BRANCH"; then
+    warn "Pull failed (possibly due to divergent history or forced updates). Resetting to origin/${BRANCH}..."
+    git -C "$INSTALL_DIR" reset --hard "origin/${BRANCH}"
+  fi
   success "Updated to latest ${BRANCH}"
 else
   info "Cloning to ${INSTALL_DIR}..."
