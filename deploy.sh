@@ -718,28 +718,19 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
   case "${provider_choice}" in
     1)
       LLM_BASE_URL="http://localhost:11434/v1"
-      WITH_OLLAMA=true
       ;;
     2)
       LLM_BASE_URL="https://api.openai.com/v1"
-      WITH_OLLAMA=false
       ;;
     3)
       LLM_BASE_URL="https://api.groq.com/openai/v1"
-      WITH_OLLAMA=false
       ;;
     4)
       LLM_BASE_URL="https://openrouter.ai/api/v1"
-      WITH_OLLAMA=false
       ;;
     5)
       read -rp "  LLM Base URL [${CURRENT_BASE_URL:-http://localhost:11434/v1}]: " input_url </dev/tty
       LLM_BASE_URL="${input_url:-${CURRENT_BASE_URL:-http://localhost:11434/v1}}"
-      if [[ "$LLM_BASE_URL" == *"ollama"* || "$LLM_BASE_URL" == *"11434"* ]]; then
-        WITH_OLLAMA=true
-      else
-        WITH_OLLAMA=false
-      fi
       ;;
     6)
       info "Skipping LLM configuration. You must configure it later in the Web UI."
@@ -747,7 +738,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
       LLM_API_KEY=""
       LLM_MODEL=""
       EMBEDDING_MODEL=""
-      WITH_OLLAMA=false
       SKIPPED_LLM=true
       update_env "LLM_BASE_URL" ""
       update_env "LLM_API_KEY" ""
@@ -756,7 +746,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
       ;;
     *)
       LLM_BASE_URL="http://localhost:11434/v1"
-      WITH_OLLAMA=true
       ;;
   esac
 
