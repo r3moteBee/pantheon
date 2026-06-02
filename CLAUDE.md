@@ -27,16 +27,21 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── tools.py             ALL agent tools (schemas + dispatch). 1500+ lines.
 │   │   ├── prompts.py           build_system_prompt(); appends recent-jobs + available-skills blocks
 │   │   └── browser_tools.py     Playwright browser tools (optional)
-│   ├── api/                     FastAPI routers
+│   ├── api/                     FastAPI routers (19 mounted routers)
 │   │   ├── chat.py              REST + websocket chat. Both run resolve_explicit + resolve_auto.
 │   │   ├── tasks.py             Schedule CRUD; run-now; rerun_job
 │   │   ├── jobs.py              Jobs CRUD
 │   │   ├── artifacts.py         Artifact CRUD + bulk export
+│   │   ├── files.py             Workspace files CRUD + document conversions
 │   │   ├── projects.py          Project metadata; reads/writes data/db/projects.json
 │   │   ├── project_export.py    Export project as zip (artifacts, episodic, graph, semantic)
 │   │   ├── project_import.py    Import a project zip
 │   │   ├── personas.py          Persona CRUD (apollo, athena, zeus, ...)
+│   │   ├── mcp.py               MCP server registry + port scanning
+│   │   ├── mcp_oauth.py         MCP OAuth2 callback authentication
 │   │   ├── connections.py       GitHub PAT connections
+│   │   ├── conversations.py     Conversation history metadata updates
+│   │   ├── sources.py           Source ingestion adapter triggers
 │   │   ├── llm_endpoints.py     /api/llm/{endpoints,roles,probe} — named endpoints + role mapping
 │   │   ├── settings.py          Legacy flat-config CRUD; still in place for backward compat
 │   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match
@@ -63,9 +68,11 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── episodic.py          EpisodicMemory — chat history + task logs
 │   │   ├── semantic.py          SemanticMemory — ChromaDB wrapper
 │   │   ├── graph.py             GraphMemory — SQLite nodes + edges. add_edge is idempotent.
+│   │   ├── chunker.py           Text chunking strategies (headings, paragraphs, fixed characters)
 │   │   ├── file_indexer.py      FileIndexer — chunk + embed + extract entities to graph.
 │   │   │                        _index_typed_topics_to_graph handles the canonical frontmatter shape.
 │   │   ├── topic_embeddings.py  Topic-label embeddings keyed by (project_id, topic_type, label)
+│   │   ├── working.py           WorkingMemory — per-conversation scratch workspace
 │   │   ├── merge_proposals.py   SQLite store for reviewable graph node merges
 │   │   ├── extraction.py        Conversation entity extractor (different from sources/extraction.py)
 │   │   └── archival.py          Archival memory (mostly unused)
@@ -98,6 +105,10 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   ├── models/provider.py       ModelProvider + 5 role getters that consult llm_config.store.resolve_role
 │   ├── secrets/vault.py         Encrypted secret storage in data/db/vault.db
 │   ├── config.py                Settings (Pydantic v2). settings.db_dir is canonical.
+│   ├── utils/                   Shared helpers
+│   │   ├── autoresearch.py      Evolutionary self-improvement loop CLI runner
+│   │   ├── document_converter.py Unified Pandoc/LibreOffice document format converter
+│   │   └── vision.py            OCR and image analysis helper
 │   ├── data/                    BUNDLED defaults — personas/, personality/. Tracked in git.
 │   ├── tests/integration/       Pytest integration tests. Sparse coverage; expand as you go.
 │   └── requirements.txt         Backend deps
@@ -147,7 +158,7 @@ Run integration tests:
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Currently 6 tests. Expand them when fixing regressions.
+Currently 228 tests (223 passed, 5 skipped). Expand them when fixing regressions.
 
 ## Versioning convention
 

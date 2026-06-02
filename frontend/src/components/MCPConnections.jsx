@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw, ShieldAlert, Pencil, X, Save, Power } from 'lucide-react'
+import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw, ShieldAlert, Pencil, X, Save, Power, Search } from 'lucide-react'
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
+import HelpDrawer from './help/HelpDrawer'
+import { MCP_PROVIDERS } from './help/mcpProviders'
+
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -706,13 +709,22 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
 
 // ── Add Connection Form ────────────────────────────────────────────────────
 
-function AddConnectionForm({ onAdd, onCancel }) {
+function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [authType, setAuthType] = useState('api_key')
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!prefill) return
+    if (prefill.name) setName(prefill.name)
+    if (prefill.url) setUrl(prefill.url)
+    if (prefill.auth_type) setAuthType(prefill.auth_type)
+    if (prefill.api_key != null) setApiKey(prefill.api_key)
+    onPrefillConsumed?.()
+  }, [prefill, onPrefillConsumed])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -721,6 +733,7 @@ function AddConnectionForm({ onAdd, onCancel }) {
     await onAdd(name.trim(), url.trim(), apiKey.trim(), authType)
     setSubmitting(false)
   }
+
 
   return (
     <form onSubmit={handleSubmit} className="border border-blue-800 rounded-lg p-4 bg-gray-850 space-y-3">
@@ -830,7 +843,43 @@ export default function MCPConnections() {
   const [allTools, setAllTools] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
+  const [prefill, setPrefill] = useState(null)
+  const [scanning, setScanning] = useState(false)
+  const [scannedPorts, setScannedPorts] = useState([])
   const addNotification = useStore((s) => s.addNotification)
+
+  const handleScan = async () => {
+    setScanning(true)
+    setScannedPorts([])
+    try {
+      const res = await mcpApi.scanPorts()
+      const discovered = res.data.discovered || []
+      setScannedPorts(discovered)
+      if (discovered.length === 0) {
+        addNotification({ type: 'info', message: 'No running local MCP servers found.' })
+      } else {
+        addNotification({ type: 'success', message: `Found ${discovered.length} active local port(s)!` })
+      }
+    } catch (err) {
+      addNotification({ type: 'error', message: `Scan failed: ${err.message}` })
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  const useProvider = (p) => {
+    setPrefill({
+      name: p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      url: p.url,
+      auth_type: 'api_key',
+      api_key: '',
+    })
+    setShowAdd(true)
+    setTimeout(() => {
+      document.querySelector('form')?.scrollIntoView({ behavior: 'smooth' })
+    }, 100)
+  }
+
 
   const loadConnections = async () => {
     try {
@@ -965,14 +1014,27 @@ export default function MCPConnections() {
               </span>
             )}
           </div>
-          {!showAdd && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-xs text-white font-medium transition-colors"
+              onClick={handleScan}
+              disabled={scanning}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 font-medium transition-colors border border-gray-700 disabled:opacity-50"
             >
-              <Plus className="w-3 h-3" /> Add Connection
+              <Search className={`w-3 h-3 ${scanning ? 'animate-spin text-blue-400' : ''}`} />
+              {scanning ? 'Scanning...' : 'Scan Local Ports'}
             </button>
-          )}
+            {!showAdd && (
+              <button
+                onClick={() => {
+                  setPrefill(null)
+                  setShowAdd(true)
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-xs text-white font-medium transition-colors"
+              >
+                <Plus className="w-3 h-3" /> Add Connection
+              </button>
+            )}
+          </div>
         </div>
 
         <p className="text-sm text-gray-400 mb-6">
@@ -980,9 +1042,49 @@ export default function MCPConnections() {
           Tools discovered from connected servers are automatically available to the agent alongside built-in tools.
         </p>
 
+        {scannedPorts.length > 0 && (
+          <div className="mb-6 p-4 rounded-lg bg-blue-950/30 border border-blue-900/50 space-y-2">
+            <h4 className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+              <Plug className="w-3.5 h-3.5 text-blue-400" /> Discovered Local MCP Servers
+            </h4>
+            <p className="text-[11px] text-gray-400">
+              The following running servers were found on your machine. Click to add them instantly:
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {scannedPorts.map((server) => (
+                <div key={server.port} className="flex items-center justify-between p-2 rounded bg-gray-800/80 border border-gray-700/80 text-xs">
+                  <div>
+                    <span className="font-medium text-white block">{server.name}</span>
+                    <span className="font-mono text-[10px] text-gray-500">{server.url}</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setPrefill({
+                        name: server.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+                        url: server.url,
+                        auth_type: 'api_key',
+                        api_key: '',
+                      })
+                      setShowAdd(true)
+                    }}
+                    className="px-2.5 py-1 rounded bg-blue-600/90 hover:bg-blue-600 text-white text-[10px] font-medium transition-all"
+                  >
+                    Use
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {showAdd && (
           <div className="mb-4">
-            <AddConnectionForm onAdd={handleAdd} onCancel={() => setShowAdd(false)} />
+            <AddConnectionForm
+              onAdd={handleAdd}
+              onCancel={() => setShowAdd(false)}
+              prefill={prefill}
+              onPrefillConsumed={() => setPrefill(null)}
+            />
           </div>
         )}
 
@@ -998,6 +1100,62 @@ export default function MCPConnections() {
           </div>
         ) : (
           <div className="space-y-3">
+            <div className="mb-6">
+              <HelpDrawer title="Popular MCP Presets Helper" storageKey="help.mcp-presets">
+                <p className="text-xs text-gray-400 mb-3">
+                  Select one of these popular pre-configured MCP servers to pre-fill the form fields.
+                  Click the links on the right to sign up for accounts/keys where required.
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="text-gray-500 uppercase tracking-wider text-[10px]">
+                      <tr className="border-b border-gray-800">
+                        <th className="pb-2 font-medium">Server Preset</th>
+                        <th className="pb-2 font-medium">Default URL</th>
+                        <th className="pb-2 font-medium">Description</th>
+                        <th className="pb-2 font-medium">Resources</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-300 divide-y divide-gray-800">
+                      {MCP_PROVIDERS.map((p) => (
+                        <tr key={p.name} className="hover:bg-gray-850/30">
+                          <td className="py-2.5 pr-4">
+                            <button
+                              type="button"
+                              onClick={() => useProvider(p)}
+                              className="text-left text-blue-400 hover:text-blue-300 font-semibold focus:outline-none hover:underline"
+                            >
+                              {p.name}
+                            </button>
+                          </td>
+                          <td className="py-2.5 pr-4 font-mono text-[10px] text-gray-500">
+                            {p.url}
+                          </td>
+                          <td className="py-2.5 pr-4 text-gray-400">
+                            {p.description}
+                          </td>
+                          <td className="py-2.5">
+                            {p.signup_url ? (
+                              <a
+                                href={p.signup_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-400 hover:underline"
+                              >
+                                {p.signup_label}
+                              </a>
+                            ) : (
+                              <span className="text-gray-500 italic">Self-contained</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </HelpDrawer>
+            </div>
+
             {connections.map((conn) => (
               <ConnectionCard
                 key={conn.name}

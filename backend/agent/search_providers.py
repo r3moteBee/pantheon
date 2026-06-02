@@ -319,6 +319,14 @@ class SearchProviderManager:
         if ptype == "ddg":
             text, n = await self._ddg(query)
             return text, n, None
+        if ptype == "tavily":
+            return await self._tavily(prov, query)
+        if ptype == "google":
+            return await self._google(prov, query)
+        if ptype == "bing":
+            return await self._bing(prov, query)
+        if ptype == "wikipedia":
+            return await self._wikipedia(prov, query)
         text, n = await self._generic(prov, query)
         return text, n, None
 
@@ -420,6 +428,147 @@ class SearchProviderManager:
         else:
             raw = []
         return self._format_results(raw, "snippet"), len(raw)
+
+    async def _tavily(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
+        api_key = self._get_api_key(prov)
+        if not api_key:
+            raise RuntimeError("tavily api key not set")
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Pantheon/1.0",
+        }
+        payload = {
+            "query": query,
+            "api_key": api_key,
+            "max_results": 6,
+        }
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post(prov["url"], json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        results = data.get("results", [])
+        formatted = []
+        for i, item in enumerate(results[:6]):
+            title = (item.get("title") or "").strip()
+            url = (item.get("url") or "").strip()
+            snippet = (item.get("content") or "").strip()
+            if title and url:
+                formatted.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet
+                })
+        return self._format_results(formatted, "snippet"), len(results), None
+
+    async def _google(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
+        api_key = self._get_api_key(prov)
+        if not api_key:
+            raise RuntimeError("google api key not set")
+        
+        url = prov.get("url", "")
+        cx_match = re.search(r"[?&]cx=([^&]+)", url)
+        if not cx_match:
+            raise RuntimeError("Google Custom Search ID (cx) parameter missing from URL query string")
+        cx_id = cx_match.group(1)
+        base_url = url.split("?")[0]
+        
+        params = {
+            "q": query,
+            "key": api_key,
+            "cx": cx_id,
+            "num": 6,
+        }
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Pantheon/1.0",
+        }
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(base_url, params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        
+        items = data.get("items", [])
+        formatted = []
+        for i, item in enumerate(items[:6]):
+            title = (item.get("title") or "").strip()
+            url = (item.get("link") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            if title and url:
+                formatted.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet
+                })
+        return self._format_results(formatted, "snippet"), len(items), None
+
+    async def _bing(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
+        api_key = self._get_api_key(prov)
+        if not api_key:
+            raise RuntimeError("bing api key not set")
+        
+        headers = {
+            "Accept": "application/json",
+            "Ocp-Apim-Subscription-Key": api_key,
+            "User-Agent": "Pantheon/1.0",
+        }
+        params = {
+            "q": query,
+            "count": 6,
+        }
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(prov["url"], params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            
+        items = data.get("webPages", {}).get("value", [])
+        formatted = []
+        for i, item in enumerate(items[:6]):
+            title = (item.get("name") or "").strip()
+            url = (item.get("url") or "").strip()
+            snippet = (item.get("snippet") or "").strip()
+            if title and url:
+                formatted.append({
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet
+                })
+        return self._format_results(formatted, "snippet"), len(items), None
+
+    async def _wikipedia(self, prov: dict[str, Any], query: str) -> tuple[str, int, dict[str, Any] | None]:
+        url = prov.get("url", "") or "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
+            "format": "json",
+            "utf8": 1,
+            "srlimit": 6,
+        }
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Pantheon/1.0",
+        }
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(url, params=params, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            
+        search_results = data.get("query", {}).get("search", [])
+        formatted = []
+        clean_html = re.compile(r"<[^>]+>")
+        for i, item in enumerate(search_results[:6]):
+            title = (item.get("title") or "").strip()
+            from urllib.parse import quote
+            page_url = f"https://en.wikipedia.org/wiki/{quote(title.replace(' ', '_'))}"
+            snippet = clean_html.sub("", item.get("snippet") or "").strip()
+            if title:
+                formatted.append({
+                    "title": title,
+                    "url": page_url,
+                    "snippet": snippet
+                })
+        return self._format_results(formatted, "snippet"), len(search_results), None
 
     def _format_results(self, raw: list[dict[str, Any]], snippet_field: str) -> str:
         lines = []

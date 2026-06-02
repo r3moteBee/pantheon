@@ -30,6 +30,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Keep a copy of bundled templates outside the /app/data volume to prevent volume masking
+RUN cp -r /app/data/personality /app/bundled_personality && cp -r /app/data/personas /app/bundled_personas
+
 # Create data directories
 RUN mkdir -p /app/data/db /app/data/personality /app/data/projects /app/data/workspace /app/data/chroma
 

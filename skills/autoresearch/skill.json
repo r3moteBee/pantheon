@@ -1,0 +1,46 @@
+{
+  "name": "autoresearch",
+  "version": "2026-06-01",
+  "description": "Run an evolutionary self-improvement loop (inspired by Andrej Karpathy's autoresearch) to iteratively mutate, execute, and optimize a target file to maximize or minimize a specific metric.",
+  "author": "pantheon",
+  "license": "MIT",
+  "triggers": [
+    "run autoresearch",
+    "optimize code iteratively",
+    "evolutionary optimization",
+    "karpathy loop",
+    "self-improvement loop",
+    "self improvement loop",
+    "run self-improvement loop",
+    "start evolutionary loop"
+  ],
+  "parameters": [
+    { "name": "target_file", "type": "string", "required": false, "description": "Path to the file to optimize (relative to workspace)" },
+    { "name": "eval_cmd", "type": "string", "required": false, "description": "Shell command to run the benchmark or tests (e.g. 'python benchmark.py')" },
+    { "name": "metric_name", "type": "string", "required": false, "description": "The metric key to parse from the output (e.g. 'time', 'loss', 'throughput')" },
+    { "name": "direction", "type": "string", "required": false, "description": "min (to minimize, e.g. loss/time) or max (to maximize, e.g. accuracy/throughput)" },
+    { "name": "iterations", "type": "integer", "required": false, "description": "Number of evolutionary iteration loops (default is 10)" }
+  ],
+  "capabilities_required": ["file_read", "file_write", "code_execute"],
+  "dependencies": {},
+  "tags": ["optimization", "evolutionary", "agent", "benchmark", "performance"],
+  "source_hub": null,
+  "security_scan": null,
+  "pantheon": {
+    "memory": {
+      "reads": ["semantic", "episodic"],
+      "writes": ["semantic"],
+      "auto_store": true
+    },
+    "project_aware": true,
+    "schedulable": { "enabled": true, "description": "Iterative optimization runs" },
+    "permissions": {
+      "network_domains": [],
+      "file_paths": ["workspace/**"],
+      "vault_secrets": [],
+      "memory_tiers": { "semantic": "rw", "episodic": "r", "graph": "none" }
+    },
+    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
+    "evolution": { "enabled": false, "locked": false }
+  }
+}

@@ -149,6 +149,7 @@ class AgentCore:
         memory_manager: Any = None,
         skill_context: str | None = None,
         active_skill_name: str | None = None,
+        custom_soul: str | None = None,
     ):
         self.provider = provider
         self.project_id = project_id
@@ -157,6 +158,7 @@ class AgentCore:
         self.memory_manager = memory_manager
         self.skill_context = skill_context
         self.active_skill_name = active_skill_name
+        self.custom_soul = custom_soul
         self.working_memory: list[dict[str, str]] = []
 
     @classmethod
@@ -169,6 +171,7 @@ class AgentCore:
         memory_manager=None,
         skill_context: str | None = None,
         active_skill_name: str | None = None,
+        custom_soul: str | None = None,
         message_limit: int = 200,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
@@ -189,6 +192,7 @@ class AgentCore:
             memory_manager=memory_manager,
             skill_context=skill_context,
             active_skill_name=active_skill_name,
+            custom_soul=custom_soul,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -366,6 +370,7 @@ class AgentCore:
                 recalled_memories=recalled_memories,
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
+                custom_soul=self.custom_soul,
             )
 
             # Phase H.5 — append a "recent background jobs" block so the

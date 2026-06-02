@@ -98,7 +98,14 @@ When a fallthrough happens, the result is prefixed with a one-line trace like `[
 
 Pantheon also ships with:
 
-- `web_search` — free DuckDuckGo scraping by default, or SearXNG if you installed with `--with-searxng`, or Brave if you set a key
+- `web_search` — Walks a configurable chain of search providers including:
+  - **SearXNG** (local dockerized proxy search)
+  - **Brave Search** (requires Brave API key)
+  - **DuckDuckGo** (scraped fallback, free)
+  - **Tavily Search** (API-optimized search for LLMs)
+  - **Google Custom Search** (requires Custom Search Engine ID + Custom Search JSON API Key)
+  - **Bing Web Search** (requires Bing Web Search API Key)
+  - **Wikipedia** (returns structured Wiki summaries and articles)
 - `web_fetch` — plain HTTP GET for static pages
 - **Browser tools** (if you installed with `--with-browser`) — Playwright-backed `browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_screenshot`. Use these for JavaScript-heavy sites, logged-in pages, or multi-step interactions. The browser session persists per project across tool calls.
 

@@ -66,6 +66,36 @@ export default function SearchProvidersTab() {
     ])
   }
 
+  const addPreset = (type) => {
+    const presets = {
+      brave: { name: 'brave', type: 'brave', url: 'https://api.search.brave.com/res/v1/web/search', api_key_vault_key: 'brave_api_key' },
+      tavily: { name: 'tavily', type: 'tavily', url: 'https://api.tavily.com/search', api_key_vault_key: 'tavily_api_key' },
+      google: { name: 'google', type: 'google', url: 'https://www.googleapis.com/customsearch/v1?cx=YOUR_CX_ID', api_key_vault_key: 'google_api_key' },
+      bing: { name: 'bing', type: 'bing', url: 'https://api.bingmicrosoft.com/v7.0/search', api_key_vault_key: 'bing_api_key' },
+      wikipedia: { name: 'wikipedia', type: 'wikipedia', url: 'https://en.wikipedia.org/w/api.php', api_key_vault_key: '' },
+      searxng: { name: 'searxng', type: 'searxng', url: 'http://localhost:8888', api_key_vault_key: '' },
+      ddg: { name: 'ddg', type: 'ddg', url: '', api_key_vault_key: '' },
+      generic: { name: 'generic', type: 'generic', url: '', api_key_vault_key: '' }
+    }
+    const selected = presets[type]
+    if (!selected) return
+
+    setProviders([
+      ...providers,
+      {
+        name: uniqueName(selected.name),
+        type: selected.type,
+        url: selected.url,
+        api_key_vault_key: selected.api_key_vault_key,
+        daily_limit: 0,
+        monthly_limit: 0,
+        rps: 0,
+        enabled: true
+      }
+    ])
+    addNotification({ type: 'success', message: `Added ${selected.name} search provider preset` })
+  }
+
   const duplicateProvider = (idx) => {
     const src = providers[idx]
     const newName = uniqueName(src.name)
@@ -159,6 +189,7 @@ export default function SearchProvidersTab() {
 
         <HelpDrawer title='About the search provider chain' storageKey='help.search-providers'>
           <p className='text-xs text-gray-400 mb-3'>
+            Click a <strong>provider type on the left</strong> (or the <strong>+ Add</strong> button on the right) to append it to the search chain.
             Pantheon's <code className='text-amber-200/80'>web_search</code> tool
             tries providers <strong>top-to-bottom</strong> and falls through to
             the next one on any error, empty result set, or exhausted quota /
@@ -170,39 +201,159 @@ export default function SearchProvidersTab() {
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Type</th>
                 <th className='text-left font-normal pb-1 pr-3'>Needs key?</th>
-                <th className='text-left font-normal pb-1'>Notes</th>
+                <th className='text-left font-normal pb-1 pr-3'>Notes</th>
+                <th className='text-right font-normal pb-1'>Action</th>
               </tr>
             </thead>
             <tbody className='text-gray-300'>
               <tr className='border-t border-amber-900/30'>
-                <td className='py-1.5 pr-3 align-top'>Brave</td>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('brave')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Brave preset to chain'
+                  >
+                    Brave
+                  </button>
+                </td>
                 <td className='py-1.5 pr-3 align-top'>Yes</td>
-                <td className='py-1.5 align-top'>Best result quality. Free tier at <a href='https://api.search.brave.com/app/keys' target='_blank' rel='noopener noreferrer' className='text-brand-400 hover:underline'>api.search.brave.com</a>.</td>
+                <td className='py-1.5 pr-3 align-top'>Best result quality. Free tier at <a href='https://api.search.brave.com/app/keys' target='_blank' rel='noopener noreferrer' className='text-brand-400 hover:underline'>api.search.brave.com</a>.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('brave')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
               </tr>
               <tr className='border-t border-amber-900/30'>
-                <td className='py-1.5 pr-3 align-top'>SearXNG</td>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('tavily')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Tavily preset to chain'
+                  >
+                    Tavily
+                  </button>
+                </td>
+                <td className='py-1.5 pr-3 align-top'>Yes</td>
+                <td className='py-1.5 pr-3 align-top'>Agent-optimized web search. Free and paid tiers at <a href='https://tavily.com' target='_blank' rel='noopener noreferrer' className='text-brand-400 hover:underline'>tavily.com</a>.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('tavily')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('google')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Google Custom Search preset to chain'
+                  >
+                    Google
+                  </button>
+                </td>
+                <td className='py-1.5 pr-3 align-top'>Yes</td>
+                <td className='py-1.5 pr-3 align-top'>Custom Search JSON API. Needs a key and Custom Search Engine ID (CX) parameter in the URL query string.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('google')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('bing')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Bing Search preset to chain'
+                  >
+                    Bing
+                  </button>
+                </td>
+                <td className='py-1.5 pr-3 align-top'>Yes</td>
+                <td className='py-1.5 pr-3 align-top'>Bing Search API. Requires Ocp-Apim-Subscription-Key credentials.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('bing')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('wikipedia')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Wikipedia preset to chain'
+                  >
+                    Wikipedia
+                  </button>
+                </td>
                 <td className='py-1.5 pr-3 align-top'>No</td>
-                <td className='py-1.5 align-top'>Self-hosted meta-search. Point URL at your instance.</td>
+                <td className='py-1.5 pr-3 align-top'>Factual encyclopedic lookup. Wikipedia MediaWiki search API.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('wikipedia')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
               </tr>
               <tr className='border-t border-amber-900/30'>
-                <td className='py-1.5 pr-3 align-top'>DuckDuckGo</td>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('searxng')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add SearXNG preset to chain'
+                  >
+                    SearXNG
+                  </button>
+                </td>
                 <td className='py-1.5 pr-3 align-top'>No</td>
-                <td className='py-1.5 align-top'>Free fallback. Lower quality, no quota tracking needed.</td>
+                <td className='py-1.5 pr-3 align-top'>Self-hosted meta-search. Point URL at your instance.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('searxng')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
               </tr>
               <tr className='border-t border-amber-900/30'>
-                <td className='py-1.5 pr-3 align-top'>Generic JSON</td>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('ddg')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add DuckDuckGo preset to chain'
+                  >
+                    DuckDuckGo
+                  </button>
+                </td>
+                <td className='py-1.5 pr-3 align-top'>No</td>
+                <td className='py-1.5 pr-3 align-top'>Free fallback. Lower quality, no quota tracking needed.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('ddg')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
+              </tr>
+              <tr className='border-t border-amber-900/30'>
+                <td className='py-1.5 pr-3 align-top'>
+                  <button
+                    type='button'
+                    onClick={() => addPreset('generic')}
+                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    title='Pre-fill and add Generic JSON preset to chain'
+                  >
+                    Generic JSON
+                  </button>
+                </td>
                 <td className='py-1.5 pr-3 align-top'>Optional</td>
-                <td className='py-1.5 align-top'>Any HTTP endpoint returning a results array. URL + optional bearer key.</td>
+                <td className='py-1.5 pr-3 align-top'>Any HTTP endpoint returning a results array. URL + optional bearer key.</td>
+                <td className='py-1.5 text-right align-top'>
+                  <button onClick={() => addPreset('generic')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
+                </td>
               </tr>
             </tbody>
           </table>
-          <p className='text-xs text-gray-400'>
+          <p className='text-xs text-gray-400 mb-3'>
             API keys are stored in the local vault keyed by the
             <code className='text-amber-200/80'> api_key vault key </code>
             field. The <strong>Test</strong> panel at the bottom lets you fire a
             real query and see which provider answered (plus a fallthrough
             trace if earlier ones failed).
           </p>
+          <div className='text-xs border-t border-amber-900/30 pt-3 text-amber-200/70'>
+            <strong>Note on Brave Search vs. MCP:</strong> You can configure Brave Search here or as an MCP server. Setting it up here integrates it directly into Pantheon's fast, built-in search fallthrough chain without running external processes. Connecting it as an MCP server, however, grants the agent access to Brave's advanced capabilities like local maps metadata and image search.
+          </div>
         </HelpDrawer>
 
         <p className="text-xs text-gray-500">
@@ -229,12 +380,32 @@ export default function SearchProvidersTab() {
                   />
                   <select
                     value={p.type}
-                    onChange={(e) => updateField(idx, 'type', e.target.value)}
+                    onChange={(e) => {
+                      const type = e.target.value
+                      const defaults = {
+                        brave: { url: 'https://api.search.brave.com/res/v1/web/search', api_key_vault_key: 'brave_api_key' },
+                        searxng: { url: 'http://localhost:8888', api_key_vault_key: '' },
+                        ddg: { url: '', api_key_vault_key: '' },
+                        tavily: { url: 'https://api.tavily.com/search', api_key_vault_key: 'tavily_api_key' },
+                        google: { url: 'https://www.googleapis.com/customsearch/v1?cx=YOUR_CX_ID', api_key_vault_key: 'google_api_key' },
+                        bing: { url: 'https://api.bingmicrosoft.com/v7.0/search', api_key_vault_key: 'bing_api_key' },
+                        wikipedia: { url: 'https://en.wikipedia.org/w/api.php', api_key_vault_key: '' },
+                        generic: { url: '', api_key_vault_key: '' }
+                      }
+                      const def = defaults[type] || {}
+                      const next = [...providers]
+                      next[idx] = { ...next[idx], type, ...def }
+                      setProviders(next)
+                    }}
                     className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
                   >
                     <option value="brave">Brave</option>
                     <option value="searxng">SearXNG</option>
                     <option value="ddg">DuckDuckGo</option>
+                    <option value="tavily">Tavily</option>
+                    <option value="google">Google Custom Search</option>
+                    <option value="bing">Bing Search</option>
+                    <option value="wikipedia">Wikipedia</option>
                     <option value="generic">Generic JSON</option>
                   </select>
                   <label className="flex items-center gap-1 text-xs text-gray-400">
@@ -259,22 +430,26 @@ export default function SearchProvidersTab() {
                       value={p.url || ''}
                       onChange={(e) => updateField(idx, 'url', e.target.value)}
                       placeholder="URL"
-                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                      className={`bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 ${p.type === 'wikipedia' ? 'col-span-2' : ''}`}
                     />
-                    <input
-                      type="text"
-                      value={p.api_key_vault_key || ''}
-                      onChange={(e) => updateField(idx, 'api_key_vault_key', e.target.value)}
-                      placeholder="api_key vault key (e.g. brave_api_key)"
-                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
-                    />
-                    <input
-                      type="password"
-                      value={p.api_key || ''}
-                      onChange={(e) => updateField(idx, 'api_key', e.target.value)}
-                      placeholder={u.api_key_set ? '(key saved — leave blank to keep)' : 'API key'}
-                      className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 col-span-2"
-                    />
+                    {p.type !== 'wikipedia' && (
+                      <input
+                        type="text"
+                        value={p.api_key_vault_key || ''}
+                        onChange={(e) => updateField(idx, 'api_key_vault_key', e.target.value)}
+                        placeholder="api_key vault key (e.g. brave_api_key)"
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                      />
+                    )}
+                    {p.type !== 'wikipedia' && (
+                      <input
+                        type="password"
+                        value={p.api_key || ''}
+                        onChange={(e) => updateField(idx, 'api_key', e.target.value)}
+                        placeholder={u.api_key_set ? '(key saved — leave blank to keep)' : 'API key'}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 col-span-2"
+                      />
+                    )}
                   </div>
                 )}
 

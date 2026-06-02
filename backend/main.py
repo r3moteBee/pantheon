@@ -68,11 +68,32 @@ def _resolve_app_version() -> str:
     string returned by /api/health so the two stay in sync.
     """
     import json as _json
-    pkg = Path(__file__).resolve().parent.parent / "frontend" / "package.json"
-    try:
-        return _json.loads(pkg.read_text())["version"]
-    except Exception:
-        return "0.0.0-dev"
+
+    # 1. Look for frontend sibling (local dev mode)
+    pkg_sibling = Path(__file__).resolve().parent.parent / "frontend" / "package.json"
+    if pkg_sibling.exists():
+        try:
+            return _json.loads(pkg_sibling.read_text(encoding="utf-8"))["version"]
+        except Exception:
+            pass
+
+    # 2. Look for package.json in the same directory (Docker container mode)
+    pkg_local = Path(__file__).resolve().parent / "package.json"
+    if pkg_local.exists():
+        try:
+            return _json.loads(pkg_local.read_text(encoding="utf-8"))["version"]
+        except Exception:
+            pass
+
+    # 3. Look for VERSION file in root directory or parent of parent
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    if version_file.exists():
+        try:
+            return version_file.read_text(encoding="utf-8").strip()
+        except Exception:
+            pass
+
+    return "0.0.0-dev"
 
 
 _APP_VERSION = _resolve_app_version()
@@ -88,7 +109,9 @@ async def lifespan(app: FastAPI):
     import shutil
     soul_path = settings.personality_dir / "soul.md"
     agent_path = settings.personality_dir / "agent.md"
-    default_dir = Path(__file__).parent / "data" / "personality"
+    default_dir_docker = Path("/app/bundled_personality")
+    default_dir_dev = Path(__file__).parent / "data" / "personality"
+    default_dir = default_dir_docker if default_dir_docker.is_dir() else default_dir_dev
 
     def _needs_init(dest: Path) -> bool:
         return not dest.exists() or not dest.read_text(encoding="utf-8").strip()

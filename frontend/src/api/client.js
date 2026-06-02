@@ -128,6 +128,8 @@ export const memoryApi = {
 
 export const systemApi = {
   sandboxHealth: () => api.get('/api/system/sandbox'),
+  checkUpdate: () => api.get('/api/system/update/check'),
+  executeUpdate: (payload) => api.post('/api/system/update/execute', payload),
 }
 
 export const sourcesApi = {
@@ -197,6 +199,8 @@ export const conversationsApi = {
   delete: (sessionId) => api.delete(`/api/conversations/${sessionId}`),
   saveAsArtifact: (sessionId, projectId, body = {}) =>
     api.post(`/api/conversations/${sessionId}/save-as-artifact`, body, { params: { project_id: projectId } }),
+  updateMetadata: (sessionId, metadata, projectId) =>
+    api.put(`/api/conversations/${sessionId}/metadata`, metadata, { params: { project_id: projectId } }),
 }
 
 export const artifactsApi = {
@@ -352,6 +356,7 @@ export const mcpApi = {
     api.put('/api/mcp/tavily/thresholds', { daily_limit: dailyLimit, monthly_limit: monthlyLimit }),
   resetTavilyDaily: () => api.post('/api/mcp/tavily/reset-daily'),
   resetTavilyMonthly: () => api.post('/api/mcp/tavily/reset-monthly'),
+  scanPorts: () => api.post('/api/mcp/scan'),
 }
 
 // Skills API

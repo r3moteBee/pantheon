@@ -18,7 +18,9 @@ settings = get_settings()
 router = APIRouter()
 
 # Bundled personas ship with the package (read-only)
-_BUNDLED_DIR = Path(__file__).parent.parent / "data" / "personas"
+_BUNDLED_DIR_DOCKER = Path("/app/bundled_personas")
+_BUNDLED_DIR_DEV = Path(__file__).parent.parent / "data" / "personas"
+_BUNDLED_DIR = _BUNDLED_DIR_DOCKER if _BUNDLED_DIR_DOCKER.is_dir() else _BUNDLED_DIR_DEV
 
 def _user_dir() -> Path:
     """User-created personas directory."""

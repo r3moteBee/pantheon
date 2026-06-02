@@ -414,6 +414,23 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
+  const setActivePersonas = useStore((s) => s.setActivePersonas)
+  useEffect(() => {
+    if (!sessionId) {
+      setActivePersonas([])
+      return
+    }
+    conversationsApi.get(sessionId, activeProject?.id || 'default')
+      .then((res) => {
+        const meta = res.data?.metadata || {}
+        setActivePersonas(meta.active_personas || [])
+      })
+      .catch(() => {
+        setActivePersonas([])
+      })
+  }, [sessionId, activeProject?.id, setActivePersonas])
+
+
   useEffect(() => {
     settingsApi.get().then((res) => {
       setMemoryRecall(res.data.memory_recall_enabled !== false)
@@ -681,6 +698,7 @@ export default function Chat() {
       message: fullMessage,
       session_id: sessionId,
       project_id: activeProject?.id || 'default',
+      active_personas: useStore.getState().activePersonas,
     })
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {

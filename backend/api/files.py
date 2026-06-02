@@ -372,8 +372,6 @@ async def index_file_or_directory(
         indexer = FileIndexer(
             memory_manager=memory,
             project_id=project_id,
-            chunk_size=settings.file_chunk_size,
-            chunk_overlap=settings.file_chunk_overlap,
         )
 
         if target.is_file():
@@ -421,8 +419,6 @@ async def _index_uploaded_file(file_path: Path, project_id: str) -> None:
         indexer = FileIndexer(
             memory_manager=memory,
             project_id=project_id,
-            chunk_size=settings.file_chunk_size,
-            chunk_overlap=settings.file_chunk_overlap,
         )
         result = await indexer.index_file(file_path)
         if not result.get("skipped"):

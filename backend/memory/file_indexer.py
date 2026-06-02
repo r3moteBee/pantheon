@@ -264,116 +264,7 @@ def _extract_csv(file_path: Path) -> str:
 
 # ── Chunking ─────────────────────────────────────────────────────────────────
 
-def chunk_text(
-    text: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
-    respect_headings: bool = True,
-) -> list[dict[str, Any]]:
-    """Split text into overlapping chunks for embedding.
-
-    Returns list of dicts: {content, chunk_index, heading, char_start, char_end}
-
-    When respect_headings=True (default for Markdown), heading boundaries
-    are preferred split points.
-    """
-    if not text.strip():
-        return []
-
-    max_chars = chunk_size * CHARS_PER_TOKEN
-    overlap_chars = chunk_overlap * CHARS_PER_TOKEN
-
-    if respect_headings:
-        chunks = _chunk_by_headings(text, max_chars, overlap_chars)
-    else:
-        chunks = _chunk_by_paragraphs(text, max_chars, overlap_chars)
-
-    return chunks
-
-
-def _chunk_by_headings(text: str, max_chars: int, overlap_chars: int) -> list[dict]:
-    """Split on Markdown headings first, then by paragraphs within sections."""
-    # Split on heading lines (## Heading)
-    heading_pattern = re.compile(r"^(#{1,4})\s+(.+)$", re.MULTILINE)
-    sections: list[tuple[str, str]] = []  # (heading, content)
-
-    last_end = 0
-    current_heading = ""
-    for match in heading_pattern.finditer(text):
-        if last_end > 0 or match.start() > 0:
-            section_text = text[last_end:match.start()].strip()
-            if section_text:
-                sections.append((current_heading, section_text))
-        current_heading = match.group(2).strip()
-        last_end = match.end()
-
-    # Remaining text after last heading
-    remaining = text[last_end:].strip()
-    if remaining:
-        sections.append((current_heading, remaining))
-
-    # If no headings found, fall back to paragraph chunking
-    if not sections:
-        return _chunk_by_paragraphs(text, max_chars, overlap_chars)
-
-    # Now chunk each section
-    chunks = []
-    idx = 0
-    for heading, section_text in sections:
-        if len(section_text) <= max_chars:
-            chunks.append({
-                "content": section_text,
-                "chunk_index": idx,
-                "heading": heading,
-            })
-            idx += 1
-        else:
-            # Sub-chunk by paragraphs
-            sub_chunks = _chunk_by_paragraphs(section_text, max_chars, overlap_chars)
-            for sc in sub_chunks:
-                sc["heading"] = heading
-                sc["chunk_index"] = idx
-                chunks.append(sc)
-                idx += 1
-
-    return chunks
-
-
-def _chunk_by_paragraphs(text: str, max_chars: int, overlap_chars: int) -> list[dict]:
-    """Split text into chunks by paragraph boundaries with overlap."""
-    paragraphs = re.split(r"\n\s*\n", text)
-    chunks = []
-    current = ""
-    idx = 0
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-
-        if len(current) + len(para) + 2 > max_chars and current:
-            chunks.append({
-                "content": current.strip(),
-                "chunk_index": idx,
-                "heading": "",
-            })
-            idx += 1
-            # Keep overlap from end of previous chunk
-            if overlap_chars > 0 and len(current) > overlap_chars:
-                current = current[-overlap_chars:] + "\n\n" + para
-            else:
-                current = para
-        else:
-            current = current + "\n\n" + para if current else para
-
-    if current.strip():
-        chunks.append({
-            "content": current.strip(),
-            "chunk_index": idx,
-            "heading": "",
-        })
-
-    return chunks
+from memory.chunker import chunk_text
 
 
 # ── Index tracking (SQLite) ──────────────────────────────────────────────────
@@ -491,9 +382,19 @@ class FileIndexer:
     ):
         self.memory_manager = memory_manager
         self.project_id = project_id
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
+        
+        # Load dynamic chunk settings from vault if available
+        try:
+            from api.settings import get_active_chunk_settings
+            active_size, active_overlap, active_strategy = get_active_chunk_settings()
+        except Exception:
+            active_size, active_overlap, active_strategy = DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP, "headings"
+            
+        self.chunk_size = chunk_size if chunk_size != DEFAULT_CHUNK_SIZE else active_size
+        self.chunk_overlap = chunk_overlap if chunk_overlap != DEFAULT_CHUNK_OVERLAP else active_overlap
+        self.chunk_strategy = active_strategy
         self.file_index = FileIndex()
+
 
     async def index_file(
         self,
@@ -549,8 +450,10 @@ class FileIndexer:
             body,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            respect_headings=ext in (".md", ".markdown"),
+            respect_headings=ext in (".md", ".markdown") if self.chunk_strategy == "headings" else None,
+            strategy=self.chunk_strategy,
         )
+
 
         # Store each chunk in semantic memory
         for chunk in chunks:
@@ -653,8 +556,10 @@ class FileIndexer:
             body,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            respect_headings=is_markdown,
+            respect_headings=is_markdown if self.chunk_strategy == "headings" else None,
+            strategy=self.chunk_strategy,
         )
+
 
         display_name = source_label or Path(virtual_path).name or virtual_path
         for chunk in chunks:

@@ -22,6 +22,10 @@ class SaveAsArtifactRequest(BaseModel):
     tags: list[str] | None = None
 
 
+class UpdateConversationMetadataRequest(BaseModel):
+    metadata: dict[str, Any]
+
+
 @router.get("/conversations")
 async def list_conversations(
     project_id: str = Query("default"),
@@ -43,11 +47,16 @@ async def get_conversation(
     session_project_id = await ep.get_session_project_id(session_id)
     if not messages and session_project_id is None:
         raise HTTPException(status_code=404, detail="conversation not found")
+    
+    conv = await ep.get_conversation(session_id)
+    metadata = json.loads(conv["metadata"]) if (conv and conv.get("metadata")) else {}
+    
     return {
         "session_id": session_id,
         "messages": messages,
         "count": len(messages),
         "project_id": session_project_id,
+        "metadata": metadata,
     }
 
 
@@ -71,12 +80,46 @@ async def resume_conversation(
     if not messages:
         raise HTTPException(status_code=404, detail="no messages for session")
     session_project_id = await ep.get_session_project_id(session_id)
+    
+    conv = await ep.get_conversation(session_id)
+    metadata = json.loads(conv["metadata"]) if (conv and conv.get("metadata")) else {}
+    
     return {
         "session_id": session_id,
         "messages": messages,
         "message_count": len(messages),
         "project_id": session_project_id,
+        "metadata": metadata,
     }
+
+
+@router.put("/conversations/{session_id}/metadata")
+async def update_conversation_metadata(
+    session_id: str,
+    req: UpdateConversationMetadataRequest,
+) -> dict[str, Any]:
+    """Update conversation metadata (like active_personas)."""
+    ep = EpisodicMemory()
+    with sqlite3.connect(ep.db_path) as conn:
+        # Check if conversation exists
+        cur = conn.execute("SELECT metadata FROM conversations WHERE session_id = ?", (session_id,))
+        row = cur.fetchone()
+        if not row:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "INSERT INTO conversations (id, project_id, session_id, title, created_at, updated_at, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (session_id, "default", session_id, "New Chat", now, now, json.dumps(req.metadata))
+            )
+        else:
+            existing = json.loads(row[0] or "{}")
+            existing.update(req.metadata)
+            conn.execute(
+                "UPDATE conversations SET metadata = ?, updated_at = ? WHERE session_id = ?",
+                (json.dumps(existing), datetime.now(timezone.utc).isoformat(), session_id)
+            )
+        conn.commit()
+    return {"status": "updated", "session_id": session_id, "metadata": req.metadata}
 
 
 @router.delete("/conversations/{session_id}")

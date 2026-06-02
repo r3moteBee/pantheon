@@ -269,6 +269,26 @@ class EpisodicMemory:
             ).fetchone()
         return row["project_id"] if row else None
 
+    async def get_conversation(self, session_id: str) -> dict[str, Any] | None:
+        """Get a single conversation session by ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, project_id, session_id, title, created_at, updated_at, metadata "
+                "FROM conversations WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row:
+            return {
+                "id": row["id"],
+                "project_id": row["project_id"],
+                "session_id": row["session_id"],
+                "title": row["title"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "metadata": row["metadata"],
+            }
+        return None
+
     async def get_sessions(
         self,
         project_id: str = "default",
@@ -277,7 +297,7 @@ class EpisodicMemory:
         """List recent conversation sessions for a project."""
         with self._connect() as conn:
             rows = conn.execute("""
-                SELECT c.id, c.session_id, c.title, c.created_at, c.updated_at,
+                SELECT c.id, c.session_id, c.title, c.created_at, c.updated_at, c.metadata,
                        COUNT(m.id) as message_count
                 FROM conversations c
                 LEFT JOIN messages m ON m.session_id = c.session_id
@@ -286,7 +306,18 @@ class EpisodicMemory:
                 ORDER BY c.updated_at DESC
                 LIMIT ?
             """, (project_id, limit)).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            {
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "title": r["title"],
+                "created_at": r["created_at"],
+                "updated_at": r["updated_at"],
+                "metadata": json.loads(r["metadata"] or "{}"),
+                "message_count": r["message_count"],
+            }
+            for r in rows
+        ]
 
     async def search_messages(
         self,

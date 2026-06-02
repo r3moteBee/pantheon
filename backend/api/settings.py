@@ -40,6 +40,10 @@ class SettingsUpdate(BaseModel):
     memory_recall_enabled: bool | None = None
     personality_weight: str | None = None
     context_focus: str | None = None
+    file_chunk_size: int | None = None
+    file_chunk_overlap: int | None = None
+    file_chunk_strategy: str | None = None
+
 
 
 class SecretUpdate(BaseModel):
@@ -50,8 +54,35 @@ class SecretUpdate(BaseModel):
 _runtime_overrides: dict[str, str] = {}
 
 
+def get_active_chunk_settings() -> tuple[int, int, str]:
+    """Helper to retrieve current active chunking configuration."""
+    vault = get_vault()
+    
+    size_val = vault.get_secret("file_chunk_size")
+    if size_val is not None:
+        try:
+            size = int(size_val)
+        except ValueError:
+            size = settings_config.file_chunk_size
+    else:
+        size = settings_config.file_chunk_size
+
+    overlap_val = vault.get_secret("file_chunk_overlap")
+    if overlap_val is not None:
+        try:
+            overlap = int(overlap_val)
+        except ValueError:
+            overlap = settings_config.file_chunk_overlap
+    else:
+        overlap = settings_config.file_chunk_overlap
+
+    strategy = vault.get_secret("file_chunk_strategy") or settings_config.file_chunk_strategy
+    return size, overlap, strategy
+
+
 def _get_effective_settings() -> dict[str, Any]:
     vault = get_vault()
+    size, overlap, strategy = get_active_chunk_settings()
     return {
         "llm_base_url": vault.get_secret("llm_base_url") or settings_config.llm_base_url,
         # Never return the key value — only whether one is saved
@@ -79,6 +110,9 @@ def _get_effective_settings() -> dict[str, Any]:
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
         "personality_weight": vault.get_secret("personality_weight") or settings_config.personality_weight,
         "context_focus": vault.get_secret("context_focus") or settings_config.context_focus,
+        "file_chunk_size": size,
+        "file_chunk_overlap": overlap,
+        "file_chunk_strategy": strategy,
     }
 
 
@@ -149,6 +183,15 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         val = req.context_focus.lower().strip()
         if val in ("broad", "balanced", "focused"):
             vault.set_secret("context_focus", val)
+    if req.file_chunk_size is not None:
+        vault.set_secret("file_chunk_size", str(req.file_chunk_size))
+    if req.file_chunk_overlap is not None:
+        vault.set_secret("file_chunk_overlap", str(req.file_chunk_overlap))
+    if req.file_chunk_strategy is not None:
+        val = req.file_chunk_strategy.lower().strip()
+        if val in ("headings", "paragraphs", "fixed"):
+            vault.set_secret("file_chunk_strategy", val)
+
 
     # Log which settings were changed
     changed = [k for k, v in req.model_dump(exclude_none=True).items() if v is not None]

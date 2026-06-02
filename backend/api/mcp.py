@@ -1,6 +1,7 @@
 """MCP Connections API — manage external MCP server integrations."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -361,3 +362,63 @@ async def debug_connection(name: str) -> dict[str, Any]:
         "url_has_trailing_slash": cfg["url"].endswith("/"),
         "url_contains_apikey_param": "tavilyApiKey" in cfg["url"],
     }
+
+
+async def _scan_port(port: int) -> dict[str, Any] | None:
+    url = f"http://127.0.0.1:{port}"
+    try:
+        # Fast socket probe
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection("127.0.0.1", port),
+            timeout=0.15
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+    except Exception:
+        return None
+
+    # Probe via HTTP to extract metadata/SSE
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=0.4) as client:
+            resp = await client.get(url)
+            content_type = resp.headers.get("content-type", "")
+            is_sse = "event-stream" in content_type.lower()
+            name = f"Local MCP (Port {port})"
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and "name" in data:
+                    name = data["name"]
+            except Exception:
+                pass
+            return {
+                "port": port,
+                "url": url,
+                "status": "open",
+                "content_type": content_type,
+                "is_sse": is_sse,
+                "name": name,
+            }
+    except Exception:
+        # Return base open port details if HTTP check fails
+        return {
+            "port": port,
+            "url": url,
+            "status": "open",
+            "is_sse": False,
+            "name": f"Local Connection (Port {port})",
+        }
+
+
+@router.post("/mcp/scan")
+async def scan_local_mcp_ports() -> dict[str, Any]:
+    """Scan local ports (8120-8145) to discover running HTTP/SSE MCP servers."""
+    ports = range(8120, 8146)
+    tasks = [_scan_port(p) for p in ports]
+    results = await asyncio.gather(*tasks)
+    discovered = [r for r in results if r is not None]
+    return {"discovered": discovered, "count": len(discovered)}
+

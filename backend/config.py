@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     file_chunk_size: int = Field(default=500, env="FILE_CHUNK_SIZE")
     # File indexing: chunk overlap in tokens
     file_chunk_overlap: int = Field(default=50, env="FILE_CHUNK_OVERLAP")
+    # File indexing: chunking strategy (headings, paragraphs, fixed)
+    file_chunk_strategy: str = Field(default="headings", env="FILE_CHUNK_STRATEGY")
+
 
     # Paths
     data_dir: Path = Field(default=Path("/app/data"), env="DATA_DIR")

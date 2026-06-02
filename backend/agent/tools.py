@@ -1384,6 +1384,162 @@ TOOL_SCHEMAS = [
                 "required": ["paths", "target_format"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_status",
+            "description": "Show the local git working tree status (runs git status --porcelain).",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_create_branch",
+            "description": "Create and switch to a new local git branch. Switched to existing if it already exists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch_name": {
+                        "type": "string",
+                        "description": "Name of the branch to create or switch to."
+                    }
+                },
+                "required": ["branch_name"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_commit",
+            "description": "Stage files and commit them to the local git repository.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "The commit message."
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of relative paths to files to stage. If empty/omitted, stages all workspace changes (git add .)."
+                    }
+                },
+                "required": ["message"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_push_pr",
+            "description": "Push the current git branch to the remote GitHub repository and create a Pull Request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "The Pull Request title."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional description for the Pull Request."
+                    },
+                    "base": {
+                        "type": "string",
+                        "description": "Optional base branch to merge into. Defaults to remote's default branch or 'main'."
+                    }
+                },
+                "required": ["title"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_company_financials",
+            "description": "Perform a vertical common size analysis, calculate key financial ratios, or analyze Year-over-Year (YoY) growth patterns for a company using direct SEC/EDGAR XBRL data.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ticker": {
+                        "type": "string",
+                        "description": "The stock ticker symbol of the company (e.g., 'AAPL', 'MSFT')."
+                    },
+                    "analysis_type": {
+                        "type": "string",
+                        "enum": ["common_size", "ratios", "growth"],
+                        "description": "The type of financial analysis to run."
+                    },
+                    "years": {
+                        "type": "integer",
+                        "description": "Optional. The number of historical fiscal years to include (default: 3)."
+                    }
+                },
+                "required": ["ticker", "analysis_type"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_company_strategy_and_risks",
+            "description": "Extract, summarize, and compare corporate strategy, R&D patterns, and risk factors from company annual reports (10-K filings) using the LLM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tickers": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of stock ticker symbols to analyze and compare (e.g., ['AAPL', 'MSFT'])."
+                    },
+                    "focus_areas": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["strategy", "risks", "rd_patterns", "all"]},
+                        "description": "Optional. Areas of focus for the analysis (default: ['all'])."
+                    },
+                    "year": {
+                        "type": "integer",
+                        "description": "Optional. Target fiscal year to look up (default: latest available)."
+                    }
+                },
+                "required": ["tickers"],
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_earnings_call",
+            "description": "Extract key business themes, revenue guidance, product updates, and executive sentiment from an earnings call transcript file in the workspace using the LLM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Relative path to the transcript file in the workspace (e.g., 'transcripts/Q3_2025_earnings.txt')."
+                    },
+                    "extract_guidance": {
+                        "type": "boolean",
+                        "description": "Optional. Explicitly pull forward-looking guidance and projections (default: true)."
+                    }
+                },
+                "required": ["file_path"],
+                "additionalProperties": False
+            }
+        }
     }
 ]
 
@@ -3111,6 +3267,425 @@ async def execute_tool(
             except GitHubError as e:
                 return f"GitHub error: {e}"
 
+        elif tool_name.startswith("git_"):
+            cwd = _get_workspace_base(effective_project)
+            if tool_name == "git_status":
+                code, stdout, stderr = await _run_git_cmd(["status", "--porcelain"], cwd)
+                if code != 0:
+                    return f"Git status error: {stderr or stdout}"
+                return stdout if stdout else "Working tree clean."
+
+            elif tool_name == "git_create_branch":
+                branch_name = tool_args["branch_name"]
+                code, stdout, stderr = await _run_git_cmd(["checkout", "-b", branch_name], cwd)
+                if code != 0:
+                    # Switch to existing branch if branch already exists
+                    code, stdout, stderr = await _run_git_cmd(["checkout", branch_name], cwd)
+                    if code != 0:
+                        return f"Error checking out branch {branch_name}: {stderr or stdout}"
+                    return f"Switched to existing branch {branch_name}"
+                return f"Created and switched to branch {branch_name}"
+
+            elif tool_name == "git_commit":
+                message = tool_args["message"]
+                files = tool_args.get("files") or []
+                if files:
+                    for f in files:
+                        code, stdout, stderr = await _run_git_cmd(["add", f], cwd)
+                        if code != 0:
+                            return f"Error staging file {f}: {stderr or stdout}"
+                else:
+                    code, stdout, stderr = await _run_git_cmd(["add", "."], cwd)
+                    if code != 0:
+                        return f"Error staging changes: {stderr or stdout}"
+
+                code, stdout, stderr = await _run_git_cmd(["commit", "-m", message], cwd)
+                if code != 0:
+                    return f"Error committing: {stderr or stdout}"
+                return f"Committed successfully: {stdout}"
+
+            elif tool_name == "git_push_pr":
+                from api.connections import (
+                    get_connection, get_token,
+                    get_project_repo_for_tools,
+                )
+                from integrations.github import GitHubClient
+                spec = get_project_repo_for_tools(effective_project)
+                if not spec:
+                    return (
+                        f"No repo bound to project {effective_project}. Bind one "
+                        f"in Settings → Connections (add a PAT) then in the "
+                        f"Projects page pick a repo for this project."
+                    )
+                conn_row = get_connection(spec["connection_id"])
+                if not conn_row:
+                    return "Connection not found. Re-add the GitHub PAT in Settings → Connections."
+                token = get_token(conn_row["id"])
+                if not token:
+                    return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Connections."
+
+                owner = spec["owner"]
+                repo = spec["repo"]
+
+                code, stdout, stderr = await _run_git_cmd(["branch", "--show-current"], cwd)
+                if code != 0 or not stdout.strip():
+                    return f"Error getting current branch: {stderr or stdout}"
+                branch_name = stdout.strip()
+
+                remote_url = f"https://{token}@github.com/{owner}/{repo}.git"
+                code, stdout, stderr = await _run_git_cmd(["push", "-u", remote_url, branch_name], cwd)
+                if code != 0:
+                    safe_err = (stderr or stdout).replace(token, "********")
+                    return f"Error pushing to remote branch {branch_name}: {safe_err}"
+
+                base_branch = tool_args.get("base") or conn_row.get("default_branch") or "main"
+                client = GitHubClient(token)
+                try:
+                    pr_res = await client.create_pr(
+                        owner,
+                        repo,
+                        title=tool_args["title"],
+                        head=branch_name,
+                        base=base_branch,
+                        body=tool_args.get("body") or "",
+                    )
+                    from api.connections import mark_used
+                    mark_used(conn_row["id"])
+                    return (
+                        f"Successfully pushed branch {branch_name} to remote and "
+                        f"created PR #{pr_res.get('number')} in {owner}/{repo}: "
+                        f"{pr_res.get('html_url')}"
+                    )
+                except Exception as e:
+                    return (
+                        f"Branch {branch_name} pushed to remote successfully, but "
+                        f"failed to create Pull Request: {e}"
+                    )
+
+            else:
+                return f"Unknown git tool: {tool_name}"
+
+        elif tool_name == "analyze_company_financials":
+            ticker = tool_args["ticker"].strip().upper()
+            analysis_type = tool_args["analysis_type"]
+            years_count = tool_args.get("years", 3)
+            if years_count <= 0:
+                years_count = 3
+                
+            from datetime import datetime
+            current_year = datetime.now().year
+            
+            # Use same user agent required by SEC EDGAR
+            sec_headers = {
+                "User-Agent": "PantheonResearch/1.0 (contact@pantheon.local)"
+            }
+            
+            # Step A: Get CIK mapping
+            async with httpx.AsyncClient() as client:
+                r = await client.get("https://data.sec.gov/files/company_tickers.json", headers=sec_headers, timeout=30)
+                r.raise_for_status()
+                tickers_data = r.json()
+
+            cik = None
+            company_name = ticker
+            for item in tickers_data.values():
+                if str(item.get("ticker")).upper() == ticker:
+                    cik = str(item.get("cik_str"))
+                    company_name = item.get("title")
+                    break
+
+            if not cik:
+                if ticker.isdigit():
+                    cik = ticker
+                    company_name = f"CIK {cik}"
+                else:
+                    return f"Ticker or CIK '{ticker}' not found in SEC company directory."
+
+            cik_10 = cik.zfill(10)
+            
+            # Step B: Get facts
+            facts_url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik_10}.json"
+            async with httpx.AsyncClient() as client:
+                r = await client.get(facts_url, headers=sec_headers, timeout=30)
+                r.raise_for_status()
+                facts = r.json()
+
+            def get_metric(keys: list[str], yr: int) -> float | None:
+                for taxonomy in ("us-gaap", "dei"):
+                    tax_dict = facts.get("facts", {}).get(taxonomy, {})
+                    for key in keys:
+                        if key in tax_dict:
+                            units = tax_dict[key].get("units", {})
+                            for unit, entries in units.items():
+                                # Look for annual FY entry
+                                for entry in entries:
+                                    if entry.get("fy") == yr and entry.get("form") == "10-K" and entry.get("fp") == "FY":
+                                        return float(entry.get("val"))
+                return None
+
+            revenue_keys = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "SalesRevenueGoodsNet"]
+            gp_keys = ["GrossProfit"]
+            cor_keys = ["CostOfGoodsAndServicesSold", "CostOfRevenue", "CostOfGoodsSold"]
+            rd_keys = ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"]
+            sga_keys = ["SellingGeneralAndAdministrativeExpense", "SellingAndMarketingExpense"]
+            opinc_keys = ["OperatingIncomeLoss"]
+            netinc_keys = ["NetIncomeLoss"]
+            assets_keys = ["Assets"]
+            liab_keys = ["Liabilities", "LiabilitiesAndStockholdersEquity"]
+            cash_keys = ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"]
+
+            # Let's inspect the years available in Revenues
+            available_years = set()
+            tax_dict = facts.get("facts", {}).get("us-gaap", {})
+            for key in revenue_keys:
+                if key in tax_dict:
+                    for entries in tax_dict[key].get("units", {}).values():
+                        for entry in entries:
+                            if entry.get("fy"):
+                                available_years.add(int(entry.get("fy")))
+            
+            if not available_years:
+                available_years = {current_year - 1, current_year - 2, current_year - 3}
+                
+            sorted_years = sorted(list(available_years), reverse=True)[:years_count]
+
+            year_data = {}
+            for yr in sorted_years:
+                rev = get_metric(revenue_keys, yr)
+                gp = get_metric(gp_keys, yr)
+                cor = get_metric(cor_keys, yr)
+                rd = get_metric(rd_keys, yr)
+                sga = get_metric(sga_keys, yr)
+                op = get_metric(opinc_keys, yr)
+                ni = get_metric(netinc_keys, yr)
+                ast = get_metric(assets_keys, yr)
+                li = get_metric(liab_keys, yr)
+                csh = get_metric(cash_keys, yr)
+                
+                # If gp is missing but cor is available, compute gp = rev - cor
+                if gp is None and rev is not None and cor is not None:
+                    gp = rev - cor
+                # If cor is missing but gp is available, cor = rev - gp
+                if cor is None and rev is not None and gp is not None:
+                    cor = rev - gp
+
+                year_data[yr] = {
+                    "Revenue": rev, "GrossProfit": gp, "CostOfRevenue": cor,
+                    "R&D": rd, "SG&A": sga, "OperatingIncome": op, "NetIncome": ni,
+                    "Assets": ast, "Liabilities": li, "Cash": csh
+                }
+
+            if analysis_type == "common_size":
+                report = f"# Common Size Analysis for {company_name} ({ticker})\n\n"
+                
+                # 1. Income Statement
+                report += "### Income Statement (% of Revenue)\n\n"
+                headers = ["Metric"] + [str(y) for y in sorted_years]
+                report += "| " + " | ".join(headers) + " |\n"
+                report += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+                
+                is_metrics = [
+                    ("Revenue", "Revenue"),
+                    ("Cost of Revenue", "CostOfRevenue"),
+                    ("Gross Profit", "GrossProfit"),
+                    ("Research & Development", "R&D"),
+                    ("SG&A Expense", "SG&A"),
+                    ("Operating Income", "OperatingIncome"),
+                    ("Net Income", "NetIncome"),
+                ]
+                
+                for label, key in is_metrics:
+                    row = [label]
+                    for yr in sorted_years:
+                        val = year_data[yr][key]
+                        rev = year_data[yr]["Revenue"]
+                        if val is not None and rev:
+                            pct = (val / rev) * 100
+                            row.append(f"{pct:.2f}%")
+                        else:
+                            row.append("N/A")
+                    report += "| " + " | ".join(row) + " |\n"
+                
+                # 2. Balance Sheet
+                report += "\n### Balance Sheet (% of Total Assets)\n\n"
+                report += "| " + " | ".join(headers) + " |\n"
+                report += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+                
+                bs_metrics = [
+                    ("Total Assets", "Assets"),
+                    ("Total Liabilities", "Liabilities"),
+                    ("Cash & Cash Equivalents", "Cash"),
+                ]
+                
+                for label, key in bs_metrics:
+                    row = [label]
+                    for yr in sorted_years:
+                        val = year_data[yr][key]
+                        ast = year_data[yr]["Assets"]
+                        if val is not None and ast:
+                            pct = (val / ast) * 100
+                            row.append(f"{pct:.2f}%")
+                        else:
+                            row.append("N/A")
+                    report += "| " + " | ".join(row) + " |\n"
+                
+                return report
+
+            elif analysis_type == "ratios":
+                report = f"# Financial Ratios Analysis for {company_name} ({ticker})\n\n"
+                headers = ["Metric"] + [str(y) for y in sorted_years]
+                report += "| " + " | ".join(headers) + " |\n"
+                report += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+                
+                ratio_defs = [
+                    ("Gross Margin (Profitability)", lambda d: (d["GrossProfit"] / d["Revenue"] * 100) if d["GrossProfit"] is not None and d["Revenue"] else None, "{:.2f}%"),
+                    ("Operating Margin (Profitability)", lambda d: (d["OperatingIncome"] / d["Revenue"] * 100) if d["OperatingIncome"] is not None and d["Revenue"] else None, "{:.2f}%"),
+                    ("Net Margin (Profitability)", lambda d: (d["NetIncome"] / d["Revenue"] * 100) if d["NetIncome"] is not None and d["Revenue"] else None, "{:.2f}%"),
+                    ("R&D Intensity (Investment)", lambda d: (d["R&D"] / d["Revenue"] * 100) if d["R&D"] is not None and d["Revenue"] else None, "{:.2f}%"),
+                    ("Return on Assets (ROA)", lambda d: (d["NetIncome"] / d["Assets"] * 100) if d["NetIncome"] is not None and d["Assets"] else None, "{:.2f}%"),
+                    ("Debt to Assets Ratio (Solvency)", lambda d: (d["Liabilities"] / d["Assets"] * 100) if d["Liabilities"] is not None and d["Assets"] else None, "{:.2f}%"),
+                    ("Cash to Assets Ratio (Liquidity)", lambda d: (d["Cash"] / d["Assets"] * 100) if d["Cash"] is not None and d["Assets"] else None, "{:.2f}%"),
+                ]
+                
+                for label, formula, fmt in ratio_defs:
+                    row = [label]
+                    for yr in sorted_years:
+                        val = formula(year_data[yr])
+                        if val is not None:
+                            row.append(fmt.format(val))
+                        else:
+                            row.append("N/A")
+                    report += "| " + " | ".join(row) + " |\n"
+                return report
+
+            elif analysis_type == "growth":
+                report = f"# Year-over-Year (YoY) Growth for {company_name} ({ticker})\n\n"
+                # To show growth, we need at least N years, comparing yr with yr-1
+                growth_years = sorted_years[:-1] if len(sorted_years) > 1 else []
+                if not growth_years:
+                    return "Need at least 2 years of data to perform YoY growth analysis."
+                    
+                headers = ["Metric"] + [f"{y} YoY" for y in growth_years]
+                report += "| " + " | ".join(headers) + " |\n"
+                report += "| " + " | ".join(["---"] * len(headers)) + " |\n"
+                
+                growth_metrics = [
+                    ("Revenue Growth", "Revenue"),
+                    ("Gross Profit Growth", "GrossProfit"),
+                    ("R&D Expense Growth", "R&D"),
+                    ("Net Income Growth", "NetIncome"),
+                ]
+                
+                for label, key in growth_metrics:
+                    row = [label]
+                    for yr in growth_years:
+                        val_curr = year_data[yr][key]
+                        val_prev = year_data[yr + 1][key]
+                        if val_curr is not None and val_prev:
+                            growth = ((val_curr - val_prev) / val_prev) * 100
+                            row.append(f"{growth:+.2f}%")
+                        else:
+                            row.append("N/A")
+                    report += "| " + " | ".join(row) + " |\n"
+                return report
+
+        elif tool_name == "compare_company_strategy_and_risks":
+            tickers = tool_args["tickers"]
+            focus_list = tool_args.get("focus_areas", ["all"])
+            
+            ticker_texts = {}
+            from models.provider import get_provider
+            
+            for ticker in tickers:
+                ticker = ticker.strip().upper()
+                try:
+                    from sources.adapters.sec_edgar import SecEdgarAdapter
+                    from sources.base import IngestRequest
+                    adapter = SecEdgarAdapter()
+                    
+                    ident = f"{ticker}/10-K"
+                    fetched = await adapter.fetch(IngestRequest(
+                        source_type="sec/edgar",
+                        identifier=ident,
+                        project_id=effective_project
+                    ))
+                    # Take first 40k chars of the markdown body (Business description and risks)
+                    ticker_texts[ticker] = fetched.text[:40000]
+                except Exception as e:
+                    ticker_texts[ticker] = f"[Could not fetch 10-K filing from SEC EDGAR: {e}]"
+            
+            prompt_content = (
+                "You are an expert financial analyst. Analyze and compare the corporate strategy, "
+                "risks, and R&D patterns of the following tech vendors based on their annual reports (10-K).\n\n"
+            )
+            for tick, txt in ticker_texts.items():
+                prompt_content += f"=== TICKER: {tick} ===\n{txt}\n\n"
+                
+            prompt_content += (
+                f"Create a detailed comparative report in Markdown format. Focus areas: {', '.join(focus_list)}.\n"
+                "Include:\n"
+                "  1. Executive Summary comparison.\n"
+                "  2. Strategic Alignment & R&D patterns (how each company is investing in future tech like AI or cloud).\n"
+                "  3. Risk Assessment comparison (competitive, regulatory, operational).\n"
+                "  4. Side-by-side comparison summary table."
+            )
+            
+            provider = get_provider()
+            prompt_messages = [
+                {"role": "system", "content": "You are a senior investment analyst specializing in enterprise tech vendors. Return only the detailed markdown report body."},
+                {"role": "user", "content": prompt_content}
+            ]
+            
+            res_text = ""
+            async for chunk in provider.chat(messages=prompt_messages, tools=[], stream=False):
+                if isinstance(chunk, dict):
+                    res_text += chunk.get("content", "") or ""
+                elif isinstance(chunk, str):
+                    res_text += chunk
+            return res_text.strip()
+
+        elif tool_name == "analyze_earnings_call":
+            rel_path = tool_args["file_path"]
+            safe_path = _safe_workspace_path(rel_path, effective_project)
+            if not safe_path.exists():
+                return f"Earnings transcript file not found at: {rel_path}"
+                
+            try:
+                content = safe_path.read_text(encoding="utf-8")
+            except Exception as e:
+                return f"Failed to read file: {e}"
+                
+            extract_guidance = tool_args.get("extract_guidance", True)
+            
+            prompt_content = (
+                "You are an expert equity research analyst. Analyze this earnings call transcript:\n\n"
+                f"{content[:50000]}\n\n"
+                "Prepare a structured report in Markdown. Extract:\n"
+                "  1. Executive highlights (main themes, strategic direction).\n"
+                "  2. Financial performance notes (revenue beats/misses, margins).\n"
+            )
+            if extract_guidance:
+                prompt_content += "  3. Forward-looking guidance, estimates, and growth projections.\n"
+            prompt_content += (
+                "  4. Q&A summary (main questions raised by analysts and answers from management).\n"
+                "  5. Sentiment analysis (Executive confidence level)."
+            )
+            
+            from models.provider import get_provider
+            provider = get_provider()
+            prompt_messages = [
+                {"role": "system", "content": "You are a veteran Wall Street research analyst. Return only the detailed markdown briefing."},
+                {"role": "user", "content": prompt_content}
+            ]
+            
+            res_text = ""
+            async for chunk in provider.chat(messages=prompt_messages, tools=[], stream=False):
+                if isinstance(chunk, dict):
+                    res_text += chunk.get("content", "") or ""
+                elif isinstance(chunk, str):
+                    res_text += chunk
+            return res_text.strip()
+
         else:
             return f"Unknown tool: {tool_name}"
 
@@ -3135,6 +3710,43 @@ def _safe_workspace_path(rel_path: str, project_id: str | None = None) -> Path:
     if not str(target).startswith(str(base)):
         raise ValueError(f"Path traversal denied: {rel_path}")
     return target
+
+
+async def _run_git_cmd(args: list[str], cwd: Path) -> tuple[int, str, str]:
+    """Execute a git command in the specified workspace directory, initializing it first if needed."""
+    if not (cwd / ".git").exists():
+        # Initialize repository
+        p_init = await asyncio.create_subprocess_exec(
+            "git", "init",
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await p_init.communicate()
+        # Set agent config
+        p_email = await asyncio.create_subprocess_exec(
+            "git", "config", "user.email", "agent@pantheon.local",
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await p_email.communicate()
+        p_name = await asyncio.create_subprocess_exec(
+            "git", "config", "user.name", "Pantheon Agent",
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await p_name.communicate()
+
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        cwd=str(cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await proc.communicate()
+    return proc.returncode or 0, stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip()
 
 
 async def _web_search(query: str) -> str:
