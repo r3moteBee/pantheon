@@ -1156,8 +1156,9 @@ export default function MCPConnections() {
             <div className="mb-6">
               <HelpDrawer title="Popular MCP Presets Helper" storageKey="help.mcp-presets">
                 <p className="text-xs text-gray-400 mb-3">
-                  Select one of these popular pre-configured MCP servers to pre-fill the form fields.
+                  Select one of these popular hosted MCP servers to pre-fill the form fields.
                   Click the links on the right to sign up for accounts/keys where required.
+                  For MCP servers running on this machine, use <b>Scan Local Ports</b> instead.
                 </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs text-left">

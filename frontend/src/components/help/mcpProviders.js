@@ -1,15 +1,12 @@
 // frontend/src/components/help/mcpProviders.js
 //
-// Popular MCP presets matching the 10 highest value services.
-// Surfaces signup links and pre-fills settings inside the MCP Connections page.
+// Popular hosted MCP presets — surfaces signup links and pre-fills settings
+// inside the MCP Connections page.
 //
-// `url` conventions:
-//   - Hosted services use their official remote MCP endpoint (Streamable HTTP,
-//     which is the transport Pantheon's client speaks).
-//   - Servers that only run locally (stdio reference servers) get a
-//     `http://localhost:<port>/mcp` placeholder — the user must run the server
-//     (or wrap a stdio server with a gateway like supergateway) and fill in
-//     the real port.
+// Only remote/hosted servers belong here (official Streamable HTTP endpoints,
+// the transport Pantheon's client speaks). Locally-run MCP servers are
+// discovered via the "Scan local ports" option instead.
+//
 // `auth_type` ('api_key' | 'oauth2') pre-selects the auth radio in the form.
 
 export const MCP_PROVIDERS = [
@@ -22,26 +19,6 @@ export const MCP_PROVIDERS = [
     description:
       'Search engine tailored for LLM agents. Hosted remote server with OAuth; alternatively append ?tavilyApiKey=<key> to the URL and use no auth.',
     request_interval_ms: 1000,
-  },
-  {
-    name: 'Brave Search',
-    url: 'http://localhost:8080/mcp',
-    auth_type: 'api_key',
-    signup_url: 'https://brave.com/search/api/',
-    signup_label: 'brave.com/search/api',
-    description:
-      'Web search and local places API. Runs locally: npx @brave/brave-search-mcp-server --transport http (needs a Brave API key).',
-    request_interval_ms: 1000,
-  },
-  {
-    name: 'Slack',
-    url: 'http://localhost:<port>/mcp',
-    auth_type: 'api_key',
-    signup_url: 'https://api.slack.com/apps',
-    signup_label: 'api.slack.com/apps',
-    description:
-      'Post messages, read channels, and manage team communication. No official hosted server — run a community Slack MCP server locally and point at its Streamable HTTP endpoint.',
-    request_interval_ms: 500,
   },
   {
     name: 'Notion',
@@ -62,30 +39,6 @@ export const MCP_PROVIDERS = [
     description:
       'Manage projects, view and edit issues, and track tickets in Jira/Confluence Cloud. Official Atlassian hosted server — OAuth 2.1.',
     request_interval_ms: 500,
-  },
-  {
-    name: 'Sequential Thinking',
-    url: 'http://localhost:<port>/mcp',
-    auth_type: 'api_key',
-    description:
-      'Reasoning tool to run sequential analysis on complex problems. Local stdio server — expose it over HTTP with a gateway (e.g. supergateway) and use that URL.',
-    request_interval_ms: 0,
-  },
-  {
-    name: 'Puppeteer',
-    url: 'http://localhost:<port>/mcp',
-    auth_type: 'api_key',
-    description:
-      'Local web scraping and automated browser control. Local stdio server — expose it over HTTP with a gateway (e.g. supergateway) and use that URL.',
-    request_interval_ms: 1000,
-  },
-  {
-    name: 'PostgreSQL',
-    url: 'http://localhost:<port>/mcp',
-    auth_type: 'api_key',
-    description:
-      'Inspect schemas and run read/write queries on SQL databases. Local stdio server — expose it over HTTP with a gateway (e.g. supergateway) and use that URL.',
-    request_interval_ms: 0,
   },
   {
     name: 'SubDownload YouTube Parser',
