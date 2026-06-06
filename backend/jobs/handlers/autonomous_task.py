@@ -339,6 +339,8 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     last_tool_name = None
     iterations = None
     truncated = False
+    got_done = False
+    last_error = None
     text_buf = ""
     text_deltas_since_tool = 0
     # Per-task iteration budget (payload override; None → global default)
@@ -387,10 +389,12 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                             progress=f"thinking… {text_buf[-200:].strip()[-180:]}"
                         )
             elif etype == "done":
+                got_done = True
                 full_response = event.get("full_response", "") or ""
                 iterations = event.get("iterations")
                 truncated = bool(event.get("truncated"))
             elif etype == "error":
+                last_error = event.get("message") or "unknown agent error"
                 logger.warning(
                     "autonomous_task %s: agent error event: %s",
                     ctx.job_id[:8], event.get("message"),
@@ -465,6 +469,47 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     if ctx.cancel_requested():
         return {"status": "cancelled", "session_id": session_id,
                 "summary": (result_text or "")[:200]}
+
+    # The agent loop ended on a provider error (model crash, endpoint down)
+    # without a closing 'done' turn. That is an ABORT, not a completion —
+    # post an honest notice with the resume pointer and fail the job so the
+    # Tasks UI doesn't show green. Incremental update_result data survives.
+    if last_error and not got_done:
+        ctx.update_result({"ended_on_error": last_error})
+        _parent = (ctx.payload or {}).get("parent_session_id")
+        if _parent and _parent != session_id:
+            _ledger_note = ""
+            try:
+                from artifacts.store import get_store as _gs, project_slug as _psl
+                if _gs().get_by_path(ctx.project_id,
+                                     f"{_psl(ctx.project_id)}/{ledger_rel}"):
+                    _ledger_note = (
+                        f"\n\nThe task ledger at `{ledger_rel}` is current — "
+                        "re-run a task with the same name to resume from its "
+                        "'Next action'."
+                    )
+            except Exception:
+                pass
+            try:
+                await memory.episodic.save_message(
+                    session_id=_parent, project_id=ctx.project_id,
+                    role="assistant",
+                    content=(
+                        f"⚠️ **Task ABORTED:** *{task_name}* "
+                        f"(job_id `{ctx.job_id[:8]}`)\n\n"
+                        f"The agent loop died on an LLM provider error, not "
+                        f"by finishing:\n\n> {last_error}\n\n"
+                        f"Work completed before the crash is intact."
+                        f"{_ledger_note}"
+                    ),
+                    metadata={"job_id": ctx.job_id,
+                              "kind": "autonomous_task_abort_notice",
+                              "task_session_id": session_id,
+                              "task_name": task_name},
+                )
+            except Exception:
+                logger.debug("abort notice post failed", exc_info=True)
+        raise RuntimeError(f"LLM provider error ended the run: {last_error}")
 
     # Persist the final assistant message so the session is replayable
     # from chat history. Even when the recovery branch synthesized this

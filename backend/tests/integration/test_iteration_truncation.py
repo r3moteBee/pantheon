@@ -43,6 +43,20 @@ async def test_truncated_when_cap_hit_mid_work(_mock_exec, _mock_schemas, _mock_
     assert done["truncated"] is True
 
 
+def test_handler_aborts_on_provider_error():
+    """A run ending on a provider error (no done event) must FAIL the job
+    with an abort notice, not sail to completed with an empty summary."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[2]
+           / "jobs/handlers/autonomous_task.py").read_text(encoding="utf-8")
+    assert "ended_on_error" in src
+    assert "last_error and not got_done" in src
+    assert "Task ABORTED" in src
+    assert 'raise RuntimeError(f"LLM provider error ended the run' in src
+    # The abort check must come BEFORE the completed-path episodic log
+    assert src.index("last_error and not got_done") < src.index('event="completed"')
+
+
 @pytest.mark.asyncio
 @patch("agent.core.build_system_prompt", return_value="sys")
 @patch("agent.core.get_all_tool_schemas", return_value=[])
