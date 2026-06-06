@@ -296,10 +296,17 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     tool_count = 0
     last_tool_name = None
     iterations = None
+    truncated = False
     text_buf = ""
     text_deltas_since_tool = 0
+    # Per-task iteration budget (payload override; None → global default)
+    try:
+        max_iterations = int((ctx.payload or {}).get("max_iterations") or 0) or None
+    except (TypeError, ValueError):
+        max_iterations = None
     async with pinger_for(ctx, interval=30.0):
-        async for event in agent.chat(full_prompt, stream=False):
+        async for event in agent.chat(full_prompt, stream=False,
+                                      max_iterations=max_iterations):
             etype = event.get("type")
             if etype == "tool_call":
                 tool_count += 1
@@ -331,6 +338,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             elif etype == "done":
                 full_response = event.get("full_response", "") or ""
                 iterations = event.get("iterations")
+                truncated = bool(event.get("truncated"))
             elif etype == "error":
                 logger.warning(
                     "autonomous_task %s: agent error event: %s",
@@ -341,7 +349,14 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     ctx.update_result({
         "tool_calls_observed": tool_count,
         "iterations_used": iterations,
+        "truncated": truncated,
     })
+    if truncated:
+        logger.warning(
+            "autonomous_task %s: TRUNCATED at iteration cap (%s iterations) "
+            "— the task did not finish; its last text is mid-work narration.",
+            ctx.job_id[:8], iterations,
+        )
 
     # Diagnostic: if the loop closed with no tool calls AND no final text,
     # log a warning so post-mortem is easier.
@@ -459,6 +474,15 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 if len(body) > 1500:
                     body = body[:1500] + "…"
                 summary_for_parent = body or "(agent made tool calls but emitted no final text — see Tasks tab for transcript)"
+            if truncated:
+                summary_for_parent = (
+                    f"⚠️ **TASK TRUNCATED — iteration cap reached at {it} "
+                    "iterations.** The agent was cut off mid-work; the text "
+                    "below is its last narration, NOT a completion report. "
+                    "Queue a follow-up task to finish the remaining work "
+                    "(you can raise the budget with `max_iterations` on "
+                    "create_task).\n\n" + summary_for_parent
+                )
             metrics_line = (
                 f"_Tools: {tc} call{'s' if tc != 1 else ''}"
                 + (f" (last: `{last_tool_name}`)" if last_tool_name else "")
@@ -492,8 +516,13 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 parent_session_id, exc_info=True,
             )
 
+    summary = (result_text or "")[:1000]
+    if truncated:
+        summary = (f"[TRUNCATED at {int(iterations or 0)} iterations — "
+                   f"work incomplete] " + summary)
     return {
         "session_id": session_id,
         "task_name": task_name,
-        "summary": (result_text or "")[:1000],
+        "truncated": truncated,
+        "summary": summary,
     }

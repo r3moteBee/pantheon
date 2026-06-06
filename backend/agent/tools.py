@@ -282,6 +282,17 @@ TOOL_SCHEMAS = [
                             "dog (5 min idle) happy independently."
                         )
                     },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": (
+                            "Optional agent-loop iteration budget (default "
+                            "100). One iteration ≈ one round of tool calls. "
+                            "Raise (e.g. 300) for long multi-step tasks like "
+                            "batch merges or large refactors; if the cap is "
+                            "hit the task is marked truncated rather than "
+                            "complete. Scale timeout_seconds along with it."
+                        )
+                    },
                     "skill_name": {
                         "type": "string",
                         "description": (
@@ -2740,6 +2751,12 @@ async def execute_tool(
                     timeout_seconds = int(timeout_seconds)
                 except (TypeError, ValueError):
                     timeout_seconds = None
+            max_iterations = tool_args.get("max_iterations")
+            if max_iterations is not None:
+                try:
+                    max_iterations = max(1, min(int(max_iterations), 1000))
+                except (TypeError, ValueError):
+                    max_iterations = None
             job_type = (tool_args.get("job_type") or "autonomous_task").strip()
             if job_type not in ("autonomous_task", "iteration_loop"):
                 return (
@@ -2771,6 +2788,8 @@ async def execute_tool(
                 }
                 if timeout_seconds is None:
                     timeout_seconds = 7200
+            if max_iterations:
+                extras = {**(extras or {}), "max_iterations": max_iterations}
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),

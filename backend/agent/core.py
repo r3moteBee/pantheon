@@ -307,6 +307,7 @@ class AgentCore:
         self,
         user_message: str,
         stream: bool = True,
+        max_iterations: int | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Process a user message and yield streaming events.
 
@@ -408,11 +409,12 @@ class AgentCore:
 
             full_response = ""
             iterations = 0
+            iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
             # Resolve all available tools (built-in + MCP)
             all_tools = get_all_tool_schemas()
 
-            while iterations < MAX_TOOL_ITERATIONS:
+            while iterations < iteration_limit:
                 iterations += 1
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
@@ -507,7 +509,18 @@ class AgentCore:
             if full_response:
                 self._add_working_message("assistant", full_response)
 
-            yield {"type": "done", "full_response": full_response, "iterations": iterations}
+            # Distinguish natural completion (model stopped calling tools)
+            # from hitting the iteration cap mid-work — callers must not
+            # present a truncated run as a finished one.
+            truncated = (iterations >= iteration_limit
+                         and bool(tool_calls_this_round))
+            if truncated:
+                logger.warning(
+                    "Agent loop truncated at iteration cap (%d) with tool "
+                    "calls still pending — work is incomplete.", iteration_limit,
+                )
+            yield {"type": "done", "full_response": full_response,
+                   "iterations": iterations, "truncated": truncated}
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
