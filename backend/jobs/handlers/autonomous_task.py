@@ -235,15 +235,30 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     # Task-ledger protocol — a compact, durable progress artifact that
     # (a) re-anchors instructions each cycle and (b) makes truncated or
     # killed runs resumable by a follow-up task with fresh context.
-    ledger_rel = "tasks/" + _re.sub(
-        r"[^a-zA-Z0-9]+", "-", (task_name or "task").lower()).strip("-")[:60] + "-ledger.md"
+    # Ledgers live under the dedicated task-ledger/ folder and carry a
+    # 'task-ledger' tag (also enforced harness-side in save_to_artifact)
+    # so they group cleanly in the Artifacts UI and are tag-searchable.
+    _ledger_slug = _re.sub(
+        r"[^a-zA-Z0-9]+", "-", (task_name or "task").lower()).strip("-")[:60]
+    ledger_rel = f"task-ledger/{_ledger_slug}.md"
+    _legacy_ledger_rel = f"tasks/{_ledger_slug}-ledger.md"
     ledger_exists = False
     try:
         from artifacts.store import get_store, project_slug
-        _full_ledger_path = f"{project_slug(ctx.project_id)}/{ledger_rel}"
-        ledger_exists = get_store().get_by_path(ctx.project_id, _full_ledger_path) is not None
+        _store = get_store()
+        _proj = project_slug(ctx.project_id)
+        if _store.get_by_path(ctx.project_id, f"{_proj}/{ledger_rel}"):
+            ledger_exists = True
+        elif _store.get_by_path(ctx.project_id, f"{_proj}/{_legacy_ledger_rel}"):
+            # In-flight ledger created before the task-ledger/ folder move —
+            # keep resuming from the legacy path rather than forking.
+            ledger_rel = _legacy_ledger_rel
+            ledger_exists = True
     except Exception:
         logger.debug("ledger existence check failed", exc_info=True)
+
+    from datetime import datetime, timezone
+    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if ledger_exists:
         ledger_block = (
@@ -257,13 +272,26 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             "it alone: one line per subtask "
             "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
             "decisions, and a final 'Next action:' line.\n"
+            "- Keep its YAML frontmatter current: set `status: complete` "
+            "and 'Next action: none — task complete' when (and only when) "
+            "everything is done.\n"
         )
     else:
         ledger_block = (
             "\n\nTASK LEDGER PROTOCOL (for multi-part work):\n"
             "- If this task decomposes into more than ~3 similar units of "
             f"work, FIRST create a ledger artifact at '{ledger_rel}' via "
-            "save_to_artifact: one line per subtask "
+            "save_to_artifact with tags=[\"task-ledger\"], beginning with "
+            "EXACTLY this YAML frontmatter:\n"
+            "  ---\n"
+            "  type: task-ledger\n"
+            f"  task: {task_name}\n"
+            f"  job_id: {ctx.job_id}\n"
+            "  status: active\n"
+            f"  created: {_today}\n"
+            "  tags: [task-ledger]\n"
+            "  ---\n"
+            "- Body: one line per subtask "
             "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
             "decisions, and a final 'Next action:' line.\n"
             "- Update it (same path) after EACH completed subtask, BEFORE "
@@ -271,6 +299,9 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             "- The ledger is the restart point if this run hits its "
             "iteration or time budget: keep it accurate enough that a "
             "fresh agent could resume from it alone.\n"
+            "- When the task is COMPLETE: set frontmatter `status: complete` "
+            "and 'Next action: none — task complete'. This is part of the "
+            "task, not optional bookkeeping.\n"
             "- Single-step tasks don't need a ledger.\n"
         )
 

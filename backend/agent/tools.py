@@ -3176,6 +3176,16 @@ async def execute_tool(
                         return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
                     return f"{base}-{n}"
 
+                # Harness-guaranteed organization: anything saved under the
+                # task-ledger/ folder always carries the 'task-ledger' tag,
+                # so ledgers stay tag-searchable regardless of whether the
+                # model remembered to pass tags.
+                _tags = list(tool_args.get("tags") or [])
+                _proj_prefix = f"{_ps(effective_project)}/"
+                if (norm.startswith(_proj_prefix + "task-ledger/")
+                        and "task-ledger" not in _tags):
+                    _tags.append("task-ledger")
+
                 final_path = norm
                 a = None
                 for n in range(50):
@@ -3187,7 +3197,7 @@ async def execute_tool(
                             content=tool_args["content"],
                             content_type=tool_args.get("content_type") or "text/markdown",
                             title=tool_args.get("title"),
-                            tags=tool_args.get("tags"),
+                            tags=_tags or None,
                             source={"kind": "agent", "session_id": session_id or ""},
                             edited_by=session_id or "agent",
                         )

@@ -98,10 +98,46 @@ def _handler_src() -> str:
 def test_handler_injects_ledger_protocol():
     src = _handler_src()
     assert "TASK LEDGER PROTOCOL" in src
-    assert "-ledger.md" in src
+    # Ledgers live in the dedicated folder, with a fallback to the legacy
+    # path so in-flight ledgers stay resumable
+    assert 'f"task-ledger/{_ledger_slug}.md"' in src
+    assert '_legacy_ledger_rel' in src
     # Resume branch keys off artifact existence
     assert "get_by_path" in src
     assert "RESUME" in src
+    # Frontmatter template + close-out rule
+    assert "type: task-ledger" in src
+    assert "status: active" in src
+    assert "status: complete" in src
+
+
+@pytest.mark.asyncio
+async def test_save_to_artifact_autotags_task_ledger(tmp_path):
+    """Artifacts saved under task-ledger/ get the task-ledger tag even
+    when the model forgets to pass tags — harness-enforced."""
+    import uuid
+    proj = f"ledgertag-{uuid.uuid4().hex[:8]}"
+    from agent.tools import execute_tool
+    from artifacts.store import get_store, project_slug
+    res = await execute_tool(
+        "save_to_artifact",
+        {"path": "task-ledger/my-task.md",
+         "content": "---\ntype: task-ledger\n---\n- [pending] step 1\n"},
+        None, project_id=proj)
+    assert "Saved artifact" in res
+    a = get_store().get_by_path(proj, f"{project_slug(proj)}/task-ledger/my-task.md")
+    assert a is not None
+    assert "task-ledger" in (a.get("tags") or [])
+
+    # And explicit tags are preserved alongside the enforced one
+    res2 = await execute_tool(
+        "save_to_artifact",
+        {"path": "task-ledger/other.md", "content": "x",
+         "tags": ["merge-work"]},
+        None, project_id=proj)
+    assert "Saved artifact" in res2
+    b = get_store().get_by_path(proj, f"{project_slug(proj)}/task-ledger/other.md")
+    assert set(b.get("tags") or []) >= {"merge-work", "task-ledger"}
 
 
 def test_handler_passes_reanchor_to_agent():
