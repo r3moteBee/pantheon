@@ -232,11 +232,53 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             f"{plan}\n"
         )
 
+    # Task-ledger protocol — a compact, durable progress artifact that
+    # (a) re-anchors instructions each cycle and (b) makes truncated or
+    # killed runs resumable by a follow-up task with fresh context.
+    ledger_rel = "tasks/" + _re.sub(
+        r"[^a-zA-Z0-9]+", "-", (task_name or "task").lower()).strip("-")[:60] + "-ledger.md"
+    ledger_exists = False
+    try:
+        from artifacts.store import get_store, project_slug
+        _full_ledger_path = f"{project_slug(ctx.project_id)}/{ledger_rel}"
+        ledger_exists = get_store().get_by_path(ctx.project_id, _full_ledger_path) is not None
+    except Exception:
+        logger.debug("ledger existence check failed", exc_info=True)
+
+    if ledger_exists:
+        ledger_block = (
+            "\n\nTASK LEDGER PROTOCOL:\n"
+            f"- A ledger from a previous run EXISTS at artifact path "
+            f"'{ledger_rel}'. read_artifact it FIRST and RESUME from its "
+            "'Next action:' line — do NOT redo subtasks marked done.\n"
+            "- Update the ledger (save_to_artifact, same path) after EACH "
+            "completed subtask, BEFORE starting the next.\n"
+            "- Keep it accurate enough that a fresh agent could resume from "
+            "it alone: one line per subtask "
+            "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
+            "decisions, and a final 'Next action:' line.\n"
+        )
+    else:
+        ledger_block = (
+            "\n\nTASK LEDGER PROTOCOL (for multi-part work):\n"
+            "- If this task decomposes into more than ~3 similar units of "
+            f"work, FIRST create a ledger artifact at '{ledger_rel}' via "
+            "save_to_artifact: one line per subtask "
+            "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
+            "decisions, and a final 'Next action:' line.\n"
+            "- Update it (same path) after EACH completed subtask, BEFORE "
+            "starting the next — not in batches at the end.\n"
+            "- The ledger is the restart point if this run hits its "
+            "iteration or time budget: keep it accurate enough that a "
+            "fresh agent could resume from it alone.\n"
+            "- Single-step tasks don't need a ledger.\n"
+        )
+
     full_prompt = (
         f"You are running an autonomous task: '{task_name}'\n"
         f"Job ID: {ctx.job_id}\n"
         f"Complete the task fully and save important results to memory."
-        f"{plan_block}\n\n"
+        f"{plan_block}{ledger_block}\n\n"
         f"Task:\n{description}"
     )
 
@@ -304,9 +346,18 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
         max_iterations = int((ctx.payload or {}).get("max_iterations") or 0) or None
     except (TypeError, ValueError):
         max_iterations = None
+    # Re-anchor text: the plan (or task description) plus the ledger rule —
+    # re-injected every ~15 iterations by AgentCore so long runs don't lose
+    # instruction fidelity under accumulated tool output.
+    reanchor = (
+        f"Task: '{task_name}'\n"
+        + (f"Plan:\n{plan}\n" if plan else f"Description:\n{(description or '')[:800]}\n")
+        + f"Ledger: keep '{ledger_rel}' updated after each completed subtask."
+    )
     async with pinger_for(ctx, interval=30.0):
         async for event in agent.chat(full_prompt, stream=False,
-                                      max_iterations=max_iterations):
+                                      max_iterations=max_iterations,
+                                      reanchor_text=reanchor):
             etype = event.get("type")
             if etype == "tool_call":
                 tool_count += 1
@@ -475,13 +526,26 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                     body = body[:1500] + "…"
                 summary_for_parent = body or "(agent made tool calls but emitted no final text — see Tasks tab for transcript)"
             if truncated:
+                # Re-check ledger existence — the run may have created it.
+                _ledger_note = ""
+                try:
+                    from artifacts.store import get_store as _gs, project_slug as _psl
+                    if _gs().get_by_path(ctx.project_id,
+                                         f"{_psl(ctx.project_id)}/{ledger_rel}"):
+                        _ledger_note = (
+                            f" A task ledger exists at artifact "
+                            f"`{ledger_rel}` — a follow-up task will resume "
+                            f"from it automatically (same task name)."
+                        )
+                except Exception:
+                    pass
                 summary_for_parent = (
                     f"⚠️ **TASK TRUNCATED — iteration cap reached at {it} "
                     "iterations.** The agent was cut off mid-work; the text "
                     "below is its last narration, NOT a completion report. "
                     "Queue a follow-up task to finish the remaining work "
                     "(you can raise the budget with `max_iterations` on "
-                    "create_task).\n\n" + summary_for_parent
+                    f"create_task).{_ledger_note}\n\n" + summary_for_parent
                 )
             metrics_line = (
                 f"_Tools: {tc} call{'s' if tc != 1 else ''}"

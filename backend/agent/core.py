@@ -308,6 +308,8 @@ class AgentCore:
         user_message: str,
         stream: bool = True,
         max_iterations: int | None = None,
+        reanchor_text: str | None = None,
+        reanchor_every: int = 15,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Process a user message and yield streaming events.
 
@@ -503,6 +505,38 @@ class AgentCore:
                         "role": "tool",
                         "tool_call_id": tool_id,
                         "content": result,
+                    })
+
+                # Re-anchor: long tool loops bury the original instructions
+                # under accumulated tool output and models drift from them
+                # (observed: a merge task abandoning its push-every-5 and
+                # hunk-only-edits rules mid-run). Periodically re-inject the
+                # instructions at full strength.
+                if reanchor_text and iterations % reanchor_every == 0:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[Pantheon harness re-anchor — iteration "
+                            f"{iterations} of {iteration_limit}]\n"
+                            "Re-read your original instructions before "
+                            "continuing:\n\n"
+                            f"{reanchor_text}\n\n"
+                            "State in one line which step you are on, then "
+                            "continue. If you have drifted from these "
+                            "instructions or their rules, correct course now."
+                        ),
+                    })
+                if iteration_limit - iterations == 10:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Pantheon harness notice] Only 10 iterations "
+                            "remain in your budget. Bring the work to a safe "
+                            "stopping point, update your task ledger (if you "
+                            "keep one), and write your final summary — a "
+                            "truncated run with a current ledger is "
+                            "resumable; one without is not."
+                        ),
                     })
 
             # Save assistant response
