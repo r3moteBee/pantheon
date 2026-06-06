@@ -871,7 +871,7 @@ export default function MCPConnections() {
     setPrefill({
       name: p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
       url: p.url,
-      auth_type: 'api_key',
+      auth_type: p.auth_type || 'api_key',
       api_key: '',
     })
     setShowAdd(true)
