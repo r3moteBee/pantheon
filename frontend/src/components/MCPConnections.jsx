@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronRight, Zap, Eye, EyeOff, Gauge, RotateCcw, ShieldAlert, Pencil, X, Save, Power, Search } from 'lucide-react'
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
@@ -882,21 +882,69 @@ export default function MCPConnections() {
 
 
   const loadConnections = async () => {
+    let conns = []
     try {
       const [connRes, toolsRes] = await Promise.all([
         mcpApi.listConnections(),
         mcpApi.listTools(),
       ])
-      setConnections(connRes.data.connections || [])
+      conns = connRes.data.connections || []
+      setConnections(conns)
       setAllTools(toolsRes.data.tools || [])
     } catch (err) {
       addNotification({ type: 'error', message: `Failed to load MCP connections: ${err.message}` })
     }
     setLoading(false)
+    return conns
+  }
+
+  // Active post-authorize poll (fallback path) — kept in a ref so the
+  // BroadcastChannel handler and unmount cleanup can cancel it.
+  const oauthPollRef = useRef(null)
+
+  const stopOauthPoll = () => {
+    if (oauthPollRef.current) {
+      clearInterval(oauthPollRef.current)
+      oauthPollRef.current = null
+    }
   }
 
   useEffect(() => {
     loadConnections()
+
+    // The OAuth callback page broadcasts its result on this channel the
+    // moment the token exchange finishes — refresh immediately instead of
+    // waiting for the poll (which exists as a cross-origin fallback).
+    let channel = null
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel('pantheon-mcp-oauth')
+      channel.onmessage = (ev) => {
+        const { status, name, tools_count, error } = ev.data || {}
+        stopOauthPoll()
+        loadConnections()
+        if (status === 'connected') {
+          addNotification({
+            type: 'success',
+            message: `${name} authorized and connected — ${tools_count || 0} tools discovered`,
+          })
+        } else if (status === 'authorized_connect_failed') {
+          addNotification({
+            type: 'error',
+            message: `${name} authorized, but connecting failed: ${error || 'unknown error'} — try Reconnect`,
+          })
+        } else if (status === 'failed') {
+          addNotification({
+            type: 'error',
+            message: `OAuth authorization failed: ${error || 'unknown error'}`,
+          })
+        }
+      }
+    }
+
+    return () => {
+      stopOauthPoll()
+      channel?.close()
+    }
   }, [])
 
   const handleAdd = async (name, url, apiKey, authType = 'api_key') => {
@@ -938,14 +986,19 @@ export default function MCPConnections() {
         return
       }
       addNotification({ type: 'success', message: `Authorizing ${name} — finish sign-in in the new tab.` })
-      // Poll the connections list so the UI reflects the new auth status
-      // as soon as the callback completes (typically within seconds).
+      // Fallback poll in case the BroadcastChannel signal from the callback
+      // page can't reach us (e.g. UI served from a different origin than the
+      // localhost callback). 5-minute window — sign-in with 2FA/consent can
+      // easily exceed the old 60s, which left the UI stale until a refresh.
+      stopOauthPoll()
       let elapsed = 0
-      const interval = setInterval(async () => {
-        elapsed += 2000
-        await loadConnections()
-        if (elapsed >= 60000) clearInterval(interval)
-      }, 2000)
+      oauthPollRef.current = setInterval(async () => {
+        elapsed += 3000
+        const conns = await loadConnections()
+        const c = conns.find((x) => x.name === name)
+        if (c && c.oauth_status === 'ok') stopOauthPoll()
+        else if (elapsed >= 300000) stopOauthPoll()
+      }, 3000)
     } catch (err) {
       addNotification({
         type: 'error',

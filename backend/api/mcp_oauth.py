@@ -9,6 +9,7 @@ Authorize on that connection.
 from __future__ import annotations
 
 import html
+import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
@@ -65,6 +66,7 @@ async def oauth_callback(
             body=f"<p>The authorization server returned an error:</p>"
                  f"<pre>{html.escape(msg)}</pre>",
             ok=False,
+            notify={"status": "failed", "error": msg},
         )
 
     if not code or not state:
@@ -73,6 +75,7 @@ async def oauth_callback(
             body="<p>Missing <code>code</code> or <code>state</code> parameter "
                  "in the redirect.</p>",
             ok=False,
+            notify={"status": "failed", "error": "missing code/state"},
         )
 
     mgr = get_mcp_manager()
@@ -84,28 +87,57 @@ async def oauth_callback(
             title="Token exchange failed",
             body=f"<p>{html.escape(str(e))}</p>",
             ok=False,
+            notify={"status": "failed", "error": str(e)},
         )
 
     status = result.get("status", "unknown")
-    name = html.escape(result.get("name", ""))
+    raw_name = result.get("name", "")
+    name = html.escape(raw_name)
     if status == "connected":
         body = (
             f"<p>MCP connection <b>{name}</b> is authorized and connected.</p>"
             f"<p>Discovered tools: {result.get('tools_count', 0)}</p>"
             "<p>You can close this tab.</p>"
         )
-        return _result_page(title="Connected ✓", body=body, ok=True)
+        return _result_page(
+            title="Connected ✓",
+            body=body,
+            ok=True,
+            notify={
+                "status": "connected",
+                "name": raw_name,
+                "tools_count": result.get("tools_count", 0),
+            },
+        )
 
     body = (
         f"<p>Token saved for <b>{name}</b>, but the MCP connect step failed.</p>"
         f"<pre>{html.escape(result.get('error', ''))}</pre>"
         "<p>Check the MCP Connections panel — you may just need to retry.</p>"
     )
-    return _result_page(title="Authorized (partial)", body=body, ok=False)
+    return _result_page(
+        title="Authorized (partial)",
+        body=body,
+        ok=False,
+        notify={"status": "authorized_connect_failed", "name": raw_name,
+                "error": result.get("error", "")},
+    )
 
 
-def _result_page(*, title: str, body: str, ok: bool) -> HTMLResponse:
+def _result_page(*, title: str, body: str, ok: bool,
+                 notify: dict | None = None) -> HTMLResponse:
+    """Render the callback result page.
+
+    `notify` is broadcast on the same-origin `pantheon-mcp-oauth`
+    BroadcastChannel so the MCP Connections page (open in another tab)
+    refreshes its auth status immediately instead of waiting on a poll.
+    The popup is opened with `noopener`, so window.opener is unavailable —
+    BroadcastChannel is the only direct signal path.
+    """
     color = "#22c55e" if ok else "#ef4444"
+    # `</` must be escaped inside <script> — an AS-controlled error string
+    # could otherwise close the tag and inject markup.
+    notify_json = json.dumps(notify or {}).replace("</", "<\\/")
     return HTMLResponse(
         f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
@@ -127,6 +159,13 @@ def _result_page(*, title: str, body: str, ok: bool) -> HTMLResponse:
     Pantheon MCP OAuth callback.
   </p>
 </div>
-<script>setTimeout(() => {{ window.close(); }}, 4000);</script>
+<script>
+try {{
+  const ch = new BroadcastChannel('pantheon-mcp-oauth');
+  ch.postMessage({notify_json});
+  ch.close();
+}} catch (e) {{ /* cross-origin frontend — the poll fallback covers this */ }}
+setTimeout(() => {{ window.close(); }}, 4000);
+</script>
 </body></html>"""
     )
