@@ -452,6 +452,15 @@ class AgentCore:
                     tool_calls_this_round = response.get("tool_calls", [])
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}
+                    # Streaming mode yields tool_call chunks as they arrive.
+                    # Mirror that here so consumers see the same event
+                    # stream — without this, the job handler's tool counter
+                    # and plan-step progress matching never fire for
+                    # autonomous tasks (observed: tool_calls_observed=1 on
+                    # a 500-tool-call run).
+                    for tc in tool_calls_this_round:
+                        yield {"type": "tool_call", "name": tc.get("name"),
+                               "args": tc.get("args", {}), "id": tc.get("id")}
 
                 if current_text:
                     full_response = current_text

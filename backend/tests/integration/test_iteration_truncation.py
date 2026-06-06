@@ -43,6 +43,29 @@ async def test_truncated_when_cap_hit_mid_work(_mock_exec, _mock_schemas, _mock_
     assert done["truncated"] is True
 
 
+@pytest.mark.asyncio
+@patch("agent.core.build_system_prompt", return_value="sys")
+@patch("agent.core.get_all_tool_schemas", return_value=[])
+@patch("agent.core.execute_tool", new_callable=AsyncMock, return_value="ok")
+async def test_nonstreaming_yields_tool_call_events(_mock_exec, _mock_schemas, _mock_prompt):
+    """Non-streaming mode must emit tool_call events like streaming does —
+    job-handler metrics and plan-step matching depend on them. Regression:
+    tool_calls_observed reported 1 on a 500-tool-call run."""
+    agent, provider = _agent()
+    provider.chat_complete = AsyncMock(return_value={
+        "content": "", "tool_calls": [{"id": "1", "name": "recall", "args": {"q": "x"}}],
+    })
+    events = []
+    async for ev in agent.chat("task", stream=False, max_iterations=3):
+        events.append(ev)
+    tool_calls = [e for e in events if e["type"] == "tool_call"]
+    tool_results = [e for e in events if e["type"] == "tool_result"]
+    assert len(tool_calls) == 3  # one per iteration
+    assert tool_calls[0]["name"] == "recall"
+    assert tool_calls[0]["args"] == {"q": "x"}
+    assert len(tool_results) == 3  # pairing preserved
+
+
 def test_handler_aborts_on_provider_error():
     """A run ending on a provider error (no done event) must FAIL the job
     with an abort notice, not sail to completed with an empty summary."""

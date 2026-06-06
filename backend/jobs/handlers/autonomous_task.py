@@ -362,6 +362,8 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                                       reanchor_text=reanchor):
             etype = event.get("type")
             if etype == "tool_call":
+                if event.get("name") == "context_loaded":
+                    continue  # synthetic pre-recall event, not a real tool
                 tool_count += 1
                 last_tool_name = event.get("name") or "?"
                 text_deltas_since_tool = 0
