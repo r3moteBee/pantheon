@@ -46,7 +46,6 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
-    return ClosingConnection(conn)  # type: ignore
     # github_connections (existing) + project_repo_bindings (new in Phase G)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_connections (
@@ -77,7 +76,7 @@ def _connect() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_gh_account ON github_connections(account_login)")
     _migrate_schema(conn)
     conn.commit()
-    return conn
+    return ClosingConnection(conn)  # type: ignore
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:
