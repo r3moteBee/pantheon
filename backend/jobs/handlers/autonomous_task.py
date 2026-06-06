@@ -76,6 +76,55 @@ def _format_progress(tool_count: int, tool_name: str,
 
 
 
+async def _repo_snapshot(project_id: str) -> dict | None:
+    """Ground-truth git state of the project's repo checkout. Computed by
+    the harness so completion notices report verified numbers instead of
+    the model's own arithmetic (observed: '40 deleted' for 44, '29
+    branches' for 31)."""
+    try:
+        from agent.tools import _resolve_repo_checkout, _run_git_cmd
+        cwd = _resolve_repo_checkout(project_id)
+        if not cwd:
+            return None
+        snap: dict = {}
+        _, head, _ = await _run_git_cmd(["rev-parse", "HEAD"], cwd, auto_init=False)
+        snap["head"] = head.strip()
+        _, branch, _ = await _run_git_cmd(["branch", "--show-current"], cwd, auto_init=False)
+        snap["branch"] = branch.strip() or "(detached)"
+        _, cnt, _ = await _run_git_cmd(["rev-list", "--count", "HEAD"], cwd, auto_init=False)
+        snap["commit_count"] = int(cnt.strip()) if cnt.strip().isdigit() else 0
+        code, ahead, _ = await _run_git_cmd(
+            ["rev-list", "--count", f"origin/{snap['branch']}..HEAD"],
+            cwd, auto_init=False)
+        snap["ahead_of_origin"] = (int(ahead.strip())
+                                   if code == 0 and ahead.strip().isdigit() else None)
+        _, dirty, _ = await _run_git_cmd(["status", "--porcelain"], cwd, auto_init=False)
+        snap["dirty"] = bool(dirty.strip())
+        return snap
+    except Exception:
+        logger.debug("repo snapshot failed", exc_info=True)
+        return None
+
+
+def _repo_delta_line(before: dict | None, after: dict | None) -> str | None:
+    """One-line harness-verified summary of what the run did to the repo."""
+    if not after:
+        return None
+    parts = []
+    if before and before.get("head") != after.get("head"):
+        added = (after.get("commit_count") or 0) - (before.get("commit_count") or 0)
+        parts.append(
+            f"+{added} commit{'s' if added != 1 else ''} on {after['branch']} "
+            f"({(before.get('head') or '')[:7]} → {(after.get('head') or '')[:7]})")
+    elif before:
+        parts.append(f"no new commits on {after.get('branch')}")
+    ahead = after.get("ahead_of_origin")
+    if ahead is not None:
+        parts.append("fully pushed" if ahead == 0 else f"{ahead} unpushed")
+    parts.append("working tree DIRTY" if after.get("dirty") else "tree clean")
+    return "Repo: " + " · ".join(parts)
+
+
 @register("autonomous_task", default_timeout_seconds=1800,
           description="Single-fire autonomous agent loop with a free-form prompt.")
 async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
@@ -367,6 +416,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
 
     full_response = ""
     tool_count = 0
+    tool_usage: dict[str, int] = {}
     last_tool_name = None
     iterations = None
     truncated = False
@@ -374,6 +424,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     last_error = None
     text_buf = ""
     text_deltas_since_tool = 0
+    repo_before = await _repo_snapshot(ctx.project_id)
     # Per-task iteration budget (payload override; None → global default)
     try:
         max_iterations = int((ctx.payload or {}).get("max_iterations") or 0) or None
@@ -397,6 +448,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                     continue  # synthetic pre-recall event, not a real tool
                 tool_count += 1
                 last_tool_name = event.get("name") or "?"
+                tool_usage[last_tool_name] = tool_usage.get(last_tool_name, 0) + 1
                 text_deltas_since_tool = 0
                 step_idx = _match_tool_to_step(last_tool_name, plan_steps)
                 progress = _format_progress(tool_count, last_tool_name, step_idx, plan_steps)
@@ -434,10 +486,17 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 )
 
     result_text = full_response
+    repo_after = await _repo_snapshot(ctx.project_id)
+    repo_delta = _repo_delta_line(repo_before, repo_after)
     ctx.update_result({
         "tool_calls_observed": tool_count,
+        "tool_usage": dict(sorted(tool_usage.items(),
+                                  key=lambda kv: -kv[1])[:15]),
         "iterations_used": iterations,
         "truncated": truncated,
+        "repo_before": repo_before,
+        "repo_after": repo_after,
+        "repo_delta": repo_delta,
     })
     if truncated:
         logger.warning(
@@ -533,7 +592,8 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                         f"The agent loop died on an LLM provider error, not "
                         f"by finishing:\n\n> {last_error}\n\n"
                         f"Work completed before the crash is intact."
-                        f"{_ledger_note}"
+                        + (f"\n\n_{repo_delta}_" if repo_delta else "")
+                        + f"{_ledger_note}"
                     ),
                     metadata={"job_id": ctx.job_id,
                               "kind": "autonomous_task_abort_notice",
@@ -625,11 +685,18 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                     "(you can raise the budget with `max_iterations` on "
                     f"create_task).{_ledger_note}\n\n" + summary_for_parent
                 )
+            # Harness-verified metrics — computed by the handler from the
+            # event stream and git, never from the model's own narration.
+            _top_tools = sorted(tool_usage.items(), key=lambda kv: -kv[1])[:5]
+            _tools_part = (", ".join(f"{n}: {c}" for n, c in _top_tools)
+                           if _top_tools else "")
             metrics_line = (
-                f"_Tools: {tc} call{'s' if tc != 1 else ''}"
-                + (f" (last: `{last_tool_name}`)" if last_tool_name else "")
-                + f" · Iterations: {it}_"
+                f"_Harness-verified — tools: {tc} call{'s' if tc != 1 else ''}"
+                + (f" ({_tools_part})" if _tools_part else "")
+                + f" · iterations: {it}_"
             )
+            if repo_delta:
+                metrics_line += f"\n_{repo_delta}_"
             parent_msg = (
                 f"**Task completed:** *{task_name}* "
                 f"(job_id `{ctx.job_id[:8]}`)\n\n"
@@ -666,5 +733,6 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
         "session_id": session_id,
         "task_name": task_name,
         "truncated": truncated,
+        "repo_delta": repo_delta,
         "summary": summary,
     }
