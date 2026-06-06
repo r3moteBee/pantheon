@@ -1481,8 +1481,47 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "git_merge",
+            "description": (
+                "Merge a branch into the CURRENT branch of the local repo "
+                "checkout. This is the ONLY correct way to merge — never "
+                "simulate a merge by copying file contents between branches. "
+                "On conflicts it returns the conflicted files with their "
+                "conflict hunks; edit only those regions, then git_commit to "
+                "conclude the merge. Pass abort=true to abandon an "
+                "in-progress merge."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch to merge in (local name or remote like 'feature/x' — origin/<branch> is tried automatically)."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional merge commit message. Defaults to 'Merge <ref> into <current branch>'."
+                    },
+                    "abort": {
+                        "type": "boolean",
+                        "description": "Abort the in-progress merge and restore the working tree."
+                    }
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "git_commit",
-            "description": "Stage files and commit them to the local git repository.",
+            "description": (
+                "Stage files and commit them on the CURRENT branch of the "
+                "local repo checkout. Refuses to commit files containing "
+                "unresolved merge-conflict markers. The result names the "
+                "branch the commit landed on — verify it matches your "
+                "intent."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -3473,6 +3512,85 @@ async def execute_tool(
                     return f"Switched to existing branch {branch_name}"
                 return f"Created and switched to branch {branch_name}"
 
+            elif tool_name == "git_merge":
+                if tool_args.get("abort"):
+                    code, stdout, stderr = await _run_git_cmd(
+                        ["merge", "--abort"], cwd, auto_init=False)
+                    if code != 0:
+                        return f"Could not abort merge: {stderr or stdout}"
+                    return "Merge aborted — working tree restored."
+
+                branch = (tool_args.get("branch") or "").strip()
+                if not branch:
+                    return "git_merge: 'branch' is required (or pass abort=true)."
+
+                # Resolve the ref: as-given first, then origin/<branch>
+                ref = branch
+                code, _, _ = await _run_git_cmd(
+                    ["rev-parse", "--verify", "--quiet", ref], cwd, auto_init=False)
+                if code != 0:
+                    code, _, _ = await _run_git_cmd(
+                        ["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+                        cwd, auto_init=False)
+                    if code != 0:
+                        return (f"git_merge: ref '{branch}' not found locally or as "
+                                f"origin/{branch}. Run git_sync_repo first to fetch "
+                                f"all remote branches.")
+                    ref = f"origin/{branch}"
+
+                _, cur_branch, _ = await _run_git_cmd(
+                    ["branch", "--show-current"], cwd, auto_init=False)
+                cur_branch = cur_branch.strip() or "(detached HEAD)"
+                msg = tool_args.get("message") or f"Merge {ref} into {cur_branch}"
+                code, stdout, stderr = await _run_git_cmd(
+                    ["merge", "--no-ff", "-m", msg, ref], cwd, auto_init=False)
+                if code == 0:
+                    _, head, _ = await _run_git_cmd(
+                        ["log", "-1", "--oneline"], cwd, auto_init=False)
+                    return f"Merged '{ref}' into '{cur_branch}'.\nHEAD: {head}"
+
+                _, conflicted, _ = await _run_git_cmd(
+                    ["diff", "--name-only", "--diff-filter=U"], cwd, auto_init=False)
+                files = [f for f in conflicted.splitlines() if f.strip()]
+                if not files:
+                    # Failed for a non-conflict reason (dirty tree, etc.) —
+                    # make sure no half-merge state lingers.
+                    await _run_git_cmd(["merge", "--abort"], cwd, auto_init=False)
+                    return (f"Merge of '{ref}' failed (no conflicts): "
+                            f"{stderr or stdout}\nAny partial merge was aborted.")
+
+                sections = []
+                for f in files[:10]:
+                    try:
+                        lines = (cwd / f).read_text(errors="replace").splitlines()
+                    except Exception:
+                        lines = []
+                    hunks, snippet, capture = [], [], False
+                    for i, ln in enumerate(lines, 1):
+                        if ln.startswith("<<<<<<< "):
+                            capture, snippet = True, [f"  line {i}:"]
+                        if capture:
+                            snippet.append("  " + ln)
+                        if capture and ln.startswith(">>>>>>> "):
+                            capture = False
+                            hunks.append("\n".join(snippet))
+                    joined = "\n".join(hunks[:5])
+                    if len(joined) > 4000:
+                        joined = joined[:4000] + "\n  …(truncated)"
+                    sections.append(f"--- {f} ---\n{joined or '  (markers not shown — read the file)'}")
+                more = (f"\n(+{len(files) - 10} more conflicted files)"
+                        if len(files) > 10 else "")
+                return (f"Merge of '{ref}' into '{cur_branch}' has CONFLICTS "
+                        f"in {len(files)} file(s):{more}\n\n"
+                        + "\n\n".join(sections)
+                        + "\n\nTO RESOLVE: edit ONLY the conflicted regions in "
+                          "each file — choose or combine the code between the "
+                          "<<<<<<< and >>>>>>> markers, delete the markers, and "
+                          "leave the rest of the file untouched. Do NOT rewrite "
+                          "whole files from memory. Validate with run_command "
+                          "(compiler/tests), then git_commit to conclude the "
+                          "merge. To bail out, call git_merge with abort=true.")
+
             elif tool_name == "git_commit":
                 message = tool_args["message"]
                 files = tool_args.get("files") or []
@@ -3486,10 +3604,26 @@ async def execute_tool(
                     if code != 0:
                         return f"Error staging changes: {stderr or stdout}"
 
+                # Refuse to commit unresolved conflict markers. ('=======' is
+                # not matched alone — it false-positives on setext/reST
+                # headings; the <<< / >>> lines are unambiguous.)
+                code, hits, _ = await _run_git_cmd(
+                    ["grep", "--cached", "-nE", "^(<{7}|>{7})( |$)"],
+                    cwd, auto_init=False)
+                if code == 0 and hits.strip():
+                    return ("Refusing to commit: unresolved merge-conflict "
+                            "markers are staged:\n" + hits[:1500] +
+                            "\nResolve the conflicts first (keep the right "
+                            "code, delete the <<<<<<</=======/>>>>>>> marker "
+                            "lines), then git_commit again.")
+
                 code, stdout, stderr = await _run_git_cmd(["commit", "-m", message], cwd)
                 if code != 0:
                     return f"Error committing: {stderr or stdout}"
-                return f"Committed successfully: {stdout}"
+                _, cur_branch, _ = await _run_git_cmd(
+                    ["branch", "--show-current"], cwd, auto_init=False)
+                return (f"Committed successfully on branch "
+                        f"'{cur_branch.strip() or '(detached HEAD)'}': {stdout}")
 
             elif tool_name == "git_push_pr":
                 from api.connections import (

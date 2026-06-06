@@ -92,7 +92,7 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
         f"Working branch: {desired_branch} (will be created if it does not exist)\n\n"
         "Available tools: git_sync_repo (clone/update the repo locally), "
         "run_command (shell in the checkout — deps, tests, linters), "
-        "git_create_branch, git_status, git_commit, git_push_pr, "
+        "git_create_branch, git_merge, git_status, git_commit, git_push_pr, "
         "read_file/write_file (workspace files), plus GitHub API tools "
         "(github_read_file, github_list_directory, github_write_files, "
         "github_create_pr) as a fallback for trivial single-file edits.\n\n"

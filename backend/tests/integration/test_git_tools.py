@@ -30,10 +30,17 @@ async def test_git_create_branch_new(mock_run, mock_get_workspace):
 @patch("agent.tools._run_git_cmd")
 async def test_git_commit_all(mock_run, mock_get_workspace):
     mock_get_workspace.return_value = Path("/app/data/projects/test/workspace")
-    mock_run.return_value = (0, "Committed", "")
-    
+
+    async def fake_git(args, cwd, auto_init=True):
+        if args[0] == "grep":          # conflict-marker scan: no matches
+            return (1, "", "")
+        if args[0] == "branch":        # --show-current
+            return (0, "main", "")
+        return (0, "Committed", "")
+    mock_run.side_effect = fake_git
+
     res = await execute_tool("git_commit", {"message": "feat: test"}, None, project_id="test")
-    assert "Committed successfully" in res
+    assert "Committed successfully on branch 'main'" in res
     # First stages all (add .) then commits
     mock_run.assert_any_call(["add", "."], Path("/app/data/projects/test/workspace"))
     mock_run.assert_any_call(["commit", "-m", "feat: test"], Path("/app/data/projects/test/workspace"))
