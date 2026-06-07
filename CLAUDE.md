@@ -27,7 +27,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── tools.py             ALL agent tools (schemas + dispatch). 1500+ lines.
 │   │   ├── prompts.py           build_system_prompt(); appends recent-jobs + available-skills blocks
 │   │   └── browser_tools.py     Playwright browser tools (optional)
-│   ├── api/                     FastAPI routers (19 mounted routers)
+│   ├── api/                     FastAPI routers (18 mounted routers)
 │   │   ├── chat.py              REST + websocket chat. Both run resolve_explicit + resolve_auto.
 │   │   ├── tasks.py             Schedule CRUD; run-now; rerun_job
 │   │   ├── jobs.py              Jobs CRUD
@@ -41,7 +41,6 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── mcp_oauth.py         MCP OAuth2 callback authentication
 │   │   ├── connections.py       GitHub PAT connections
 │   │   ├── conversations.py     Conversation history metadata updates
-│   │   ├── sources.py           Source ingestion adapter triggers
 │   │   ├── llm_endpoints.py     /api/llm/{endpoints,roles,probe} — named endpoints + role mapping
 │   │   ├── settings.py          Legacy flat-config CRUD; still in place for backward compat
 │   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match

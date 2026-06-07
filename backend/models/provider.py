@@ -14,6 +14,55 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _extract_error_message(raw_body: str | None) -> str | None:
+    """Pull the human-readable message out of an OpenAI-compatible (or
+    abacus-style) JSON error body. Returns None if the body isn't JSON or
+    has no recognizable message field."""
+    if not raw_body:
+        return None
+    try:
+        data = json.loads(raw_body)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            return err.get("message") or err.get("type")
+        if isinstance(err, str):
+            return err
+        return data.get("message") or data.get("detail")
+    return None
+
+
+def _format_llm_error(status_code: int, raw_body: str | None) -> str:
+    """Build a descriptive, user-facing error string from an LLM HTTP error.
+
+    Surfaces the provider's own message instead of an opaque status code, and
+    appends an actionable hint for the common failure modes (model can't do
+    tool calling, bad key, wrong model id)."""
+    detail = _extract_error_message(raw_body)
+    if not detail:
+        detail = (raw_body or "").strip()[:300] or "(no response body)"
+    low = detail.lower()
+    hint = ""
+    if "tool" in low and ("support" in low or "calling" in low):
+        hint = (
+            " — This model can't be used with Pantheon's agent tools. "
+            "Choose a tool-calling model for the chat role in "
+            "Settings → Role Mapping."
+        )
+    elif status_code in (401, 403):
+        hint = " — Check this endpoint's API key in Settings → Endpoints."
+    elif status_code == 404:
+        hint = (
+            " — Check the model id and base URL for this endpoint in "
+            "Settings → Endpoints."
+        )
+    elif status_code == 429:
+        hint = " — Rate limited or out of quota on this endpoint."
+    return f"LLM API error {status_code}: {detail}{hint}"
+
+
 class ModelProvider:
     """Wraps any OpenAI-compatible LLM API for chat and embeddings."""
 
@@ -93,7 +142,20 @@ class ModelProvider:
                     headers=self._headers(),
                     json=payload,
                 ) as resp:
-                    resp.raise_for_status()
+                    if resp.status_code >= 400:
+                        # Read the body BEFORE the stream context unwinds —
+                        # once raise_for_status escapes the `async with`, the
+                        # response is closed and the body is unreadable (this
+                        # is what produced the old "(unreadable)" errors).
+                        try:
+                            await resp.aread()
+                            body = resp.text
+                        except Exception:
+                            body = None
+                        msg = _format_llm_error(resp.status_code, body)
+                        logger.error(msg)
+                        yield {"type": "error", "message": msg}
+                        return
                     async for line in resp.aiter_lines():
                         if not line.startswith("data: "):
                             continue
@@ -155,14 +217,21 @@ class ModelProvider:
             yield {"type": "done", "content": current_text}
 
         except httpx.HTTPStatusError as e:
-            # In streaming mode the response body hasn't been read — read it safely
+            # Defensive fallback — the inline status check above handles the
+            # normal path, but read the body safely if a status error still
+            # escapes from elsewhere.
             try:
                 await e.response.aread()
-                body = e.response.text[:500]
+                body = e.response.text
             except Exception:
-                body = "(unreadable)"
-            logger.error(f"HTTP error from LLM API: {e.response.status_code} {body}")
-            yield {"type": "error", "message": f"LLM API error {e.response.status_code}: {body}"}
+                body = None
+            msg = _format_llm_error(e.response.status_code, body)
+            logger.error(msg)
+            yield {"type": "error", "message": msg}
+        except httpx.RequestError as e:
+            msg = f"Could not reach LLM endpoint ({self.base_url}): {e}"
+            logger.error(msg)
+            yield {"type": "error", "message": msg}
         except Exception as e:
             logger.error(f"Streaming error: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
@@ -186,7 +255,10 @@ class ModelProvider:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 resp = await client.post(url, headers=self._headers(), json=payload)
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    msg = _format_llm_error(resp.status_code, resp.text)
+                    logger.error(msg)
+                    raise RuntimeError(msg)
                 data = resp.json()
 
             choices = data.get("choices", [])

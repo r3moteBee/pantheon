@@ -94,6 +94,45 @@ def build_system_prompt(
             "the user uploaded or files in a code repo.\n"
         )
 
+    # Repo work protocol — only when the project actually has a bound repo,
+    # so ordinary chat sessions don't pay the prompt tokens. Exists because
+    # an agent once "merged" branches by rewriting files from memory and
+    # wrote commit messages claiming merges that never ran.
+    repo_section = ""
+    if project_id:
+        try:
+            from api.connections import get_project_repo_for_tools
+            _repo_spec = get_project_repo_for_tools(project_id)
+        except Exception:
+            _repo_spec = None
+        if _repo_spec:
+            repo_section = (
+                f"\n\n## Repository work protocol\n"
+                f"This project is bound to GitHub repo "
+                f"`{_repo_spec['owner']}/{_repo_spec['repo']}` (default branch "
+                f"`{_repo_spec['default_branch']}`).\n"
+                "- Start local repo work with `git_sync_repo` — it clones/"
+                "updates the checkout and fetches all remote branches.\n"
+                "- Merge branches ONLY with `git_merge`. Never simulate a "
+                "merge by copying file contents between branches or "
+                "rewriting files from memory.\n"
+                "- On merge conflicts, edit only the conflicted regions "
+                "(between the <<<<<<< and >>>>>>> markers) in the files "
+                "git_merge lists, leave everything else untouched, then "
+                "`git_commit` to conclude the merge.\n"
+                "- VALIDATE before every commit: run the repo's compiler/"
+                "linter/tests via `run_command` (e.g. `npx tsc --noEmit`, "
+                "`pytest`, `npm test`) and confirm it passes.\n"
+                "- NEVER pass `--no-verify` to git commit. The checkout's "
+                "pre-commit hook (installed by git_sync_repo) rejects "
+                "unresolved conflict markers — if it fires, fix the "
+                "conflict, don't bypass the hook.\n"
+                "- Report only what tool outputs confirm. git_commit and "
+                "git_merge name the branch they acted on — if it doesn't "
+                "match your intent, stop and correct course instead of "
+                "narrating success.\n"
+            )
+
     memory_section = ""
     if recalled_memories:
         memory_lines = []
@@ -117,7 +156,7 @@ def build_system_prompt(
 
 ---
 
-{agent_config}{project_section}{memory_section}{extra_section}
+{agent_config}{project_section}{repo_section}{memory_section}{extra_section}
 
 ---
 

@@ -76,6 +76,55 @@ def _format_progress(tool_count: int, tool_name: str,
 
 
 
+async def _repo_snapshot(project_id: str) -> dict | None:
+    """Ground-truth git state of the project's repo checkout. Computed by
+    the harness so completion notices report verified numbers instead of
+    the model's own arithmetic (observed: '40 deleted' for 44, '29
+    branches' for 31)."""
+    try:
+        from agent.tools import _resolve_repo_checkout, _run_git_cmd
+        cwd = _resolve_repo_checkout(project_id)
+        if not cwd:
+            return None
+        snap: dict = {}
+        _, head, _ = await _run_git_cmd(["rev-parse", "HEAD"], cwd, auto_init=False)
+        snap["head"] = head.strip()
+        _, branch, _ = await _run_git_cmd(["branch", "--show-current"], cwd, auto_init=False)
+        snap["branch"] = branch.strip() or "(detached)"
+        _, cnt, _ = await _run_git_cmd(["rev-list", "--count", "HEAD"], cwd, auto_init=False)
+        snap["commit_count"] = int(cnt.strip()) if cnt.strip().isdigit() else 0
+        code, ahead, _ = await _run_git_cmd(
+            ["rev-list", "--count", f"origin/{snap['branch']}..HEAD"],
+            cwd, auto_init=False)
+        snap["ahead_of_origin"] = (int(ahead.strip())
+                                   if code == 0 and ahead.strip().isdigit() else None)
+        _, dirty, _ = await _run_git_cmd(["status", "--porcelain"], cwd, auto_init=False)
+        snap["dirty"] = bool(dirty.strip())
+        return snap
+    except Exception:
+        logger.debug("repo snapshot failed", exc_info=True)
+        return None
+
+
+def _repo_delta_line(before: dict | None, after: dict | None) -> str | None:
+    """One-line harness-verified summary of what the run did to the repo."""
+    if not after:
+        return None
+    parts = []
+    if before and before.get("head") != after.get("head"):
+        added = (after.get("commit_count") or 0) - (before.get("commit_count") or 0)
+        parts.append(
+            f"+{added} commit{'s' if added != 1 else ''} on {after['branch']} "
+            f"({(before.get('head') or '')[:7]} → {(after.get('head') or '')[:7]})")
+    elif before:
+        parts.append(f"no new commits on {after.get('branch')}")
+    ahead = after.get("ahead_of_origin")
+    if ahead is not None:
+        parts.append("fully pushed" if ahead == 0 else f"{ahead} unpushed")
+    parts.append("working tree DIRTY" if after.get("dirty") else "tree clean")
+    return "Repo: " + " · ".join(parts)
+
+
 @register("autonomous_task", default_timeout_seconds=1800,
           description="Single-fire autonomous agent loop with a free-form prompt.")
 async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
@@ -232,11 +281,84 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             f"{plan}\n"
         )
 
+    # Task-ledger protocol — a compact, durable progress artifact that
+    # (a) re-anchors instructions each cycle and (b) makes truncated or
+    # killed runs resumable by a follow-up task with fresh context.
+    # Ledgers live under the dedicated task-ledger/ folder and carry a
+    # 'task-ledger' tag (also enforced harness-side in save_to_artifact)
+    # so they group cleanly in the Artifacts UI and are tag-searchable.
+    _ledger_slug = _re.sub(
+        r"[^a-zA-Z0-9]+", "-", (task_name or "task").lower()).strip("-")[:60]
+    ledger_rel = f"task-ledger/{_ledger_slug}.md"
+    _legacy_ledger_rel = f"tasks/{_ledger_slug}-ledger.md"
+    ledger_exists = False
+    try:
+        from artifacts.store import get_store, project_slug
+        _store = get_store()
+        _proj = project_slug(ctx.project_id)
+        if _store.get_by_path(ctx.project_id, f"{_proj}/{ledger_rel}"):
+            ledger_exists = True
+        elif _store.get_by_path(ctx.project_id, f"{_proj}/{_legacy_ledger_rel}"):
+            # In-flight ledger created before the task-ledger/ folder move —
+            # keep resuming from the legacy path rather than forking.
+            ledger_rel = _legacy_ledger_rel
+            ledger_exists = True
+    except Exception:
+        logger.debug("ledger existence check failed", exc_info=True)
+
+    from datetime import datetime, timezone
+    _today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    if ledger_exists:
+        ledger_block = (
+            "\n\nTASK LEDGER PROTOCOL:\n"
+            f"- A ledger from a previous run EXISTS at artifact path "
+            f"'{ledger_rel}'. read_artifact it FIRST and RESUME from its "
+            "'Next action:' line — do NOT redo subtasks marked done.\n"
+            "- Update the ledger (save_to_artifact, same path) after EACH "
+            "completed subtask, BEFORE starting the next.\n"
+            "- Keep it accurate enough that a fresh agent could resume from "
+            "it alone: one line per subtask "
+            "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
+            "decisions, and a final 'Next action:' line.\n"
+            "- Keep its YAML frontmatter current: set `status: complete` "
+            "and 'Next action: none — task complete' when (and only when) "
+            "everything is done.\n"
+        )
+    else:
+        ledger_block = (
+            "\n\nTASK LEDGER PROTOCOL (for multi-part work):\n"
+            "- If this task decomposes into more than ~3 similar units of "
+            f"work, FIRST create a ledger artifact at '{ledger_rel}' via "
+            "save_to_artifact with tags=[\"task-ledger\"], beginning with "
+            "EXACTLY this YAML frontmatter:\n"
+            "  ---\n"
+            "  type: task-ledger\n"
+            f"  task: {task_name}\n"
+            f"  job_id: {ctx.job_id}\n"
+            "  status: active\n"
+            f"  created: {_today}\n"
+            "  tags: [task-ledger]\n"
+            "  ---\n"
+            "- Body: one line per subtask "
+            "(`- [pending|in-progress|done|skipped: reason] subtask`), key "
+            "decisions, and a final 'Next action:' line.\n"
+            "- Update it (same path) after EACH completed subtask, BEFORE "
+            "starting the next — not in batches at the end.\n"
+            "- The ledger is the restart point if this run hits its "
+            "iteration or time budget: keep it accurate enough that a "
+            "fresh agent could resume from it alone.\n"
+            "- When the task is COMPLETE: set frontmatter `status: complete` "
+            "and 'Next action: none — task complete'. This is part of the "
+            "task, not optional bookkeeping.\n"
+            "- Single-step tasks don't need a ledger.\n"
+        )
+
     full_prompt = (
         f"You are running an autonomous task: '{task_name}'\n"
         f"Job ID: {ctx.job_id}\n"
         f"Complete the task fully and save important results to memory."
-        f"{plan_block}\n\n"
+        f"{plan_block}{ledger_block}\n\n"
         f"Task:\n{description}"
     )
 
@@ -294,16 +416,39 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
 
     full_response = ""
     tool_count = 0
+    tool_usage: dict[str, int] = {}
     last_tool_name = None
     iterations = None
+    truncated = False
+    got_done = False
+    last_error = None
     text_buf = ""
     text_deltas_since_tool = 0
+    repo_before = await _repo_snapshot(ctx.project_id)
+    # Per-task iteration budget (payload override; None → global default)
+    try:
+        max_iterations = int((ctx.payload or {}).get("max_iterations") or 0) or None
+    except (TypeError, ValueError):
+        max_iterations = None
+    # Re-anchor text: the plan (or task description) plus the ledger rule —
+    # re-injected every ~15 iterations by AgentCore so long runs don't lose
+    # instruction fidelity under accumulated tool output.
+    reanchor = (
+        f"Task: '{task_name}'\n"
+        + (f"Plan:\n{plan}\n" if plan else f"Description:\n{(description or '')[:800]}\n")
+        + f"Ledger: keep '{ledger_rel}' updated after each completed subtask."
+    )
     async with pinger_for(ctx, interval=30.0):
-        async for event in agent.chat(full_prompt, stream=False):
+        async for event in agent.chat(full_prompt, stream=False,
+                                      max_iterations=max_iterations,
+                                      reanchor_text=reanchor):
             etype = event.get("type")
             if etype == "tool_call":
+                if event.get("name") == "context_loaded":
+                    continue  # synthetic pre-recall event, not a real tool
                 tool_count += 1
                 last_tool_name = event.get("name") or "?"
+                tool_usage[last_tool_name] = tool_usage.get(last_tool_name, 0) + 1
                 text_deltas_since_tool = 0
                 step_idx = _match_tool_to_step(last_tool_name, plan_steps)
                 progress = _format_progress(tool_count, last_tool_name, step_idx, plan_steps)
@@ -329,19 +474,36 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                             progress=f"thinking… {text_buf[-200:].strip()[-180:]}"
                         )
             elif etype == "done":
+                got_done = True
                 full_response = event.get("full_response", "") or ""
                 iterations = event.get("iterations")
+                truncated = bool(event.get("truncated"))
             elif etype == "error":
+                last_error = event.get("message") or "unknown agent error"
                 logger.warning(
                     "autonomous_task %s: agent error event: %s",
                     ctx.job_id[:8], event.get("message"),
                 )
 
     result_text = full_response
+    repo_after = await _repo_snapshot(ctx.project_id)
+    repo_delta = _repo_delta_line(repo_before, repo_after)
     ctx.update_result({
         "tool_calls_observed": tool_count,
+        "tool_usage": dict(sorted(tool_usage.items(),
+                                  key=lambda kv: -kv[1])[:15]),
         "iterations_used": iterations,
+        "truncated": truncated,
+        "repo_before": repo_before,
+        "repo_after": repo_after,
+        "repo_delta": repo_delta,
     })
+    if truncated:
+        logger.warning(
+            "autonomous_task %s: TRUNCATED at iteration cap (%s iterations) "
+            "— the task did not finish; its last text is mid-work narration.",
+            ctx.job_id[:8], iterations,
+        )
 
     # Diagnostic: if the loop closed with no tool calls AND no final text,
     # log a warning so post-mortem is easier.
@@ -399,6 +561,48 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     if ctx.cancel_requested():
         return {"status": "cancelled", "session_id": session_id,
                 "summary": (result_text or "")[:200]}
+
+    # The agent loop ended on a provider error (model crash, endpoint down)
+    # without a closing 'done' turn. That is an ABORT, not a completion —
+    # post an honest notice with the resume pointer and fail the job so the
+    # Tasks UI doesn't show green. Incremental update_result data survives.
+    if last_error and not got_done:
+        ctx.update_result({"ended_on_error": last_error})
+        _parent = (ctx.payload or {}).get("parent_session_id")
+        if _parent and _parent != session_id:
+            _ledger_note = ""
+            try:
+                from artifacts.store import get_store as _gs, project_slug as _psl
+                if _gs().get_by_path(ctx.project_id,
+                                     f"{_psl(ctx.project_id)}/{ledger_rel}"):
+                    _ledger_note = (
+                        f"\n\nThe task ledger at `{ledger_rel}` is current — "
+                        "re-run a task with the same name to resume from its "
+                        "'Next action'."
+                    )
+            except Exception:
+                pass
+            try:
+                await memory.episodic.save_message(
+                    session_id=_parent, project_id=ctx.project_id,
+                    role="assistant",
+                    content=(
+                        f"⚠️ **Task ABORTED:** *{task_name}* "
+                        f"(job_id `{ctx.job_id[:8]}`)\n\n"
+                        f"The agent loop died on an LLM provider error, not "
+                        f"by finishing:\n\n> {last_error}\n\n"
+                        f"Work completed before the crash is intact."
+                        + (f"\n\n_{repo_delta}_" if repo_delta else "")
+                        + f"{_ledger_note}"
+                    ),
+                    metadata={"job_id": ctx.job_id,
+                              "kind": "autonomous_task_abort_notice",
+                              "task_session_id": session_id,
+                              "task_name": task_name},
+                )
+            except Exception:
+                logger.debug("abort notice post failed", exc_info=True)
+        raise RuntimeError(f"LLM provider error ended the run: {last_error}")
 
     # Persist the final assistant message so the session is replayable
     # from chat history. Even when the recovery branch synthesized this
@@ -459,11 +663,40 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 if len(body) > 1500:
                     body = body[:1500] + "…"
                 summary_for_parent = body or "(agent made tool calls but emitted no final text — see Tasks tab for transcript)"
+            if truncated:
+                # Re-check ledger existence — the run may have created it.
+                _ledger_note = ""
+                try:
+                    from artifacts.store import get_store as _gs, project_slug as _psl
+                    if _gs().get_by_path(ctx.project_id,
+                                         f"{_psl(ctx.project_id)}/{ledger_rel}"):
+                        _ledger_note = (
+                            f" A task ledger exists at artifact "
+                            f"`{ledger_rel}` — a follow-up task will resume "
+                            f"from it automatically (same task name)."
+                        )
+                except Exception:
+                    pass
+                summary_for_parent = (
+                    f"⚠️ **TASK TRUNCATED — iteration cap reached at {it} "
+                    "iterations.** The agent was cut off mid-work; the text "
+                    "below is its last narration, NOT a completion report. "
+                    "Queue a follow-up task to finish the remaining work "
+                    "(you can raise the budget with `max_iterations` on "
+                    f"create_task).{_ledger_note}\n\n" + summary_for_parent
+                )
+            # Harness-verified metrics — computed by the handler from the
+            # event stream and git, never from the model's own narration.
+            _top_tools = sorted(tool_usage.items(), key=lambda kv: -kv[1])[:5]
+            _tools_part = (", ".join(f"{n}: {c}" for n, c in _top_tools)
+                           if _top_tools else "")
             metrics_line = (
-                f"_Tools: {tc} call{'s' if tc != 1 else ''}"
-                + (f" (last: `{last_tool_name}`)" if last_tool_name else "")
-                + f" · Iterations: {it}_"
+                f"_Harness-verified — tools: {tc} call{'s' if tc != 1 else ''}"
+                + (f" ({_tools_part})" if _tools_part else "")
+                + f" · iterations: {it}_"
             )
+            if repo_delta:
+                metrics_line += f"\n_{repo_delta}_"
             parent_msg = (
                 f"**Task completed:** *{task_name}* "
                 f"(job_id `{ctx.job_id[:8]}`)\n\n"
@@ -492,8 +725,14 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 parent_session_id, exc_info=True,
             )
 
+    summary = (result_text or "")[:1000]
+    if truncated:
+        summary = (f"[TRUNCATED at {int(iterations or 0)} iterations — "
+                   f"work incomplete] " + summary)
     return {
         "session_id": session_id,
         "task_name": task_name,
-        "summary": (result_text or "")[:1000],
+        "truncated": truncated,
+        "repo_delta": repo_delta,
+        "summary": summary,
     }

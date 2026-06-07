@@ -307,6 +307,9 @@ class AgentCore:
         self,
         user_message: str,
         stream: bool = True,
+        max_iterations: int | None = None,
+        reanchor_text: str | None = None,
+        reanchor_every: int = 15,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Process a user message and yield streaming events.
 
@@ -408,11 +411,12 @@ class AgentCore:
 
             full_response = ""
             iterations = 0
+            iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
             # Resolve all available tools (built-in + MCP)
             all_tools = get_all_tool_schemas()
 
-            while iterations < MAX_TOOL_ITERATIONS:
+            while iterations < iteration_limit:
                 iterations += 1
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
@@ -448,6 +452,15 @@ class AgentCore:
                     tool_calls_this_round = response.get("tool_calls", [])
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}
+                    # Streaming mode yields tool_call chunks as they arrive.
+                    # Mirror that here so consumers see the same event
+                    # stream — without this, the job handler's tool counter
+                    # and plan-step progress matching never fire for
+                    # autonomous tasks (observed: tool_calls_observed=1 on
+                    # a 500-tool-call run).
+                    for tc in tool_calls_this_round:
+                        yield {"type": "tool_call", "name": tc.get("name"),
+                               "args": tc.get("args", {}), "id": tc.get("id")}
 
                 if current_text:
                     full_response = current_text
@@ -503,11 +516,54 @@ class AgentCore:
                         "content": result,
                     })
 
+                # Re-anchor: long tool loops bury the original instructions
+                # under accumulated tool output and models drift from them
+                # (observed: a merge task abandoning its push-every-5 and
+                # hunk-only-edits rules mid-run). Periodically re-inject the
+                # instructions at full strength.
+                if reanchor_text and iterations % reanchor_every == 0:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[Pantheon harness re-anchor — iteration "
+                            f"{iterations} of {iteration_limit}]\n"
+                            "Re-read your original instructions before "
+                            "continuing:\n\n"
+                            f"{reanchor_text}\n\n"
+                            "State in one line which step you are on, then "
+                            "continue. If you have drifted from these "
+                            "instructions or their rules, correct course now."
+                        ),
+                    })
+                if iteration_limit - iterations == 10:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Pantheon harness notice] Only 10 iterations "
+                            "remain in your budget. Bring the work to a safe "
+                            "stopping point, update your task ledger (if you "
+                            "keep one), and write your final summary — a "
+                            "truncated run with a current ledger is "
+                            "resumable; one without is not."
+                        ),
+                    })
+
             # Save assistant response
             if full_response:
                 self._add_working_message("assistant", full_response)
 
-            yield {"type": "done", "full_response": full_response, "iterations": iterations}
+            # Distinguish natural completion (model stopped calling tools)
+            # from hitting the iteration cap mid-work — callers must not
+            # present a truncated run as a finished one.
+            truncated = (iterations >= iteration_limit
+                         and bool(tool_calls_this_round))
+            if truncated:
+                logger.warning(
+                    "Agent loop truncated at iteration cap (%d) with tool "
+                    "calls still pending — work is incomplete.", iteration_limit,
+                )
+            yield {"type": "done", "full_response": full_response,
+                   "iterations": iterations, "truncated": truncated}
 
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)

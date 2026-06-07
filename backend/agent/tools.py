@@ -282,6 +282,17 @@ TOOL_SCHEMAS = [
                             "dog (5 min idle) happy independently."
                         )
                     },
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": (
+                            "Optional agent-loop iteration budget (default "
+                            "100). One iteration ≈ one round of tool calls. "
+                            "Raise (e.g. 300) for long multi-step tasks like "
+                            "batch merges or large refactors; if the cap is "
+                            "hit the task is marked truncated rather than "
+                            "complete. Scale timeout_seconds along with it."
+                        )
+                    },
                     "skill_name": {
                         "type": "string",
                         "description": (
@@ -1046,6 +1057,40 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "run_command",
+            "description": (
+                "Run a shell (bash) command inside the project's local repo "
+                "checkout (created by git_sync_repo), or the project "
+                "workspace if no checkout exists. Use this to install "
+                "dependencies, run test suites (pytest, npm test), linters, "
+                "or build steps. Multi-line scripts are allowed; paths are "
+                "relative to the checkout root. Runs on the host in "
+                "subprocess sandbox mode — only use against trusted repos. "
+                "Default timeout 120s (max 1800)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Bash command or multi-line script to run."
+                    },
+                    "workdir": {
+                        "type": "string",
+                        "description": "Optional subdirectory (relative to the repo checkout / workspace) to run in."
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Optional timeout override (1-1800 seconds, default 120). Raise it for dependency installs or slow test suites."
+                    }
+                },
+                "required": ["command"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "github_list_connections",
             "description": "Diagnostic only — list configured GitHub PATs and show which one is bound to this project. You do NOT need to call this before other github_* tools; they automatically use the project's bound repo.",
             "parameters": {"type": "object", "properties": {}}
@@ -1388,6 +1433,35 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "git_sync_repo",
+            "description": (
+                "Clone the project's bound GitHub repo into the local "
+                "workspace (or fetch + fast-forward it if already cloned) "
+                "and return the checkout path. Run this FIRST before doing "
+                "local coding work: all other git_* tools and run_command "
+                "automatically operate on this checkout once it exists. "
+                "Files inside it are reachable via read_file/write_file "
+                "under 'repos/<owner>__<repo>/...'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Optional branch to check out after syncing. Defaults to the repo's default branch. Created locally if it doesn't exist yet."
+                    },
+                    "fresh": {
+                        "type": "boolean",
+                        "description": "If true, delete the existing checkout and re-clone from scratch."
+                    }
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "git_status",
             "description": "Show the local git working tree status (runs git status --porcelain).",
             "parameters": {
@@ -1418,8 +1492,47 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "git_merge",
+            "description": (
+                "Merge a branch into the CURRENT branch of the local repo "
+                "checkout. This is the ONLY correct way to merge — never "
+                "simulate a merge by copying file contents between branches. "
+                "On conflicts it returns the conflicted files with their "
+                "conflict hunks; edit only those regions, then git_commit to "
+                "conclude the merge. Pass abort=true to abandon an "
+                "in-progress merge."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Branch to merge in (local name or remote like 'feature/x' — origin/<branch> is tried automatically)."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Optional merge commit message. Defaults to 'Merge <ref> into <current branch>'."
+                    },
+                    "abort": {
+                        "type": "boolean",
+                        "description": "Abort the in-progress merge and restore the working tree."
+                    }
+                },
+                "additionalProperties": False
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "git_commit",
-            "description": "Stage files and commit them to the local git repository.",
+            "description": (
+                "Stage files and commit them on the CURRENT branch of the "
+                "local repo checkout. Refuses to commit files containing "
+                "unresolved merge-conflict markers. The result names the "
+                "branch the commit landed on — verify it matches your "
+                "intent."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2638,6 +2751,12 @@ async def execute_tool(
                     timeout_seconds = int(timeout_seconds)
                 except (TypeError, ValueError):
                     timeout_seconds = None
+            max_iterations = tool_args.get("max_iterations")
+            if max_iterations is not None:
+                try:
+                    max_iterations = max(1, min(int(max_iterations), 1000))
+                except (TypeError, ValueError):
+                    max_iterations = None
             job_type = (tool_args.get("job_type") or "autonomous_task").strip()
             if job_type not in ("autonomous_task", "iteration_loop"):
                 return (
@@ -2669,6 +2788,8 @@ async def execute_tool(
                 }
                 if timeout_seconds is None:
                     timeout_seconds = 7200
+            if max_iterations:
+                extras = {**(extras or {}), "max_iterations": max_iterations}
             task_id = await schedule_agent_task(
                 name=tool_args.get("name", "task"),
                 description=tool_args.get("description", ""),
@@ -2980,6 +3101,42 @@ async def execute_tool(
                 parts.append("stderr:\n" + result.stderr.rstrip())
             return "\n\n".join(parts) or "(no output)"
 
+        elif tool_name == "run_command":
+            from sandbox import get_sandbox
+            from sandbox.backend import SandboxConfig
+            command = (tool_args.get("command") or "").strip()
+            if not command:
+                return "run_command: empty command argument"
+            timeout = int(tool_args.get("timeout_seconds") or 120)
+            timeout = max(1, min(timeout, 1800))
+            base = _resolve_repo_checkout(effective_project) or _get_workspace_base(effective_project)
+            workdir = (tool_args.get("workdir") or "").strip().lstrip("/")
+            if workdir:
+                cand = (base / workdir).resolve()
+                if not cand.is_relative_to(base):
+                    return f"run_command: workdir escapes the workspace: {workdir}"
+                if not cand.is_dir():
+                    return f"run_command: workdir not found: {workdir}"
+                base = cand
+            # Generous memory cap — package managers and test runners need
+            # far more virtual address space than inline snippets.
+            cfg = SandboxConfig(timeout_seconds=timeout, max_memory_mb=4096,
+                                workspace_dir=base)
+            result = await get_sandbox().execute_inline(
+                language="bash", code=command, config=cfg,
+            )
+            parts = [f"cwd: {base}",
+                     f"exit_code: {result.exit_code}",
+                     f"duration_ms: {result.duration_ms}"]
+            if result.timed_out:
+                parts.append(f"timed_out: true (limit {timeout}s — pass a "
+                             f"higher timeout_seconds if the command needs more)")
+            if result.stdout:
+                parts.append("stdout:\n" + result.stdout.rstrip())
+            if result.stderr:
+                parts.append("stderr:\n" + result.stderr.rstrip())
+            return "\n\n".join(parts) or "(no output)"
+
         elif tool_name in ("save_to_artifact", "update_artifact", "read_artifact", "list_artifacts"):
             from artifacts.store import get_store, is_text_type, project_slug as _ps
             from artifacts import embedder as _emb
@@ -3019,6 +3176,16 @@ async def execute_tool(
                         return str(p.with_name(f"{p.stem}-{n}{p.suffix}"))
                     return f"{base}-{n}"
 
+                # Harness-guaranteed organization: anything saved under the
+                # task-ledger/ folder always carries the 'task-ledger' tag,
+                # so ledgers stay tag-searchable regardless of whether the
+                # model remembered to pass tags.
+                _tags = list(tool_args.get("tags") or [])
+                _proj_prefix = f"{_ps(effective_project)}/"
+                if (norm.startswith(_proj_prefix + "task-ledger/")
+                        and "task-ledger" not in _tags):
+                    _tags.append("task-ledger")
+
                 final_path = norm
                 a = None
                 for n in range(50):
@@ -3030,7 +3197,7 @@ async def execute_tool(
                             content=tool_args["content"],
                             content_type=tool_args.get("content_type") or "text/markdown",
                             title=tool_args.get("title"),
-                            tags=tool_args.get("tags"),
+                            tags=_tags or None,
                             source={"kind": "agent", "session_id": session_id or ""},
                             edited_by=session_id or "agent",
                         )
@@ -3268,8 +3435,98 @@ async def execute_tool(
                 return f"GitHub error: {e}"
 
         elif tool_name.startswith("git_"):
-            cwd = _get_workspace_base(effective_project)
-            if tool_name == "git_status":
+            # Prefer the bound repo's local checkout (created by
+            # git_sync_repo); fall back to the bare workspace dir for
+            # legacy ad-hoc use.
+            cwd = _resolve_repo_checkout(effective_project) or _get_workspace_base(effective_project)
+
+            if tool_name == "git_sync_repo":
+                import shutil
+                from api.connections import get_project_repo_for_tools, get_token
+                spec = get_project_repo_for_tools(effective_project)
+                if not spec:
+                    return (f"No repo bound to project {effective_project}. Bind one "
+                            f"in Settings → Connections (add a PAT) then in the "
+                            f"Projects page pick a repo for this project.")
+                token = get_token(spec["connection_id"])  # None is fine for public repos
+                owner, repo = spec["owner"], spec["repo"]
+                branch = tool_args.get("branch") or spec["default_branch"] or "main"
+                dest = _repo_checkout_dir(effective_project, owner, repo)
+                clean_url = f"https://github.com/{owner}/{repo}.git"
+                auth_url = (f"https://{token}@github.com/{owner}/{repo}.git"
+                            if token else clean_url)
+
+                def _redact(s: str) -> str:
+                    return s.replace(token, "********") if token else s
+
+                if tool_args.get("fresh") and dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+
+                if (dest / ".git").exists():
+                    # Update existing checkout: fetch all branches, then
+                    # check out + fast-forward the requested one.
+                    code, out, err = await _run_git_cmd(
+                        ["fetch", auth_url,
+                         "+refs/heads/*:refs/remotes/origin/*"],
+                        dest, auto_init=False)
+                    if code != 0:
+                        return f"Fetch failed: {_redact(err or out)}"
+                    code, out, err = await _run_git_cmd(
+                        ["checkout", branch], dest, auto_init=False)
+                    if code != 0:
+                        code, out, err = await _run_git_cmd(
+                            ["checkout", "-b", branch, f"origin/{branch}"],
+                            dest, auto_init=False)
+                        if code != 0:
+                            # Branch doesn't exist remotely either — create
+                            # it locally from the current HEAD.
+                            code, out, err = await _run_git_cmd(
+                                ["checkout", "-b", branch], dest, auto_init=False)
+                            if code != 0:
+                                return (f"Synced refs but could not check out "
+                                        f"'{branch}': {_redact(err or out)}")
+                    ff_code, _, ff_err = await _run_git_cmd(
+                        ["merge", "--ff-only", f"origin/{branch}"],
+                        dest, auto_init=False)
+                    ff_note = ("" if ff_code == 0 else
+                               "\nNote: could not fast-forward (local commits "
+                               "or no matching remote branch) — working tree "
+                               "left as-is.")
+                    _install_precommit_hook(dest)  # refresh on every sync
+                    action = "Updated existing checkout"
+                else:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    code, out, err = await _run_git_cmd(
+                        ["clone", auth_url, str(dest)],
+                        dest.parent, auto_init=False)
+                    if code != 0:
+                        return f"Clone failed: {_redact(err or out)}"
+                    # Don't persist the token in .git/config
+                    await _run_git_cmd(["remote", "set-url", "origin", clean_url],
+                                       dest, auto_init=False)
+                    await _run_git_cmd(["config", "user.email", "agent@pantheon.local"],
+                                       dest, auto_init=False)
+                    await _run_git_cmd(["config", "user.name", "Pantheon Agent"],
+                                       dest, auto_init=False)
+                    _install_precommit_hook(dest)
+                    code, out, err = await _run_git_cmd(
+                        ["checkout", branch], dest, auto_init=False)
+                    if code != 0:
+                        await _run_git_cmd(["checkout", "-b", branch],
+                                           dest, auto_init=False)
+                    ff_note = ""
+                    action = "Cloned"
+
+                _, head, _ = await _run_git_cmd(["log", "-1", "--oneline"],
+                                                dest, auto_init=False)
+                rel = dest.relative_to(_get_workspace_base(effective_project))
+                return (f"{action} {owner}/{repo} at workspace path '{rel}/'.\n"
+                        f"Branch: {branch}\nHEAD: {head}\n"
+                        f"git_* tools and run_command now operate on this "
+                        f"checkout; read_file/write_file reach it via "
+                        f"'{rel}/<path>'.{ff_note}")
+
+            elif tool_name == "git_status":
                 code, stdout, stderr = await _run_git_cmd(["status", "--porcelain"], cwd)
                 if code != 0:
                     return f"Git status error: {stderr or stdout}"
@@ -3286,6 +3543,85 @@ async def execute_tool(
                     return f"Switched to existing branch {branch_name}"
                 return f"Created and switched to branch {branch_name}"
 
+            elif tool_name == "git_merge":
+                if tool_args.get("abort"):
+                    code, stdout, stderr = await _run_git_cmd(
+                        ["merge", "--abort"], cwd, auto_init=False)
+                    if code != 0:
+                        return f"Could not abort merge: {stderr or stdout}"
+                    return "Merge aborted — working tree restored."
+
+                branch = (tool_args.get("branch") or "").strip()
+                if not branch:
+                    return "git_merge: 'branch' is required (or pass abort=true)."
+
+                # Resolve the ref: as-given first, then origin/<branch>
+                ref = branch
+                code, _, _ = await _run_git_cmd(
+                    ["rev-parse", "--verify", "--quiet", ref], cwd, auto_init=False)
+                if code != 0:
+                    code, _, _ = await _run_git_cmd(
+                        ["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+                        cwd, auto_init=False)
+                    if code != 0:
+                        return (f"git_merge: ref '{branch}' not found locally or as "
+                                f"origin/{branch}. Run git_sync_repo first to fetch "
+                                f"all remote branches.")
+                    ref = f"origin/{branch}"
+
+                _, cur_branch, _ = await _run_git_cmd(
+                    ["branch", "--show-current"], cwd, auto_init=False)
+                cur_branch = cur_branch.strip() or "(detached HEAD)"
+                msg = tool_args.get("message") or f"Merge {ref} into {cur_branch}"
+                code, stdout, stderr = await _run_git_cmd(
+                    ["merge", "--no-ff", "-m", msg, ref], cwd, auto_init=False)
+                if code == 0:
+                    _, head, _ = await _run_git_cmd(
+                        ["log", "-1", "--oneline"], cwd, auto_init=False)
+                    return f"Merged '{ref}' into '{cur_branch}'.\nHEAD: {head}"
+
+                _, conflicted, _ = await _run_git_cmd(
+                    ["diff", "--name-only", "--diff-filter=U"], cwd, auto_init=False)
+                files = [f for f in conflicted.splitlines() if f.strip()]
+                if not files:
+                    # Failed for a non-conflict reason (dirty tree, etc.) —
+                    # make sure no half-merge state lingers.
+                    await _run_git_cmd(["merge", "--abort"], cwd, auto_init=False)
+                    return (f"Merge of '{ref}' failed (no conflicts): "
+                            f"{stderr or stdout}\nAny partial merge was aborted.")
+
+                sections = []
+                for f in files[:10]:
+                    try:
+                        lines = (cwd / f).read_text(errors="replace").splitlines()
+                    except Exception:
+                        lines = []
+                    hunks, snippet, capture = [], [], False
+                    for i, ln in enumerate(lines, 1):
+                        if ln.startswith("<<<<<<< "):
+                            capture, snippet = True, [f"  line {i}:"]
+                        if capture:
+                            snippet.append("  " + ln)
+                        if capture and ln.startswith(">>>>>>> "):
+                            capture = False
+                            hunks.append("\n".join(snippet))
+                    joined = "\n".join(hunks[:5])
+                    if len(joined) > 4000:
+                        joined = joined[:4000] + "\n  …(truncated)"
+                    sections.append(f"--- {f} ---\n{joined or '  (markers not shown — read the file)'}")
+                more = (f"\n(+{len(files) - 10} more conflicted files)"
+                        if len(files) > 10 else "")
+                return (f"Merge of '{ref}' into '{cur_branch}' has CONFLICTS "
+                        f"in {len(files)} file(s):{more}\n\n"
+                        + "\n\n".join(sections)
+                        + "\n\nTO RESOLVE: edit ONLY the conflicted regions in "
+                          "each file — choose or combine the code between the "
+                          "<<<<<<< and >>>>>>> markers, delete the markers, and "
+                          "leave the rest of the file untouched. Do NOT rewrite "
+                          "whole files from memory. Validate with run_command "
+                          "(compiler/tests), then git_commit to conclude the "
+                          "merge. To bail out, call git_merge with abort=true.")
+
             elif tool_name == "git_commit":
                 message = tool_args["message"]
                 files = tool_args.get("files") or []
@@ -3299,10 +3635,26 @@ async def execute_tool(
                     if code != 0:
                         return f"Error staging changes: {stderr or stdout}"
 
+                # Refuse to commit unresolved conflict markers. ('=======' is
+                # not matched alone — it false-positives on setext/reST
+                # headings; the <<< / >>> lines are unambiguous.)
+                code, hits, _ = await _run_git_cmd(
+                    ["grep", "--cached", "-nE", "^(<{7}|>{7})( |$)"],
+                    cwd, auto_init=False)
+                if code == 0 and hits.strip():
+                    return ("Refusing to commit: unresolved merge-conflict "
+                            "markers are staged:\n" + hits[:1500] +
+                            "\nResolve the conflicts first (keep the right "
+                            "code, delete the <<<<<<</=======/>>>>>>> marker "
+                            "lines), then git_commit again.")
+
                 code, stdout, stderr = await _run_git_cmd(["commit", "-m", message], cwd)
                 if code != 0:
                     return f"Error committing: {stderr or stdout}"
-                return f"Committed successfully: {stdout}"
+                _, cur_branch, _ = await _run_git_cmd(
+                    ["branch", "--show-current"], cwd, auto_init=False)
+                return (f"Committed successfully on branch "
+                        f"'{cur_branch.strip() or '(detached HEAD)'}': {stdout}")
 
             elif tool_name == "git_push_pr":
                 from api.connections import (
@@ -3712,9 +4064,69 @@ def _safe_workspace_path(rel_path: str, project_id: str | None = None) -> Path:
     return target
 
 
-async def _run_git_cmd(args: list[str], cwd: Path) -> tuple[int, str, str]:
+_PRECOMMIT_MARKER = "# pantheon-conflict-guard"
+
+_PRECOMMIT_HOOK = f"""#!/bin/sh
+{_PRECOMMIT_MARKER}
+# Installed by Pantheon's git_sync_repo. Rejects unresolved merge-conflict
+# markers in the files being committed, regardless of which tool invokes
+# the commit (git_commit tool, run_command, or a human in the checkout).
+# Scoped to staged files only so pre-existing content that legitimately
+# documents conflict markers doesn't block unrelated commits.
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$files" ] && exit 0
+hits=$(printf '%s\\n' "$files" | tr '\\n' '\\0' | xargs -0 git grep --cached -nE '^(<{{7}}|>{{7}})( |$)' -- 2>/dev/null)
+if [ -n "$hits" ]; then
+  echo "pantheon pre-commit: refusing to commit unresolved merge-conflict markers:" >&2
+  echo "$hits" >&2
+  echo "Resolve the conflicts first (keep the right code, delete the <<<<<<</=======/>>>>>>> marker lines), then commit again." >&2
+  exit 1
+fi
+exit 0
+"""
+
+
+def _install_precommit_hook(repo_dir: Path) -> str:
+    """Install (or refresh) the conflict-marker pre-commit hook.
+
+    Returns a short status string for the tool result. Never clobbers a
+    hook Pantheon didn't write."""
+    try:
+        hooks = repo_dir / ".git" / "hooks"
+        hook = hooks / "pre-commit"
+        if hook.exists() and _PRECOMMIT_MARKER not in hook.read_text(errors="replace"):
+            return "existing non-Pantheon pre-commit hook left untouched"
+        hooks.mkdir(parents=True, exist_ok=True)
+        hook.write_text(_PRECOMMIT_HOOK)
+        hook.chmod(0o755)
+        return "conflict-marker pre-commit guard installed"
+    except Exception as e:
+        logger.debug("pre-commit hook install failed: %s", e)
+        return f"pre-commit hook install failed: {e}"
+
+
+def _repo_checkout_dir(project_id: str | None, owner: str, repo: str) -> Path:
+    """Canonical location of a repo's local checkout inside the workspace."""
+    return _get_workspace_base(project_id) / "repos" / f"{owner}__{repo}"
+
+
+def _resolve_repo_checkout(project_id: str | None) -> Path | None:
+    """Path of the bound repo's local checkout, or None if the project has
+    no repo binding or git_sync_repo hasn't cloned it yet."""
+    try:
+        from api.connections import get_project_repo_for_tools
+        spec = get_project_repo_for_tools(project_id or "default")
+    except Exception:
+        return None
+    if not spec:
+        return None
+    d = _repo_checkout_dir(project_id, spec["owner"], spec["repo"])
+    return d if (d / ".git").exists() else None
+
+
+async def _run_git_cmd(args: list[str], cwd: Path, auto_init: bool = True) -> tuple[int, str, str]:
     """Execute a git command in the specified workspace directory, initializing it first if needed."""
-    if not (cwd / ".git").exists():
+    if auto_init and not (cwd / ".git").exists():
         # Initialize repository
         p_init = await asyncio.create_subprocess_exec(
             "git", "init",
