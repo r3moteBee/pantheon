@@ -3492,6 +3492,7 @@ async def execute_tool(
                                "\nNote: could not fast-forward (local commits "
                                "or no matching remote branch) — working tree "
                                "left as-is.")
+                    _install_precommit_hook(dest)  # refresh on every sync
                     action = "Updated existing checkout"
                 else:
                     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -3507,6 +3508,7 @@ async def execute_tool(
                                        dest, auto_init=False)
                     await _run_git_cmd(["config", "user.name", "Pantheon Agent"],
                                        dest, auto_init=False)
+                    _install_precommit_hook(dest)
                     code, out, err = await _run_git_cmd(
                         ["checkout", branch], dest, auto_init=False)
                     if code != 0:
@@ -4060,6 +4062,47 @@ def _safe_workspace_path(rel_path: str, project_id: str | None = None) -> Path:
     if not str(target).startswith(str(base)):
         raise ValueError(f"Path traversal denied: {rel_path}")
     return target
+
+
+_PRECOMMIT_MARKER = "# pantheon-conflict-guard"
+
+_PRECOMMIT_HOOK = f"""#!/bin/sh
+{_PRECOMMIT_MARKER}
+# Installed by Pantheon's git_sync_repo. Rejects unresolved merge-conflict
+# markers in the files being committed, regardless of which tool invokes
+# the commit (git_commit tool, run_command, or a human in the checkout).
+# Scoped to staged files only so pre-existing content that legitimately
+# documents conflict markers doesn't block unrelated commits.
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$files" ] && exit 0
+hits=$(printf '%s\\n' "$files" | tr '\\n' '\\0' | xargs -0 git grep --cached -nE '^(<{{7}}|>{{7}})( |$)' -- 2>/dev/null)
+if [ -n "$hits" ]; then
+  echo "pantheon pre-commit: refusing to commit unresolved merge-conflict markers:" >&2
+  echo "$hits" >&2
+  echo "Resolve the conflicts first (keep the right code, delete the <<<<<<</=======/>>>>>>> marker lines), then commit again." >&2
+  exit 1
+fi
+exit 0
+"""
+
+
+def _install_precommit_hook(repo_dir: Path) -> str:
+    """Install (or refresh) the conflict-marker pre-commit hook.
+
+    Returns a short status string for the tool result. Never clobbers a
+    hook Pantheon didn't write."""
+    try:
+        hooks = repo_dir / ".git" / "hooks"
+        hook = hooks / "pre-commit"
+        if hook.exists() and _PRECOMMIT_MARKER not in hook.read_text(errors="replace"):
+            return "existing non-Pantheon pre-commit hook left untouched"
+        hooks.mkdir(parents=True, exist_ok=True)
+        hook.write_text(_PRECOMMIT_HOOK)
+        hook.chmod(0o755)
+        return "conflict-marker pre-commit guard installed"
+    except Exception as e:
+        logger.debug("pre-commit hook install failed: %s", e)
+        return f"pre-commit hook install failed: {e}"
 
 
 def _repo_checkout_dir(project_id: str | None, owner: str, repo: str) -> Path:
