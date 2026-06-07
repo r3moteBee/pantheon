@@ -155,6 +155,14 @@ async def lifespan(app: FastAPI):
         try:
             from jobs.handlers.bootstrap import bootstrap_handlers
             bootstrap_handlers()
+            # Recover jobs orphaned by the previous process dying mid-run —
+            # must happen BEFORE the worker starts so a requeued job can't
+            # race its own orphaned predecessor.
+            from jobs.recovery import recover_orphaned_jobs
+            try:
+                recover_orphaned_jobs()
+            except Exception:
+                logger.exception("Orphan recovery failed")
             from jobs.worker import get_worker
             from jobs.watchdog import get_watchdog
             get_worker().start()

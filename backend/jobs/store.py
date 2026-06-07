@@ -192,11 +192,30 @@ class JobStore:
         try: return self.get(job_id)
         except JobNotFound: return None
 
-    def rerun(self, job_id: str) -> dict[str, Any]:
+    # NOTE: _record_failure_to_memory (module-level, defined below the
+    # class) was referenced by fail()/stall_running() but never existed —
+    # every failure note silently raised NameError into catch-all handlers.
+
+    def mark_stalled(self, job_id: str, *, error: str) -> None:
+        """Mark a single running job stalled with a specific error message.
+        Used by startup orphan recovery (vs. stall_running's bulk sweep)."""
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE jobs SET status = ?, completed_at = ?, error = ?
+                   WHERE id = ? AND status = 'running'""",
+                (JobStatus.STALLED, _now(), error, job_id),
+            )
+        _record_failure_to_memory(self, job_id, error)
+
+    def rerun(self, job_id: str,
+              extra_payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """Create a fresh job that mirrors a previous (completed/failed/
         cancelled/stalled) one. Same payload, title, description,
         project_id, job_type, schedule_id, timeout. Status starts at
         QUEUED so the worker picks it up.
+
+        extra_payload entries are merged over the copied payload (used by
+        orphan recovery to thread the auto_requeue_count).
 
         The original job row is left untouched — this gives you a
         history of attempts rather than overwriting the original.
@@ -209,6 +228,7 @@ class JobStore:
             )
         new_id = str(uuid.uuid4())
         now = _now()
+        new_payload = {**(old.get("payload") or {}), **(extra_payload or {})}
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO jobs
@@ -220,7 +240,7 @@ class JobStore:
                     new_id, old["job_type"], old["project_id"], JobStatus.QUEUED,
                     old.get("title") or old["job_type"],
                     old.get("description") or "",
-                    json.dumps(old.get("payload") or {}),
+                    json.dumps(new_payload),
                     None,                       # scheduled_for: run now
                     old.get("timeout_seconds"),
                     old.get("max_attempts") or 1,
@@ -453,6 +473,36 @@ class JobStore:
                 d[k] = {}
         d["cancel_requested"] = bool(d.get("cancel_requested"))
         return d
+
+
+def _record_failure_to_memory(store: "JobStore", job_id: str, error: str) -> None:
+    """Best-effort episodic task-log note about a job failure/stall.
+
+    Must NEVER raise — the job-state transition matters more than the
+    memory note. Called from sync store methods, so the async episodic
+    write is scheduled onto the running loop when one exists (the FastAPI
+    process) and run inline otherwise (tests, CLI)."""
+    try:
+        job = store.get_or_none(job_id)
+        if not job:
+            return
+        import asyncio
+        from memory.episodic import EpisodicMemory
+        em = EpisodicMemory(project_id=job.get("project_id") or "default")
+        coro = em.log_task_event(
+            task_id=job_id,
+            event="failed",
+            project_id=job.get("project_id") or "default",
+            task_name=job.get("title") or job.get("job_type") or "job",
+            details=(error or "")[:500],
+        )
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(coro)
+        except RuntimeError:
+            asyncio.run(coro)
+    except Exception:
+        logger.debug("episodic failure note skipped", exc_info=True)
 
 
 _INSTANCE: JobStore | None = None
