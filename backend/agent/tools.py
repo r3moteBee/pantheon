@@ -619,6 +619,23 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "get_self_documentation",
+            "description": (
+                "Retrieve the system self-documentation. Use this tool "
+                "when the user asks questions about the agent's prompt skills, "
+                "active configuration state, architecture/storage tiers, or "
+                "the current local deployment status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_skill",
             "description": (
                 "Create a reusable, callable SKILL — NOT a scheduled "
@@ -2645,6 +2662,13 @@ async def execute_tool(
                 f"Worker picks it up on the next poll. Track via "
                 f"get_job_status({new_job['id'][:8]!r})."
             )
+
+        elif tool_name == "get_self_documentation":
+            try:
+                from utils.self_doc import generate_self_doc
+                return generate_self_doc()
+            except Exception as e:
+                return f"get_self_documentation failed: {e}"
 
         elif tool_name == "create_skill":
             from skills import editor as _skill_ed

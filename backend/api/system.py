@@ -169,3 +169,11 @@ async def execute_update(payload: dict[str, Any]) -> dict[str, Any]:
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start update script: {str(e)}")
+
+
+@router.get("/system/self-doc")
+async def system_self_doc() -> dict[str, Any]:
+    """Retrieve self-documentation information."""
+    from utils.self_doc import generate_self_doc
+    return {"documentation": generate_self_doc()}
+
