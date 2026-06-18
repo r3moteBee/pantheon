@@ -23,12 +23,37 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
   const [dcGuildIds, setDcGuildIds] = useState('')
   const [dcScope, setDcScope] = useState('guild')
 
+  // Slack fields
+  const [slackToken, setSlackToken] = useState('')
+  const [slackAppToken, setSlackAppToken] = useState('')
+  const [slackChannelIds, setSlackChannelIds] = useState('')
+
+  // Matrix fields
+  const [matrixHomeserver, setMatrixHomeserver] = useState('')
+  const [matrixUserId, setMatrixUserId] = useState('')
+  const [matrixAccessToken, setMatrixAccessToken] = useState('')
+
+  // Mattermost fields
+  const [mmUrl, setMmUrl] = useState('')
+  const [mmToken, setMmToken] = useState('')
+  const [mmScheme, setMmScheme] = useState('https')
+  const [mmPort, setMmPort] = useState(443)
+
   useEffect(() => {
     if (adapter.name === 'telegram') {
       setTgChatIds(appSettings?.telegram_allowed_chat_ids || '')
     } else if (adapter.name === 'discord') {
       setDcGuildIds(appSettings?.discord_allowed_guild_ids || '')
       setDcScope(appSettings?.discord_command_scope || 'guild')
+    } else if (adapter.name === 'slack') {
+      setSlackChannelIds(appSettings?.slack_allowed_channel_ids || '')
+    } else if (adapter.name === 'matrix') {
+      setMatrixHomeserver(appSettings?.matrix_homeserver_url || 'https://matrix.org')
+      setMatrixUserId(appSettings?.matrix_user_id || '')
+    } else if (adapter.name === 'mattermost') {
+      setMmUrl(appSettings?.mattermost_url || '')
+      setMmScheme(appSettings?.mattermost_scheme || 'https')
+      setMmPort(appSettings?.mattermost_port || 443)
     }
   }, [adapter.name, appSettings])
 
@@ -45,10 +70,27 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
         payload.discord_allowed_guild_ids = dcGuildIds
         payload.discord_command_scope = dcScope
         if (dcToken) payload.discord_bot_token = dcToken
+      } else if (adapter.name === 'slack') {
+        payload.slack_allowed_channel_ids = slackChannelIds
+        if (slackToken) payload.slack_bot_token = slackToken
+        if (slackAppToken) payload.slack_app_token = slackAppToken
+      } else if (adapter.name === 'matrix') {
+        payload.matrix_homeserver_url = matrixHomeserver
+        payload.matrix_user_id = matrixUserId
+        if (matrixAccessToken) payload.matrix_access_token = matrixAccessToken
+      } else if (adapter.name === 'mattermost') {
+        payload.mattermost_url = mmUrl
+        payload.mattermost_scheme = mmScheme
+        payload.mattermost_port = parseInt(mmPort, 10) || 443
+        if (mmToken) payload.mattermost_bot_token = mmToken
       }
       await settingsApi.update(payload)
       setTgToken('')
       setDcToken('')
+      setSlackToken('')
+      setSlackAppToken('')
+      setMatrixAccessToken('')
+      setMmToken('')
       addNotification({ type: 'success', message: `${adapter.display_name} settings saved.` })
       if (onSave) onSave()
     } catch (err) {
@@ -80,7 +122,15 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
 
   const tokenSet = adapter.name === 'telegram'
     ? appSettings?.telegram_bot_token_set
-    : appSettings?.discord_bot_token_set
+    : adapter.name === 'discord'
+    ? appSettings?.discord_bot_token_set
+    : adapter.name === 'slack'
+    ? appSettings?.slack_bot_token_set && appSettings?.slack_app_token_set
+    : adapter.name === 'matrix'
+    ? appSettings?.matrix_access_token_set
+    : adapter.name === 'mattermost'
+    ? appSettings?.mattermost_bot_token_set
+    : false
 
   return (
     <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4">
@@ -163,6 +213,119 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   <option value="guild">Guild (instant, per-server)</option>
                   <option value="global">Global (all servers, ~1hr delay)</option>
                 </select>
+              </div>
+            </>
+          )}
+
+          {adapter.name === 'slack' && (
+            <>
+              <p className="text-xs text-gray-500">
+                Connect a Slack bot via WebSockets (Socket Mode).
+                Requires a Slack App with <strong>connections:write</strong> and <strong>app_mentions:read</strong> / <strong>message:im</strong> scopes.
+              </p>
+              <TokenField
+                label="Bot User OAuth Token (xoxb-...)"
+                value={slackToken}
+                onChange={setSlackToken}
+                tokenSet={appSettings?.slack_bot_token_set}
+              />
+              <TokenField
+                label="App-Level Token (xapp-...)"
+                value={slackAppToken}
+                onChange={setSlackAppToken}
+                tokenSet={appSettings?.slack_app_token_set}
+              />
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Allowed Channel IDs</label>
+                <input
+                  type="text"
+                  value={slackChannelIds}
+                  onChange={(e) => setSlackChannelIds(e.target.value)}
+                  placeholder="C123456, C789012"
+                  className={inputClass}
+                />
+                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Leave blank to allow all.</p>
+              </div>
+            </>
+          )}
+
+          {adapter.name === 'matrix' && (
+            <>
+              <p className="text-xs text-gray-500">
+                Connect a Matrix bot to your homeserver.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Homeserver URL</label>
+                <input
+                  type="text"
+                  value={matrixHomeserver}
+                  onChange={(e) => setMatrixHomeserver(e.target.value)}
+                  placeholder="https://matrix.org"
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Bot User ID</label>
+                <input
+                  type="text"
+                  value={matrixUserId}
+                  onChange={(e) => setMatrixUserId(e.target.value)}
+                  placeholder="@mybot:matrix.org"
+                  className={inputClass}
+                />
+              </div>
+              <TokenField
+                label="Access Token"
+                value={matrixAccessToken}
+                onChange={setMatrixAccessToken}
+                tokenSet={appSettings?.matrix_access_token_set}
+              />
+            </>
+          )}
+
+          {adapter.name === 'mattermost' && (
+            <>
+              <p className="text-xs text-gray-500">
+                Connect a Mattermost bot integration using WebSockets.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Mattermost Server URL</label>
+                <input
+                  type="text"
+                  value={mmUrl}
+                  onChange={(e) => setMmUrl(e.target.value)}
+                  placeholder="chat.example.com"
+                  className={inputClass}
+                />
+              </div>
+              <TokenField
+                label="Bot Access Token"
+                value={mmToken}
+                onChange={setMmToken}
+                tokenSet={appSettings?.mattermost_bot_token_set}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1.5">Scheme</label>
+                  <select
+                    value={mmScheme}
+                    onChange={(e) => setMmScheme(e.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="https">HTTPS</option>
+                    <option value="http">HTTP</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1.5">Port</label>
+                  <input
+                    type="number"
+                    value={mmPort}
+                    onChange={(e) => setMmPort(e.target.value)}
+                    placeholder="443"
+                    className={inputClass}
+                  />
+                </div>
               </div>
             </>
           )}
@@ -268,6 +431,9 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
   const platformIcon = (p) => {
     if (p === 'discord') return '#'
     if (p === 'telegram') return '💬'
+    if (p === 'slack') return '⚙️'
+    if (p === 'matrix') return 'Ⓜ️'
+    if (p === 'mattermost') return 'M'
     return '•'
   }
 

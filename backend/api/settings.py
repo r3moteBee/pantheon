@@ -40,6 +40,16 @@ class SettingsUpdate(BaseModel):
     discord_bot_token: str | None = None
     discord_allowed_guild_ids: str | None = None
     discord_command_scope: str | None = None
+    slack_bot_token: str | None = None
+    slack_app_token: str | None = None
+    slack_allowed_channel_ids: str | None = None
+    matrix_homeserver_url: str | None = None
+    matrix_user_id: str | None = None
+    matrix_access_token: str | None = None
+    mattermost_url: str | None = None
+    mattermost_bot_token: str | None = None
+    mattermost_scheme: str | None = None
+    mattermost_port: int | None = None
     messaging_default_project: str | None = None
     memory_recall_enabled: bool | None = None
     personality_weight: str | None = None
@@ -113,6 +123,16 @@ def _get_effective_settings() -> dict[str, Any]:
         "discord_bot_token_set": bool(vault.get_secret("discord_bot_token") or settings_config.discord_bot_token),
         "discord_allowed_guild_ids": vault.get_secret("discord_allowed_guild_ids") or getattr(settings_config, "discord_allowed_guild_ids", ""),
         "discord_command_scope": vault.get_secret("discord_command_scope") or "guild",
+        "slack_bot_token_set": bool(vault.get_secret("slack_bot_token") or settings_config.slack_bot_token),
+        "slack_app_token_set": bool(vault.get_secret("slack_app_token") or settings_config.slack_app_token),
+        "slack_allowed_channel_ids": vault.get_secret("slack_allowed_channel_ids") or settings_config.slack_allowed_channel_ids,
+        "matrix_homeserver_url": vault.get_secret("matrix_homeserver_url") or settings_config.matrix_homeserver_url,
+        "matrix_user_id": vault.get_secret("matrix_user_id") or settings_config.matrix_user_id,
+        "matrix_access_token_set": bool(vault.get_secret("matrix_access_token") or settings_config.matrix_access_token),
+        "mattermost_url": vault.get_secret("mattermost_url") or settings_config.mattermost_url,
+        "mattermost_bot_token_set": bool(vault.get_secret("mattermost_bot_token") or settings_config.mattermost_bot_token),
+        "mattermost_scheme": vault.get_secret("mattermost_scheme") or settings_config.mattermost_scheme,
+        "mattermost_port": int(vault.get_secret("mattermost_port") or settings_config.mattermost_port),
         "messaging_default_project": vault.get_secret("messaging_default_project") or "default",
         "app_env": settings_config.app_env,
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
@@ -191,6 +211,26 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
             vault.set_secret("discord_command_scope", val)
     if req.messaging_default_project is not None:
         vault.set_secret("messaging_default_project", req.messaging_default_project)
+    if req.slack_bot_token is not None:
+        vault.set_secret("slack_bot_token", req.slack_bot_token)
+    if req.slack_app_token is not None:
+        vault.set_secret("slack_app_token", req.slack_app_token)
+    if req.slack_allowed_channel_ids is not None:
+        vault.set_secret("slack_allowed_channel_ids", req.slack_allowed_channel_ids)
+    if req.matrix_homeserver_url is not None:
+        vault.set_secret("matrix_homeserver_url", req.matrix_homeserver_url)
+    if req.matrix_user_id is not None:
+        vault.set_secret("matrix_user_id", req.matrix_user_id)
+    if req.matrix_access_token is not None:
+        vault.set_secret("matrix_access_token", req.matrix_access_token)
+    if req.mattermost_url is not None:
+        vault.set_secret("mattermost_url", req.mattermost_url)
+    if req.mattermost_bot_token is not None:
+        vault.set_secret("mattermost_bot_token", req.mattermost_bot_token)
+    if req.mattermost_scheme is not None:
+        vault.set_secret("mattermost_scheme", req.mattermost_scheme)
+    if req.mattermost_port is not None:
+        vault.set_secret("mattermost_port", str(req.mattermost_port))
     if req.memory_recall_enabled is not None:
         vault.set_secret("memory_recall_enabled", str(req.memory_recall_enabled).lower())
     if req.personality_weight is not None:

@@ -161,6 +161,27 @@ class MessagingGateway:
             except Exception as exc:
                 logger.debug("Discord adapter not available: %s", exc)
 
+        if "slack" not in self._adapters:
+            try:
+                from messaging.adapters.slack import SlackAdapter
+                self.register(SlackAdapter())
+            except Exception as exc:
+                logger.debug("Slack adapter not available: %s", exc)
+
+        if "matrix" not in self._adapters:
+            try:
+                from messaging.adapters.matrix import MatrixAdapter
+                self.register(MatrixAdapter())
+            except Exception as exc:
+                logger.debug("Matrix adapter not available: %s", exc)
+
+        if "mattermost" not in self._adapters:
+            try:
+                from messaging.adapters.mattermost import MattermostAdapter
+                self.register(MattermostAdapter())
+            except Exception as exc:
+                logger.debug("Mattermost adapter not available: %s", exc)
+
 
 @lru_cache()
 def get_messaging_gateway() -> MessagingGateway:

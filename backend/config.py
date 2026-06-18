@@ -50,6 +50,22 @@ class Settings(BaseSettings):
     discord_bot_token: str = Field(default="", env="DISCORD_BOT_TOKEN")
     discord_allowed_guild_ids: str = Field(default="", env="DISCORD_ALLOWED_GUILD_IDS")
 
+    # Slack
+    slack_bot_token: str = Field(default="", env="SLACK_BOT_TOKEN")
+    slack_app_token: str = Field(default="", env="SLACK_APP_TOKEN")
+    slack_allowed_channel_ids: str = Field(default="", env="SLACK_ALLOWED_CHANNEL_IDS")
+
+    # Matrix
+    matrix_homeserver_url: str = Field(default="", env="MATRIX_HOMESERVER_URL")
+    matrix_user_id: str = Field(default="", env="MATRIX_USER_ID")
+    matrix_access_token: str = Field(default="", env="MATRIX_ACCESS_TOKEN")
+
+    # Mattermost
+    mattermost_url: str = Field(default="", env="MATTERMOST_URL")
+    mattermost_bot_token: str = Field(default="", env="MATTERMOST_BOT_TOKEN")
+    mattermost_scheme: str = Field(default="https", env="MATTERMOST_SCHEME")
+    mattermost_port: int = Field(default=443, env="MATTERMOST_PORT")
+
     # Application
     app_env: str = Field(default="development", env="APP_ENV")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
