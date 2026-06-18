@@ -4,7 +4,7 @@ import {
   Trash2, ChevronDown, ChevronUp, Wifi, WifiOff, Hash
 } from 'lucide-react'
 import { settingsApi, messagingApi, projectsApi } from '../api/client'
-import useStore from '../store'
+import { useStore } from '../store'
 
 // ── Adapter credential card ────────────────────────────────────────────────
 
