@@ -117,7 +117,7 @@ class SlackAdapter(BaseMessagingAdapter):
                 return True
             return channel_id in allowed_channels
 
-        async def _run_agent(message_text: str, project: str, session_id: str) -> str:
+        async def _run_agent(message_text: str, project: str, session_id: str, skill_context=None, active_skill_name=None) -> str:
             from agent.core import AgentCore
             from memory.manager import create_memory_manager
             from models.provider import get_provider
@@ -133,6 +133,8 @@ class SlackAdapter(BaseMessagingAdapter):
                 memory_manager=memory,
                 project_id=project,
                 session_id=session_id,
+                skill_context=skill_context,
+                active_skill_name=active_skill_name,
             )
             return await agent.run_autonomous(message_text) or "No response."
 
@@ -272,14 +274,69 @@ class SlackAdapter(BaseMessagingAdapter):
                     return
 
             # Plain text chat
-            # Post a typing indicator or ack message if long-running
             try:
-                # Run the agent in a thread or asyncio task
-                reply = await _run_agent(clean_text, project, session_id)
-                await client.web_client.chat_postMessage(channel=channel_id, text=reply)
+                # Run the agent in a background task
+                async def _process():
+                    try:
+                        resolved_ctx = None
+                        resolved_skill = None
+                        text_to_process = clean_text
+
+                        try:
+                            from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
+                            from skills.registry import get_skill_registry
+                            from skills.models import SkillDiscoveryMode
+
+                            explicit_skill, remaining = resolve_explicit(clean_text)
+                            if explicit_skill:
+                                registry = get_skill_registry()
+                                skill = registry.get(explicit_skill)
+                                if skill:
+                                    try:
+                                        from skills import analytics as _sa
+                                        _sa.record_fire(explicit_skill, source="explicit")
+                                    except Exception:
+                                        pass
+                                    resolved_ctx = build_skill_context(skill, project_id=project)
+                                    resolved_skill = explicit_skill
+                                    text_to_process = remaining or clean_text
+                            else:
+                                try:
+                                    from secrets.vault import get_vault as _gv
+                                    _vault = _gv()
+                                    discovery_mode = _vault.get_secret(f"skill_discovery_{project}") or "off"
+                                except Exception:
+                                    discovery_mode = "off"
+
+                                if discovery_mode == "auto":
+                                    matches = resolve_auto(
+                                        clean_text, project_id=project,
+                                        mode=SkillDiscoveryMode("auto"), top_k=1,
+                                    )
+                                    if matches and matches[0]["score"] >= 2.0:
+                                        best = matches[0]
+                                        skill = best["skill"]
+                                        try:
+                                            from skills import analytics as _sa
+                                            _sa.record_fire(skill.name, source="auto")
+                                        except Exception:
+                                            pass
+                                        resolved_ctx = build_skill_context(skill, project_id=project)
+                                        resolved_skill = skill.name
+                                        await client.web_client.chat_postMessage(channel=channel_id, text=f"⚡ Auto-activating skill: /{skill.name}")
+                        except ImportError:
+                            pass
+                        except Exception as e:
+                            logger.warning("Slack skill resolution failed: %s", e)
+
+                        reply = await _run_agent(text_to_process, project, session_id, skill_context=resolved_ctx, active_skill_name=resolved_skill)
+                        await client.web_client.chat_postMessage(channel=channel_id, text=reply)
+                    except Exception as e:
+                        logger.error("Error running agent from Slack: %s", e)
+                        await client.web_client.chat_postMessage(channel=channel_id, text=f"Error running agent: {str(e)}")
+                asyncio.create_task(_process())
             except Exception as e:
-                logger.error("Error running agent from Slack: %s", e)
-                await client.web_client.chat_postMessage(channel=channel_id, text=f"Error running agent: {str(e)}")
+                logger.error("Error scheduling agent from Slack: %s", e)
 
         _socket_client.socket_mode_request_listeners.append(handle_message)
         await _socket_client.connect()

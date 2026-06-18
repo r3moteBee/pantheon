@@ -102,7 +102,7 @@ class MatrixAdapter(BaseMessagingAdapter):
 
         adapter = self
 
-        async def _run_agent(message_text: str, project: str, session_id: str) -> str:
+        async def _run_agent(message_text: str, project: str, session_id: str, skill_context=None, active_skill_name=None) -> str:
             from agent.core import AgentCore
             from memory.manager import create_memory_manager
             from models.provider import get_provider
@@ -118,6 +118,8 @@ class MatrixAdapter(BaseMessagingAdapter):
                 memory_manager=memory,
                 project_id=project,
                 session_id=session_id,
+                skill_context=skill_context,
+                active_skill_name=active_skill_name,
             )
             return await agent.run_autonomous(message_text) or "No response."
 
@@ -278,19 +280,80 @@ class MatrixAdapter(BaseMessagingAdapter):
                     return
 
             try:
-                reply = await _run_agent(clean_text, project, session_id)
-                await client.room_send(
-                    room_id=room_id,
-                    message_type="m.room.message",
-                    content={"msgtype": "m.text", "body": reply}
-                )
+                # Run the agent in a background task
+                async def _process():
+                    try:
+                        resolved_ctx = None
+                        resolved_skill = None
+                        text_to_process = clean_text
+
+                        try:
+                            from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
+                            from skills.registry import get_skill_registry
+                            from skills.models import SkillDiscoveryMode
+
+                            explicit_skill, remaining = resolve_explicit(clean_text)
+                            if explicit_skill:
+                                registry = get_skill_registry()
+                                skill = registry.get(explicit_skill)
+                                if skill:
+                                    try:
+                                        from skills import analytics as _sa
+                                        _sa.record_fire(explicit_skill, source="explicit")
+                                    except Exception:
+                                        pass
+                                    resolved_ctx = build_skill_context(skill, project_id=project)
+                                    resolved_skill = explicit_skill
+                                    text_to_process = remaining or clean_text
+                            else:
+                                try:
+                                    from secrets.vault import get_vault as _gv
+                                    _vault = _gv()
+                                    discovery_mode = _vault.get_secret(f"skill_discovery_{project}") or "off"
+                                except Exception:
+                                    discovery_mode = "off"
+
+                                if discovery_mode == "auto":
+                                    matches = resolve_auto(
+                                        clean_text, project_id=project,
+                                        mode=SkillDiscoveryMode("auto"), top_k=1,
+                                    )
+                                    if matches and matches[0]["score"] >= 2.0:
+                                        best = matches[0]
+                                        skill = best["skill"]
+                                        try:
+                                            from skills import analytics as _sa
+                                            _sa.record_fire(skill.name, source="auto")
+                                        except Exception:
+                                            pass
+                                        resolved_ctx = build_skill_context(skill, project_id=project)
+                                        resolved_skill = skill.name
+                                        await client.room_send(
+                                            room_id=room_id,
+                                            message_type="m.room.message",
+                                            content={"msgtype": "m.text", "body": f"⚡ Auto-activating skill: /{skill.name}"}
+                                        )
+                        except ImportError:
+                            pass
+                        except Exception as e:
+                            logger.warning("Matrix skill resolution failed: %s", e)
+
+                        reply = await _run_agent(text_to_process, project, session_id, skill_context=resolved_ctx, active_skill_name=resolved_skill)
+                        await client.room_send(
+                            room_id=room_id,
+                            message_type="m.room.message",
+                            content={"msgtype": "m.text", "body": reply}
+                        )
+                    except Exception as e:
+                        logger.error("Error running agent from Matrix: %s", e)
+                        await client.room_send(
+                            room_id=room_id,
+                            message_type="m.room.message",
+                            content={"msgtype": "m.text", "body": f"Error running agent: {str(e)}"}
+                        )
+                asyncio.create_task(_process())
             except Exception as e:
-                logger.error("Error running agent from Matrix: %s", e)
-                await client.room_send(
-                    room_id=room_id,
-                    message_type="m.room.message",
-                    content={"msgtype": "m.text", "body": f"Error running agent: {str(e)}"}
-                )
+                logger.error("Error scheduling agent from Matrix: %s", e)
 
         # Start background sync task
         async def sync_loop():

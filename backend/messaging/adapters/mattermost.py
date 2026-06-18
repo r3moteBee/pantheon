@@ -120,7 +120,7 @@ class MattermostAdapter(BaseMessagingAdapter):
 
         adapter = self
 
-        async def _run_agent(message_text: str, project: str, session_id: str) -> str:
+        async def _run_agent(message_text: str, project: str, session_id: str, skill_context=None, active_skill_name=None) -> str:
             from agent.core import AgentCore
             from memory.manager import create_memory_manager
             from models.provider import get_provider
@@ -136,6 +136,8 @@ class MattermostAdapter(BaseMessagingAdapter):
                 memory_manager=memory,
                 project_id=project,
                 session_id=session_id,
+                skill_context=skill_context,
+                active_skill_name=active_skill_name,
             )
             return await agent.run_autonomous(message_text) or "No response."
 
@@ -192,43 +194,31 @@ class MattermostAdapter(BaseMessagingAdapter):
 
                 if cmd in ("!project", "/project"):
                     if not arg:
-                        _driver.posts.create_post({
-                            'channel_id': channel_id,
-                            'message': f"Active project: {project}\nUsage: !project <name_or_id>"
-                        })
+                        await adapter.send_message(channel_id, f"Active project: {project}\nUsage: !project <name_or_id>")
                         return
                     from api.projects import _load_projects
                     existing = list(_load_projects().values())
                     match = next((p for p in existing if p["id"] == arg or p["name"].lower() == arg.lower()), None)
                     if not match:
                         names = ", ".join(p["id"] for p in existing)
-                        _driver.posts.create_post({
-                            'channel_id': channel_id,
-                            'message': f"Project '{arg}' not found. Available: {names}"
-                        })
+                        await adapter.send_message(channel_id, f"Project '{arg}' not found. Available: {names}")
                         return
                     adapter.set_channel_project(channel_id, match["id"])
-                    _driver.posts.create_post({
-                        'channel_id': channel_id,
-                        'message': f"Switched this channel to project: {match['name']} ({match['id']})"
-                    })
+                    await adapter.send_message(channel_id, f"Switched this channel to project: {match['name']} ({match['id']})")
                     return
 
                 elif cmd in ("!projects", "/projects"):
                     from api.projects import _load_projects
                     existing = list(_load_projects().values())
                     lines = [f"• {p['name']} ({p['id']})" + (" ← active" if p["id"] == project else "") for p in existing]
-                    _driver.posts.create_post({
-                        'channel_id': channel_id,
-                        'message': "Projects:\n" + "\n".join(lines)
-                    })
+                    await adapter.send_message(channel_id, "Projects:\n" + "\n".join(lines))
                     return
 
                 elif cmd in ("!status", "/status"):
                     from tasks.scheduler import list_jobs
                     jobs = list_jobs()
                     status_text = f"Pantheon Online\nProject: {project}\nScheduled tasks: {len(jobs)}"
-                    _driver.posts.create_post({'channel_id': channel_id, 'message': status_text})
+                    await adapter.send_message(channel_id, status_text)
                     return
 
                 elif cmd in ("!files", "/files"):
@@ -237,72 +227,116 @@ class MattermostAdapter(BaseMessagingAdapter):
                     workspace.mkdir(parents=True, exist_ok=True)
                     files = list(workspace.glob("**/*"))[:20]
                     if not files:
-                        _driver.posts.create_post({
-                            'channel_id': channel_id,
-                            'message': f"No files in workspace ({project})."
-                        })
+                        await adapter.send_message(channel_id, f"No files in workspace ({project}).")
                         return
                     file_list = "\n".join(f"• {f.relative_to(workspace)}" for f in files if f.is_file())
-                    _driver.posts.create_post({
-                        'channel_id': channel_id,
-                        'message': f"Workspace files ({project}):\n{file_list}"
-                    })
+                    await adapter.send_message(channel_id, f"Workspace files ({project}):\n{file_list}")
                     return
 
                 elif cmd in ("!task", "/task"):
                     if not arg:
-                        _driver.posts.create_post({'channel_id': channel_id, 'message': "Usage: !task <description>"})
+                        await adapter.send_message(channel_id, "Usage: !task <description>")
                         return
                     from tasks.scheduler import schedule_agent_task
                     task_id = await schedule_agent_task(name=arg[:50], description=arg, schedule="now", project_id=project)
-                    _driver.posts.create_post({
-                        'channel_id': channel_id,
-                        'message': f"Task scheduled!\nID: {task_id}\nDescription: {arg}"
-                    })
+                    await adapter.send_message(channel_id, f"Task scheduled!\nID: {task_id}\nDescription: {arg}")
                     return
 
                 elif cmd in ("!memory", "/memory"):
                     if not arg:
-                        _driver.posts.create_post({'channel_id': channel_id, 'message': "Usage: !memory <query>"})
+                        await adapter.send_message(channel_id, "Usage: !memory <query>")
                         return
                     from memory.manager import create_memory_manager
                     manager = create_memory_manager(project_id=project)
                     results = await manager.recall(arg, tiers=["semantic", "episodic"])
                     if not results:
-                        _driver.posts.create_post({'channel_id': channel_id, 'message': "No memories found."})
+                        await adapter.send_message(channel_id, "No memories found.")
                         return
                     lines = [f"[{r.tier}] {r.content} (score: {r.score:.2f})" for r in results[:5]]
-                    _driver.posts.create_post({
-                        'channel_id': channel_id,
-                        'message': "Memories:\n" + "\n".join(lines)
-                    })
+                    await adapter.send_message(channel_id, "Memories:\n" + "\n".join(lines))
                     return
 
                 elif cmd in ("!note", "/note"):
                     if not arg:
-                        _driver.posts.create_post({'channel_id': channel_id, 'message': "Usage: !note <text>"})
+                        await adapter.send_message(channel_id, "Usage: !note <text>")
                         return
                     from memory.manager import create_memory_manager
                     manager = create_memory_manager(project_id=project)
                     await manager.memorize(arg, tier="semantic", tags=["note", "mattermost"])
-                    _driver.posts.create_post({'channel_id': channel_id, 'message': "Note saved successfully to semantic memory."})
+                    await adapter.send_message(channel_id, "Note saved successfully to semantic memory.")
                     return
 
             try:
-                reply = await _run_agent(clean_text, project, session_id)
-                _driver.posts.create_post({'channel_id': channel_id, 'message': reply})
+                # Run the agent in a background task so we don't hold up the handler
+                async def _process():
+                    try:
+                        resolved_ctx = None
+                        resolved_skill = None
+                        text_to_process = clean_text
+
+                        try:
+                            from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
+                            from skills.registry import get_skill_registry
+                            from skills.models import SkillDiscoveryMode
+
+                            explicit_skill, remaining = resolve_explicit(clean_text)
+                            if explicit_skill:
+                                registry = get_skill_registry()
+                                skill = registry.get(explicit_skill)
+                                if skill:
+                                    try:
+                                        from skills import analytics as _sa
+                                        _sa.record_fire(explicit_skill, source="explicit")
+                                    except Exception:
+                                        pass
+                                    resolved_ctx = build_skill_context(skill, project_id=project)
+                                    resolved_skill = explicit_skill
+                                    text_to_process = remaining or clean_text
+                            else:
+                                try:
+                                    from secrets.vault import get_vault as _gv
+                                    _vault = _gv()
+                                    discovery_mode = _vault.get_secret(f"skill_discovery_{project}") or "off"
+                                except Exception:
+                                    discovery_mode = "off"
+
+                                if discovery_mode == "auto":
+                                    matches = resolve_auto(
+                                        clean_text, project_id=project,
+                                        mode=SkillDiscoveryMode("auto"), top_k=1,
+                                    )
+                                    if matches and matches[0]["score"] >= 2.0:
+                                        best = matches[0]
+                                        skill = best["skill"]
+                                        try:
+                                            from skills import analytics as _sa
+                                            _sa.record_fire(skill.name, source="auto")
+                                        except Exception:
+                                            pass
+                                        resolved_ctx = build_skill_context(skill, project_id=project)
+                                        resolved_skill = skill.name
+                                        await adapter.send_message(channel_id, f"⚡ Auto-activating skill: /{skill.name}")
+                        except ImportError:
+                            pass
+                        except Exception as e:
+                            logger.warning("Mattermost skill resolution failed: %s", e)
+
+                        reply = await _run_agent(text_to_process, project, session_id, skill_context=resolved_ctx, active_skill_name=resolved_skill)
+                        await adapter.send_message(channel_id, reply)
+                    except Exception as e:
+                        logger.error("Error running agent from Mattermost: %s", e)
+                        await adapter.send_message(channel_id, f"Error running agent: {str(e)}")
+                asyncio.create_task(_process())
             except Exception as e:
-                logger.error("Error running agent from Mattermost: %s", e)
-                _driver.posts.create_post({'channel_id': channel_id, 'message': f"Error running agent: {str(e)}"})
+                logger.error("Error scheduling agent from Mattermost: %s", e)
 
         async def ws_loop():
             try:
                 _driver.login()
-                # mattermostdriver has a blocking websocket loop, we run it in a thread or executor
-                # or handle a custom websocket connection. For simplicity, we can call init_websocket:
-                # _driver.init_websocket(event_handler) which is blocking, so run in thread:
+                # mattermostdriver has a blocking websocket loop, we run it in an executor
+                # Use a fire-and-forget task for the callback
                 loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, _driver.init_websocket, lambda e: asyncio.run_coroutine_threadsafe(event_handler(e), loop).result())
+                await loop.run_in_executor(None, _driver.init_websocket, lambda e: asyncio.run_coroutine_threadsafe(event_handler(e), loop))
             except asyncio.CancelledError:
                 pass
             except Exception as e:
@@ -331,21 +365,23 @@ class MattermostAdapter(BaseMessagingAdapter):
         if _driver is None:
             return []
         try:
-            # Fetch teams and then channels for teams
-            teams = _driver.teams.get_teams_for_user('me')
-            result = []
-            for t in teams:
-                channels = _driver.channels.get_channels_for_user('me', t['id'])
-                for c in channels:
-                    raw_id = c['id']
-                    name = c['display_name'] or c['name']
-                    result.append(ChannelInfo(
-                        id=self.prefixed_channel_id(raw_id),
-                        name=name,
-                        platform=self.name,
-                        project_id=self.resolve_project(raw_id),
-                    ))
-            return result
+            def _fetch():
+                # Fetch teams and then channels for teams
+                teams = _driver.teams.get_teams_for_user('me')
+                result = []
+                for t in teams:
+                    channels = _driver.channels.get_channels_for_user('me', t['id'])
+                    for c in channels:
+                        raw_id = c['id']
+                        name = c['display_name'] or c['name']
+                        result.append(ChannelInfo(
+                            id=self.prefixed_channel_id(raw_id),
+                            name=name,
+                            platform=self.name,
+                            project_id=self.resolve_project(raw_id),
+                        ))
+                return result
+            return await asyncio.to_thread(_fetch)
         except Exception as e:
             logger.error("Failed to list Mattermost channels: %s", e)
             return []
@@ -355,6 +391,6 @@ class MattermostAdapter(BaseMessagingAdapter):
         if _driver is None:
             return
         try:
-            _driver.posts.create_post({'channel_id': channel_id, 'message': text})
+            await asyncio.to_thread(_driver.posts.create_post, {'channel_id': channel_id, 'message': text})
         except Exception as e:
             logger.error("Failed to send Mattermost message to %s: %s", channel_id, e)

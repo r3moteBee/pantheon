@@ -22,3 +22,6 @@ markdownify>=0.13.0
 mammoth==1.7.1
 openpyxl>=3.1.2
 markdown>=3.6
+slack_sdk>=3.27.0
+matrix-nio>=0.24.0
+mattermostdriver>=7.3.2

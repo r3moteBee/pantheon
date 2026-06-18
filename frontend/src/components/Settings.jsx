@@ -169,9 +169,8 @@ function ChannelsHelp() {
         platform the agent should listen on.
       </p>
       <p className='text-xs text-gray-400 mb-2'>
-        Today only <strong>Telegram</strong> is wired up. Discord, Slack,
-        Matrix / Synapse, Microsoft Teams, and other messengers will land in
-        this tab as adapters are added.
+        Currently supported platforms include <strong>Telegram, Discord, Slack, Matrix, and Mattermost</strong>. 
+        Additional messengers will land in this tab as adapters are added.
       </p>
       <p className='text-xs text-gray-400'>
         Channels are <em>inbound</em> — users send messages <em>to</em> Pantheon

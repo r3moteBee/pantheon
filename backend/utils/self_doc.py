@@ -427,4 +427,24 @@ def generate_self_doc() -> str:
     else:
         md.append("*No skills currently loaded in registry.*")
         
+    # 9. Messaging Integrations
+    md.append("\n## 📡 Messaging Integrations")
+    md.append("Configured external messaging platforms mapped to Pantheon projects:")
+    try:
+        from messaging.gateway import get_messaging_gateway
+        gw = get_messaging_gateway()
+        status = gw.status()
+        adapters = status.get("adapters", [])
+        if adapters:
+            md.append("| Platform | Display Name | Configured | Running | Channels |")
+            md.append("| --- | --- | --- | --- | --- |")
+            for a in adapters:
+                conf = "Yes" if a["configured"] else "No"
+                run = "Yes" if a["running"] else "No"
+                md.append(f"| `{a['name']}` | {a['display_name']} | {conf} | {run} | {a.get('channel_count', 0)} |")
+        else:
+            md.append("*No messaging adapters loaded.*")
+    except Exception as e:
+        logger.warning("Could not list messaging adapters: %s", e)
+
     return "\n".join(md)

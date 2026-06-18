@@ -86,7 +86,7 @@ class TelegramAdapter(BaseMessagingAdapter):
                 ContextTypes,
             )
 
-            app = Application.builder().token(token).build()
+            app = Application.builder().token(token).concurrent_updates(True).build()
             adapter = self  # capture for closures
 
             # ── ACL helper ──────────────────────────────────────────
