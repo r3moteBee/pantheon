@@ -169,7 +169,7 @@ class SearchProviderManager:
                 "errors": u.get("errors", 0),
                 "skipped": u.get("skipped", 0),
                 "api_key_set": bool(self._get_api_key(prov)),
-                "last_used": u.get("history", [{}])[-1].get("timestamp") if u.get("history") else None,
+                "last_used": u.get("history", [{}])[-1].get("ts") if u.get("history") else None,
                 "remote": u.get("remote"),
             })
         return {"providers": out, "date": today, "month": month}

@@ -555,38 +555,11 @@ async def convert_files(
 
             # Ingest as artifact if requested
             if req.save_as_artifact:
-                import mimetypes
-                from artifacts.store import get_store, is_text_type
-                from artifacts import embedder
-                
-                content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
-                is_txt = is_text_type(content_type)
-                if is_txt:
-                    try:
-                        content = target_path.read_text(encoding="utf-8")
-                    except Exception:
-                        content = target_path.read_bytes()
-                        is_txt = False
-                else:
-                    content = target_path.read_bytes()
-
-                store = get_store()
-                target_rel = str(target_path.relative_to(base))
-                a = store.create(
-                    project_id=project_id,
-                    path=target_rel,
-                    content=content,
-                    content_type=content_type,
-                    title=target_path.name,
-                    tags=["converted", req.target_format.lower()],
-                    source={
-                        "kind": "conversion",
-                        "source_file": source_rel
-                    },
-                    edited_by="agent",
+                from artifacts.conversions import save_converted_artifact
+                save_converted_artifact(
+                    project_id=project_id, target_path=target_path, base=base,
+                    source_rel=source_rel, fmt=req.target_format,
                 )
-                if is_txt:
-                    embedder.schedule_embed(a["id"], project_id)
 
             size_bytes = target_path.stat().st_size if target_path.exists() else None
             results.append(

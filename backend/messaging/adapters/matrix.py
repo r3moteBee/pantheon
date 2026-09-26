@@ -67,6 +67,18 @@ class MatrixAdapter(BaseMessagingAdapter):
             pass
         return settings.matrix_access_token or ""
 
+    @staticmethod
+    def _get_allowed_rooms() -> set[str]:
+        """Room IDs the bot will answer in. Empty = none (deny by default)."""
+        raw = ""
+        try:
+            from secrets.vault import get_vault
+            raw = get_vault().get_secret("matrix_allowed_room_ids") or ""
+        except Exception:
+            pass
+        raw = raw or getattr(settings, "matrix_allowed_room_ids", "") or ""
+        return {r.strip() for r in raw.split(",") if r.strip()}
+
     # ------------------------------------------------------------------
     # BaseMessagingAdapter interface
     # ------------------------------------------------------------------
@@ -99,7 +111,10 @@ class MatrixAdapter(BaseMessagingAdapter):
             return
 
         client = AsyncClient(homeserver, user_id)
+        # Access-token auth: set the token directly. (login(token=...) is
+        # the m.login.token flow, which rejects an access token.)
         client.access_token = access_token
+        client.user_id = user_id
         _client = client
 
         adapter = self
@@ -127,13 +142,18 @@ class MatrixAdapter(BaseMessagingAdapter):
             )
             return await agent.run_autonomous(message_text) or "No response."
 
-        @client.event_callback(RoomMessageText)
         async def message_callback(room: MatrixRoom, event: RoomMessageText) -> None:
             # Ignore messages from ourselves
             if event.sender == client.user_id:
                 return
 
             room_id = room.room_id
+            if room_id not in adapter._get_allowed_rooms():
+                logger.warning(
+                    "Ignoring Matrix room %s — add it to matrix_allowed_room_ids to allow.",
+                    room_id,
+                )
+                return
             text = event.body.strip()
             project = adapter.resolve_project(room_id)
             session_id = f"matrix:{room_id}"
@@ -361,16 +381,26 @@ class MatrixAdapter(BaseMessagingAdapter):
 
         # Start background sync task
         async def sync_loop():
-            try:
-                # Login if necessary, or check credentials
-                await client.login(token=access_token)
-                await client.sync_forever(timeout=30000)
-            except asyncio.CancelledError:
-                pass
-            except Exception as e:
-                logger.exception("Matrix sync loop crash: %s", e)
+            backoff = 5
+            while True:
+                try:
+                    # Initial sync WITHOUT the callback registered, so the
+                    # bot doesn't answer the room history nio replays.
+                    resp = await client.sync(timeout=0, full_state=True)
+                    if type(resp).__name__.endswith("Error"):
+                        raise RuntimeError(f"initial sync failed: {resp}")
+                    if message_callback not in [cb.func for cb in client.event_callbacks]:
+                        client.add_event_callback(message_callback, RoomMessageText)
+                    backoff = 5
+                    await client.sync_forever(timeout=30000, since=client.next_batch)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("Matrix sync loop error: %s — retrying in %ss", e, backoff)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 300)
 
-        _sync_task = asyncio.create_task(sync_loop())
+        _sync_task = asyncio.create_task(sync_loop(), name="matrix-sync")
 
     async def stop(self) -> None:
         global _client, _sync_task
@@ -394,10 +424,10 @@ class MatrixAdapter(BaseMessagingAdapter):
             for room_id, room in _client.rooms.items():
                 name = room.display_name or room.name or room_id
                 result.append(ChannelInfo(
-                    id=self.prefixed_channel_id(room_id),
+                    channel_id=self.prefixed_channel_id(room_id),
+                    raw_id=room_id,
                     name=name,
                     platform=self.name,
-                    project_id=self.resolve_project(room_id),
                 ))
             return result
         except Exception as e:

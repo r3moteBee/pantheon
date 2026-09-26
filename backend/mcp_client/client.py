@@ -95,11 +95,20 @@ class MCPClient:
         return headers
 
     async def _resolve_bearer(self, *, force_refresh: bool = False) -> None:
-        """Populate self._cached_bearer from the token_getter (if any)."""
+        """Populate self._cached_bearer from the token_getter (if any).
+
+        On a forced refresh the rejected token is passed along so the getter
+        can skip refreshing when another request already rotated it.
+        """
         if not self._token_getter:
             return
         try:
-            token = await self._token_getter(force_refresh=force_refresh)
+            if force_refresh:
+                token = await self._token_getter(
+                    force_refresh=True, failed_token=self._cached_bearer,
+                )
+            else:
+                token = await self._token_getter(force_refresh=False)
         except Exception as e:
             logger.warning("MCP '%s' token_getter raised: %s", self.name, e)
             token = None
@@ -146,6 +155,8 @@ class MCPClient:
         headers = self._build_headers()
         # Track 401 refresh-and-retry — only attempt once per request.
         oauth_retried = False
+        # Track 404-on-stale-session re-initialize — once per request.
+        session_retried = False
 
         # Debug logging — mask API key in URL and headers
         safe_url = url
@@ -171,6 +182,8 @@ class MCPClient:
         # Give OAuth-enabled clients one extra attempt for the 401 refresh.
         if self._token_getter is not None:
             max_attempts += 1
+        # And one for re-initializing an expired session (404).
+        max_attempts += 1
 
         for attempt in range(max_attempts):
             await self._throttle()
@@ -211,6 +224,24 @@ class MCPClient:
                         self.name,
                     )
                     await self._resolve_bearer(force_refresh=True)
+                    headers = self._build_headers()
+                    continue
+
+                # Spec: a 404 on a request carrying Mcp-Session-Id means the
+                # session is gone (e.g. server restarted). Start a new one
+                # and retry, instead of failing every call until a manual
+                # reconnect.
+                if (
+                    resp.status_code == 404
+                    and self.session_id
+                    and method != "initialize"
+                    and not session_retried
+                ):
+                    session_retried = True
+                    logger.info("MCP '%s' session expired (404) — re-initializing", self.name)
+                    self.session_id = None
+                    self._initialized = False
+                    await self.initialize()
                     headers = self._build_headers()
                     continue
 

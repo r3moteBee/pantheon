@@ -510,10 +510,19 @@ class TelegramAdapter(BaseMessagingAdapter):
             ))
             app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, plain_message))
 
+            try:
+                await app.initialize()
+                await app.start()
+                await app.updater.start_polling(drop_pending_updates=True)
+            except Exception:
+                # Don't leave a half-started app registered — is_running()
+                # would report it up and restart would think it's fine.
+                try:
+                    await app.shutdown()
+                except Exception:
+                    pass
+                raise
             _application = app
-            await app.initialize()
-            await app.start()
-            asyncio.create_task(app.updater.start_polling(drop_pending_updates=True))
             logger.info("Telegram bot started successfully")
 
         except ImportError as exc:

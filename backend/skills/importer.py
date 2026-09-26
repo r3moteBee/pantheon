@@ -351,7 +351,7 @@ class GitHubAdapter(HubAdapter):
         # Normalize identifier
         if identifier.startswith("https://github.com/"):
             identifier = identifier.replace("https://github.com/", "")
-        identifier = identifier.rstrip("/").rstrip(".git")
+        identifier = identifier.rstrip("/").removesuffix(".git")
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="github_"))
 
@@ -851,8 +851,8 @@ def load_configured_registries() -> None:
             if auth.get("type") == "bearer":
                 token_ref = auth.get("token_ref", "")
                 if token_ref.startswith("vault:"):
-                    from vault import get_secret  # local import to avoid cycle
-                    token = get_secret(token_ref[len("vault:"):])
+                    from secrets.vault import get_vault  # local import to avoid cycle
+                    token = get_vault().get_secret(token_ref[len("vault:"):])
                 else:
                     token = auth.get("token")
             register_skill_registry(
@@ -983,14 +983,11 @@ async def import_skill(
                 format_detected=detected_format,
             )
 
-        # Check if already installed
+        # Existing user-installed copy is only replaced AFTER the new
+        # version passes its scan (step 5) — a failed re-import used to
+        # delete the working skill and then quarantine the new one.
         existing = registry.get(skill_name)
-        if existing and not existing.is_bundled:
-            # Overwrite existing user-installed skill
-            old_dir = Path(existing.skill_dir)
-            if old_dir.is_dir():
-                shutil.rmtree(old_dir)
-            logger.info("Replacing existing user skill '%s'", skill_name)
+        old_dir = Path(existing.skill_dir) if existing and not existing.is_bundled else None
 
         # Step 4: Run security scan
         scan_result = None
@@ -1013,27 +1010,29 @@ async def import_skill(
                 len(scan_result.findings),
             )
 
-        # Step 5: Install to data/skills/
         install_dir = settings.data_dir / "skills" / skill_name
-        install_dir.parent.mkdir(parents=True, exist_ok=True)
-
-        if install_dir.exists():
-            shutil.rmtree(install_dir)
-        shutil.copytree(tmp_dir, install_dir)
-
-        # Step 6: Handle scan failure — quarantine
         quarantined = False
         if scan_result and not scan_result.passed:
+            # Step 5a: scan failed — quarantine the NEW copy straight from the
+            # temp dir; any existing install is left untouched.
             quarantine_dir = settings.data_dir / "skills" / ".quarantine"
             quarantine_dir.mkdir(parents=True, exist_ok=True)
             dest = quarantine_dir / skill_name
             if dest.exists():
                 shutil.rmtree(dest)
-            shutil.move(str(install_dir), str(dest))
+            shutil.copytree(tmp_dir, dest)
             quarantined = True
             sec_log.skill_quarantined(skill=skill_name, reason="import_scan_failed")
             logger.info("Quarantined imported skill '%s' (scan failed)", skill_name)
         else:
+            # Step 5b: install to data/skills/, replacing any previous copy.
+            if old_dir is not None and old_dir.is_dir() and old_dir != install_dir:
+                shutil.rmtree(old_dir)
+                logger.info("Replacing existing user skill '%s'", skill_name)
+            install_dir.parent.mkdir(parents=True, exist_ok=True)
+            if install_dir.exists():
+                shutil.rmtree(install_dir)
+            shutil.copytree(tmp_dir, install_dir)
             if scan_result:
                 sec_log.skill_scan_passed(
                     skill=skill_name,

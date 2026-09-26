@@ -6,6 +6,7 @@ MCP-provided tools alongside built-in tools.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -23,6 +24,9 @@ _VAULT_KEY = "mcp_connections"
 _MAX_STRUCTURED_CHARS = 50_000
 
 
+_REFRESH_LOCKS: dict[str, "asyncio.Lock"] = {}
+
+
 def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
     """Return an async callable that yields the current access token.
 
@@ -31,39 +35,60 @@ def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
     server). Returns None when there are no usable tokens at all — the
     caller will fall back to the static api_key or send no Authorization.
     """
-    async def getter(*, force_refresh: bool = False) -> str | None:
+    async def getter(*, force_refresh: bool = False, failed_token: str | None = None) -> str | None:
         from mcp_client import oauth as oauth_mod
 
-        tokens = oauth_mod.load_tokens(name)
-        if not tokens:
-            return None
+        # Serialize refreshes per connection. With refresh-token rotation
+        # (OAuth 2.1), two concurrent refreshes send the same refresh_token
+        # and the second is rejected — some servers then revoke the whole
+        # token family.
+        lock = _REFRESH_LOCKS.setdefault(name, asyncio.Lock())
+        async with lock:
+            tokens = oauth_mod.load_tokens(name)
+            if not tokens:
+                return None
 
-        if force_refresh or not oauth_mod.is_token_fresh(tokens):
-            refresh = tokens.get("refresh_token")
-            if not refresh:
-                logger.warning(
-                    "MCP '%s' OAuth token expired and no refresh_token stored — "
-                    "user must reauthorize",
-                    name,
-                )
-                return tokens.get("access_token") or None
-            try:
-                new_raw = await oauth_mod.refresh_tokens(
-                    token_endpoint=oauth_cfg["token_endpoint"],
-                    client_id=oauth_cfg["client_id"],
-                    refresh_token=refresh,
-                    resource=oauth_cfg.get("resource", ""),
-                    scopes=oauth_cfg.get("scopes") or None,
-                    client_secret=oauth_mod.load_client_secret(name),
-                )
-                tokens = oauth_mod.save_tokens(name, new_raw)
-            except Exception as e:
-                logger.warning(
-                    "MCP '%s' OAuth refresh failed: %s — returning stale token",
-                    name, e,
-                )
+            current = tokens.get("access_token") or None
+            # Another request already rotated the token this caller was
+            # rejected with — just use the new one.
+            if force_refresh and failed_token and current and current != failed_token:
+                return current
 
-        return tokens.get("access_token") or None
+            if force_refresh or not oauth_mod.is_token_fresh(tokens):
+                refresh = tokens.get("refresh_token")
+                if not refresh:
+                    logger.warning(
+                        "MCP '%s' OAuth token expired and no refresh_token stored — "
+                        "user must reauthorize",
+                        name,
+                    )
+                    return current
+                try:
+                    new_raw = await oauth_mod.refresh_tokens(
+                        token_endpoint=oauth_cfg["token_endpoint"],
+                        client_id=oauth_cfg["client_id"],
+                        refresh_token=refresh,
+                        resource=oauth_cfg.get("resource", ""),
+                        scopes=oauth_cfg.get("scopes") or None,
+                        client_secret=oauth_mod.load_client_secret(name),
+                    )
+                    tokens = oauth_mod.save_tokens(name, new_raw)
+                except Exception as e:
+                    # The AS rejected the grant (HTTP 400/401, e.g.
+                    # invalid_grant): mark it dead so the UI shows Re-auth
+                    # instead of "ok" while every request 401s. Network
+                    # errors are transient and leave the tokens alone.
+                    msg = str(e)
+                    rejected = any(f"HTTP {c}" in msg for c in (400, 401, 403)) or "invalid_grant" in msg
+                    logger.warning(
+                        "MCP '%s' OAuth refresh failed: %s%s", name, e,
+                        " — marking needs_auth" if rejected else "",
+                    )
+                    if rejected:
+                        oauth_mod.mark_refresh_failed(name, msg)
+                    return current
+
+            return tokens.get("access_token") or None
 
     return getter
 
@@ -191,7 +216,7 @@ class MCPManager:
             oauth_meta = None
             if auth_type == "oauth2":
                 tokens = oauth_mod.load_tokens(name)
-                if not tokens:
+                if not tokens or tokens.get("refresh_failed"):
                     oauth_status = "needs_auth"
                 elif tokens.get("expires_at") and not oauth_mod.is_token_fresh(tokens):
                     # Stale tokens with refresh available are still "ok" — getter

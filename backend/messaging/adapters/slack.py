@@ -177,9 +177,14 @@ class SlackAdapter(BaseMessagingAdapter):
             mention_pattern = re.compile(rf"<@{bot_user_id}>\s*")
             clean_text = mention_pattern.sub("", text).strip()
 
-            # Handle direct message or mention
+            # Handle direct message or mention. A channel @mention arrives
+            # as BOTH a `message` and an `app_mention` event — answer only
+            # the app_mention there, or the agent runs and replies twice.
+            # Also skip edits/deletes/joins (message subtypes).
             is_dm = event.get("channel_type") == "im"
-            is_mention = event_type == "app_mention" or f"<@{bot_user_id}>" in text
+            if event_type == "message" and (not is_dm or event.get("subtype")):
+                return
+            is_mention = event_type == "app_mention"
 
             if not (is_dm or is_mention):
                 return

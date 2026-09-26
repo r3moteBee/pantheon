@@ -495,6 +495,20 @@ def load_tokens(name: str) -> Optional[dict[str, Any]]:
         return None
 
 
+def mark_refresh_failed(name: str, error: str) -> None:
+    """Flag stored tokens as unrecoverable (refresh rejected) so the
+    connection reports needs_auth. The next successful save_tokens()
+    (after re-authorizing) writes a fresh record without the flag."""
+    from secrets.vault import get_vault
+
+    tokens = load_tokens(name)
+    if not tokens:
+        return
+    tokens["refresh_failed"] = True
+    tokens["refresh_error"] = (error or "")[:300]
+    get_vault().set_secret(_tokens_key(name), json.dumps(tokens))
+
+
 def delete_tokens(name: str) -> None:
     """Wipe persisted tokens (and any DCR secret) for a connection."""
     from secrets.vault import get_vault
