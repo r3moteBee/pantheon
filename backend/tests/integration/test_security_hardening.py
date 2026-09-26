@@ -26,9 +26,12 @@ def _ws_app():
 
 
 def _settings(password=""):
+    import tempfile
+    from pathlib import Path
     return SimpleNamespace(
         auth_password=password, secret_key="s",
         cors_origins_list=["http://localhost:5173"],
+        db_dir=Path(tempfile.mkdtemp()), auth_session_days=30,
     )
 
 
@@ -40,12 +43,16 @@ def test_ws_rejects_missing_token_when_auth_enabled():
                 ws.receive_text()
 
 
-def test_ws_accepts_valid_token():
-    from api.auth import compute_token
-    token = compute_token("pw", "s")
+def test_ws_accepts_session_cookie_but_not_query_token():
+    from api.auth import SESSION_COOKIE, create_session
     with patch("api.auth.get_settings", return_value=_settings("pw")):
+        token = create_session()
         client = TestClient(_ws_app())
-        with client.websocket_connect(f"/ws/chat?token={token}") as ws:
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/ws/chat?token={token}") as ws:
+                ws.receive_text()
+        client.cookies.set(SESSION_COOKIE, token)
+        with client.websocket_connect("/ws/chat") as ws:
             ws.close()
 
 
@@ -276,9 +283,7 @@ def test_login_rate_limited():
     from main import app
     auth._failures.clear()
     client = TestClient(app)
-    with patch("api.auth.get_settings", return_value=SimpleNamespace(
-        auth_password="right", secret_key="s", cors_origins_list=[],
-    )):
+    with patch("api.auth.get_settings", return_value=_settings("right")):
         codes = [client.post("/api/auth/login", json={"password": "wrong"}).status_code
                  for _ in range(auth._MAX_FAILURES + 1)]
     auth._failures.clear()

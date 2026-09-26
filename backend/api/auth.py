@@ -3,11 +3,13 @@ from __future__ import annotations
 import hmac
 import hashlib
 import logging
+import base64
+import os
 
 import time
 from collections import defaultdict, deque
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from config import get_settings
@@ -17,9 +19,117 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def compute_token(password: str, secret: str) -> str:
-    """Derive a stable auth token from password + secret key."""
-    return hmac.new(secret.encode(), password.encode(), hashlib.sha256).hexdigest()
+SESSION_COOKIE = "pantheon_session"
+
+
+def _session_ttl_seconds() -> int:
+    days = getattr(get_settings(), "auth_session_days", 30) or 30
+    return int(days) * 86400
+
+
+def password_matches(password: str) -> bool:
+    """Constant-time check of ``password`` against AUTH_PASSWORD."""
+    settings = get_settings()
+    key = settings.secret_key.encode()
+    given = hmac.new(key, (password or "").encode(), hashlib.sha256).digest()
+    expected = hmac.new(key, settings.auth_password.encode(), hashlib.sha256).digest()
+    return hmac.compare_digest(given, expected)
+
+
+# ── Session store ────────────────────────────────────────────────────────────
+# Login issues a random token (not derived from the password, so a leaked
+# token can't be brute-forced back to it and expires on its own). Only a
+# SHA-256 of each token is stored.
+
+def _sessions_db():
+    import sqlite3
+    from db_utils import apply_sqlite_pragmas, ClosingConnection
+    settings = get_settings()
+    settings.db_dir.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(settings.db_dir / "auth_sessions.db"))
+    apply_sqlite_pragmas(conn)
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS sessions (
+               token_hash TEXT PRIMARY KEY,
+               created_at REAL NOT NULL,
+               expires_at REAL NOT NULL,
+               pw_fp TEXT NOT NULL DEFAULT ''
+           )"""
+    )
+    return ClosingConnection(conn)  # type: ignore
+
+
+def _password_fingerprint() -> str:
+    """Tag sessions with the password they were issued under, so changing
+    AUTH_PASSWORD (or SECRET_KEY) logs every existing session out."""
+    s = get_settings()
+    return hmac.new(s.secret_key.encode(), s.auth_password.encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_session() -> str:
+    """Issue a new random session token (valid for AUTH_SESSION_DAYS)."""
+    # (stdlib `secrets` is shadowed by this app's secrets/ package)
+    token = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+    now = time.time()
+    with _sessions_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+        conn.execute(
+            "INSERT INTO sessions (token_hash, created_at, expires_at, pw_fp) VALUES (?, ?, ?, ?)",
+            (_hash_token(token), now, now + _session_ttl_seconds(), _password_fingerprint()),
+        )
+        conn.commit()
+    return token
+
+
+def revoke_session(token: str) -> None:
+    with _sessions_db() as conn:
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (_hash_token(token),))
+        conn.commit()
+
+
+def revoke_all_sessions() -> None:
+    with _sessions_db() as conn:
+        conn.execute("DELETE FROM sessions")
+        conn.commit()
+
+
+def _session_valid(token: str) -> bool:
+    if not token:
+        return False
+    with _sessions_db() as conn:
+        row = conn.execute(
+            "SELECT expires_at, pw_fp FROM sessions WHERE token_hash = ?", (_hash_token(token),)
+        ).fetchone()
+    return (
+        bool(row)
+        and row[0] > time.time()
+        and hmac.compare_digest(row[1] or "", _password_fingerprint())
+    )
+
+
+def request_token(headers, cookies) -> str:
+    """Session token from ``Authorization: Bearer`` or the session cookie.
+    Never from the query string — URLs end up in access logs and history."""
+    auth = headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return cookies.get(SESSION_COOKIE, "") or ""
+
+
+def _set_session_cookie(response: Response, request: Request, token: str) -> None:
+    secure = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
+    response.set_cookie(
+        SESSION_COOKIE, token,
+        max_age=_session_ttl_seconds(), httponly=True, samesite="strict",
+        secure=secure, path="/",
+    )
 
 
 class LoginRequest(BaseModel):
@@ -52,7 +162,7 @@ def _recent_failures(ip: str) -> deque:
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest, request: Request) -> LoginResponse:
+async def login(req: LoginRequest, request: Request, response: Response) -> LoginResponse:
     settings = get_settings()
     ip = request.client.host if request.client else "unknown"
     if len(_recent_failures(ip)) >= _MAX_FAILURES:
@@ -63,33 +173,40 @@ async def login(req: LoginRequest, request: Request) -> LoginResponse:
     if not settings.auth_password:
         return LoginResponse(token="no-auth")
 
-    expected = compute_token(settings.auth_password, settings.secret_key)
-    given = compute_token(req.password, settings.secret_key)
-
-    try:
-        valid = hmac.compare_digest(given, expected)
-    except (TypeError, ValueError):
-        valid = False
-
-    if not valid:
+    if not password_matches(req.password):
         _failures[ip].append(time.monotonic())
         sec_log.auth_login_failure(ip=ip, reason="bad_password")
         raise HTTPException(status_code=401, detail="Invalid password")
 
     sec_log.auth_login_success()
-    return LoginResponse(token=expected)
+    token = create_session()
+    # The browser UI authenticates with this HttpOnly cookie (script can't
+    # read it; SameSite=Strict keeps other sites from using it). The token
+    # is also returned for API/script clients using a Bearer header.
+    _set_session_cookie(response, request, token)
+    return LoginResponse(token=token)
+
+
+@router.get("/auth/session")
+async def session_check() -> dict:
+    """200 when the caller is authenticated (the middleware enforces it)."""
+    return {"ok": True}
+
+
+@router.post("/auth/logout")
+async def logout(request: Request, response: Response) -> dict:
+    token = request_token(request.headers, request.cookies)
+    if token:
+        revoke_session(token)
+    response.delete_cookie(SESSION_COOKIE, path="/")
+    return {"ok": True}
 
 
 def token_is_valid(token: str) -> bool:
-    """True when auth is disabled or ``token`` matches the configured password."""
-    settings = get_settings()
-    if not settings.auth_password:
+    """True when auth is disabled or ``token`` is a live session token."""
+    if not get_settings().auth_password:
         return True
-    expected = compute_token(settings.auth_password, settings.secret_key)
-    try:
-        return hmac.compare_digest(token or "", expected)
-    except (TypeError, ValueError):
-        return False
+    return _session_valid(token)
 
 
 def origin_is_allowed(origin: str | None, host: str | None) -> bool:
@@ -115,7 +232,7 @@ def origin_is_allowed(origin: str | None, host: str | None) -> bool:
 
 
 async def authorize_websocket(websocket) -> bool:
-    """Validate Origin + ``?token=`` before accept().
+    """Validate Origin + session (cookie or Bearer) before accept().
 
     Starlette's ``@app.middleware("http")`` never runs for WebSocket scopes,
     so every WebSocket endpoint must call this itself. Closes the socket and
@@ -129,9 +246,8 @@ async def authorize_websocket(websocket) -> bool:
     if not get_settings().auth_password and not host_is_allowed(websocket.headers.get("host")):
         await websocket.close(code=1008)
         return False
-    token = websocket.query_params.get("token", "")
-    if not token:
-        token = websocket.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    # Browsers send the session cookie on the same-origin WS handshake.
+    token = request_token(websocket.headers, websocket.cookies)
     if not token_is_valid(token):
         sec_log.auth_login_failure(reason="ws_bad_token")
         await websocket.close(code=1008)

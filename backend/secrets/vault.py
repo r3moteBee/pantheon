@@ -26,23 +26,91 @@ CACHE_TTL = 300  # seconds
 class SecretsVault:
     """Encrypted key-value store for sensitive configuration."""
 
+    # v2 key derivation: PBKDF2-SHA256 over the FULL master key with a
+    # random per-vault salt (stored in vault_meta) and 600k iterations.
+    # v1 truncated the key to 32 bytes and used a fixed salt shared by
+    # every install; v1 vaults are re-encrypted to v2 on first open.
+    _KDF_VERSION = "2"
+    _V2_ITERATIONS = 600_000
+
     def __init__(self, db_path: str | None = None, master_key: str | None = None):
         self.db_path = db_path or settings.vault_db_path
-        self._fernet = self._init_fernet(master_key or settings.vault_master_key)
+        self._master_key = master_key or settings.vault_master_key
         self._init_db()
+        self._fernet = self._load_or_migrate_fernet()
 
-    def _init_fernet(self, master_key: str) -> Fernet:
-        """Derive a Fernet key from the master key using PBKDF2."""
-        salt = b"agent-harness-vault-salt-v1"
+    @staticmethod
+    def _legacy_fernet(master_key: str) -> Fernet:
+        """v1 derivation — kept only to read/migrate old vaults."""
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=b"agent-harness-vault-salt-v1",
+            iterations=100_000,
+        )
+        key_bytes = master_key.encode("utf-8")[:32].ljust(32, b"\0")
+        return Fernet(base64.urlsafe_b64encode(kdf.derive(key_bytes)))
+
+    @classmethod
+    def _v2_fernet(cls, master_key: str, salt: bytes) -> Fernet:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=100_000,
+            iterations=cls._V2_ITERATIONS,
         )
-        key_bytes = master_key.encode("utf-8")[:32].ljust(32, b"\0")
-        derived = kdf.derive(key_bytes)
-        return Fernet(base64.urlsafe_b64encode(derived))
+        return Fernet(base64.urlsafe_b64encode(kdf.derive(master_key.encode("utf-8"))))
+
+    def _get_meta(self, conn, key: str) -> str | None:
+        row = conn.execute("SELECT value FROM vault_meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def _load_or_migrate_fernet(self) -> Fernet:
+        with self._connect() as conn:
+            version = self._get_meta(conn, "kdf_version")
+            salt_hex = self._get_meta(conn, "kdf_salt")
+            if version == self._KDF_VERSION and salt_hex:
+                return self._v2_fernet(self._master_key, bytes.fromhex(salt_hex))
+
+            salt = os.urandom(16)
+            new = self._v2_fernet(self._master_key, salt)
+            legacy = self._legacy_fernet(self._master_key)
+            rows = conn.execute("SELECT key, encrypted_value FROM secrets").fetchall()
+            migrated = failed = 0
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for key, blob in rows:
+                    try:
+                        plain = legacy.decrypt(blob)
+                    except InvalidToken:
+                        # Can't read it with this master key either way —
+                        # leave the row untouched rather than destroying it.
+                        failed += 1
+                        continue
+                    conn.execute(
+                        "UPDATE secrets SET encrypted_value = ? WHERE key = ?",
+                        (new.encrypt(plain), key),
+                    )
+                    migrated += 1
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_salt', ?)",
+                    (salt.hex(),),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)",
+                    (self._KDF_VERSION,),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        if rows:
+            logger.warning(
+                "Vault key derivation upgraded to v2: %d secret(s) re-encrypted%s",
+                migrated, f", {failed} unreadable (left as-is)" if failed else "",
+            )
+        _cache.clear()
+        return new
 
     def _connect(self) -> sqlite3.Connection:
         from db_utils import apply_sqlite_pragmas, ClosingConnection
@@ -59,6 +127,12 @@ class SecretsVault:
                     encrypted_value BLOB NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS vault_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
                 )
             """)
             conn.commit()

@@ -1,6 +1,5 @@
 """FastAPI application entry point."""
 from __future__ import annotations
-import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -12,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
-from api.auth import router as auth_router, compute_token, host_is_allowed, origin_is_allowed
+from api.auth import router as auth_router, host_is_allowed, origin_is_allowed, request_token, token_is_valid
 from api.chat import router as chat_router, websocket_chat
 from api.files import router as files_router
 from api.memory import router as memory_router
@@ -50,6 +49,7 @@ _PUBLIC_PATHS = {
     "/openapi.json",
     "/api/auth/login",
     "/api/auth/config",
+    "/api/auth/logout",  # must work with an expired session to clear the cookie
     # The OAuth callback is the redirect_uri an external authorization
     # server hits on the user's browser — it cannot carry Pantheon's
     # Bearer token. Security comes from the PKCE code_verifier + state
@@ -273,31 +273,12 @@ async def auth_middleware(request: Request, call_next):
     if _FRONTEND_DIR.is_dir() and not path.startswith(("/api/", "/ws/")):
         return await call_next(request)
 
-    # WebSocket and direct-URL endpoints (file view/download, artifact
-    # raw download, used by <img src>, <embed>, <a download>, etc.) carry
-    # the token as a query parameter because neither the WebSocket API nor
-    # bare HTML tags support arbitrary request headers. Fall back to the
-    # Authorization header so axios callers still work too.
-    _QUERY_TOKEN_PREFIXES = ("/ws/", "/api/files/view", "/api/files/download")
-    path = request.url.path
-    accepts_query_token = (
-        path.startswith(_QUERY_TOKEN_PREFIXES)
-        or (path.startswith("/api/artifacts/") and path.endswith("/raw"))
-    )
-    if accepts_query_token:
-        token = request.query_params.get("token", "")
-        if not token:
-            auth_header = request.headers.get("Authorization", "")
-            token = auth_header.removeprefix("Bearer ").strip()
-    else:
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header.removeprefix("Bearer ").strip()
-
-    expected = compute_token(cfg.auth_password, cfg.secret_key)
-    try:
-        valid = hmac.compare_digest(token, expected)
-    except (TypeError, ValueError):
-        valid = False
+    # Session token from the Authorization header (API clients) or the
+    # HttpOnly session cookie (browser, incl. <img src>/<a download>
+    # direct-URL requests). Tokens are never accepted in the query string.
+    # Cookie use can't be forged cross-site: SameSite=Strict, plus the
+    # Origin check above for state-changing methods.
+    valid = token_is_valid(request_token(request.headers, request.cookies))
 
     if not valid:
         return JSONResponse({"error": "Unauthorized"}, status_code=401)

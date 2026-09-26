@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # Set AUTH_PASSWORD to require a password on the web interface.
     # Leave empty to disable authentication (not recommended on public servers).
     auth_password: str = Field(default="", env="AUTH_PASSWORD")
+    # Login sessions expire after this many days.
+    auth_session_days: int = Field(default=30, env="AUTH_SESSION_DAYS")
     # Extra public hostnames (comma-separated) this server may be reached by
     # when AUTH_PASSWORD is empty, e.g. a Caddy domain. Guards DNS rebinding.
     allowed_hosts: str = Field(default="", env="ALLOWED_HOSTS")

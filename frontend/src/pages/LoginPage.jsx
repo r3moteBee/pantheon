@@ -28,8 +28,8 @@ export default function LoginPage({ onLogin }) {
         setLoading(false)
         return
       }
-      localStorage.setItem('auth_token', token)
-      onLogin(token)
+      // Session is carried by the HttpOnly cookie the server just set.
+      onLogin()
     } catch (err) {
       const msg = err?.message || ''
       if (msg.includes('Invalid password') || msg.includes('401')) {

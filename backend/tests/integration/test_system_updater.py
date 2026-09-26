@@ -14,7 +14,7 @@ os.makedirs("/tmp/pantheon-tests-data/db", exist_ok=True)
 
 from main import app
 from config import get_settings
-from api.auth import compute_token
+from api.auth import create_session
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def test_check_update_with_auth(mock_run, clean_settings, client):
     """Test checking for updates returns auth_enabled=True when AUTH_PASSWORD is set."""
     os.environ["AUTH_PASSWORD"] = "test-admin-pass"
     settings = get_settings()
-    token = compute_token(settings.auth_password, settings.secret_key)
+    token = create_session()
     
     # Mock subprocess git fetches
     mock_run.return_value = MagicMock(returncode=0, stdout="")
@@ -90,7 +90,7 @@ def test_execute_update_password_gate_with_auth(mock_popen, clean_settings, clie
     """When auth is enabled, password field is checked. Invalid password gives 401."""
     os.environ["AUTH_PASSWORD"] = "super-secret"
     settings = get_settings()
-    token = compute_token(settings.auth_password, settings.secret_key)
+    token = create_session()
     headers = {"Authorization": f"Bearer {token}"}
     
     # Missing password -> 401

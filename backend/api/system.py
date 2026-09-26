@@ -111,20 +111,16 @@ async def execute_update(payload: dict[str, Any]) -> dict[str, Any]:
     """Execute update by pulling git changes and rebuilding the app."""
     import os
     import subprocess
-    import hmac
     from pathlib import Path
     from fastapi import HTTPException
     from config import get_settings
-    from api.auth import compute_token
+    from api.auth import password_matches
 
     settings = get_settings()
 
     # 1. Password/Confirmation Gate
     if settings.auth_password:
-        password = payload.get("password", "")
-        expected = compute_token(settings.auth_password, settings.secret_key)
-        given = compute_token(password, settings.secret_key)
-        if not hmac.compare_digest(given, expected):
+        if not password_matches(payload.get("password", "")):
             raise HTTPException(status_code=401, detail="Invalid password.")
     else:
         if not payload.get("confirm", False):

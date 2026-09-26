@@ -2,27 +2,23 @@ import axios from 'axios'
 
 const BASE_URL = import.meta.env.VITE_API_URL || ''
 
+// Auth rides on the HttpOnly session cookie set by /api/auth/login — script
+// never sees the token and it never goes into URLs.
 export const api = axios.create({
   baseURL: BASE_URL,
   timeout: 120000,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
-// Request interceptor — attach auth token if present
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('auth_token')
-  if (token && token !== 'no-auth') {
-    config.headers['Authorization'] = `Bearer ${token}`
-  }
-  return config
-})
+// Earlier builds kept a (non-expiring) token in localStorage; drop it.
+try { localStorage.removeItem('auth_token') } catch { /* storage unavailable */ }
 
 // Response interceptor — handle errors and 401 redirects
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('auth_token')
+    if (error.response?.status === 401 && !error.config?.url?.includes('/api/auth/')) {
       window.dispatchEvent(new Event('auth:logout'))
     }
     const message = error.response?.data?.detail || error.message || 'Request failed'
@@ -35,6 +31,9 @@ export const authApi = {
   config: () => api.get('/api/auth/config').then((r) => r.data),
   login: (password) =>
     api.post('/api/auth/login', { password }),
+  // Resolves when the session cookie is valid; rejects on 401.
+  session: () => api.get('/api/auth/session').then((r) => r.data),
+  logout: () => api.post('/api/auth/logout').catch(() => {}),
 }
 
 // Chat API
@@ -212,9 +211,7 @@ export const artifactsApi = {
     api.get('/api/artifacts/tags', { params: { project_id: projectId } }),
   get: (id) => api.get(`/api/artifacts/${id}`),
   rawUrl: (id) => {
-    const token = localStorage.getItem('auth_token')
-    const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
-    return `${BASE_URL}/api/artifacts/${id}/raw${tokenParam}`
+    return `${BASE_URL}/api/artifacts/${id}/raw`
   },
   preview: (id) => api.get(`/api/artifacts/${id}/preview`),
   create: ({ project_id, path, content, content_type = 'text/markdown', title, tags, source }) =>
@@ -287,14 +284,10 @@ export const filesApi = {
       responseType: 'blob',
     }),
   downloadUrl: (path, projectId) => {
-    const token = localStorage.getItem('auth_token')
-    const tokenParam = token && token !== 'no-auth' ? `&token=${encodeURIComponent(token)}` : ''
-    return `${BASE_URL}/api/files/download?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}${tokenParam}`
+    return `${BASE_URL}/api/files/download?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}`
   },
   viewUrl: (path, projectId) => {
-    const token = localStorage.getItem('auth_token')
-    const tokenParam = token && token !== 'no-auth' ? `&token=${encodeURIComponent(token)}` : ''
-    return `${BASE_URL}/api/files/view?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}${tokenParam}`
+    return `${BASE_URL}/api/files/view?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}`
   },
 }
 
@@ -584,9 +577,8 @@ export function createChatSocket(onMessage, onClose) {
   _cleanupSocket()
 
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const token = localStorage.getItem('auth_token') || ''
-  const tokenParam = token && token !== 'no-auth' ? `?token=${encodeURIComponent(token)}` : ''
-  const wsUrl = `${proto}//${window.location.host}/ws/chat${tokenParam}`
+  // Same-origin handshake carries the session cookie.
+  const wsUrl = `${proto}//${window.location.host}/ws/chat`
   const socket = new WebSocket(wsUrl)
 
   socket.onmessage = (event) => {
