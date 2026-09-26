@@ -46,6 +46,8 @@ class SettingsUpdate(BaseModel):
     matrix_homeserver_url: str | None = None
     matrix_user_id: str | None = None
     matrix_access_token: str | None = None
+    matrix_allowed_room_ids: str | None = None
+    mattermost_allowed_channel_ids: str | None = None
     mattermost_url: str | None = None
     mattermost_bot_token: str | None = None
     mattermost_scheme: str | None = None
@@ -129,6 +131,8 @@ def _get_effective_settings() -> dict[str, Any]:
         "matrix_homeserver_url": vault.get_secret("matrix_homeserver_url") or settings_config.matrix_homeserver_url,
         "matrix_user_id": vault.get_secret("matrix_user_id") or settings_config.matrix_user_id,
         "matrix_access_token_set": bool(vault.get_secret("matrix_access_token") or settings_config.matrix_access_token),
+        "matrix_allowed_room_ids": vault.get_secret("matrix_allowed_room_ids") or settings_config.matrix_allowed_room_ids,
+        "mattermost_allowed_channel_ids": vault.get_secret("mattermost_allowed_channel_ids") or settings_config.mattermost_allowed_channel_ids,
         "mattermost_url": vault.get_secret("mattermost_url") or settings_config.mattermost_url,
         "mattermost_bot_token_set": bool(vault.get_secret("mattermost_bot_token") or settings_config.mattermost_bot_token),
         "mattermost_scheme": vault.get_secret("mattermost_scheme") or settings_config.mattermost_scheme,
@@ -217,6 +221,10 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         vault.set_secret("slack_app_token", req.slack_app_token)
     if req.slack_allowed_channel_ids is not None:
         vault.set_secret("slack_allowed_channel_ids", req.slack_allowed_channel_ids)
+    if req.matrix_allowed_room_ids is not None:
+        vault.set_secret("matrix_allowed_room_ids", req.matrix_allowed_room_ids)
+    if req.mattermost_allowed_channel_ids is not None:
+        vault.set_secret("mattermost_allowed_channel_ids", req.mattermost_allowed_channel_ids)
     if req.matrix_homeserver_url is not None:
         vault.set_secret("matrix_homeserver_url", req.matrix_homeserver_url)
     if req.matrix_user_id is not None:

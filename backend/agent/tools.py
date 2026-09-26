@@ -16,6 +16,7 @@ import httpx
 
 from config import get_settings
 from utils.paths import check_project_id, is_within, safe_filename
+from artifacts.conversions import save_converted_artifact
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -938,11 +939,11 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "save_last_response",
-            "description": "Save conversation history to a file in the project workspace. By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
+            "description": "Save conversation history as a durable, searchable artifact (read it back with read_artifact / list_artifacts). By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Workspace-relative file path, e.g. 'ANALYSIS/2026-04-07-ai-maturity.md'"},
+                    "path": {"type": "string", "description": "Artifact path, e.g. 'ANALYSIS/2026-04-07-ai-maturity.md' (project prefix added automatically)"},
                     "history_count": {"type": "integer", "description": "How many of the most recent messages (both user and assistant) to include as source material. 1 = just the last assistant reply (default). Use a larger number when the user references 'the last few messages' or 'the conversation so far'.", "default": 1},
                     "mode": {
                         "type": "string",
@@ -1727,8 +1728,14 @@ async def execute_tool(
                 return f"MCP tool error: {e}"
 
         if tool_name == "remember":
-            from memory.manager import create_memory_manager
-            mgr = create_memory_manager(project_id=effective_project)
+            # Use the agent's own manager so tier="working" lands in this
+            # session and episodic notes carry the real session id (a fresh
+            # manager dropped working memory and filed under "default").
+            if memory_manager is not None:
+                mgr = memory_manager
+            else:
+                from memory.manager import create_memory_manager
+                mgr = create_memory_manager(project_id=effective_project, session_id=session_id)
             tier = tool_args.get("tier", "semantic")
             content = tool_args["content"]
             metadata = tool_args.get("metadata", {})
@@ -1902,36 +1909,10 @@ async def execute_tool(
                 
                 # Ingest as artifact if requested
                 if save_as_artifact:
-                    import mimetypes
-                    from artifacts.store import get_store, is_text_type
-                    from artifacts import embedder
-                    
-                    content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
-                    is_txt = is_text_type(content_type)
-                    if is_txt:
-                        try:
-                            content = target_path.read_text(encoding="utf-8")
-                        except Exception:
-                            content = target_path.read_bytes()
-                            is_txt = False
-                    else:
-                        content = target_path.read_bytes()
-
-                    store = get_store()
-                    target_rel = str(target_path.relative_to(base))
-                    source_rel = str(source_path.relative_to(base))
-                    a = store.create(
-                        project_id=effective_project,
-                        path=target_rel,
-                        content=content,
-                        content_type=content_type,
-                        title=target_path.name,
-                        tags=["converted", target_format.lower()],
-                        source={"kind": "conversion", "source_file": source_rel},
-                        edited_by="agent",
+                    save_converted_artifact(
+                        project_id=effective_project, target_path=target_path, base=base,
+                        source_rel=str(source_path.relative_to(base)), fmt=target_format,
                     )
-                    if is_txt:
-                        embedder.schedule_embed(a["id"], effective_project)
                         
                 size_kb = target_path.stat().st_size / 1024
                 return (
@@ -2017,35 +1998,10 @@ async def execute_tool(
 
                         # Ingest as artifact if requested
                         if save_as_artifact:
-                            import mimetypes
-                            from artifacts.store import get_store, is_text_type
-                            from artifacts import embedder
-                            
-                            content_type = mimetypes.guess_type(str(target_path))[0] or "application/octet-stream"
-                            is_txt = is_text_type(content_type)
-                            if is_txt:
-                                try:
-                                    content = target_path.read_text(encoding="utf-8")
-                                except Exception:
-                                    content = target_path.read_bytes()
-                                    is_txt = False
-                            else:
-                                content = target_path.read_bytes()
-
-                            store = get_store()
-                            target_rel = str(target_path.relative_to(base))
-                            a = store.create(
-                                project_id=effective_project,
-                                path=target_rel,
-                                content=content,
-                                content_type=content_type,
-                                title=target_path.name,
-                                tags=["converted", target_format.lower()],
-                                source={"kind": "conversion", "source_file": source_rel},
-                                edited_by="agent",
+                            save_converted_artifact(
+                                project_id=effective_project, target_path=target_path,
+                                base=base, source_rel=source_rel, fmt=target_format,
                             )
-                            if is_txt:
-                                embedder.schedule_embed(a["id"], effective_project)
 
                         converted_files.append(f"{source_rel} -> {target_path.relative_to(base)}")
                     except Exception as e:
@@ -2226,10 +2182,18 @@ async def execute_tool(
                 logger.exception("save_last_response transform failed")
                 return f"Transform failed ({mode}): {e}"
 
-            # ── Write file ──────────────────────────────────────────────
-            rel = tool_args["path"]
-            safe = _safe_workspace_path(rel, project_id)
-            safe.parent.mkdir(parents=True, exist_ok=True)
+            # ── Save as artifact ────────────────────────────────────────
+            # Durable + searchable, matching what read_file / list_artifacts
+            # tell the model (it used to write a scratch workspace file the
+            # model then couldn't find via list_artifacts).
+            import sqlite3 as _sqlite3
+            from artifacts.store import get_store, project_slug as _ps
+            from artifacts import embedder as _emb
+            rel = (tool_args.get("path") or "notes/saved-response.md").lstrip("/").strip()
+            _slug = _ps(effective_project)
+            if not (rel == _slug or rel.startswith(f"{_slug}/")):
+                rel = f"{_slug}/{rel}"
+            safe = Path(rel)
             content = content_body
             if safe.suffix.lower() in (".md", ".markdown") and tool_args.get("prepend_header", True):
                 from datetime import datetime
@@ -2247,8 +2211,29 @@ async def execute_tool(
                 frontmatter.append("source: agent_response")
                 frontmatter.append("---")
                 content = "\n".join(frontmatter) + "\n\n# " + title + "\n\n" + content_body
-            safe.write_text(content, encoding="utf-8")
-            return f"Saved {source_label} ({mode}, {len(content_body)} chars) to {rel}"
+            store = get_store()
+            a = None
+            for n in range(50):
+                cand = rel if n == 0 else str(safe.with_name(f"{safe.stem}-{n}{safe.suffix}"))
+                try:
+                    a = store.create(
+                        project_id=effective_project, path=cand, content=content,
+                        content_type="text/markdown" if safe.suffix.lower() in (".md", ".markdown") else "text/plain",
+                        title=tool_args.get("title") or safe.stem,
+                        tags=list(tool_args.get("tags") or []) or None,
+                        source={"kind": "agent", "tool": "save_last_response", "session_id": session_id or ""},
+                        edited_by=session_id or "agent",
+                    )
+                    rel = cand
+                    break
+                except _sqlite3.IntegrityError as e:
+                    if "UNIQUE" not in str(e):
+                        raise
+            if a is None:
+                return f"save_last_response failed: could not find a free path near {rel!r}"
+            _emb.schedule_embed(a["id"], effective_project)
+            return (f"Saved {source_label} ({mode}, {len(content_body)} chars) as artifact "
+                    f"{rel} (id={a['id']}). Find it with list_artifacts / read_artifact.")
 
         elif tool_name == "web_search":
             return await _web_search(tool_args["query"])
@@ -3850,10 +3835,33 @@ async def execute_tool(
                         if key in tax_dict:
                             units = tax_dict[key].get("units", {})
                             for unit, entries in units.items():
-                                # Look for annual FY entry
+                                # Annual value for fiscal year `yr`. SEC `fy` is
+                                # the FILING's fiscal year — each 10-K also repeats
+                                # prior years under the same fy — so match on the
+                                # period end date instead, require a ~1-year
+                                # duration for flow metrics, and take the latest
+                                # filing (restatements win).
+                                best = None
                                 for entry in entries:
-                                    if entry.get("fy") == yr and entry.get("form") == "10-K" and entry.get("fp") == "FY":
-                                        return float(entry.get("val"))
+                                    if entry.get("form") != "10-K" or entry.get("fp") != "FY":
+                                        continue
+                                    end = str(entry.get("end") or "")
+                                    entry_year = end[:4] if end else str(entry.get("fy") or "")
+                                    if entry_year != str(yr):
+                                        continue
+                                    start = entry.get("start")
+                                    if start:
+                                        try:
+                                            from datetime import date as _d
+                                            days = (_d.fromisoformat(end) - _d.fromisoformat(start)).days
+                                        except ValueError:
+                                            days = 365
+                                        if not 330 <= days <= 400:
+                                            continue
+                                    if best is None or str(entry.get("filed") or "") > str(best.get("filed") or ""):
+                                        best = entry
+                                if best is not None:
+                                    return float(best.get("val"))
                 return None
 
             revenue_keys = ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "SalesRevenueGoodsNet"]
@@ -3874,7 +3882,12 @@ async def execute_tool(
                 if key in tax_dict:
                     for entries in tax_dict[key].get("units", {}).values():
                         for entry in entries:
-                            if entry.get("fy"):
+                            if entry.get("form") != "10-K":
+                                continue
+                            end = str(entry.get("end") or "")
+                            if end[:4].isdigit():
+                                available_years.add(int(end[:4]))
+                            elif entry.get("fy"):
                                 available_years.add(int(entry.get("fy")))
             
             if not available_years:
@@ -4013,7 +4026,8 @@ async def execute_tool(
                     row = [label]
                     for yr in growth_years:
                         val_curr = year_data[yr][key]
-                        val_prev = year_data[yr + 1][key]
+                        # sorted_years is newest-first; the prior year is yr-1.
+                        val_prev = (year_data.get(yr - 1) or {}).get(key)
                         if val_curr is not None and val_prev:
                             growth = ((val_curr - val_prev) / val_prev) * 100
                             row.append(f"{growth:+.2f}%")
@@ -4125,6 +4139,7 @@ async def execute_tool(
     except Exception as e:
         logger.error(f"Tool '{tool_name}' error: {e}", exc_info=True)
         return f"Error executing {tool_name}: {str(e)}"
+
 
 
 def _get_workspace_base(project_id: str | None = None) -> Path:

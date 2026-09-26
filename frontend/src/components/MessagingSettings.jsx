@@ -32,12 +32,14 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
   const [matrixHomeserver, setMatrixHomeserver] = useState('')
   const [matrixUserId, setMatrixUserId] = useState('')
   const [matrixAccessToken, setMatrixAccessToken] = useState('')
+  const [matrixRoomIds, setMatrixRoomIds] = useState('')
 
   // Mattermost fields
   const [mmUrl, setMmUrl] = useState('')
   const [mmToken, setMmToken] = useState('')
   const [mmScheme, setMmScheme] = useState('https')
   const [mmPort, setMmPort] = useState(443)
+  const [mmChannelIds, setMmChannelIds] = useState('')
 
   useEffect(() => {
     if (adapter.name === 'telegram') {
@@ -50,10 +52,12 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
     } else if (adapter.name === 'matrix') {
       setMatrixHomeserver(appSettings?.matrix_homeserver_url || 'https://matrix.org')
       setMatrixUserId(appSettings?.matrix_user_id || '')
+      setMatrixRoomIds(appSettings?.matrix_allowed_room_ids || '')
     } else if (adapter.name === 'mattermost') {
       setMmUrl(appSettings?.mattermost_url || '')
       setMmScheme(appSettings?.mattermost_scheme || 'https')
       setMmPort(appSettings?.mattermost_port || 443)
+      setMmChannelIds(appSettings?.mattermost_allowed_channel_ids || '')
     }
   }, [adapter.name, appSettings])
 
@@ -77,11 +81,13 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
       } else if (adapter.name === 'matrix') {
         payload.matrix_homeserver_url = matrixHomeserver
         payload.matrix_user_id = matrixUserId
+        payload.matrix_allowed_room_ids = matrixRoomIds
         if (matrixAccessToken) payload.matrix_access_token = matrixAccessToken
       } else if (adapter.name === 'mattermost') {
         payload.mattermost_url = mmUrl
         payload.mattermost_scheme = mmScheme
         payload.mattermost_port = parseInt(mmPort, 10) || 443
+        payload.mattermost_allowed_channel_ids = mmChannelIds
         if (mmToken) payload.mattermost_bot_token = mmToken
       }
       await settingsApi.update(payload)
@@ -280,6 +286,17 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                 onChange={setMatrixAccessToken}
                 tokenSet={appSettings?.matrix_access_token_set}
               />
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Allowed Room IDs</label>
+                <input
+                  type="text"
+                  value={matrixRoomIds}
+                  onChange={(e) => setMatrixRoomIds(e.target.value)}
+                  placeholder="!abc123:matrix.org"
+                  className={inputClass}
+                />
+                <p className="text-xs text-gray-600 mt-1">Comma-separated room IDs. Required — the bot ignores other rooms.</p>
+              </div>
             </>
           )}
 
@@ -326,6 +343,17 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                     className={inputClass}
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-400 mb-1.5">Allowed Channel IDs</label>
+                <input
+                  type="text"
+                  value={mmChannelIds}
+                  onChange={(e) => setMmChannelIds(e.target.value)}
+                  placeholder="channel id, channel id"
+                  className={inputClass}
+                />
+                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
               </div>
             </>
           )}

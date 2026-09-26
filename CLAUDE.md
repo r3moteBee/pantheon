@@ -256,7 +256,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **MCP `save_*` tools are NOT artifact tools.** `mcp_SubDownload_save_to_library` writes to that MCP server's external storage, which Pantheon cannot see. Always use `save_to_artifact` (or `save_transcript_artifact` for video transcripts) for Pantheon persistence.
 
-**save_to_artifact dedup.** Re-ingesting the same canonical path UPDATES the existing artifact (creating a new version in `artifact_versions`) rather than creating a duplicate. Pass `extras={"force_new": true}` when you legitimately want a separate artifact (e.g. new product version where the old datasheet should also be kept).
+**Ingest dedup vs save_to_artifact.** `ingest_source` / `registry.ingest`: re-ingesting the same canonical path UPDATES the existing artifact (new version in `artifact_versions`); pass `extras={"force_new": true}` for a separate artifact. `save_to_artifact` is different: an existing path gets a `-1`, `-2`… suffix. Use `update_artifact` to revise in place.
 
 **Graph idempotency.** `graph.add_edge` is idempotent on `(project_id, node_a_id, node_b_id, relationship)`. Re-running the typed-topics extractor doesn't pile parallel edges. Same for `add_node` on `(project_id, label)`.
 
@@ -302,7 +302,9 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Git credentials never go in URLs.** Use `_git_auth_env(token)` (http.extraheader via `GIT_CONFIG_*` env) with the clean `https://github.com/...` URL.
 
-**Messaging bot allowlists are deny-by-default.** Empty `telegram_allowed_chat_ids` / `slack_allowed_channel_ids` / `discord_allowed_guild_ids` = nobody.
+**Messaging bot allowlists are deny-by-default.** Empty `telegram_allowed_chat_ids` / `slack_allowed_channel_ids` / `discord_allowed_guild_ids` / `matrix_allowed_room_ids` / `mattermost_allowed_channel_ids` = nobody.
+
+**MCP OAuth refresh is serialized per connection** (`_REFRESH_LOCKS`); the client passes the rejected token so concurrent 401s refresh once. A refresh rejected by the AS (HTTP 400/401/403, `invalid_grant`) sets `refresh_failed` on the stored tokens → `oauth_status: needs_auth`. A 404 on a request with `Mcp-Session-Id` re-initializes the session and retries once.
 
 **Embedding failures raise.** `ModelProvider.embed` no longer returns a zero vector; callers skip/fall back (semantic search → `[]`, episodic → LIKE search).
 

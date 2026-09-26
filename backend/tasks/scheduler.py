@@ -1,6 +1,7 @@
 """APScheduler setup and job management for autonomous tasks."""
 from __future__ import annotations
 import asyncio
+import functools
 import logging
 import uuid
 from typing import Any
@@ -138,7 +139,7 @@ async def run_job_now(job_id: str) -> dict[str, Any]:
     return {"ran": True, "recurring": recurring, "schedule_id": job_id}
 
 
-async def schedule_agent_task(
+def schedule_agent_task_sync(
     name: str,
     description: str,
     schedule: str,
@@ -295,6 +296,12 @@ async def schedule_agent_task(
     logger.info(f"Task scheduled: {name} (id={task_id}, schedule={schedule}, plan_status={plan_status})")
     return task_id
 
+
+
+@functools.wraps(schedule_agent_task_sync)
+async def schedule_agent_task(*args: Any, **kwargs: Any) -> str:
+    """Async wrapper kept for existing callers (the work is synchronous)."""
+    return schedule_agent_task_sync(*args, **kwargs)
 
 
 # ── Phase H integration: schedule fires enqueue jobs instead of running directly ──

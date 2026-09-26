@@ -62,12 +62,14 @@ class Settings(BaseSettings):
     matrix_homeserver_url: str = Field(default="", env="MATRIX_HOMESERVER_URL")
     matrix_user_id: str = Field(default="", env="MATRIX_USER_ID")
     matrix_access_token: str = Field(default="", env="MATRIX_ACCESS_TOKEN")
+    matrix_allowed_room_ids: str = Field(default="", env="MATRIX_ALLOWED_ROOM_IDS")
 
     # Mattermost
     mattermost_url: str = Field(default="", env="MATTERMOST_URL")
     mattermost_bot_token: str = Field(default="", env="MATTERMOST_BOT_TOKEN")
     mattermost_scheme: str = Field(default="https", env="MATTERMOST_SCHEME")
     mattermost_port: int = Field(default=443, env="MATTERMOST_PORT")
+    mattermost_allowed_channel_ids: str = Field(default="", env="MATTERMOST_ALLOWED_CHANNEL_IDS")
 
     # Application
     app_env: str = Field(default="development", env="APP_ENV")

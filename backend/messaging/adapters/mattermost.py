@@ -84,6 +84,18 @@ class MattermostAdapter(BaseMessagingAdapter):
     # BaseMessagingAdapter interface
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _get_allowed_channels() -> set[str]:
+        """Channel IDs the bot will answer in. Empty = none (deny by default)."""
+        raw = ""
+        try:
+            from secrets.vault import get_vault
+            raw = get_vault().get_secret("mattermost_allowed_channel_ids") or ""
+        except Exception:
+            pass
+        raw = raw or getattr(settings, "mattermost_allowed_channel_ids", "") or ""
+        return {c.strip() for c in raw.split(",") if c.strip()}
+
     def is_configured(self) -> bool:
         return bool(self._get_url() and self._get_token())
 
@@ -118,7 +130,11 @@ class MattermostAdapter(BaseMessagingAdapter):
             'scheme': scheme,
             'port': port,
             'debug': False,
+            # Websocket.connect reconnects on drop only when keepalive is on.
+            'keepalive': True,
+            'keepalive_delay': 5,
         })
+        bot_user_id: dict[str, str] = {}
 
         adapter = self
 
@@ -170,10 +186,16 @@ class MattermostAdapter(BaseMessagingAdapter):
             # We can compare user_id if we fetch it at startup
             # For simplicity, we compare via bot tag or username if we find it
             # We will ignore post if it has props indicating bot_id
-            if post.get("userId") == data.get("broadcast", {}).get("userId") or post.get("props", {}).get("from_bot"):
+            if post.get("user_id") == bot_user_id.get("id") or post.get("props", {}).get("from_bot"):
                 return
 
             channel_id = post.get("channel_id")
+            if channel_id not in adapter._get_allowed_channels():
+                logger.warning(
+                    "Ignoring Mattermost channel %s — add it to mattermost_allowed_channel_ids to allow.",
+                    channel_id,
+                )
+                return
             text = post.get("message", "").strip()
             project = adapter.resolve_project(channel_id)
             session_id = f"mattermost:{channel_id}"
@@ -336,17 +358,22 @@ class MattermostAdapter(BaseMessagingAdapter):
 
         async def ws_loop():
             try:
-                _driver.login()
-                # mattermostdriver has a blocking websocket loop, we run it in an executor
-                # Use a fire-and-forget task for the callback
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, _driver.init_websocket, lambda e: asyncio.run_coroutine_threadsafe(event_handler(e), loop))
+                from mattermostdriver.websocket import Websocket
+                # Driver.login / REST calls are blocking requests calls.
+                await asyncio.to_thread(_driver.login)
+                me = await asyncio.to_thread(_driver.users.get_user, "me")
+                bot_user_id["id"] = me.get("id", "")
+                # Run the driver's async websocket directly on our loop.
+                # (Driver.init_websocket calls loop.run_until_complete, which
+                # can't work from inside a running loop or a worker thread.)
+                _driver.websocket = Websocket(_driver.options, _driver.client.token)
+                await _driver.websocket.connect(event_handler)
             except asyncio.CancelledError:
-                pass
+                raise
             except Exception as e:
                 logger.exception("Mattermost WebSocket client crash: %s", e)
 
-        _websocket_task = asyncio.create_task(ws_loop())
+        _websocket_task = asyncio.create_task(ws_loop(), name="mattermost-ws")
 
     async def stop(self) -> None:
         global _driver, _websocket_task
@@ -359,6 +386,9 @@ class MattermostAdapter(BaseMessagingAdapter):
             _websocket_task = None
         if _driver is not None:
             try:
+                ws = getattr(_driver, "websocket", None)
+                if ws is not None:
+                    ws.disconnect()
                 _driver.disconnect()
             except Exception:
                 pass
@@ -379,10 +409,10 @@ class MattermostAdapter(BaseMessagingAdapter):
                         raw_id = c['id']
                         name = c['display_name'] or c['name']
                         result.append(ChannelInfo(
-                            id=self.prefixed_channel_id(raw_id),
+                            channel_id=self.prefixed_channel_id(raw_id),
+                            raw_id=raw_id,
                             name=name,
                             platform=self.name,
-                            project_id=self.resolve_project(raw_id),
                         ))
                 return result
             return await asyncio.to_thread(_fetch)

@@ -14,6 +14,8 @@ from config import get_settings
 from messaging.base import BaseMessagingAdapter
 from messaging.models import ChannelInfo
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -455,16 +457,21 @@ class DiscordAdapter(BaseMessagingAdapter):
         _client = client
         _tree = tree
         try:
-            asyncio.create_task(client.start(token))
-            # Wait briefly for the client to connect
-            for _ in range(30):
-                await asyncio.sleep(1)
-                if client.is_ready():
-                    break
-            if not client.is_ready():
-                logger.warning("Discord client did not become ready within 30s")
-            else:
-                logger.info("Discord bot started successfully")
+            # Don't block startup (this runs inside the FastAPI lifespan)
+            # waiting for the gateway; report readiness in the background.
+            start_task = spawn(client.start(token), name="discord-client")
+
+            async def _report_ready() -> None:
+                for _ in range(60):
+                    if client.is_ready():
+                        logger.info("Discord bot started successfully")
+                        return
+                    if start_task.done():
+                        return  # start() failed; spawn() logs the exception
+                    await asyncio.sleep(1)
+                logger.warning("Discord client did not become ready within 60s")
+
+            spawn(_report_ready(), name="discord-ready")
         except Exception as e:
             _client = None
             _tree = None

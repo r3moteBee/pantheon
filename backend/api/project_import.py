@@ -616,15 +616,19 @@ def _import_episodic(
             );
         """)
 
-        # Import conversations — use INSERT OR REPLACE so reimports work
+        # Import conversations — upsert so reimports into the same project work.
+        # The WHERE on the conflict branch stops an archive that reuses row
+        # ids from overwriting/re-homing another project's rows.
         for row in data.get("conversations", []):
             row["project_id"] = project_id
             cols = ["id", "project_id", "session_id", "title", "created_at", "updated_at", "metadata"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
-                INSERT OR REPLACE INTO conversations
+                INSERT INTO conversations
                 (id, project_id, session_id, title, created_at, updated_at, metadata)
                 VALUES (:id, :project_id, :session_id, :title, :created_at, :updated_at, :metadata)
+                ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, title=excluded.title, created_at=excluded.created_at, updated_at=excluded.updated_at, metadata=excluded.metadata
+                WHERE conversations.project_id = excluded.project_id
             """, vals)
 
         # Import messages
@@ -635,9 +639,11 @@ def _import_episodic(
             # conversation_id may be present
             vals["conversation_id"] = row.get("conversation_id")
             conn.execute("""
-                INSERT OR REPLACE INTO messages
+                INSERT INTO messages
                 (id, conversation_id, project_id, session_id, role, content, timestamp, metadata)
                 VALUES (:id, :conversation_id, :project_id, :session_id, :role, :content, :timestamp, :metadata)
+                ON CONFLICT(id) DO UPDATE SET conversation_id=excluded.conversation_id, project_id=excluded.project_id, session_id=excluded.session_id, role=excluded.role, content=excluded.content, timestamp=excluded.timestamp, metadata=excluded.metadata
+                WHERE messages.project_id = excluded.project_id
             """, vals)
 
         # Import task logs
@@ -646,9 +652,11 @@ def _import_episodic(
             cols = ["id", "project_id", "task_id", "task_name", "event", "details", "timestamp"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
-                INSERT OR REPLACE INTO task_logs
+                INSERT INTO task_logs
                 (id, project_id, task_id, task_name, event, details, timestamp)
                 VALUES (:id, :project_id, :task_id, :task_name, :event, :details, :timestamp)
+                ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, task_id=excluded.task_id, task_name=excluded.task_name, event=excluded.event, details=excluded.details, timestamp=excluded.timestamp
+                WHERE task_logs.project_id = excluded.project_id
             """, vals)
 
         # Import memory notes
@@ -657,9 +665,11 @@ def _import_episodic(
             cols = ["id", "project_id", "session_id", "content", "tags", "created_at", "updated_at"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
-                INSERT OR REPLACE INTO memory_notes
+                INSERT INTO memory_notes
                 (id, project_id, session_id, content, tags, created_at, updated_at)
                 VALUES (:id, :project_id, :session_id, :content, :tags, :created_at, :updated_at)
+                ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, content=excluded.content, tags=excluded.tags, created_at=excluded.created_at, updated_at=excluded.updated_at
+                WHERE memory_notes.project_id = excluded.project_id
             """, vals)
 
         conn.commit()
@@ -720,9 +730,11 @@ def _import_graph(
             vals = {c: row.get(c) for c in cols}
             try:
                 conn.execute("""
-                    INSERT OR REPLACE INTO graph_nodes
+                    INSERT INTO graph_nodes
                     (id, project_id, node_type, label, metadata, created_at, updated_at)
                     VALUES (:id, :project_id, :node_type, :label, :metadata, :created_at, :updated_at)
+                    ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_type=excluded.node_type, label=excluded.label, metadata=excluded.metadata, created_at=excluded.created_at, updated_at=excluded.updated_at
+                    WHERE graph_nodes.project_id = excluded.project_id
                 """, vals)
                 node_count += 1
             except Exception as e:
@@ -736,9 +748,11 @@ def _import_graph(
             vals = {c: row.get(c) for c in cols}
             try:
                 conn.execute("""
-                    INSERT OR REPLACE INTO graph_edges
+                    INSERT INTO graph_edges
                     (id, project_id, node_a_id, node_b_id, relationship, weight, created_at)
                     VALUES (:id, :project_id, :node_a_id, :node_b_id, :relationship, :weight, :created_at)
+                    ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_a_id=excluded.node_a_id, node_b_id=excluded.node_b_id, relationship=excluded.relationship, weight=excluded.weight, created_at=excluded.created_at
+                    WHERE graph_edges.project_id = excluded.project_id
                 """, vals)
                 edge_count += 1
             except Exception as e:
@@ -843,36 +857,23 @@ def _import_tasks(
                 continue
 
             try:
-                # Parse cron schedule
-                from apscheduler.triggers.cron import CronTrigger
-                parts = task_schedule.strip().split()
-                if len(parts) >= 5:
-                    trigger = CronTrigger(
-                        minute=parts[0],
-                        hour=parts[1],
-                        day=parts[2],
-                        month=parts[3],
-                        day_of_week=parts[4],
-                    )
-                else:
+                # Imported schedules land as PROPOSED (paused) — an archive
+                # from elsewhere must not start running agent tasks until the
+                # user approves them. (This used to import a non-existent
+                # tasks.scheduler.run_task, so nothing was ever scheduled.)
+                from tasks.scheduler import schedule_agent_task_sync
+                if len(task_schedule.strip().split()) != 5 and not task_schedule.startswith("interval:"):
                     skipped += 1
                     warnings.append(f"Task '{task_name}' has invalid schedule: {task_schedule}")
                     continue
-
-                # Import as a reference — the actual job function needs to
-                # be wired to the agent's task runner
-                from tasks.scheduler import run_task
-                scheduler.add_job(
-                    run_task,
-                    trigger=trigger,
-                    id=f"imported-{project_id}-{task_name}",
+                schedule_agent_task_sync(
                     name=task_name,
-                    kwargs={
-                        "description": task_desc,
-                        "project_id": project_id,
-                        "schedule": task_schedule,
-                    },
-                    replace_existing=True,
+                    description=task_desc,
+                    schedule=task_schedule.strip(),
+                    project_id=project_id,
+                    plan=task.get("plan") or f"(imported) {task_desc}",
+                    plan_status="proposed",
+                    skill_name=task.get("skill_name"),
                 )
                 created += 1
             except Exception as e:
