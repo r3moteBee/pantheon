@@ -304,6 +304,16 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Messaging bot allowlists are deny-by-default.** Empty `telegram_allowed_chat_ids` / `slack_allowed_channel_ids` / `discord_allowed_guild_ids` = nobody.
 
+**Embedding failures raise.** `ModelProvider.embed` no longer returns a zero vector; callers skip/fall back (semantic search → `[]`, episodic → LIKE search).
+
+**Semantic deletes use metadata filters.** `SemanticMemory.delete_where(where)`; `strip_artifact` matches both `artifact_id` (embedder chunks) and `fm_artifact_id` (FileIndexer chunks). `index_text` deletes a path's old chunks before re-storing.
+
+**Ingest embeds once.** `registry.ingest` relies on `index_artifact`; the generic embedder (`schedule_embed`) is only the fallback when that fails.
+
+**Graph merges are one transaction** (`GraphMemory.merge_nodes`) and drop the absorbed label's topic embedding so it can't be resurrected by the next similarity pass.
+
+**Adapters calling MCP tools** use `mgr.call_tool_raw()` (raw `{text, structured, is_error}`), never `execute_tool()` (LLM-formatted prose).
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)

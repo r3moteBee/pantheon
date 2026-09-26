@@ -63,17 +63,9 @@ async def _embed(artifact: dict[str, Any], project_id: str) -> None:
     mgr = create_memory_manager(project_id=project_id)
     semantic = mgr.semantic
 
-    # Drop prior vectors for this artifact (by walking and matching metadata)
-    try:
-        all_for_id = await semantic.list_by_model(embedding_model=None)
-        stale_ids = [
-            it["id"] for it in all_for_id
-            if (it.get("metadata") or {}).get("artifact_id") == artifact["id"]
-        ]
-        for sid in stale_ids:
-            await semantic.delete(sid)
-    except Exception:
-        logger.debug("could not drop prior artifact vectors", exc_info=True)
+    # Drop prior vectors for this artifact (metadata filter — not a scan
+    # of the whole collection, which also missed anything past 10k docs).
+    await semantic.delete_where({"artifact_id": artifact["id"]})
 
     # Chunk the new content
     chunks = _chunk(artifact.get("content") or "")
@@ -132,10 +124,4 @@ async def drop_for_artifact(artifact_id: str, project_id: str = "default") -> in
     from memory.manager import create_memory_manager
     mgr = create_memory_manager(project_id=project_id)
     semantic = mgr.semantic
-    items = await semantic.list_by_model(embedding_model=None)
-    n = 0
-    for it in items:
-        if (it.get("metadata") or {}).get("artifact_id") == artifact_id:
-            if await semantic.delete(it["id"]):
-                n += 1
-    return n
+    return await semantic.strip_artifact(artifact_id)

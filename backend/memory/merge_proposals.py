@@ -61,12 +61,18 @@ def _db_path() -> Path:
     return p
 
 
+_DDL_DONE: set[str] = set()
+
+
 def _connect() -> sqlite3.Connection:
     from db_utils import apply_sqlite_pragmas, ClosingConnection
-    conn = sqlite3.connect(str(_db_path()))
+    path = str(_db_path())
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
-    conn.executescript(_DDL)
+    if path not in _DDL_DONE:  # once per DB file, not on every connection
+        conn.executescript(_DDL)
+        _DDL_DONE.add(path)
     return ClosingConnection(conn)  # type: ignore
 
 
@@ -196,7 +202,7 @@ def set_status(
             (status, canonical_label,
              _now() if status in {"approved", "merged"} else None,
              approved_by,
-             merged_at if status == "merged" else None,
+             (merged_at or _now()) if status == "merged" else None,
              proposal_id),
         )
         conn.commit()

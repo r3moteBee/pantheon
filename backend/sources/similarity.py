@@ -137,6 +137,14 @@ async def link_artifact_topics(
             if pair_key in seen_edges:
                 continue
             seen_edges.add(pair_key)
+            # Only link to topics that still exist in the graph —
+            # add_edge_by_label would otherwise resurrect a merged-away or
+            # deleted node from a stale embedding.
+            try:
+                if not await graph.get_node_by_label(other_label):
+                    continue
+            except Exception:
+                continue
             try:
                 await graph.add_edge_by_label(
                     label, other_label, "SEMANTICALLY_SIMILAR_TO",
@@ -223,39 +231,21 @@ async def execute_merge(
         )
         return {"ok": True, "reason": "nodes_already_identical"}
 
-    # Rewrite edges. graph.add_edge_by_label / list_edges work by
-    # label; for surgical rewrite we need direct access. Pull all
-    # edges touching the deprecated node and re-create against the
-    # canonical id, then delete the deprecated node (which cascades
-    # the original edges).
-    edges_rewritten = 0
+    # Re-point every edge + delete the deprecated node atomically. The
+    # old implementation scanned only the newest 10k edges, committed each
+    # rewrite separately and deleted the node even if rewrites failed.
     try:
-        all_edges = await graph.list_edges(limit=10_000)
-        for e in all_edges:
-            a_id, b_id, rel = e["node_a_id"], e["node_b_id"], e["relationship"]
-            touches = (a_id == deprecated_node["id"] or
-                       b_id == deprecated_node["id"])
-            if not touches:
-                continue
-            # Skip edges between the two merging nodes — they
-            # disappear entirely (a node can't be similar to itself).
-            if {a_id, b_id} == {canonical_node["id"], deprecated_node["id"]}:
-                continue
-            new_a = canonical_node["id"] if a_id == deprecated_node["id"] else a_id
-            new_b = canonical_node["id"] if b_id == deprecated_node["id"] else b_id
-            try:
-                await graph.add_edge(new_a, new_b, rel)
-                edges_rewritten += 1
-            except Exception as ex:
-                logger.debug("edge rewrite failed: %s", ex)
+        edges_rewritten = await graph.merge_nodes(canonical_node["id"], deprecated_node["id"])
     except Exception as e:
-        return {"ok": False, "reason": f"edge_rewrite_failed: {e}"}
+        return {"ok": False, "reason": f"merge_failed: {e}"}
 
-    # Delete the deprecated node (cascades remaining edges).
+    # Drop the deprecated label's topic embedding, otherwise the next
+    # similarity pass finds it as a neighbour and re-creates the node.
     try:
-        await graph.delete_node(deprecated_node["id"])
+        from memory.topic_embeddings import delete_topic_embeddings_for_label
+        await delete_topic_embeddings_for_label(memory_manager, deprecated_label)
     except Exception as e:
-        return {"ok": False, "reason": f"delete_failed: {e}"}
+        logger.warning("could not drop topic embedding for %r: %s", deprecated_label, e)
 
     merge_proposals.set_status(
         proposal_id, "merged",

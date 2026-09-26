@@ -15,6 +15,7 @@ filtering (\"show me all NVIDIA product pages\") stays clean.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -61,7 +62,8 @@ class _WebAdapterBase(SourceAdapter):
             raise RuntimeError(f"Empty response body from {url!r}")
 
         from sources.util import html_to_markdown as _h2m
-        cleaned_html = trafilatura.extract(
+        cleaned_html = await asyncio.to_thread(
+            trafilatura.extract,
             downloaded, url=url,
             output_format="html",
             include_tables=True,
@@ -72,7 +74,8 @@ class _WebAdapterBase(SourceAdapter):
         )
         text = _h2m(cleaned_html or "")
         if not text or len(text.strip()) < 100:
-            text = trafilatura.extract(
+            text = await asyncio.to_thread(
+                trafilatura.extract,
                 downloaded, url=url,
                 output_format="markdown",
                 include_tables=True,
@@ -87,7 +90,7 @@ class _WebAdapterBase(SourceAdapter):
                 f"page may be JS-rendered or behind a login wall"
             )
 
-        meta = trafilatura.extract_metadata(downloaded) or None
+        meta = await asyncio.to_thread(trafilatura.extract_metadata, downloaded) or None
         title = ""
         author = ""
         published_at: str | None = None

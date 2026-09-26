@@ -562,6 +562,10 @@ class FileIndexer:
 
 
         display_name = source_label or Path(virtual_path).name or virtual_path
+        # Content changed (or force): drop the previous chunks for this
+        # path first, otherwise every re-index adds a full stale copy.
+        if chunks:
+            await self.memory_manager.semantic.delete_where({"source_path": rel_path})
         for chunk in chunks:
             try:
                 chunk_meta = {
@@ -713,6 +717,10 @@ class FileIndexer:
                     "video_id": str(frontmatter.get("video_id") or ""),
                     "channel_name": str(frontmatter.get("channel_name") or ""),
                     "published_at": str(frontmatter.get("published_at") or ""),
+                    # 1:1 with the artifact — lets GraphMemory.strip_artifact
+                    # find it on move/delete. (The source node is shared per
+                    # source type, so it is deliberately not tagged.)
+                    "artifact_id": str(frontmatter.get("artifact_id") or ""),
                 })
                 entities_created += 1
             except Exception as e:

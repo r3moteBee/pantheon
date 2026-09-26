@@ -17,6 +17,7 @@ Identifier semantics: a URL (https://...) or a local file path
 from __future__ import annotations
 
 import io
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,9 @@ def _read_local(path: str) -> bytes:
         raise RuntimeError(f"PDF path must be absolute: {path!r}")
     if not p.is_file():
         raise RuntimeError(f"PDF not found at {p}")
+    with p.open("rb") as fh:
+        if fh.read(5) != b"%PDF-":
+            raise RuntimeError(f"Not a PDF file: {p}")
     return p.read_bytes()
 
 
@@ -112,21 +116,22 @@ class _PDFAdapterBase(SourceAdapter):
         if _looks_like_url(req.identifier):
             blob = await _download(req.identifier)
         else:
-            blob = _read_local(req.identifier)
+            blob = await asyncio.to_thread(_read_local, req.identifier)
 
-        # Primary engine.
+        # Primary engine. PDF parsing is CPU-heavy and synchronous — run it
+        # off the event loop or a large PDF freezes the whole app.
         try:
             if self.pdf_engine == "pypdf":
-                text, meta = _extract_with_pypdf(blob)
+                text, meta = await asyncio.to_thread(_extract_with_pypdf, blob)
             else:
-                text, meta = _extract_with_pdfplumber(blob)
+                text, meta = await asyncio.to_thread(_extract_with_pdfplumber, blob)
         except Exception as e:
             logger.warning(
                 "primary engine %s failed for %s: %s; trying fallback",
                 self.pdf_engine, req.identifier, e,
             )
             try:
-                text, meta = _extract_with_pypdf(blob)
+                text, meta = await asyncio.to_thread(_extract_with_pypdf, blob)
             except Exception as e2:
                 raise RuntimeError(
                     f"both pdfplumber and pypdf failed for {req.identifier!r}: "

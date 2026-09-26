@@ -66,13 +66,24 @@ class _YouTubeAdapterBase(SourceAdapter):
     async def fetch(self, req: IngestRequest) -> FetchedContent:
         from mcp_client.manager import get_mcp_manager
         mgr = get_mcp_manager()
-        raw = await mgr.execute_tool(
+        # call_tool_raw, not execute_tool: the latter formats the result
+        # for the LLM (appends a <structured-output> block / error marker
+        # and turns exceptions into "MCP tool error: ..." strings), which
+        # made json.loads fail on every such response.
+        raw = await mgr.call_tool_raw(
             "mcp_SubDownload_fetch_transcript",
             {"video_id": req.identifier, "save": False},
         )
-        payload = raw
-        if isinstance(payload, str):
-            payload = json.loads(payload)
+        payload = raw.get("structured")
+        if payload is None:
+            text_payload = raw.get("text") or ""
+            try:
+                payload = json.loads(text_payload)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(
+                    f"fetch_transcript returned non-JSON text for {req.identifier!r}: "
+                    f"{text_payload[:200]!r}"
+                ) from e
         inner = payload.get("result") if isinstance(payload, dict) and isinstance(payload.get("result"), dict) else payload
         text = (inner or {}).get("text") or ""
         if not text and isinstance((inner or {}).get("segments"), list):

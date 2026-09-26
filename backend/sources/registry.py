@@ -245,6 +245,23 @@ async def ingest(
             except _sqlite3.IntegrityError as e:
                 if "UNIQUE" not in str(e) or "path" not in str(e):
                     raise
+                if n == 0 and not force_new:
+                    # A concurrent ingest of the same source created the
+                    # canonical path between our get_by_path and create.
+                    # Update it instead of spawning a "-1" duplicate.
+                    raced = store.get_by_path(req.project_id, norm)
+                    if raced:
+                        a = store.update(
+                            raced["id"],
+                            content=body,
+                            title=fetched.title or req.identifier,
+                            tags=["ingest", req.source_type],
+                            edit_summary=f"re-ingest from {req.source_type} ({req.identifier})",
+                            edited_by=session_id or "agent",
+                        )
+                        final_path = raced["path"]
+                        update_mode = True
+                        break
                 continue
 
     if a is None:
@@ -258,17 +275,24 @@ async def ingest(
     # 5. Embed + graph index. The FileIndexer's typed-topics branch
     #    handles the source/topics/speakers frontmatter and produces
     #    the source -> content -> topic / speaker edges.
-    _emb.schedule_embed(a["id"], req.project_id)
+    #    index_artifact chunks + embeds the body itself, so only fall
+    #    back to the generic embedder (which re-chunks, re-embeds AND
+    #    runs a full LLM extraction) when that path isn't available —
+    #    running both doubled embedding cost and duplicated recall hits.
     nodes = edges = 0
+    indexed = False
     try:
         if memory_manager:
             stats = await memory_manager.index_artifact(a["id"])
             nodes = (stats or {}).get("entities_extracted", 0)
+            indexed = True
             # The current indexer doesn't separate nodes/edges in
             # its return; we report nodes only and leave edges=0
             # until the indexer is updated.
     except Exception as e:
-        logger.debug("index_artifact for %s failed: %s", a["id"], e)
+        logger.warning("index_artifact for %s failed: %s; falling back to embedder", a["id"], e)
+    if not indexed:
+        _emb.schedule_embed(a["id"], req.project_id)
 
     # 5b. Cross-artifact similarity pipeline (opt-in per adapter).
     if adapter.auto_link_similarity:

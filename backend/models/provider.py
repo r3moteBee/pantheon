@@ -302,8 +302,12 @@ class ModelProvider:
                 logger.debug("Embedding response ← %d dimensions", dims)
                 return data["data"][0]["embedding"]
         except Exception as e:
-            logger.warning(f"Embedding failed, using zero vector: {e}")
-            return [0.0] * 1536
+            # Raise instead of returning a zero vector: a fake vector either
+            # has the wrong dimension (Chroma rejects it, or locks a new
+            # collection to 1536) or is stored/queried as garbage and
+            # silently corrupts recall. Callers skip or fall back.
+            logger.warning("Embedding failed: %s", e)
+            raise
 
     async def list_models(self) -> list[str]:
         """Fetch available models from the provider."""
