@@ -20,6 +20,8 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
+from utils.http import pooled_client
+
 logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2025-11-25"
@@ -188,8 +190,8 @@ class MCPClient:
         for attempt in range(max_attempts):
             await self._throttle()
 
-            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
-                resp = await client.post(url, json=payload, headers=headers)
+            async with pooled_client(timeout=self.timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers, follow_redirects=True)
 
                 # Log response details
                 logger.info(
@@ -351,9 +353,9 @@ class MCPClient:
         url = self._build_url()
         headers = self._build_headers()
 
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+        async with pooled_client(timeout=self.timeout) as client:
             try:
-                await client.post(url, json=payload, headers=headers)
+                await client.post(url, json=payload, headers=headers, follow_redirects=True)
             except Exception:
                 pass  # Notifications are fire-and-forget
 

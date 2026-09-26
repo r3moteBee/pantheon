@@ -1,5 +1,3 @@
-import { jsPDF } from 'jspdf'
-import { svg2pdf } from 'svg2pdf.js'
 
 function serializeSvg(svgEl) {
   const clone = svgEl.cloneNode(true)
@@ -72,6 +70,8 @@ export async function downloadPngFile(svgEl, basename, scale = 2) {
 export async function downloadPdfFile(svgEl, basename) {
   const { w, h } = getSvgSize(svgEl)
   const orientation = w >= h ? 'l' : 'p'
+  // Loaded on demand — jspdf + svg2pdf are large and only needed here.
+  const [{ jsPDF }, { svg2pdf }] = await Promise.all([import('jspdf'), import('svg2pdf.js')])
   const pdf = new jsPDF({ orientation, unit: 'pt', format: [w, h] })
   pdf.setFillColor(255, 255, 255)
   pdf.rect(0, 0, w, h, 'F')

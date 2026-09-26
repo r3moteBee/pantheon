@@ -1,21 +1,21 @@
-import React, { useEffect, useState } from 'react'
+import React, { lazy, useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
-import ChatPage from './pages/ChatPage'
-import MemoryPage from './pages/MemoryPage'
-import FilesPage from './pages/FilesPage'
-import ArtifactsPage from './pages/ArtifactsPage'
-import PersonalityPage from './pages/PersonalityPage'
-import SettingsPage from './pages/SettingsPage'
-import SkillsPage from './pages/SkillsPage'
-import MCPPage from './pages/MCPPage'
-import SourcesPage from './pages/SourcesPage'
-import ConnectionsPage from './pages/ConnectionsPage'
-import PersonasPage from './pages/PersonasPage'
-import TasksPage from './pages/TasksPage'
-import ProjectsPage from './pages/ProjectsPage'
 import LoginPage from './pages/LoginPage'
 import { authApi } from './api/client'
+
+// Pages are code-split: each route's bundle (CodeMirror, d3, mermaid…)
+// loads on first visit instead of all up front. Suspense lives in Layout.
+const ChatPage = lazy(() => import('./pages/ChatPage'))
+const MemoryPage = lazy(() => import('./pages/MemoryPage'))
+const ArtifactsPage = lazy(() => import('./pages/ArtifactsPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const SkillsPage = lazy(() => import('./pages/SkillsPage'))
+const MCPPage = lazy(() => import('./pages/MCPPage'))
+const ConnectionsPage = lazy(() => import('./pages/ConnectionsPage'))
+const PersonasPage = lazy(() => import('./pages/PersonasPage'))
+const TasksPage = lazy(() => import('./pages/TasksPage'))
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 
 export default function App() {
   // null = checking, false = needs login, true = authenticated

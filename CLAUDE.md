@@ -316,6 +316,12 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Adapters calling MCP tools** use `mgr.call_tool_raw()` (raw `{text, structured, is_error}`), never `execute_tool()` (LLM-formatted prose).
 
+**Outbound HTTP to LLM/embedding/rerank/MCP endpoints uses `utils.http.pooled_client(timeout=…)`** (one keep-alive pool per event loop, closed on shutdown). Don't reintroduce `async with httpx.AsyncClient()` per request on hot paths.
+
+**Batch embeddings.** `ModelProvider.embed_many` + `SemanticMemory.store_many`; the indexer and artifact embedder store chunks in one call. `embed()` memoizes short texts (queries, topic labels) in a 512-entry LRU.
+
+**Frontend routes and heavy libs are lazy-loaded** (`React.lazy` pages, dynamic `import('mermaid')`, `import('jspdf')`). Keep new heavy deps behind dynamic imports.
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)

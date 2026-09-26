@@ -134,10 +134,12 @@ class MemoryManager:
         max_working_tokens: int = 8000,
         context_budget: ContextBudget | None = None,
         embedding_model: str | None = None,
+        embedding_batch_fn: Any = None,
     ):
         self.project_id = project_id
         self.session_id = session_id
         self.embedding_fn = embedding_fn
+        self.embedding_batch_fn = embedding_batch_fn
         self.embedding_model = embedding_model
         self.context_budget = context_budget or ContextBudget()
 
@@ -151,6 +153,7 @@ class MemoryManager:
             project_id=project_id,
             embedding_fn=embedding_fn,
             embedding_model=embedding_model,
+            embedding_batch_fn=embedding_batch_fn,
         )
         self.graph = GraphMemory(project_id=project_id)
         self.archival = ArchivalMemory(project_id=project_id)
@@ -166,6 +169,7 @@ class MemoryManager:
             project_id=project_id,
             embedding_fn=self.embedding_fn,
             embedding_model=self.embedding_model,
+            embedding_batch_fn=self.embedding_batch_fn,
         )
         self.graph = GraphMemory(project_id=project_id)
         self.archival = ArchivalMemory(project_id=project_id)
@@ -261,7 +265,11 @@ class MemoryManager:
         if "graph" in tiers:
             try:
                 graph_results = await self.graph.search_nodes(query, limit=limit_per_tier * 2)
-                all_edges = await self.graph.list_edges(limit=500)
+                # Only the matched nodes' edges (was: newest 500 edges of
+                # the whole project, joined + sorted on every turn).
+                all_edges = await self.graph.edges_for_nodes(
+                    [r["id"] for r in graph_results[:limit_per_tier]], per_node=10,
+                )
                 edge_index: dict[str, list[str]] = {}
                 for e in all_edges:
                     a, b, rel = e["node_a_label"], e["node_b_label"], e["relationship"]
@@ -321,47 +329,43 @@ class MemoryManager:
         if not results:
             return results
 
-        # Collect entity labels from graph
-        try:
-            all_nodes = await self.graph.list_nodes(limit=500)
-        except Exception:
-            return results
-
-        if not all_nodes:
-            return results
-
-        node_labels = {n["label"].lower(): n for n in all_nodes}
         augmented_entities: set[str] = set()
         augmented_items: list[dict[str, Any]] = []
 
         for result in results[:8]:  # Only check top results for entity mentions
-            content = result.get("content", "").lower()
-            for label_lower, node in node_labels.items():
-                if (
-                    label_lower in content
-                    and label_lower not in augmented_entities
-                    and len(augmented_entities) < max_augmentations
-                    and result.get("tier") != "graph"  # Don't re-augment graph results
-                ):
-                    augmented_entities.add(label_lower)
-                    # Fetch 1-hop neighbors
-                    try:
-                        neighbors = await self.graph.find_related(node["id"], depth=1, max_nodes=10)
-                        if neighbors:
-                            rel_lines = [
-                                f"  {node['label']} → {n['relationship']}: {n['label']}"
-                                for n in neighbors
-                            ]
-                            augmented_items.append({
-                                "id": f"graph-aug-{node['id']}",
-                                "content": f"[graph context for '{node['label']}']\n" + "\n".join(rel_lines),
-                                "source": "graph_augmentation",
-                                "tier": "graph",
-                                "score": result.get("score", 0.5) * 0.8,  # Slightly lower than parent
-                                "metadata": {"augmented_from": node["label"]},
-                            })
-                    except Exception as e:
-                        logger.debug("Graph augmentation failed for %s: %s", node["label"], e)
+            if len(augmented_entities) >= max_augmentations:
+                break
+            if result.get("tier") == "graph":  # Don't re-augment graph results
+                continue
+            try:
+                mentioned = await self.graph.nodes_mentioned_in(
+                    result.get("content", ""), limit=max_augmentations,
+                )
+            except Exception:
+                return results
+            for node in mentioned:
+                label_lower = node["label"].lower()
+                if label_lower in augmented_entities or len(augmented_entities) >= max_augmentations:
+                    continue
+                augmented_entities.add(label_lower)
+                # Fetch 1-hop neighbors
+                try:
+                    neighbors = await self.graph.find_related(node["id"], depth=1, max_nodes=10)
+                    if neighbors:
+                        rel_lines = [
+                            f"  {node['label']} → {n['relationship']}: {n['label']}"
+                            for n in neighbors
+                        ]
+                        augmented_items.append({
+                            "id": f"graph-aug-{node['id']}",
+                            "content": f"[graph context for '{node['label']}']\n" + "\n".join(rel_lines),
+                            "source": "graph_augmentation",
+                            "tier": "graph",
+                            "score": result.get("score", 0.5) * 0.8,  # Slightly lower than parent
+                            "metadata": {"augmented_from": node["label"]},
+                        })
+                except Exception as e:
+                    logger.debug("Graph augmentation failed for %s: %s", node["label"], e)
 
         if augmented_items:
             logger.info("Graph augmentation added %d context blocks", len(augmented_items))
@@ -431,7 +435,8 @@ class MemoryManager:
 
         logger.info("Reranking %d results with model %s", len(documents), reranker.model)
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            from utils.http import pooled_client
+            async with pooled_client(timeout=15.0) as client:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
@@ -735,19 +740,23 @@ def create_memory_manager(
     routed to a different endpoint/model than the primary chat LLM.
     """
     embedding_fn = None
+    embedding_batch_fn = None
     embedding_model = None
     try:
         from models.provider import get_embedding_provider
         emb_provider = get_embedding_provider()
         embedding_fn = emb_provider.embed
+        embedding_batch_fn = getattr(emb_provider, "embed_many", None)
         embedding_model = getattr(emb_provider, "embedding_model", None)
     except Exception:
         if provider:
             embedding_fn = provider.embed
+            embedding_batch_fn = getattr(provider, "embed_many", None)
             embedding_model = getattr(provider, "embedding_model", None)
     return MemoryManager(
         project_id=project_id,
         session_id=session_id,
         embedding_fn=embedding_fn,
         embedding_model=embedding_model,
+        embedding_batch_fn=embedding_batch_fn,
     )

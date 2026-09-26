@@ -69,19 +69,18 @@ async def _embed(artifact: dict[str, Any], project_id: str) -> None:
 
     # Chunk the new content
     chunks = _chunk(artifact.get("content") or "")
-    for i, chunk in enumerate(chunks):
-        await semantic.store(
-            content=chunk,
-            metadata={
-                "source": "artifact",
-                "artifact_id": artifact["id"],
-                "version_id": artifact["current_version_id"],
-                "path": artifact["path"],
-                "title": artifact.get("title") or "",
-                "content_type": artifact["content_type"],
-                "chunk_index": i,
-            },
-        )
+    await semantic.store_many([
+        (chunk, {
+            "source": "artifact",
+            "artifact_id": artifact["id"],
+            "version_id": artifact["current_version_id"],
+            "path": artifact["path"],
+            "title": artifact.get("title") or "",
+            "content_type": artifact["content_type"],
+            "chunk_index": i,
+        })
+        for i, chunk in enumerate(chunks)
+    ])
     logger.info("embedded artifact %s: %d chunks", artifact["id"], len(chunks))
 
     # Graph + entity extraction. Run the same MemoryExtractor used after

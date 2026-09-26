@@ -578,6 +578,47 @@ class GraphMemory:
             conn.commit()
         return cursor.rowcount > 0
 
+    async def edges_for_nodes(self, node_ids: list[str], per_node: int = 10) -> list[dict[str, Any]]:
+        """Edges touching any of ``node_ids`` (with labels), newest first,
+        at most ``per_node`` per node. Replaces scanning the whole edge list
+        on every recall."""
+        if not node_ids:
+            return []
+        marks = ",".join("?" * len(node_ids))
+        with self._connect() as conn:
+            rows = conn.execute(f"""
+                SELECT * FROM (
+                    SELECT e.relationship, e.node_a_id, e.node_b_id,
+                           na.label AS node_a_label, nb.label AS node_b_label,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY CASE WHEN e.node_a_id IN ({marks}) THEN e.node_a_id ELSE e.node_b_id END
+                               ORDER BY e.created_at DESC
+                           ) AS rn
+                    FROM graph_edges e
+                    JOIN graph_nodes na ON na.id = e.node_a_id
+                    JOIN graph_nodes nb ON nb.id = e.node_b_id
+                    WHERE e.project_id = ?
+                      AND (e.node_a_id IN ({marks}) OR e.node_b_id IN ({marks}))
+                ) WHERE rn <= ?
+            """, (*node_ids, self.project_id, *node_ids, *node_ids, per_node)).fetchall()
+        return [dict(r) for r in rows]
+
+    async def nodes_mentioned_in(self, text: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Nodes whose label appears (case-insensitive) in ``text``, longest
+        label first. The substring scan runs inside SQLite instead of
+        loading nodes into Python (the old path only looked at the first
+        500 labels alphabetically)."""
+        if not text:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT id, label, node_type FROM graph_nodes
+                WHERE project_id = ? AND length(label) >= 2
+                  AND instr(?, lower(label)) > 0
+                ORDER BY length(label) DESC LIMIT ?
+            """, (self.project_id, text.lower(), limit)).fetchall()
+        return [dict(r) for r in rows]
+
     async def search_nodes(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Search nodes by label (text match)."""
         pattern = f"%{query}%"
