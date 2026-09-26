@@ -94,17 +94,30 @@ class GraphMemory:
         with self._connect() as conn:
             # Check if node with this label already exists in project
             existing = conn.execute(
-                "SELECT id FROM graph_nodes WHERE project_id = ? AND label = ?",
+                "SELECT id, metadata FROM graph_nodes WHERE project_id = ? AND label = ?",
                 (self.project_id, label)
             ).fetchone()
 
             if existing:
-                # Update existing node
+                # Update existing node. Merge metadata rather than replace:
+                # shared nodes (topics, people) are upserted by every
+                # artifact that mentions them, and replacing wiped earlier
+                # provenance. Empty-string values don't clobber real ones.
                 node_id = existing["id"]
+                try:
+                    merged = json.loads(existing["metadata"] or "{}")
+                    if not isinstance(merged, dict):
+                        merged = {}
+                except json.JSONDecodeError:
+                    merged = {}
+                for k, v in (metadata or {}).items():
+                    if v in ("", None) and merged.get(k):
+                        continue
+                    merged[k] = v
                 conn.execute("""
                     UPDATE graph_nodes SET node_type = ?, metadata = ?, updated_at = ?
                     WHERE id = ?
-                """, (node_type, json.dumps(metadata or {}), now, node_id))
+                """, (node_type, json.dumps(merged), now, node_id))
             else:
                 conn.execute("""
                     INSERT INTO graph_nodes (id, project_id, node_type, label, metadata, created_at, updated_at)
@@ -371,9 +384,16 @@ class GraphMemory:
                         for n, w in adj.get(full[j], []) if n == full[j + 1]
                     )
                     heapq.heappush(candidates, (cost, full))
-            if not candidates:
+            # Candidates can repeat (same spur found from several roots) or
+            # equal a path already returned — skip those.
+            next_path = None
+            while candidates:
+                _, cand = heapq.heappop(candidates)
+                if cand not in paths_out:
+                    next_path = cand
+                    break
+            if next_path is None:
                 break
-            _, next_path = heapq.heappop(candidates)
             paths_out.append(next_path)
 
         # Hydrate node id paths into dicts
@@ -483,6 +503,50 @@ class GraphMemory:
             conn.commit()
         return cursor.rowcount > 0
 
+    async def merge_nodes(self, canonical_id: str, deprecated_id: str) -> int:
+        """Re-point every edge of ``deprecated_id`` at ``canonical_id`` and
+        delete the deprecated node, in one transaction.
+
+        Skips edges that would become self-loops (including the edge
+        between the two merging nodes) and edges the canonical node
+        already has. Returns the number of edges moved.
+        """
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cur = conn.execute(
+                    """INSERT INTO graph_edges
+                         (id, project_id, node_a_id, node_b_id, relationship, weight, created_at)
+                       SELECT lower(hex(randomblob(16))), e.project_id, e.new_a, e.new_b,
+                              e.relationship, e.weight, e.created_at
+                       FROM (
+                         SELECT project_id, relationship, weight, created_at,
+                                CASE WHEN node_a_id = :dep THEN :can ELSE node_a_id END AS new_a,
+                                CASE WHEN node_b_id = :dep THEN :can ELSE node_b_id END AS new_b
+                         FROM graph_edges
+                         WHERE project_id = :pid AND (node_a_id = :dep OR node_b_id = :dep)
+                         GROUP BY new_a, new_b, relationship
+                       ) AS e
+                       WHERE e.new_a != e.new_b
+                         AND NOT EXISTS (
+                           SELECT 1 FROM graph_edges x
+                           WHERE x.project_id = :pid AND x.node_a_id = e.new_a
+                             AND x.node_b_id = e.new_b AND x.relationship = e.relationship
+                         )""",
+                    {"dep": deprecated_id, "can": canonical_id, "pid": self.project_id},
+                )
+                moved = cur.rowcount
+                # FK cascade removes the deprecated node's original edges.
+                conn.execute(
+                    "DELETE FROM graph_nodes WHERE id = ? AND project_id = ?",
+                    (deprecated_id, self.project_id),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return moved
+
     async def strip_artifact(self, artifact_id: str) -> int:
         """Delete graph nodes whose metadata.artifact_id matches.
 
@@ -492,26 +556,17 @@ class GraphMemory:
 
         Returns the number of nodes deleted.
         """
-        deleted = 0
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT id, metadata FROM graph_nodes WHERE project_id = ?",
-                (self.project_id,),
-            ).fetchall()
-            target_ids: list[str] = []
-            for row in rows:
-                try:
-                    meta = json.loads(row["metadata"] or "{}")
-                except json.JSONDecodeError:
-                    continue
-                if meta.get("artifact_id") == artifact_id:
-                    target_ids.append(row["id"])
-            for node_id in target_ids:
-                # FK ON DELETE CASCADE removes incident edges.
-                conn.execute("DELETE FROM graph_nodes WHERE id = ?", (node_id,))
-                deleted += 1
+            # FK ON DELETE CASCADE removes incident edges.
+            cur = conn.execute(
+                """DELETE FROM graph_nodes
+                   WHERE project_id = ?
+                     AND json_valid(metadata)
+                     AND json_extract(metadata, '$.artifact_id') = ?""",
+                (self.project_id, artifact_id),
+            )
             conn.commit()
-        return deleted
+        return cur.rowcount
 
     async def delete_edge(self, edge_id: str) -> bool:
         """Delete an edge."""

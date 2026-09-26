@@ -114,9 +114,47 @@ def _chunk_by_headings(text: str, max_chars: int, overlap_chars: int) -> list[di
     return chunks
 
 
+def _split_oversized(para: str, max_chars: int, overlap_chars: int) -> list[str]:
+    """Break one over-long paragraph into pieces of at most max_chars,
+    preferring line breaks, then sentence ends."""
+    units = [u for u in para.split("\n") if u.strip()]
+    if len(units) <= 1:
+        units = re.split(r"(?<=[.!?])\s+", para)
+    pieces: list[str] = []
+    cur = ""
+    for u in units:
+        u = u.strip()
+        if not u:
+            continue
+        if len(u) > max_chars:
+            if cur:
+                pieces.append(cur)
+                cur = ""
+            pieces.extend(c["content"] for c in _chunk_fixed(u, max_chars, overlap_chars))
+            continue
+        if cur and len(cur) + len(u) + 1 > max_chars:
+            pieces.append(cur)
+            cur = u
+        else:
+            cur = f"{cur}\n{u}" if cur else u
+    if cur:
+        pieces.append(cur)
+    return pieces
+
+
 def _chunk_by_paragraphs(text: str, max_chars: int, overlap_chars: int) -> list[dict]:
     """Split text into chunks by paragraph boundaries with overlap."""
-    paragraphs = re.split(r"\n\s*\n", text)
+    paragraphs: list[str] = []
+    for para in re.split(r"\n\s*\n", text):
+        para = para.strip()
+        if len(para) <= max_chars:
+            paragraphs.append(para)
+            continue
+        # One "paragraph" bigger than a chunk (e.g. a YouTube transcript
+        # joined with single newlines) would otherwise become one giant
+        # chunk the embedder truncates. Split it on line/sentence
+        # boundaries, falling back to fixed windows.
+        paragraphs.extend(_split_oversized(para, max_chars, overlap_chars))
     chunks = []
     current = ""
     idx = 0

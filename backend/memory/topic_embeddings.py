@@ -64,13 +64,27 @@ async def upsert_topic_embedding(
     if not label or not label.strip():
         return ""
     doc_id = topic_doc_id(project_id, topic_type, label)
+    now = when or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Keep the original first_seen_* on re-upsert (it used to be
+    # overwritten with the latest artifact on every save).
+    first_id, first_at = artifact_id or "", now
+    try:
+        prior = await semantic_memory.get_metadata(doc_id)
+    except Exception:
+        prior = None
+    if prior:
+        first_id = prior.get("first_seen_artifact_id") or first_id
+        first_at = prior.get("first_seen_at") or first_at
     metadata = {
         "kind": "topic_node",
         "topic_label": label,
-        "topic_type": (topic_type or "concept"),
+        # Lowercased so type-gated similarity filters match ("Vendor").
+        "topic_type": (topic_type or "concept").strip().lower() or "concept",
         "project_id": project_id,
-        "first_seen_artifact_id": artifact_id or "",
-        "first_seen_at": when or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "first_seen_artifact_id": first_id,
+        "first_seen_at": first_at,
+        "last_seen_artifact_id": artifact_id or "",
+        "last_seen_at": now,
     }
     if confidence is not None:
         metadata["confidence"] = float(confidence)
@@ -81,6 +95,15 @@ async def upsert_topic_embedding(
                        topic_type, label, e)
         return ""
     return doc_id
+
+
+async def delete_topic_embeddings_for_label(memory_manager: Any, label: str) -> int:
+    """Remove every topic_node embedding for ``label`` (any topic_type).
+    Called after a merge so the absorbed label stops matching."""
+    return await memory_manager.semantic.delete_where({"$and": [
+        {"kind": {"$eq": "topic_node"}},
+        {"topic_label": {"$eq": label}},
+    ]})
 
 
 async def find_similar_topics(

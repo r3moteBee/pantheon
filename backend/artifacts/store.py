@@ -275,17 +275,21 @@ class ArtifactStore:
             clauses.append("(title LIKE ? OR content LIKE ? OR tags LIKE ?)")
             wildcard = f"%{search}%"
             args.extend([wildcard, wildcard, wildcard])
-        # tag filter is a JSON contains; do it post-query for portability
+        # Tag filter in SQL (was applied after LIMIT, so pages came back
+        # short or empty). tags is a JSON array column.
+        if tag:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(tags) THEN tags ELSE '[]' END) "
+                "WHERE json_each.value = ?)"
+            )
+            args.append(tag)
         with self._connect() as conn:
             rows = conn.execute(
                 f"SELECT * FROM artifacts WHERE {' AND '.join(clauses)} "
                 f"ORDER BY pinned DESC, {order} LIMIT ? OFFSET ?",
                 (*args, limit, offset),
             ).fetchall()
-        results = [self._hydrate_artifact(r) for r in rows]
-        if tag:
-            results = [r for r in results if tag in (r.get("tags") or [])]
-        return results
+        return [self._hydrate_artifact(r) for r in rows]
 
     def list_versions(self, artifact_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:

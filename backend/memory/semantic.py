@@ -216,27 +216,41 @@ class SemanticMemory:
             logger.error(f"Failed to delete semantic memory {doc_id}: {e}")
             return False
 
-    async def strip_artifact(self, artifact_id: str) -> int:
-        """Delete all semantic chunks whose metadata.artifact_id matches.
+    async def get_metadata(self, doc_id: str) -> dict[str, Any] | None:
+        """Metadata for one document, or None if it doesn't exist."""
+        collection = await self._get_collection_async()
+        res = await _asyncio.to_thread(collection.get, ids=[doc_id], include=["metadatas"])
+        if res and res.get("ids"):
+            return (res.get("metadatas") or [{}])[0] or {}
+        return None
 
-        Returns the number of chunks deleted.
-        """
+    async def delete_where(self, where: dict[str, Any]) -> int:
+        """Delete every document matching a Chroma ``where`` filter.
+        Returns the number deleted (0 on error)."""
         try:
             collection = await self._get_collection_async()
-            # Chroma's where filter supports metadata equality.
-            existing = await _asyncio.to_thread(
-                collection.get,
-                where={"artifact_id": {"$eq": artifact_id}},
-                include=[],
-            )
+            existing = await _asyncio.to_thread(collection.get, where=where, include=[])
             ids = existing.get("ids") if existing else []
             if not ids:
                 return 0
             await _asyncio.to_thread(collection.delete, ids=ids)
             return len(ids)
         except Exception as e:
-            logger.error(f"strip_artifact({artifact_id}) failed: {e}")
+            logger.error("semantic delete_where(%s) failed: %s", where, e)
             return 0
+
+    async def strip_artifact(self, artifact_id: str) -> int:
+        """Delete all semantic chunks belonging to an artifact.
+
+        Two writers tag chunks differently: artifacts/embedder.py stores
+        ``artifact_id``; FileIndexer.index_text stores frontmatter keys
+        with an ``fm_`` prefix, i.e. ``fm_artifact_id``. Match both.
+        Returns the number of chunks deleted.
+        """
+        return await self.delete_where({"$or": [
+            {"artifact_id": {"$eq": artifact_id}},
+            {"fm_artifact_id": {"$eq": artifact_id}},
+        ]})
 
     async def list_memories(
         self,

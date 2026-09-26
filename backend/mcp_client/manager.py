@@ -646,6 +646,23 @@ class MCPManager:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"
 
+    async def call_tool_raw(self, prefixed_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Call an MCP tool for programmatic use (adapters, not the LLM).
+
+        Returns the client's ``{"text", "structured", "is_error"}`` dict
+        unformatted. Raises on unknown tool, transport error, or when the
+        server reports isError — unlike execute_tool, which folds all of
+        that into prose for the model.
+        """
+        resolved = self.resolve_tool_call(prefixed_name)
+        if not resolved:
+            raise RuntimeError(f"MCP tool not available: {prefixed_name}")
+        client, tool_name = resolved
+        result = await client.call_tool(tool_name, arguments)
+        if result.get("is_error"):
+            raise RuntimeError(f"MCP tool {prefixed_name} reported an error: {(result.get('text') or '')[:500]}")
+        return result
+
     def get_discovered_tools(self) -> list[dict[str, Any]]:
         """List all discovered tools with their connection source."""
         result = []

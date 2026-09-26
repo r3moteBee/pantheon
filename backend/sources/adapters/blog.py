@@ -23,6 +23,7 @@ and lets the registry fail-fast with a useful message.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -73,7 +74,8 @@ class _BlogAdapterBase(SourceAdapter):
         # nested structures, which is what produced inline-bolded
         # would-be-list-items in earlier ingests.
         from sources.util import html_to_markdown as _h2m
-        cleaned_html = trafilatura.extract(
+        cleaned_html = await asyncio.to_thread(
+            trafilatura.extract,
             downloaded,
             url=url,
             output_format="html",
@@ -87,7 +89,8 @@ class _BlogAdapterBase(SourceAdapter):
         if not text or len(text.strip()) < 100:
             # Fall back to trafilatura\'s native markdown output
             # if HTML extraction didn\'t produce enough.
-            text = trafilatura.extract(
+            text = await asyncio.to_thread(
+                trafilatura.extract,
                 downloaded, url=url,
                 output_format="markdown",
                 include_tables=True,
@@ -103,7 +106,7 @@ class _BlogAdapterBase(SourceAdapter):
             )
 
         # Pull metadata separately — title, author, date.
-        meta = trafilatura.extract_metadata(downloaded) or None
+        meta = await asyncio.to_thread(trafilatura.extract_metadata, downloaded) or None
         title = ""
         author = ""
         published_at: str | None = None
