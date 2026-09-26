@@ -57,9 +57,14 @@ class _BlogAdapterBase(SourceAdapter):
 
         url = req.identifier
         # trafilatura.fetch_url returns the raw HTML.
-        downloaded = trafilatura.fetch_url(url)
+        # SSRF-guarded fetch (checks every redirect hop) instead of
+        # trafilatura.fetch_url, which also blocked the event loop.
+        from utils.net import safe_http_get
+        _resp = await safe_http_get(url)
+        _resp.raise_for_status()
+        downloaded = _resp.text
         if not downloaded:
-            raise RuntimeError(f"trafilatura.fetch_url returned None for {url!r}")
+            raise RuntimeError(f"Empty response body from {url!r}")
 
         # Two-step: trafilatura produces cleaned article HTML
         # (drops nav/footer/ads/comments), markdownify converts that

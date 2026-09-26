@@ -24,6 +24,33 @@ logger = logging.getLogger(__name__)
 _FORMAT_RE = re.compile(r"[a-z0-9]{1,10}")
 
 
+_PANDOC_SANDBOX: dict[str, bool] = {}
+_CONVERT_TIMEOUT_S = 300
+
+
+def _pandoc_cmd(pandoc_path: str, *args: str) -> list[str]:
+    """Pandoc argv with ``--sandbox`` when supported (pandoc >= 2.15).
+
+    Sources are often ingested/untrusted; without the sandbox pandoc
+    follows ``<img src>``/include references to local files and URLs and
+    embeds them in the output (local file disclosure, SSRF).
+    """
+    if pandoc_path not in _PANDOC_SANDBOX:
+        ok = False
+        try:
+            out = subprocess.run([pandoc_path, "--version"], capture_output=True,
+                                 text=True, timeout=10).stdout
+            m = re.search(r"pandoc(?:\.exe)?\s+(\d+)\.(\d+)", out)
+            ok = bool(m) and (int(m.group(1)), int(m.group(2))) >= (2, 15)
+        except Exception:
+            pass
+        _PANDOC_SANDBOX[pandoc_path] = ok
+        if not ok:
+            logger.warning("pandoc < 2.15: converting without --sandbox")
+    base = [pandoc_path, "--sandbox"] if _PANDOC_SANDBOX[pandoc_path] else [pandoc_path]
+    return base + list(args)
+
+
 def validate_format(fmt: str) -> str:
     """Normalize a target format and reject anything that isn't a bare
     extension. Callers build ``f"{stem}.{fmt}"`` paths from this value, so a
@@ -171,8 +198,8 @@ class DocumentConverter:
         pandoc_path = self.find_pandoc()
         if pandoc_path:
             try:
-                cmd = [pandoc_path, "-s", str(source_path), "-o", str(target_path)]
-                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                cmd = _pandoc_cmd(pandoc_path, "-s", str(source_path), "-o", str(target_path))
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_CONVERT_TIMEOUT_S)
                 if res.returncode == 0:
                     return
                 logger.debug("General pandoc conversion fallback failed: %s", res.stderr)
@@ -274,6 +301,9 @@ class DocumentConverter:
             # Run headless LibreOffice
             cmd = [
                 soffice_path,
+                # Throwaway profile: no shared user macros/config, and a
+                # hung instance can't lock the user's real profile.
+                f"-env:UserInstallation=file://{Path(tmpdir).resolve()}/lo-profile",
                 "--headless",
                 "--convert-to",
                 "pdf",
@@ -283,7 +313,7 @@ class DocumentConverter:
             ]
             
             logger.info("Running LibreOffice command: %s", " ".join(cmd))
-            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_CONVERT_TIMEOUT_S)
             if res.returncode != 0:
                 raise RuntimeError(
                     f"LibreOffice PDF conversion failed (code {res.returncode}):\n{res.stderr or res.stdout}"
@@ -308,16 +338,10 @@ class DocumentConverter:
                 "Pandoc is required to convert documents to DOCX."
             )
 
-        cmd = [
-            pandoc_path,
-            "-s",
-            str(source_path),
-            "-o",
-            str(target_path)
-        ]
+        cmd = _pandoc_cmd(pandoc_path, "-s", str(source_path), "-o", str(target_path))
 
         logger.info("Running Pandoc command: %s", " ".join(cmd))
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_CONVERT_TIMEOUT_S)
         if res.returncode != 0:
             raise RuntimeError(
                 f"Pandoc DOCX conversion failed (code {res.returncode}):\n{res.stderr or res.stdout}"

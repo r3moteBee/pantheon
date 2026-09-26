@@ -138,7 +138,7 @@ export const sourcesApi = {
   listGitHub: (projectId) =>
     api.get('/api/connections/github', { params: { project_id: projectId } }),
   listRepos: (token) =>
-    api.get('/api/connections/github/repos', { params: { token } }),
+    api.post('/api/connections/github/repos', { token }),
   createGitHub: (projectId, token, repo, defaultBranch) =>
     api.post('/api/connections/github', {
       project_id: projectId, token, repo, default_branch: defaultBranch,
@@ -149,7 +149,7 @@ export const sourcesApi = {
 export const connectionsApi = {
   list: () => api.get('/api/connections/github'),
   listRepos: (token) =>
-    api.get('/api/connections/github/repos', { params: { token } }),
+    api.post('/api/connections/github/repos', { token }),
   create: ({ token, repo, default_branch }) =>
     api.post('/api/connections/github', { token, repo, default_branch }),
   delete: (id) => api.delete(`/api/connections/github/${id}`),

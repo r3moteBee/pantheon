@@ -173,7 +173,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="123456789, 987654321"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated. Leave blank to allow all.</p>
+                <p className="text-xs text-gray-600 mt-1">Comma-separated chat IDs. Required — the bot ignores everyone else (rejected IDs are logged).</p>
               </div>
             </>
           )}
@@ -201,7 +201,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="123456789012345678"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated server IDs. Leave blank to allow all.</p>
+                <p className="text-xs text-gray-600 mt-1">Comma-separated server IDs. Required — the bot ignores other servers.</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">Slash Command Scope</label>
@@ -244,7 +244,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="C123456, C789012"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Leave blank to allow all.</p>
+                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
               </div>
             </>
           )}

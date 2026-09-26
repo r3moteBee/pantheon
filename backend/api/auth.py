@@ -4,7 +4,10 @@ import hmac
 import hashlib
 import logging
 
-from fastapi import APIRouter, HTTPException
+import time
+from collections import defaultdict, deque
+
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from config import get_settings
@@ -34,9 +37,27 @@ async def auth_config():
     return {"auth_required": bool(settings.auth_password)}
 
 
+# Failed-login throttle: at most _MAX_FAILURES per client IP per window.
+_MAX_FAILURES = 10
+_FAILURE_WINDOW_S = 300.0
+_failures: dict[str, deque] = defaultdict(deque)
+
+
+def _recent_failures(ip: str) -> deque:
+    q = _failures[ip]
+    cutoff = time.monotonic() - _FAILURE_WINDOW_S
+    while q and q[0] < cutoff:
+        q.popleft()
+    return q
+
+
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest) -> LoginResponse:
+async def login(req: LoginRequest, request: Request) -> LoginResponse:
     settings = get_settings()
+    ip = request.client.host if request.client else "unknown"
+    if len(_recent_failures(ip)) >= _MAX_FAILURES:
+        sec_log.auth_login_failure(ip=ip, reason="rate_limited")
+        raise HTTPException(status_code=429, detail="Too many failed attempts; try again later")
 
     # Auth disabled — any (or no) password works
     if not settings.auth_password:
@@ -51,7 +72,8 @@ async def login(req: LoginRequest) -> LoginResponse:
         valid = False
 
     if not valid:
-        sec_log.auth_login_failure(reason="bad_password")
+        _failures[ip].append(time.monotonic())
+        sec_log.auth_login_failure(ip=ip, reason="bad_password")
         raise HTTPException(status_code=401, detail="Invalid password")
 
     sec_log.auth_login_success()
@@ -83,7 +105,13 @@ def origin_is_allowed(origin: str | None, host: str | None) -> bool:
     from urllib.parse import urlparse
     if origin in get_settings().cors_origins_list:
         return True
-    return bool(host) and urlparse(origin).netloc.lower() == host.lower()
+    if not host:
+        return False
+    # Compare hostnames only: reverse proxies (nginx `$host`) drop the port
+    # from Host while the browser keeps it in Origin.
+    origin_host = (urlparse(origin).hostname or "").lower()
+    host_only = urlparse(f"//{host}").hostname or ""
+    return bool(origin_host) and origin_host == host_only.lower()
 
 
 async def authorize_websocket(websocket) -> bool:
@@ -98,6 +126,9 @@ async def authorize_websocket(websocket) -> bool:
         sec_log.auth_login_failure(reason=f"ws_bad_origin:{origin}")
         await websocket.close(code=1008)
         return False
+    if not get_settings().auth_password and not host_is_allowed(websocket.headers.get("host")):
+        await websocket.close(code=1008)
+        return False
     token = websocket.query_params.get("token", "")
     if not token:
         token = websocket.headers.get("authorization", "").removeprefix("Bearer ").strip()
@@ -106,3 +137,33 @@ async def authorize_websocket(websocket) -> bool:
         await websocket.close(code=1008)
         return False
     return True
+
+
+_PRIVATE_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal", ".localhost")
+
+
+def host_is_allowed(host_header: str | None) -> bool:
+    """DNS-rebinding guard for when AUTH_PASSWORD is empty.
+
+    A rebinding attack needs a public, attacker-controlled DNS name pointing
+    at this machine, so IP literals, single-label names (localhost) and
+    private-TLD names are always fine; any other dotted name must be listed
+    in ALLOWED_HOSTS.
+    """
+    import ipaddress
+    host = (host_header or "").strip().lower()
+    if not host:
+        return True
+    if host.startswith("["):  # [::1]:8000
+        host = host[1:].split("]", 1)[0]
+    elif host.count(":") == 1:
+        host = host.rsplit(":", 1)[0]
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    if "." not in host or host.endswith(_PRIVATE_SUFFIXES):
+        return True
+    allowed = {h.strip().lower() for h in get_settings().allowed_hosts.split(",") if h.strip()}
+    return host in allowed

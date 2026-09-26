@@ -30,9 +30,21 @@ source "$DIR/.venv/bin/activate"
 # Load .env into the environment for the backend
 set -a; source "$DIR/.env"; set +a
 
-info "Starting backend on port ${BACKEND_PORT}..."
+# Listen on all interfaces only when a password protects the API. Without
+# one, anyone on the LAN would get full control of the agent. Override with
+# BIND_HOST in .env (e.g. BIND_HOST=0.0.0.0 behind a trusted firewall).
+if [[ -z "${BIND_HOST:-}" ]]; then
+  if [[ -n "${AUTH_PASSWORD:-}" && "${AUTH_PASSWORD}" != "insert-auth-password-here" ]]; then
+    BIND_HOST=0.0.0.0
+  else
+    BIND_HOST=127.0.0.1
+    info "AUTH_PASSWORD not set — binding to 127.0.0.1 only (set AUTH_PASSWORD or BIND_HOST for LAN access)."
+  fi
+fi
+
+info "Starting backend on ${BIND_HOST}:${BACKEND_PORT}..."
 cd "$DIR/backend"
-uvicorn main:app --host 0.0.0.0 --port "$BACKEND_PORT" --log-level info >> "$DIR/backend.log" 2>&1 &
+uvicorn main:app --host "$BIND_HOST" --port "$BACKEND_PORT" --log-level info >> "$DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" >> "$DIR/.pids"
 

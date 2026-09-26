@@ -1706,8 +1706,13 @@ async def execute_tool(
     project_id: str | None = None,
     session_id: str | None = None,
     last_assistant_text: str = "",
+    interactive: bool = False,
 ) -> str:
-    """Execute a tool call and return the result as a string."""
+    """Execute a tool call and return the result as a string.
+
+    ``interactive`` is True only for turns driven by a person in the web UI;
+    it gates actions that assume the user just approved something.
+    """
     try:
         effective_project = project_id or "default"
 
@@ -1830,32 +1835,34 @@ async def execute_tool(
                 safe_path = safe_path / safe_filename(url_name)
 
             try:
-                async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
-                    resp = await client.get(url)
-                    resp.raise_for_status()
+                from utils.net import UnsafeURLError, safe_http_get
+                try:
+                    resp = await safe_http_get(url, timeout=60.0)
+                except UnsafeURLError as e:
+                    return f"Download refused: {e}"
+                resp.raise_for_status()
+                # Still no extension — try Content-Disposition. The header
+                # is server-controlled, so keep only its basename.
+                if not filename and not safe_path.suffix:
+                    cd = resp.headers.get("content-disposition", "")
+                    if "filename=" in cd:
+                        import re as _re
+                        match = _re.search(r'filename[*]?=["\']?([^"\';]+)', cd)
+                        if match:
+                            safe_path = safe_path.parent / safe_filename(
+                                unquote(match.group(1).strip()), safe_path.name,
+                            )
 
-                    # Still no extension — try Content-Disposition. The header
-                    # is server-controlled, so keep only its basename.
-                    if not filename and not safe_path.suffix:
-                        cd = resp.headers.get("content-disposition", "")
-                        if "filename=" in cd:
-                            import re as _re
-                            match = _re.search(r'filename[*]?=["\']?([^"\';]+)', cd)
-                            if match:
-                                safe_path = safe_path.parent / safe_filename(
-                                    unquote(match.group(1).strip()), safe_path.name,
-                                )
-
-                    if not is_within(safe_path, base):
-                        return f"Error: download path escapes the workspace: {safe_path.name}"
-                    safe_path.parent.mkdir(parents=True, exist_ok=True)
-                    safe_path.write_bytes(resp.content)
-                    size_kb = len(resp.content) / 1024
-                    content_type = resp.headers.get("content-type", "unknown")
-                    return (
-                        f"Downloaded {safe_path.name} ({size_kb:.1f}KB, {content_type}) "
-                        f"to {safe_path.relative_to(base)}. Use show_file to display it or read_file to read its contents."
-                    )
+                if not is_within(safe_path, base):
+                    return f"Error: download path escapes the workspace: {safe_path.name}"
+                safe_path.parent.mkdir(parents=True, exist_ok=True)
+                safe_path.write_bytes(resp.content)
+                size_kb = len(resp.content) / 1024
+                content_type = resp.headers.get("content-type", "unknown")
+                return (
+                    f"Downloaded {safe_path.name} ({size_kb:.1f}KB, {content_type}) "
+                    f"to {safe_path.relative_to(base)}. Use show_file to display it or read_file to read its contents."
+                )
             except httpx.HTTPStatusError as e:
                 return f"Download failed: HTTP {e.response.status_code} from {url}"
             except httpx.RequestError as e:
@@ -2776,6 +2783,11 @@ async def execute_tool(
             from tasks.scheduler import schedule_agent_task
             plan_text = (tool_args.get("plan") or "").strip()
             skip_review = bool(tool_args.get("skip_review", False))
+            # Only a person in the web chat can have approved the plan.
+            # Background runs (jobs, bots) may be steered by injected
+            # content, so their tasks always land as proposals.
+            if skip_review and not interactive:
+                skip_review = False
 
             # SERVER-SIDE GUARDRAIL: reject create_task without a plan, and
             # reject skip_review=true unless the user explicitly approved
@@ -3523,8 +3535,7 @@ async def execute_tool(
                 branch = tool_args.get("branch") or spec["default_branch"] or "main"
                 dest = _repo_checkout_dir(effective_project, owner, repo)
                 clean_url = f"https://github.com/{owner}/{repo}.git"
-                auth_url = (f"https://{token}@github.com/{owner}/{repo}.git"
-                            if token else clean_url)
+                auth_env = _git_auth_env(token)
 
                 def _redact(s: str) -> str:
                     return s.replace(token, "********") if token else s
@@ -3533,12 +3544,13 @@ async def execute_tool(
                     shutil.rmtree(dest, ignore_errors=True)
 
                 if (dest / ".git").exists():
+                    _scrub_git_config(dest)
                     # Update existing checkout: fetch all branches, then
                     # check out + fast-forward the requested one.
                     code, out, err = await _run_git_cmd(
-                        ["fetch", auth_url,
+                        ["fetch", clean_url,
                          "+refs/heads/*:refs/remotes/origin/*"],
-                        dest, auto_init=False)
+                        dest, auto_init=False, env=auth_env)
                     if code != 0:
                         return f"Fetch failed: {_redact(err or out)}"
                     code, out, err = await _run_git_cmd(
@@ -3567,13 +3579,10 @@ async def execute_tool(
                 else:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     code, out, err = await _run_git_cmd(
-                        ["clone", auth_url, str(dest)],
-                        dest.parent, auto_init=False)
+                        ["clone", clean_url, str(dest)],
+                        dest.parent, auto_init=False, env=auth_env)
                     if code != 0:
                         return f"Clone failed: {_redact(err or out)}"
-                    # Don't persist the token in .git/config
-                    await _run_git_cmd(["remote", "set-url", "origin", clean_url],
-                                       dest, auto_init=False)
                     await _run_git_cmd(["config", "user.email", "agent@pantheon.local"],
                                        dest, auto_init=False)
                     await _run_git_cmd(["config", "user.name", "Pantheon Agent"],
@@ -3754,8 +3763,10 @@ async def execute_tool(
                     return f"Error getting current branch: {stderr or stdout}"
                 branch_name = stdout.strip()
 
-                remote_url = f"https://{token}@github.com/{owner}/{repo}.git"
-                code, stdout, stderr = await _run_git_cmd(["push", "-u", remote_url, branch_name], cwd)
+                remote_url = f"https://github.com/{owner}/{repo}.git"
+                _scrub_git_config(cwd)
+                code, stdout, stderr = await _run_git_cmd(
+                    ["push", "-u", remote_url, branch_name], cwd, env=_git_auth_env(token))
                 if code != 0:
                     safe_err = (stderr or stdout).replace(token, "********")
                     return f"Error pushing to remote branch {branch_name}: {safe_err}"
@@ -4194,7 +4205,44 @@ def _resolve_repo_checkout(project_id: str | None) -> Path | None:
     return d if (d / ".git").exists() else None
 
 
-async def _run_git_cmd(args: list[str], cwd: Path, auto_init: bool = True) -> tuple[int, str, str]:
+def _git_auth_env(token: str | None) -> dict[str, str] | None:
+    """Env that authenticates git to github.com without putting the token
+    in a URL (which git records in .git/config and exposes via ps)."""
+    if not token:
+        return None
+    import base64
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    env = dict(os.environ)
+    env.update({
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {basic}",
+        "GIT_TERMINAL_PROMPT": "0",
+    })
+    return env
+
+
+_GIT_TIMEOUT_S = 600
+
+
+def _scrub_git_config(checkout: Path) -> None:
+    """Strip credentials that older versions pushed into .git/config
+    (``git push -u https://TOKEN@github.com/...`` records the URL)."""
+    import re as _re
+    cfg = checkout / ".git" / "config"
+    try:
+        text = cfg.read_text(encoding="utf-8")
+    except OSError:
+        return
+    cleaned = _re.sub(r"https://[^/@\s]+@github\.com/", "https://github.com/", text)
+    if cleaned != text:
+        cfg.write_text(cleaned, encoding="utf-8")
+
+
+async def _run_git_cmd(
+    args: list[str], cwd: Path, auto_init: bool = True,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Execute a git command in the specified workspace directory, initializing it first if needed."""
     if auto_init and not (cwd / ".git").exists():
         # Initialize repository
@@ -4224,10 +4272,21 @@ async def _run_git_cmd(args: list[str], cwd: Path, auto_init: bool = True) -> tu
     proc = await asyncio.create_subprocess_exec(
         "git", *args,
         cwd=str(cwd),
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=_GIT_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return 124, "", f"git {args[0]} timed out after {_GIT_TIMEOUT_S}s"
+    except BaseException:
+        # Job cancelled — don't leave git running.
+        if proc.returncode is None:
+            proc.kill()
+        raise
     return proc.returncode or 0, stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip()
 
 

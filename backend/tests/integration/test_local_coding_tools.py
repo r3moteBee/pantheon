@@ -108,11 +108,13 @@ async def test_git_sync_repo_clone_flow(mock_base, mock_run, _mock_spec, _mock_t
 
     dest = tmp_path / "repos" / "octo__demo"
     calls = [c.args for c in mock_run.await_args_list]
-    # Clone uses the token URL, from the parent dir, no auto-init
-    assert calls[0][0][:2] == ["clone", "https://tok-secret@github.com/octo/demo.git"]
+    # Clone uses the clean URL, from the parent dir, no auto-init; the token
+    # travels in an http.extraheader env var, never in a URL / .git/config.
+    assert calls[0][0][:2] == ["clone", "https://github.com/octo/demo.git"]
     assert calls[0][1] == dest.parent
-    # Token must not persist in the remote URL
-    assert ["remote", "set-url", "origin", "https://github.com/octo/demo.git"] in [c[0] for c in calls]
+    env = mock_run.await_args_list[0].kwargs["env"]
+    assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert all("tok-secret" not in str(a) for c in calls for a in c[0])
     assert "Cloned octo/demo" in res
     assert "repos/octo__demo" in res
     assert "tok-secret" not in res

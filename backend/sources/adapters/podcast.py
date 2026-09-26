@@ -87,9 +87,14 @@ class PodcastEpisode(SourceAdapter):
                 f"extras['transcript'] must be supplied; got {url!r}"
             )
 
-        downloaded = trafilatura.fetch_url(url)
+        # SSRF-guarded fetch (checks every redirect hop) instead of
+        # trafilatura.fetch_url, which also blocked the event loop.
+        from utils.net import safe_http_get
+        _resp = await safe_http_get(url)
+        _resp.raise_for_status()
+        downloaded = _resp.text
         if not downloaded:
-            raise RuntimeError(f"trafilatura.fetch_url returned None for {url!r}")
+            raise RuntimeError(f"Empty response body from {url!r}")
 
         from sources.util import html_to_markdown as _h2m
         cleaned_html = trafilatura.extract(

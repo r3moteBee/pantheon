@@ -115,9 +115,14 @@ class DiscordAdapter(BaseMessagingAdapter):
 
         # ── ACL helper ──────────────────────────────────────────────
         def _is_allowed_guild(guild_id: int | None) -> bool:
-            if not allowed_guilds:
-                return True
-            return guild_id in allowed_guilds
+            # Deny by default — an empty allowlist is not "allow all".
+            if guild_id not in allowed_guilds:
+                logger.warning(
+                    "Ignoring Discord guild %s — add it to discord_allowed_guild_ids to allow.",
+                    guild_id,
+                )
+                return False
+            return True
 
         # ── Agent runner ────────────────────────────────────────────
         async def _run_agent(message_text: str, project: str, session_id: str,

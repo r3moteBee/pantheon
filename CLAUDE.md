@@ -288,6 +288,14 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Untrusted names → paths.** Use `utils.paths` (`is_within`, `check_project_id`, `safe_filename`) — never `str(p).startswith(str(base))`. Conversion formats go through `document_converter.validate_format`.
 
+**Outbound fetches go through `utils.net.safe_http_get`.** It blocks non-public addresses on every redirect hop (SSRF). Don't add `httpx.get(model_chosen_url, follow_redirects=True)` or `trafilatura.fetch_url`. `ALLOW_PRIVATE_FETCH=true` opts out.
+
+**Untrusted HTML/SVG rendering.** Workspace HTML renders via `SandboxedHtml` (srcDoc + `sandbox="allow-scripts"`, no `allow-same-origin`, no token in URL). Anything going into `innerHTML`/`dangerouslySetInnerHTML` goes through DOMPurify first.
+
+**Git credentials never go in URLs.** Use `_git_auth_env(token)` (http.extraheader via `GIT_CONFIG_*` env) with the clean `https://github.com/...` URL.
+
+**Messaging bot allowlists are deny-by-default.** Empty `telegram_allowed_chat_ids` / `slack_allowed_channel_ids` / `discord_allowed_guild_ids` = nobody.
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)

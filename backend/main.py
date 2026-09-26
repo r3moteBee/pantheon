@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
-from api.auth import router as auth_router, compute_token
+from api.auth import router as auth_router, compute_token, host_is_allowed, origin_is_allowed
 from api.chat import router as chat_router, websocket_chat
 from api.files import router as files_router
 from api.memory import router as memory_router
@@ -104,6 +104,20 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     logger.info("Starting Pantheon backend...")
     settings.ensure_dirs()
+
+    # Public default keys: the vault can be decrypted and auth tokens
+    # brute-forced offline by anyone who has read this repo.
+    for _field, _default in (
+        ("vault_master_key", "dev-key-change-in-production-32x"),
+        ("secret_key", "dev-secret-key-change-in-production"),
+    ):
+        if getattr(settings, _field) == _default:
+            logger.warning(
+                "SECURITY: %s is the public default. Set %s in .env to a random "
+                "value (e.g. `openssl rand -hex 32`). Changing VAULT_MASTER_KEY "
+                "requires re-entering stored secrets.",
+                _field, _field.upper(),
+            )
 
     # Initialize default personality files if missing or empty
     import shutil
@@ -228,8 +242,21 @@ async def auth_middleware(request: Request, call_next):
     """Gate all non-public routes behind AUTH_PASSWORD when it is set."""
     cfg = get_settings()
 
-    # Auth disabled — pass everything through
+    # CSRF guard: browsers attach Origin to cross-site POST/PUT/DELETE. With
+    # no password (or a query-string token) a form on any site could
+    # otherwise trigger state changes.
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        origin = request.headers.get("origin")
+        if origin and not origin_is_allowed(origin, request.headers.get("host")):
+            return JSONResponse({"error": "Cross-origin request blocked"}, status_code=403)
+
+    # Auth disabled — only reachable by hosts that can't be DNS-rebound
     if not cfg.auth_password:
+        if not host_is_allowed(request.headers.get("host")):
+            return JSONResponse(
+                {"error": "Host not allowed. Set AUTH_PASSWORD or add it to ALLOWED_HOSTS."},
+                status_code=421,
+            )
         return await call_next(request)
 
     # Always allow public paths

@@ -151,8 +151,11 @@ class AgentCore:
         active_skill_name: str | None = None,
         custom_soul: str | None = None,
         host_exec: bool = False,
+        interactive: bool = False,
     ):
         self.provider = provider
+        # True only for turns a person drives from the web UI.
+        self.interactive = interactive
         # Host-exec tools (shell/code/git) are opt-in per construction site.
         # Default False so any new caller is safe by default.
         self.host_exec = host_exec
@@ -178,6 +181,7 @@ class AgentCore:
         custom_soul: str | None = None,
         message_limit: int = 200,
         host_exec: bool = False,
+        interactive: bool = False,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -199,6 +203,7 @@ class AgentCore:
             active_skill_name=active_skill_name,
             custom_soul=custom_soul,
             host_exec=host_exec,
+            interactive=interactive,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -525,6 +530,7 @@ class AgentCore:
                             project_id=self.project_id,
                             session_id=self.session_id,
                             last_assistant_text=last_assistant_text,
+                            interactive=self.interactive,
                         )
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id}
 

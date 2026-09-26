@@ -89,6 +89,13 @@ async def shutdown():
 # ───────── tool implementations ─────────
 
 async def browser_open(url: str, project_id: str) -> str:
+    # Blocks file://, localhost, LAN and metadata addresses. Only the first
+    # hop is checked — in-page redirects/subresources are not.
+    from utils.net import UnsafeURLError, check_public_url
+    try:
+        await check_public_url(url)
+    except UnsafeURLError as e:
+        return f"browser_open refused: {e}"
     page = await _get_page(project_id)
     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
     title = await page.title()
