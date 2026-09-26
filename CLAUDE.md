@@ -298,7 +298,11 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Untrusted names → paths.** Use `utils.paths` (`is_within`, `check_project_id`, `safe_filename`) — never `str(p).startswith(str(base))`. Conversion formats go through `document_converter.validate_format`.
 
-**Outbound fetches go through `utils.net.safe_http_get`.** It blocks non-public addresses on every redirect hop (SSRF). Don't add `httpx.get(model_chosen_url, follow_redirects=True)` or `trafilatura.fetch_url`. `ALLOW_PRIVATE_FETCH=true` opts out.
+**Outbound fetches go through `utils.net.safe_http_get`.** It blocks non-public addresses on every redirect hop and connects to the IP it validated (Host header + TLS SNI keep the real hostname), so DNS rebinding between check and connect doesn't work. Behind an HTTP(S) proxy it skips pinning (the proxy resolves). Don't add `httpx.get(model_chosen_url, follow_redirects=True)` or `trafilatura.fetch_url`. `ALLOW_PRIVATE_FETCH=true` opts out.
+
+**Browser tools are guarded per request.** `browser_tools._guard_route` is installed on every Playwright context: all requests (subresources, fetch/XHR) to non-public hosts are aborted, and navigations are fetched without following redirects so a redirect to an internal host is refused before it's requested. Tools also re-check the page's final URL before returning content. `BROWSER_EXECUTABLE_PATH` points Playwright at a system Chromium.
+
+**Stall detection needs progress signals.** Agent handlers wrap their run in `pinger_for(ctx, 30, max_quiet=AGENT_MAX_QUIET_SECONDS)` (15 min). The pinger only heartbeats while something calls `utils.progress.report_progress()` (agent rounds/stream chunks/tool results, ingest items, MCP responses) — a hung await goes quiet, the watchdog stalls the row, the worker cancels it. Long-running new code paths under a job should call `report_progress()`.
 
 **Untrusted HTML/SVG rendering.** Workspace HTML renders via `SandboxedHtml` (srcDoc + `sandbox="allow-scripts"`, no `allow-same-origin`, no token in URL). Anything going into `innerHTML`/`dangerouslySetInnerHTML` goes through DOMPurify first.
 

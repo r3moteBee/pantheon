@@ -37,7 +37,7 @@ import logging
 import uuid
 from typing import Any
 
-from jobs.context import JobContext, pinger_for
+from jobs.context import AGENT_MAX_QUIET_SECONDS, JobContext, pinger_for
 from jobs.handlers import register
 
 logger = logging.getLogger(__name__)
@@ -138,8 +138,7 @@ async def _run_phase(
     tool_count = 0
     last_tool: str | None = None
     text_buf: list[str] = []
-
-    async with pinger_for(ctx, interval=30.0):
+    async with pinger_for(ctx, interval=30.0, max_quiet=AGENT_MAX_QUIET_SECONDS):
         async for event in agent.chat(prompt, stream=False):
             etype = event.get("type")
             if etype == "tool_call":

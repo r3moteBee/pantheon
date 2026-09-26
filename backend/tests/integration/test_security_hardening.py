@@ -305,3 +305,51 @@ async def test_background_create_task_cannot_skip_review():
         }, None, interactive=False)
     assert sched.await_args.kwargs["plan_status"] == "proposed"
     assert "review skipped" not in res
+
+
+# ── SSRF: DNS pinning ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_safe_http_get_connects_to_validated_ip_with_original_host():
+    """The request goes to the IP check_public_url validated (no second DNS
+    lookup that could be rebound), with the real hostname in Host."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from utils import net
+
+    seen = {}
+
+    class H(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["host"] = self.headers.get("Host")
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        async def fake_check(url):
+            return ["127.0.0.1"]
+        async with httpx.AsyncClient(trust_env=False) as client:
+            with patch("utils.net.check_public_url", fake_check), \
+                 patch("utils.net._proxied", return_value=False):
+                # "rebind.example" doesn't resolve at all — success proves
+                # we connected to the pinned IP without a second lookup.
+                r = await net.safe_http_get(f"http://rebind.example:{port}/x", client=client)
+        assert r.status_code == 200
+        assert seen["host"] == f"rebind.example:{port}"
+    finally:
+        srv.shutdown()
+
+
+def test_pinned_args_https_sets_sni():
+    from utils.net import _pinned_request_args
+    url, headers, ext = _pinned_request_args("https://api.example.com/p?q=1", "93.184.216.34")
+    assert url == "https://93.184.216.34/p?q=1"
+    assert headers == {"Host": "api.example.com"}
+    assert ext == {"sni_hostname": "api.example.com"}
+    url6, _, _ = _pinned_request_args("http://h.example:8080/", "2606:2800::1")
+    assert url6 == "http://[2606:2800::1]:8080/"
