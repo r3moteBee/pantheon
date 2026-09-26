@@ -163,13 +163,11 @@ def test_embed_failure_raises_instead_of_zero_vector():
     p._headers = lambda: {}
 
     class _Boom:
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
         async def post(self, *a, **k): raise httpx.ConnectError("down")
 
-    with patch("models.provider.httpx.AsyncClient", return_value=_Boom()):
+    with patch("utils.http.shared_client", return_value=_Boom()):
         with pytest.raises(httpx.ConnectError):
-            asyncio.run(p.embed("hello"))
+            asyncio.run(p.embed("hello-unique-uncached"))
 
 
 # ── YouTube adapter ──────────────────────────────────────────────────────────
@@ -204,3 +202,61 @@ def test_artifact_list_tag_filter_applies_before_limit(tmp_path, monkeypatch):
                  content_type="text/markdown", title="target", tags=["wanted"])
     got = store.list(project_id="p1", tag="wanted", limit=5)
     assert [a["path"] for a in got] == ["notes/target.md"]
+
+
+def test_embed_many_batches_and_orders_by_index():
+    from models.provider import ModelProvider
+    import httpx
+    p = ModelProvider.__new__(ModelProvider)
+    p.base_url = "http://embed.test"
+    p.embedding_model = "m"
+    p._headers = lambda: {}
+    calls = []
+
+    def handler(req):
+        import json as _j
+        inputs = _j.loads(req.content)["input"]
+        calls.append(len(inputs))
+        data = [{"index": i, "embedding": [float(len(t))]} for i, t in enumerate(inputs)]
+        return httpx.Response(200, json={"data": list(reversed(data))})
+
+    async def run():
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        with patch("utils.http.shared_client", return_value=client):
+            out = await p.embed_many(["a", "bb", "ccc"], batch_size=2)
+        await client.aclose()
+        return out
+    out = asyncio.run(run())
+    assert out == [[1.0], [2.0], [3.0]]
+    assert calls == [2, 1]
+
+
+def test_embed_cache_dedupes_repeat_queries():
+    from models.provider import ModelProvider
+    p = ModelProvider.__new__(ModelProvider)
+    p.base_url = "http://embed.test"
+    p.embedding_model = "m-cache"
+    n = {"calls": 0}
+
+    async def fake(text):
+        n["calls"] += 1
+        return [0.5]
+    p._embed_uncached = fake
+
+    async def run():
+        await p.embed("same query")
+        await p.embed("same query")
+    asyncio.run(run())
+    assert n["calls"] == 1
+
+
+def test_recall_graph_helpers(graph):
+    async def run():
+        a = await graph.add_node("concept", "NVIDIA")
+        b = await graph.add_node("concept", "Blackwell")
+        await graph.add_edge(a, b, "PRODUCES")
+        hits = await graph.nodes_mentioned_in("Today nvidia announced something")
+        assert [h["label"] for h in hits] == ["NVIDIA"]
+        edges = await graph.edges_for_nodes([a])
+        assert len(edges) == 1 and edges[0]["node_b_label"] == "Blackwell"
+    asyncio.run(run())

@@ -456,32 +456,30 @@ class FileIndexer:
 
 
         # Store each chunk in semantic memory
+        # Drop this file's previous chunks, then embed + store the new ones
+        # in one batch.
+        if chunks:
+            await self.memory_manager.semantic.delete_where({"source_path": rel_path})
+        items = []
         for chunk in chunks:
-            try:
-                chunk_meta = {
-                    "type": "file_chunk",
-                    "source_file": file_path.name,
-                    "source_path": rel_path,
-                    "chunk_index": str(chunk["chunk_index"]),
-                    "heading": chunk.get("heading", ""),
-                    "content_hash": content_hash,
-                    "project_id": self.project_id,
-                    "indexed_at": _now_iso(),
-                }
-                # Merge frontmatter fields as metadata (flattened)
-                for k, v in frontmatter.items():
-                    if isinstance(v, (str, int, float, bool)):
-                        chunk_meta[f"fm_{k}"] = str(v)
-                    elif isinstance(v, list):
-                        chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
-
-                await self.memory_manager.semantic.store(
-                    content=chunk["content"],
-                    metadata=chunk_meta,
-                )
-                stats["chunks_stored"] += 1
-            except Exception as e:
-                logger.warning("Failed to store chunk %d of %s: %s", chunk["chunk_index"], file_path.name, e)
+            chunk_meta = {
+                "type": "file_chunk",
+                "source_file": file_path.name,
+                "source_path": rel_path,
+                "chunk_index": str(chunk["chunk_index"]),
+                "heading": chunk.get("heading", ""),
+                "content_hash": content_hash,
+                "project_id": self.project_id,
+                "indexed_at": _now_iso(),
+            }
+            # Merge frontmatter fields as metadata (flattened)
+            for k, v in frontmatter.items():
+                if isinstance(v, (str, int, float, bool)):
+                    chunk_meta[f"fm_{k}"] = str(v)
+                elif isinstance(v, list):
+                    chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
+            items.append((chunk["content"], chunk_meta))
+        stats["chunks_stored"] += await self._store_chunks(items, file_path.name)
 
         # Extract frontmatter entities to graph (for structured files)
         if frontmatter:
@@ -566,33 +564,25 @@ class FileIndexer:
         # path first, otherwise every re-index adds a full stale copy.
         if chunks:
             await self.memory_manager.semantic.delete_where({"source_path": rel_path})
+        items = []
         for chunk in chunks:
-            try:
-                chunk_meta = {
-                    "type": "artifact_chunk" if frontmatter_extras and "artifact_id" in frontmatter_extras else "file_chunk",
-                    "source_file": display_name,
-                    "source_path": rel_path,
-                    "chunk_index": str(chunk["chunk_index"]),
-                    "heading": chunk.get("heading", ""),
-                    "content_hash": content_hash,
-                    "project_id": self.project_id,
-                    "indexed_at": _now_iso(),
-                }
-                for k, v in frontmatter.items():
-                    if isinstance(v, (str, int, float, bool)):
-                        chunk_meta[f"fm_{k}"] = str(v)
-                    elif isinstance(v, list):
-                        chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
-                await self.memory_manager.semantic.store(
-                    content=chunk["content"],
-                    metadata=chunk_meta,
-                )
-                stats["chunks_stored"] += 1
-            except Exception as e:
-                logger.warning(
-                    "Failed to store chunk %d of %s: %s",
-                    chunk["chunk_index"], display_name, e,
-                )
+            chunk_meta = {
+                "type": "artifact_chunk" if frontmatter_extras and "artifact_id" in frontmatter_extras else "file_chunk",
+                "source_file": display_name,
+                "source_path": rel_path,
+                "chunk_index": str(chunk["chunk_index"]),
+                "heading": chunk.get("heading", ""),
+                "content_hash": content_hash,
+                "project_id": self.project_id,
+                "indexed_at": _now_iso(),
+            }
+            for k, v in frontmatter.items():
+                if isinstance(v, (str, int, float, bool)):
+                    chunk_meta[f"fm_{k}"] = str(v)
+                elif isinstance(v, list):
+                    chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
+            items.append((chunk["content"], chunk_meta))
+        stats["chunks_stored"] += await self._store_chunks(items, display_name)
 
         if frontmatter:
             stats["entities_extracted"] = await self._index_frontmatter_to_graph(
@@ -667,6 +657,29 @@ class FileIndexer:
         )
         return total_stats
 
+
+    async def _store_chunks(self, items: list[tuple[str, dict[str, Any]]], label: str) -> int:
+        """Batch-embed + store chunks; on a batch failure fall back to one
+        at a time so a single bad chunk doesn't drop the whole file.
+        Returns the number stored."""
+        if not items:
+            return 0
+        semantic = self.memory_manager.semantic
+        try:
+            await semantic.store_many(items)
+            return len(items)
+        except Exception as e:
+            logger.warning("Batch store of %d chunks for %s failed (%s); retrying singly",
+                           len(items), label, e)
+        stored = 0
+        for content, meta in items:
+            try:
+                await semantic.store(content=content, metadata=meta)
+                stored += 1
+            except Exception as e:
+                logger.warning("Failed to store chunk %s of %s: %s",
+                               meta.get("chunk_index"), label, e)
+        return stored
 
     async def _index_typed_topics_to_graph(
         self,

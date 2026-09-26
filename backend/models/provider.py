@@ -6,7 +6,11 @@ import logging
 import uuid
 from typing import Any, AsyncGenerator
 
+from collections import OrderedDict
+
 import httpx
+
+from utils.http import pooled_client
 
 from config import get_settings
 
@@ -61,6 +65,11 @@ def _format_llm_error(status_code: int, raw_body: str | None) -> str:
     elif status_code == 429:
         hint = " — Rate limited or out of quota on this endpoint."
     return f"LLM API error {status_code}: {detail}{hint}"
+
+
+_EMBED_CACHE: "OrderedDict[tuple[str, str, str], tuple[float, ...]]" = OrderedDict()
+_EMBED_CACHE_SIZE = 512
+_EMBED_CACHE_MAX_CHARS = 2000
 
 
 class ModelProvider:
@@ -135,7 +144,7 @@ class ModelProvider:
         finish_reason: str | None = None
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with pooled_client(timeout=120.0) as client:
                 async with client.stream(
                     "POST",
                     url,
@@ -253,7 +262,7 @@ class ModelProvider:
             payload["tool_choice"] = "auto"
 
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with pooled_client(timeout=300.0) as client:
                 resp = await client.post(url, headers=self._headers(), json=payload)
                 if resp.status_code >= 400:
                     msg = _format_llm_error(resp.status_code, resp.text)
@@ -289,12 +298,48 @@ class ModelProvider:
             raise
 
     async def embed(self, text: str) -> list[float]:
-        """Get embedding for text."""
+        """Get embedding for text.
+
+        Short texts (queries, topic labels) are memoized: one recall embeds
+        the same query for the semantic and episodic tiers, and the
+        similarity pipeline re-embeds each topic label several times.
+        """
+        cache_key = (self.base_url, self.embedding_model, text) if len(text) <= _EMBED_CACHE_MAX_CHARS else None
+        if cache_key is not None and cache_key in _EMBED_CACHE:
+            _EMBED_CACHE.move_to_end(cache_key)
+            return list(_EMBED_CACHE[cache_key])
+        vec = await self._embed_uncached(text)
+        if cache_key is not None:
+            _EMBED_CACHE[cache_key] = tuple(vec)
+            if len(_EMBED_CACHE) > _EMBED_CACHE_SIZE:
+                _EMBED_CACHE.popitem(last=False)
+        return vec
+
+    async def embed_many(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
+        """Embed several texts with one /embeddings call per batch (the API
+        accepts a list). Raises on failure like embed()."""
+        out: list[list[float]] = []
+        url = f"{self.base_url}/embeddings"
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            async with pooled_client(timeout=120.0) as client:
+                resp = await client.post(url, headers=self._headers(),
+                                         json={"model": self.embedding_model, "input": batch})
+                resp.raise_for_status()
+                data = resp.json()["data"]
+            # Responses carry an index; don't assume order.
+            data = sorted(data, key=lambda d: d.get("index", 0))
+            if len(data) != len(batch):
+                raise RuntimeError(f"embeddings returned {len(data)} vectors for {len(batch)} inputs")
+            out.extend(d["embedding"] for d in data)
+        return out
+
+    async def _embed_uncached(self, text: str) -> list[float]:
         url = f"{self.base_url}/embeddings"
         payload = {"model": self.embedding_model, "input": text}
         logger.debug("Embedding request → %s (model: %s, %d chars)", url, self.embedding_model, len(text))
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with pooled_client(timeout=30.0) as client:
                 resp = await client.post(url, headers=self._headers(), json=payload)
                 resp.raise_for_status()
                 data = resp.json()

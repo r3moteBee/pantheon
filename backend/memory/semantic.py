@@ -35,10 +35,12 @@ class SemanticMemory:
         project_id: str = "default",
         embedding_fn: Any = None,
         embedding_model: str | None = None,
+        embedding_batch_fn: Any = None,
     ):
         self.project_id = project_id
         self.collection_name = _sanitize_collection_name(f"proj-{project_id}")
         self._embedding_fn = embedding_fn
+        self._embedding_batch_fn = embedding_batch_fn
         # Identifier for the model that produces vectors via _embedding_fn.
         # Tagged onto every stored vector so we can detect mismatches at
         # recall time and re-embed when the user changes embedding model.
@@ -135,6 +137,33 @@ class SemanticMemory:
         except Exception as e:
             logger.error(f"Failed to store semantic memory: {e}")
             raise
+
+    async def store_many(self, items: list[tuple[str, dict[str, Any]]]) -> list[str]:
+        """Store several (content, metadata) pairs with one embedding call
+        and one upsert. Falls back to per-item store() when no batch
+        embedder is configured."""
+        if not items:
+            return []
+        if not (self._embedding_fn and self._embedding_batch_fn):
+            return [await self.store(content=c, metadata=m) for c, m in items]
+        ids, docs, metas = [], [], []
+        for content, metadata in items:
+            meta = {
+                "project_id": self.project_id,
+                "created_at": _now_iso(),
+                "embedding_model": self._embedding_model,
+                "embedded_at": _now_iso(),
+                **(metadata or {}),
+            }
+            ids.append(str(uuid.uuid4()))
+            docs.append(content)
+            metas.append({k: str(v) for k, v in meta.items()})
+        embeddings = await self._embedding_batch_fn(docs)
+        collection = await self._get_collection_async()
+        await _asyncio.to_thread(
+            collection.upsert, ids=ids, documents=docs, metadatas=metas, embeddings=embeddings,
+        )
+        return ids
 
     async def search(
         self,

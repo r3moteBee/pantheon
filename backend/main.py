@@ -217,6 +217,9 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
         logger.info("Task scheduler stopped")
 
+    from utils.http import close_shared_clients
+    await close_shared_clients()
+
     logger.info("Pantheon backend shutdown complete")
 
 

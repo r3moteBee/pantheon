@@ -107,17 +107,14 @@ async def test_stale_session_404_reinitializes_and_retries():
             return httpx.Response(404, text="session not found")
         return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": []}})
 
-    real = httpx.AsyncClient
-
-    def factory(*a, **kw):
-        kw["transport"] = httpx.MockTransport(handler)
-        return real(*a, **kw)
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     c = MCPClient("t", "http://mcp.test/mcp", request_interval_ms=0)
     c.session_id = "old"
     c._initialized = True
-    with patch("mcp_client.client.httpx.AsyncClient", factory):
+    with patch("utils.http.shared_client", return_value=mock_client):
         result = await c._send_jsonrpc("tools/list")
+    await mock_client.aclose()
     assert result == {"tools": []}
     assert c.session_id == "new"
     assert ("initialize", None) in calls

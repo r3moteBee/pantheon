@@ -1,10 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react'
-import mermaid from 'mermaid'
 import ExportMenu from './ExportMenu'
 
-let _initialized = false
-function ensureInit() {
-  if (_initialized) return
+// mermaid is ~1MB+; load it only when a diagram actually renders.
+let _mermaidPromise = null
+function loadMermaid() {
+  if (!_mermaidPromise) {
+    _mermaidPromise = import('mermaid').then(({ default: mermaid }) => {
+      initMermaid(mermaid)
+      return mermaid
+    })
+  }
+  return _mermaidPromise
+}
+
+function initMermaid(mermaid) {
   mermaid.initialize({
     startOnLoad: false,
     theme: 'dark',
@@ -27,7 +36,6 @@ function ensureInit() {
       tertiaryColor: '#1e293b',
     },
   })
-  _initialized = true
 }
 
 let _idCounter = 0
@@ -45,14 +53,13 @@ export default function Mermaid({ code, basename = 'mermaid-diagram' }) {
 
   useEffect(() => {
     let cancelled = false
-    ensureInit()
     setError(null)
     setHasSvg(false)
     svgRef.current = null
     if (containerRef.current) containerRef.current.innerHTML = ''
     if (!code || !code.trim()) return
-    mermaid
-      .render(idRef.current, code)
+    loadMermaid()
+      .then((mermaid) => mermaid.render(idRef.current, code))
       .then((result) => {
         if (cancelled || !containerRef.current) return
         containerRef.current.innerHTML = result.svg

@@ -175,7 +175,9 @@ export default function Layout() {
         </header>
 
         <main className="flex-1 overflow-hidden">
-          <Outlet />
+          <React.Suspense fallback={<div className="flex-1 flex items-center justify-center"><div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" /></div>}>
+            <Outlet />
+          </React.Suspense>
         </main>
       </div>
 
