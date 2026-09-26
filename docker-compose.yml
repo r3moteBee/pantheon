@@ -7,7 +7,7 @@ services:
         - INSTALL_BROWSER=${INSTALL_BROWSER:-false}
     container_name: pantheon-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # reach via nginx on :80; direct port is local-only
     env_file: .env
     environment:
       - CHROMA_HOST=chromadb
@@ -43,7 +43,7 @@ services:
     image: chromadb/chroma:latest
     container_name: pantheon-chroma
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"   # unauthenticated — never expose to LAN
     volumes:
       - ./data/chroma:/chroma/chroma
     environment:
@@ -72,7 +72,7 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: pantheon-searxng
     ports:
-      - "8888:8080"
+      - "127.0.0.1:8888:8080"   # unauthenticated — never expose to LAN
     volumes:
       - ./data/searxng:/etc/searxng:rw
     environment:

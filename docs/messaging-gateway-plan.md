@@ -196,7 +196,7 @@ Channel-project mapping behaviour for Discord:
 Credential storage:
 
 - `discord_bot_token` in vault (same pattern as `telegram_bot_token`).
-- `discord_allowed_guild_ids` in vault (optional whitelist, empty = all guilds the bot is in).
+- `discord_allowed_guild_ids` in vault (required allowlist; empty = no guilds).
 
 ### API routes
 

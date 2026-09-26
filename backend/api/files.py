@@ -234,9 +234,13 @@ async def view_file(
     mime = _VIEW_MIME.get(ext)
     if not mime:
         raise HTTPException(status_code=415, detail=f"Unsupported file type for viewing: {ext}")
+    # HTML/SVG can carry script. If opened directly (new tab) it would run
+    # same-origin with the app; the CSP sandbox gives it an opaque origin.
+    headers = {"Content-Security-Policy": "sandbox allow-scripts"} if ext in (".html", ".htm", ".svg") else None
     return FileResponse(
         path=str(target),
         media_type=mime,
+        headers=headers,
         # No filename= param → Content-Disposition: inline (renders in browser)
     )
 

@@ -150,6 +150,8 @@ def test_validate_format_normalizes():
 # ── download_file ────────────────────────────────────────────────────────────
 
 def _mock_client_factory(headers):
+    # safe_http_get builds its own client in utils.net; tests hit fake
+    # hosts, so the DNS-based SSRF check is bypassed via _private_fetch_allowed.
     real = httpx.AsyncClient
 
     def handler(request):
@@ -168,7 +170,8 @@ async def test_download_file_content_disposition_traversal_contained(tmp_path):
     ws.mkdir()
     headers = {"content-disposition": 'attachment; filename="../../../evil.sh"'}
     with patch("agent.tools._get_workspace_base", return_value=ws.resolve()), \
-         patch("agent.tools.httpx.AsyncClient", _mock_client_factory(headers)):
+         patch("utils.net.httpx.AsyncClient", _mock_client_factory(headers)), \
+         patch("utils.net._private_fetch_allowed", return_value=True):
         res = await execute_tool(
             "download_file", {"url": "https://x.test/dl", "path": "docs"}, None,
         )
@@ -183,7 +186,8 @@ async def test_download_file_honors_filename_arg(tmp_path):
     ws = tmp_path / "workspace"
     ws.mkdir()
     with patch("agent.tools._get_workspace_base", return_value=ws.resolve()), \
-         patch("agent.tools.httpx.AsyncClient", _mock_client_factory({})):
+         patch("utils.net.httpx.AsyncClient", _mock_client_factory({})), \
+         patch("utils.net._private_fetch_allowed", return_value=True):
         await execute_tool(
             "download_file",
             {"url": "https://x.test/a", "path": "docs", "filename": "../r.pdf"}, None,
@@ -199,3 +203,100 @@ async def test_download_file_rejects_non_http_scheme(tmp_path):
             "download_file", {"url": "file:///etc/passwd", "path": "x.txt"}, None,
         )
     assert "only http(s)" in res
+
+
+# ── SSRF guard ───────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8000/api/settings",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.5/",
+    "http://[::1]/",
+    "http://localhost/",
+    "file:///etc/passwd",
+])
+async def test_check_public_url_blocks_internal(url):
+    from utils.net import UnsafeURLError, check_public_url
+    with patch("utils.net._private_fetch_allowed", return_value=False):
+        with pytest.raises(UnsafeURLError):
+            await check_public_url(url)
+
+
+@pytest.mark.asyncio
+async def test_safe_http_get_blocks_redirect_to_internal():
+    from utils.net import UnsafeURLError, safe_http_get
+
+    def handler(request):
+        return httpx.Response(302, headers={"location": "http://127.0.0.1/secret"})
+
+    checked = []
+
+    async def fake_check(url):
+        checked.append(url)
+        if "127.0.0.1" in url:
+            raise UnsafeURLError("private")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with patch("utils.net.check_public_url", fake_check):
+            with pytest.raises(UnsafeURLError):
+                await safe_http_get("https://public.test/start", client=client)
+    assert checked == ["https://public.test/start", "http://127.0.0.1/secret"]
+
+
+# ── DNS rebinding / CSRF ─────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("host,ok", [
+    ("localhost:8000", True), ("127.0.0.1:8000", True), ("[::1]:8000", True),
+    ("192.168.1.20:8000", True), ("pantheon.local", True), ("testserver", True),
+    ("attacker.example.com", False), ("attacker.example.com:8000", False),
+])
+def test_host_is_allowed(host, ok):
+    from api.auth import host_is_allowed
+    with patch("api.auth.get_settings", return_value=SimpleNamespace(allowed_hosts="")):
+        assert host_is_allowed(host) is ok
+
+
+def test_host_is_allowed_honors_allowed_hosts():
+    from api.auth import host_is_allowed
+    with patch("api.auth.get_settings", return_value=SimpleNamespace(allowed_hosts="pantheon.example.com")):
+        assert host_is_allowed("pantheon.example.com")
+
+
+def test_cross_origin_post_blocked():
+    from main import app
+    client = TestClient(app)
+    r = client.post("/api/auth/login", json={"password": "x"},
+                    headers={"origin": "https://evil.example"})
+    assert r.status_code == 403
+
+
+def test_login_rate_limited():
+    import api.auth as auth
+    from main import app
+    auth._failures.clear()
+    client = TestClient(app)
+    with patch("api.auth.get_settings", return_value=SimpleNamespace(
+        auth_password="right", secret_key="s", cors_origins_list=[],
+    )):
+        codes = [client.post("/api/auth/login", json={"password": "wrong"}).status_code
+                 for _ in range(auth._MAX_FAILURES + 1)]
+    auth._failures.clear()
+    assert codes[:auth._MAX_FAILURES] == [401] * auth._MAX_FAILURES
+    assert codes[-1] == 429
+
+
+# ── skip_review ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_background_create_task_cannot_skip_review():
+    from agent.tools import execute_tool
+    from unittest.mock import AsyncMock
+    with patch("tasks.scheduler.schedule_agent_task", new_callable=AsyncMock,
+               return_value="abcd1234") as sched:
+        res = await execute_tool("create_task", {
+            "name": "x", "description": "d", "schedule": "now",
+            "plan": "1. do it", "skip_review": True,
+        }, None, interactive=False)
+    assert sched.await_args.kwargs["plan_status"] == "proposed"
+    assert "review skipped" not in res

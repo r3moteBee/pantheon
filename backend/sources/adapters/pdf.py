@@ -52,10 +52,10 @@ async def _download(url: str) -> bytes:
         raise RuntimeError(
             "httpx not installed. pip install httpx --break-system-packages"
         )
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-        r = await client.get(url, headers={"User-Agent": "Pantheon/1.0"})
-        r.raise_for_status()
-        return r.content
+    from utils.net import safe_http_get
+    r = await safe_http_get(url, timeout=60)
+    r.raise_for_status()
+    return r.content
 
 
 def _extract_with_pdfplumber(blob: bytes) -> tuple[str, dict]:

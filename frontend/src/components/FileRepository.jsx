@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import SandboxedHtml from './SandboxedHtml'
 import { ChevronRight, Download, Trash2, FolderPlus, Upload, File, Folder, ArrowLeft, RefreshCw, CheckCircle, AlertCircle, Pencil, Save, Archive, Eye, Image, FileText, Code2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -719,10 +720,10 @@ export default function FileRepository() {
 
               {isHtmlFile(viewFile) && (
                 htmlSource ? (
-                  <iframe
-                    src={getViewUrl(viewFile)}
+                  <SandboxedHtml
+                    path={currentPath ? `${currentPath}/${viewFile}` : viewFile}
+                    projectId={projectId}
                     title={viewFile}
-                    sandbox="allow-scripts allow-same-origin"
                     className="w-full h-full bg-white"
                   />
                 ) : (

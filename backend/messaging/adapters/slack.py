@@ -113,9 +113,14 @@ class SlackAdapter(BaseMessagingAdapter):
         allowed_channels = self._get_allowed_channels()
 
         def _is_allowed(channel_id: str) -> bool:
-            if not allowed_channels:
-                return True
-            return channel_id in allowed_channels
+            # Deny by default — an empty allowlist is not "allow all".
+            if channel_id not in allowed_channels:
+                logger.warning(
+                    "Ignoring Slack channel %s — add it to slack_allowed_channel_ids to allow.",
+                    channel_id,
+                )
+                return False
+            return True
 
         async def _run_agent(message_text: str, project: str, session_id: str, skill_context=None, active_skill_name=None) -> str:
             from agent.core import AgentCore

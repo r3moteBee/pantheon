@@ -70,7 +70,7 @@ def test_soffice_pdf_conversion_mocked(mock_run, converter, tmp_path):
     with patch.object(converter, "find_soffice", return_value="/usr/bin/soffice"):
         # Mock subprocess.run to simulate successful conversion and create the output file
         def fake_run(cmd, **kwargs):
-            out_pdf = Path(cmd[5]) / "test.pdf"
+            out_pdf = Path(cmd[cmd.index("--outdir") + 1]) / "test.pdf"
             out_pdf.write_text("dummy pdf output", encoding="utf-8")
             res = MagicMock()
             res.returncode = 0
@@ -98,7 +98,7 @@ def test_pandoc_docx_conversion_mocked(mock_run, converter, tmp_path):
     
     with patch.object(converter, "find_pandoc", return_value="/usr/bin/pandoc"):
         def fake_run(cmd, **kwargs):
-            out_docx = Path(cmd[4])
+            out_docx = Path(cmd[cmd.index("-o") + 1])
             out_docx.write_text("dummy docx output", encoding="utf-8")
             res = MagicMock()
             res.returncode = 0

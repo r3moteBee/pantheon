@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
+import SandboxedHtml from './SandboxedHtml'
 import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus, Bookmark, Copy, Loader } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -65,7 +66,7 @@ function FilePreview({ filePath, caption }) {
   if (ext === 'html' || ext === 'htm') {
     return (
       <div className="my-2 rounded-lg overflow-hidden border border-gray-700">
-        <iframe src={url} title={caption || filePath} sandbox="allow-scripts allow-same-origin" className="w-full bg-white" style={{ height: '400px' }} />
+        <SandboxedHtml path={filePath} projectId={projectId} title={caption || filePath} className="w-full bg-white" style={{ height: '400px' }} />
         <div className="bg-gray-800 px-3 py-1.5 text-xs text-gray-400 flex items-center gap-2">
           <FileText className="w-3 h-3" /> {caption || filePath}
         </div>

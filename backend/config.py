@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Set AUTH_PASSWORD to require a password on the web interface.
     # Leave empty to disable authentication (not recommended on public servers).
     auth_password: str = Field(default="", env="AUTH_PASSWORD")
+    # Extra public hostnames (comma-separated) this server may be reached by
+    # when AUTH_PASSWORD is empty, e.g. a Caddy domain. Guards DNS rebinding.
+    allowed_hosts: str = Field(default="", env="ALLOWED_HOSTS")
 
     # Telegram
     telegram_bot_token: str = Field(default="", env="TELEGRAM_BOT_TOKEN")
@@ -79,6 +82,9 @@ class Settings(BaseSettings):
     #   always      — also autonomous/scheduled jobs and messaging bots
     #   never       — disabled everywhere
     agent_host_exec: str = Field(default="interactive", env="AGENT_HOST_EXEC")
+    # Let agent tools / source adapters fetch private, loopback and
+    # link-local addresses (intranet ingest). Off by default: SSRF guard.
+    allow_private_fetch: bool = Field(default=False, env="ALLOW_PRIVATE_FETCH")
 
     # Search
     # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).

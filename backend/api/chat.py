@@ -90,6 +90,7 @@ async def _build_agent(
             skill_context=skill_context,
             active_skill_name=active_skill_name,
             host_exec=host_exec,
+            interactive=True,
         )
     return AgentCore(
         provider=provider,
@@ -99,6 +100,7 @@ async def _build_agent(
         skill_context=skill_context,
         active_skill_name=active_skill_name,
         host_exec=host_exec,
+        interactive=True,
     )
 
 

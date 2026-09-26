@@ -247,8 +247,15 @@ async def delete_github_connection(connection_id: str) -> dict[str, str]:
     return {"status": "deleted", "id": connection_id}
 
 
-@router.get("/connections/github/repos")
-async def list_repos(token: str = Query(..., description="Temporary PAT for picking a repo")) -> dict[str, Any]:
+class _RepoListRequest(BaseModel):
+    token: str
+
+
+@router.post("/connections/github/repos")
+async def list_repos(req: _RepoListRequest) -> dict[str, Any]:
+    """List repos for a not-yet-saved PAT. POST so the token travels in the
+    body, not the URL (URLs land in access logs and browser history)."""
+    token = req.token
     try:
         await verify_pat(token)
     except GitHubAuthError as e:

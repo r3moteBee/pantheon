@@ -91,12 +91,15 @@ class TelegramAdapter(BaseMessagingAdapter):
 
             # ── ACL helper ──────────────────────────────────────────
             def _is_allowed(update: Update) -> bool:
+                # Deny by default: an empty allowlist would let anyone who
+                # finds the bot drive the agent.
                 allowed_ids = adapter._get_allowed_ids()
-                if not allowed_ids:
-                    return True
                 chat_id = update.effective_chat.id if update.effective_chat else None
                 if chat_id not in allowed_ids:
-                    logger.warning("Unauthorized Telegram access from chat_id: %s", chat_id)
+                    logger.warning(
+                        "Unauthorized Telegram access from chat_id %s — add it to "
+                        "telegram_allowed_chat_ids to allow.", chat_id,
+                    )
                     return False
                 return True
 

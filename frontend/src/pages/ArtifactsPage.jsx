@@ -6,6 +6,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Move, Copy,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
+import DOMPurify from 'dompurify'
 import remarkGfm from 'remark-gfm'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
@@ -838,7 +839,10 @@ function SvgPreview({ svgContent, basename }) {
     setReady(false)
     svgRef.current = null
     if (!containerRef.current) return
-    containerRef.current.innerHTML = svgContent || ''
+    // SVG artifacts can be agent/ingest-authored; strip scripts + handlers.
+    containerRef.current.innerHTML = DOMPurify.sanitize(svgContent || '', {
+      USE_PROFILES: { svg: true, svgFilters: true },
+    })
     svgRef.current = containerRef.current.querySelector('svg')
     setReady(!!svgRef.current)
   }, [svgContent])
@@ -890,7 +894,7 @@ function PreviewBody({ artifact, preview }) {
     return <iframe src={preview.url} title="PDF" className="w-full h-full" />
   }
   if (preview.type === 'html') {
-    return <div className="p-6 prose prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: preview.content }} />
+    return <div className="p-6 prose prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(preview.content || '') }} />
   }
   if (preview.type === 'sheet') {
     return (
