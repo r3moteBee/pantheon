@@ -44,7 +44,9 @@ async def _ensure_browser():
         _BROWSER = await _PLAYWRIGHT.chromium.connect_over_cdp(ws_url)
         logger.info("Connected to remote browser at %s", ws_url)
     else:
-        _BROWSER = await _PLAYWRIGHT.chromium.launch(headless=headless)
+        # Optional: use a system Chromium instead of Playwright's download.
+        exe = os.getenv("BROWSER_EXECUTABLE_PATH") or None
+        _BROWSER = await _PLAYWRIGHT.chromium.launch(headless=headless, executable_path=exe)
         logger.info("Launched local chromium (headless=%s)", headless)
 
 
@@ -59,6 +61,9 @@ async def _get_page(project_id: str):
                 ),
                 viewport={"width": 1280, "height": 900},
             )
+            # Every request any page in this context makes (navigations,
+            # subresources, fetch/XHR, popups) goes through the SSRF guard.
+            await ctx.route("**/*", _guard_route)
             page = await ctx.new_page()
             _CONTEXTS[project_id] = (ctx, page)
         return _CONTEXTS[project_id][1]
@@ -86,24 +91,113 @@ async def shutdown():
         _PLAYWRIGHT = None
 
 
+# ───────── SSRF guard ─────────
+# Playwright can't pin DNS, so this checks each request's destination
+# (cached briefly per host) and blocks non-public addresses. Route handlers
+# don't see redirect hops, so tools also re-check the page's final URL
+# before returning anything to the model.
+
+_HOST_OK: dict[str, tuple[bool, float]] = {}
+_HOST_TTL = 60.0
+
+
+async def _url_allowed(url: str) -> bool:
+    import time
+    from urllib.parse import urlparse
+    from utils.net import UnsafeURLError, check_public_url
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    if scheme in ("data", "blob", "about"):
+        return True
+    if scheme not in ("http", "https"):
+        return False
+    key = f"{scheme}://{parsed.hostname}:{parsed.port or ''}"
+    hit = _HOST_OK.get(key)
+    now = time.monotonic()
+    if hit and now - hit[1] < _HOST_TTL:
+        return hit[0]
+    try:
+        await check_public_url(url)
+        ok = True
+    except UnsafeURLError:
+        ok = False
+    _HOST_OK[key] = (ok, now)
+    return ok
+
+
+async def _guard_route(route) -> None:
+    url = route.request.url
+    if not await _url_allowed(url):
+        logger.warning("browser: blocked request to non-public address: %s", url[:200])
+        await route.abort("blockedbyclient")
+        return
+    if route.request.is_navigation_request() and url.startswith(("http://", "https://")):
+        # Fetch navigations ourselves without following redirects, so a
+        # redirect to an internal address is refused before any request
+        # reaches it. A fulfilled 3xx makes the browser issue the next hop
+        # as a new request, which comes back through this guard.
+        try:
+            resp = await route.fetch(max_redirects=0)
+        except Exception as e:
+            logger.debug("browser: guarded fetch failed (%s); aborting", e)
+            await route.abort("failed")
+            return
+        location = resp.headers.get("location")
+        if 300 <= resp.status < 400 and location:
+            from urllib.parse import urljoin
+            target = urljoin(url, location)
+            if not await _url_allowed(target):
+                logger.warning("browser: blocked redirect %s -> %s", url[:200], target[:200])
+                await route.abort("blockedbyclient")
+                return
+        await route.fulfill(response=resp)
+        return
+    await route.continue_()
+
+
+async def _page_is_safe(page) -> bool:
+    """False (and the page is blanked) if a redirect or script navigation
+    landed on a non-public address."""
+    if await _url_allowed(page.url):
+        return True
+    logger.warning("browser: page ended on non-public URL %s — blanking", page.url[:200])
+    try:
+        await page.goto("about:blank")
+    except Exception:
+        pass
+    return False
+
+
+_UNSAFE_MSG = "Refused: the page navigated to a private/internal address (blocked for safety)."
+
+
 # ───────── tool implementations ─────────
 
 async def browser_open(url: str, project_id: str) -> str:
-    # Blocks file://, localhost, LAN and metadata addresses. Only the first
-    # hop is checked — in-page redirects/subresources are not.
+    # Blocks file://, localhost, LAN and metadata addresses: the URL here,
+    # every request via _guard_route, and the final URL after redirects.
     from utils.net import UnsafeURLError, check_public_url
     try:
         await check_public_url(url)
     except UnsafeURLError as e:
         return f"browser_open refused: {e}"
     page = await _get_page(project_id)
-    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    except Exception as e:
+        if "ERR_BLOCKED_BY_CLIENT" in str(e):
+            return "browser_open refused: the page redirected to a private/internal address."
+        raise
+    if not await _page_is_safe(page):
+        return _UNSAFE_MSG
     title = await page.title()
     return f"Opened {page.url}\nTitle: {title}"
 
 
 async def browser_read(project_id: str, max_chars: int = 8000) -> str:
     page = await _get_page(project_id)
+    if not await _page_is_safe(page):
+        return _UNSAFE_MSG
     # Prefer visible body text; fall back to innerText.
     text = await page.evaluate(
         """() => {
@@ -119,6 +213,8 @@ async def browser_read(project_id: str, max_chars: int = 8000) -> str:
 async def browser_click(selector: str, project_id: str) -> str:
     page = await _get_page(project_id)
     await page.click(selector, timeout=10000)
+    if not await _page_is_safe(page):
+        return _UNSAFE_MSG
     return f"Clicked: {selector}"
 
 
@@ -127,12 +223,16 @@ async def browser_type(selector: str, text: str, project_id: str, submit: bool =
     await page.fill(selector, text, timeout=10000)
     if submit:
         await page.keyboard.press("Enter")
+        if not await _page_is_safe(page):
+            return _UNSAFE_MSG
     return f"Typed into {selector}" + (" and pressed Enter" if submit else "")
 
 
 async def browser_screenshot(project_id: str, rel_path: str = "screenshot.png") -> str:
     from agent.tools import _safe_workspace_path  # avoid circular import at module load
     page = await _get_page(project_id)
+    if not await _page_is_safe(page):
+        return _UNSAFE_MSG
     safe = _safe_workspace_path(rel_path, project_id)
     safe.parent.mkdir(parents=True, exist_ok=True)
     await page.screenshot(path=str(safe), full_page=True)

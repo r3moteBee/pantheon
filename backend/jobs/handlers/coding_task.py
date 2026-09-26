@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from jobs.context import JobContext, pinger_for
+from jobs.context import AGENT_MAX_QUIET_SECONDS, JobContext, pinger_for
 from jobs.handlers import register
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
     )
 
     await ctx.heartbeat(progress="Running coding agent loop…")
-    async with pinger_for(ctx, interval=30.0):
+    async with pinger_for(ctx, interval=30.0, max_quiet=AGENT_MAX_QUIET_SECONDS):
         result_text = await agent.run_autonomous(full_prompt) or ""
 
     if ctx.cancel_requested():

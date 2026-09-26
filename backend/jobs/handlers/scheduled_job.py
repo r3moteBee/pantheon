@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from jobs.context import JobContext, pinger_for
+from jobs.context import AGENT_MAX_QUIET_SECONDS, JobContext, pinger_for
 from jobs.handlers import register
 from jobs.sinks import get_sink
 
@@ -88,7 +88,7 @@ async def handle_scheduled_job(ctx: JobContext) -> dict[str, Any]:
     )
 
     await ctx.heartbeat(progress="Running prompt through agent…")
-    async with pinger_for(ctx, interval=30.0):
+    async with pinger_for(ctx, interval=30.0, max_quiet=AGENT_MAX_QUIET_SECONDS):
         result_text = await agent.run_autonomous(prompt) or ""
 
     if ctx.cancel_requested():

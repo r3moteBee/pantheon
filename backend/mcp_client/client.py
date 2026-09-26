@@ -21,6 +21,7 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from utils.http import pooled_client
+from utils.progress import report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,8 @@ class MCPClient:
                 resp.raise_for_status()
 
                 content_type = resp.headers.get("content-type", "")
+
+                report_progress()  # a response arrived — not hung
 
                 # Track session ID from server
                 new_session = resp.headers.get("mcp-session-id")

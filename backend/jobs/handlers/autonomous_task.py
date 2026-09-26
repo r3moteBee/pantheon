@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from jobs.context import JobContext, pinger_for
+from jobs.context import AGENT_MAX_QUIET_SECONDS, JobContext, pinger_for
 from jobs.handlers import register
 
 logger = logging.getLogger(__name__)
@@ -445,7 +445,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
         + (f"Plan:\n{plan}\n" if plan else f"Description:\n{(description or '')[:800]}\n")
         + f"Ledger: keep '{ledger_rel}' updated after each completed subtask."
     )
-    async with pinger_for(ctx, interval=30.0):
+    async with pinger_for(ctx, interval=30.0, max_quiet=AGENT_MAX_QUIET_SECONDS):
         async for event in agent.chat(full_prompt, stream=False,
                                       max_iterations=max_iterations,
                                       reanchor_text=reanchor):

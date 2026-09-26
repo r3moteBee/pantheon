@@ -18,6 +18,8 @@ from sources.base import (
     SourceAdapter,
 )
 
+from utils.progress import report_progress
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +104,7 @@ async def ingest(
     # 1. Fetch
     try:
         fetched: FetchedContent = await adapter.fetch(req)
+        report_progress()
     except Exception as e:
         logger.exception("adapter %s fetch failed for %s",
                          req.source_type, req.identifier)
@@ -359,6 +362,7 @@ async def batch_ingest(
     """
     results: list[AdapterResult] = []
     for req in reqs:
+        report_progress()
         try:
             r = await ingest(req, memory_manager=memory_manager, session_id=session_id)
         except Exception as e:

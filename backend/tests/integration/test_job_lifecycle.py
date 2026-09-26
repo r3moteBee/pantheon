@@ -234,3 +234,54 @@ def test_failed_scan_skill_is_blocked_unless_overridden():
     assert not sk.scan_blocked and sk.is_enabled_for("default")
     bundled = LoadedSkill(manifest=manifest, is_bundled=True)
     assert bundled.is_enabled_for("default")
+
+
+# ── Progress-aware pinger ────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_pinger_stops_vouching_when_no_progress(store):
+    from jobs.context import JobContext, pinger_for
+    from utils.progress import report_progress
+    j = store.create(job_type="x", project_id="lifecycle-test")
+    store.claim_next()
+    ctx = JobContext(job_id=j["id"], job_type="x", project_id="p", payload={}, store=store)
+    beats = []
+    ctx._write_heartbeat = lambda progress=None: _record(beats)
+
+    async with pinger_for(ctx, interval=0.02, max_quiet=0.1):
+        for _ in range(10):          # busy: progress keeps flowing
+            report_progress()
+            await asyncio.sleep(0.02)
+        busy = len(beats)
+        await asyncio.sleep(0.3)     # hung: no progress
+        hung_start = len(beats)
+        await asyncio.sleep(0.2)
+        hung_end = len(beats)
+    assert busy >= 3
+    assert hung_end == hung_start, "pinger kept heartbeating a hung job"
+
+
+async def _record(beats):
+    beats.append(1)
+
+
+# ── schedule_scheduled_job ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_schedule_scheduled_job_is_serializable(tmp_path, monkeypatch):
+    pytest.importorskip("sqlalchemy")
+    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from tasks import scheduler as sched_mod
+
+    s = AsyncIOScheduler(jobstores={"default": SQLAlchemyJobStore(url=f"sqlite:///{tmp_path}/aps.db")})
+    s.start(paused=True)
+    try:
+        monkeypatch.setattr(sched_mod, "get_scheduler", lambda: s)
+        sid = await sched_mod.schedule_scheduled_job(
+            "digest", "summarize news", "interval:60", project_id="p1",
+        )
+        job = s.get_job(sid)
+        assert job is not None and job.kwargs["prompt"] == "summarize news"
+    finally:
+        s.shutdown(wait=False)

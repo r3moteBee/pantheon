@@ -434,6 +434,7 @@ class AgentCore:
 
             while iterations < iteration_limit:
                 iterations += 1
+                self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
 
@@ -445,6 +446,7 @@ class AgentCore:
                         tools=all_tools,
                         stream=True,
                     ):
+                        self._progress()
                         if chunk["type"] == "text_delta":
                             current_text += chunk["content"]
                             yield chunk
@@ -532,6 +534,7 @@ class AgentCore:
                             last_assistant_text=last_assistant_text,
                             interactive=self.interactive,
                         )
+                    self._progress()
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id}
 
                     messages.append({
@@ -592,6 +595,12 @@ class AgentCore:
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
+
+    @staticmethod
+    def _progress() -> None:
+        """Tell the job stall watchdog (if running under one) we're alive."""
+        from utils.progress import report_progress
+        report_progress()
 
     async def run_autonomous(self, task_description: str) -> str:
         """Run a task autonomously (no streaming, returns final response).
