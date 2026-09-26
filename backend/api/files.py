@@ -14,6 +14,8 @@ import zipfile
 
 import aiofiles
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Query
+
+from utils.paths import check_project_id as _check_project_id, is_within
 from typing import List as TList
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -26,6 +28,10 @@ router = APIRouter()
 
 def _get_workspace(project_id: str = "default") -> Path:
     if project_id and project_id != "default":
+        try:
+            _check_project_id(project_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         path = settings.projects_dir / project_id / "workspace"
     else:
         path = settings.workspace_dir
@@ -36,7 +42,7 @@ def _get_workspace(project_id: str = "default") -> Path:
 def _safe_path(rel_path: str, project_id: str = "default") -> Path:
     base = _get_workspace(project_id)
     target = (base / rel_path).resolve()
-    if not str(target).startswith(str(base)):
+    if not is_within(target, base):
         raise HTTPException(status_code=400, detail="Path traversal denied")
     return target
 
@@ -474,7 +480,7 @@ async def convert_files(
             search_pattern = str(base / pattern)
             for matched_str in glob.glob(search_pattern, recursive=True):
                 matched_path = Path(matched_str).resolve()
-                if str(matched_path).startswith(str(base)) and matched_path.is_file():
+                if is_within(matched_path, base) and matched_path.is_file():
                     expanded_paths.append(matched_path)
         else:
             try:
@@ -512,6 +518,12 @@ async def convert_files(
     if req.out_dir:
         out_dir_path = _safe_path(req.out_dir, project_id)
         out_dir_path.mkdir(parents=True, exist_ok=True)
+
+    from utils.document_converter import validate_format
+    try:
+        req.target_format = validate_format(req.target_format)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     results: list[ConversionResult] = []
     success_count = 0

@@ -79,9 +79,11 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
     memory = create_memory_manager(
         project_id=ctx.project_id, session_id=session_id, provider=provider,
     )
+    from agent.tools import host_exec_allowed
     agent = AgentCore(
         provider=provider, memory_manager=memory,
         project_id=ctx.project_id, session_id=session_id,
+        host_exec=host_exec_allowed("interactive"),
     )
 
     # Coding-specific system prompt — opinionated and concrete

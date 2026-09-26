@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
 from agent.prompts import build_system_prompt
-from agent.tools import TOOL_SCHEMAS, execute_tool, get_all_tool_schemas
+from agent.tools import TOOL_SCHEMAS, HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from config import get_settings
 from models.provider import ModelProvider
 
@@ -150,8 +150,12 @@ class AgentCore:
         skill_context: str | None = None,
         active_skill_name: str | None = None,
         custom_soul: str | None = None,
+        host_exec: bool = False,
     ):
         self.provider = provider
+        # Host-exec tools (shell/code/git) are opt-in per construction site.
+        # Default False so any new caller is safe by default.
+        self.host_exec = host_exec
         self.project_id = project_id
         self.project_name = project_name
         self.session_id = session_id or str(uuid.uuid4())
@@ -173,6 +177,7 @@ class AgentCore:
         active_skill_name: str | None = None,
         custom_soul: str | None = None,
         message_limit: int = 200,
+        host_exec: bool = False,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -193,6 +198,7 @@ class AgentCore:
             skill_context=skill_context,
             active_skill_name=active_skill_name,
             custom_soul=custom_soul,
+            host_exec=host_exec,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -415,6 +421,11 @@ class AgentCore:
 
             # Resolve all available tools (built-in + MCP)
             all_tools = get_all_tool_schemas()
+            if not self.host_exec:
+                all_tools = [
+                    t for t in all_tools
+                    if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
+                ]
 
             while iterations < iteration_limit:
                 iterations += 1
@@ -500,14 +511,21 @@ class AgentCore:
                         if _m.get("role") == "assistant" and _m.get("content"):
                             last_assistant_text = _m["content"]
                             break
-                    result = await execute_tool(
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        memory_manager=self.memory_manager,
-                        project_id=self.project_id,
-                        session_id=self.session_id,
-                        last_assistant_text=last_assistant_text,
-                    )
+                    if tool_name in HOST_EXEC_TOOLS and not self.host_exec:
+                        result = (
+                            f"Tool '{tool_name}' is disabled in this context "
+                            "(host command execution is only available in "
+                            "interactive chat; see AGENT_HOST_EXEC)."
+                        )
+                    else:
+                        result = await execute_tool(
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            memory_manager=self.memory_manager,
+                            project_id=self.project_id,
+                            session_id=self.session_id,
+                            last_assistant_text=last_assistant_text,
+                        )
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id}
 
                     messages.append({

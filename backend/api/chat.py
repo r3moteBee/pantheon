@@ -75,6 +75,8 @@ async def _build_agent(
     so the agent sees the conversation so far.
     """
     from memory.episodic import EpisodicMemory
+    from agent.tools import host_exec_allowed
+    host_exec = host_exec_allowed("interactive")
     try:
         existing = await EpisodicMemory().get_history(session_id=session_id, limit=1)
     except Exception:
@@ -87,6 +89,7 @@ async def _build_agent(
             memory_manager=memory_manager,
             skill_context=skill_context,
             active_skill_name=active_skill_name,
+            host_exec=host_exec,
         )
     return AgentCore(
         provider=provider,
@@ -95,6 +98,7 @@ async def _build_agent(
         session_id=session_id,
         skill_context=skill_context,
         active_skill_name=active_skill_name,
+        host_exec=host_exec,
     )
 
 
@@ -219,6 +223,9 @@ async def list_sessions(
 @router.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for streaming chat with the agent."""
+    from api.auth import authorize_websocket
+    if not await authorize_websocket(websocket):
+        return
     await websocket.accept()
     connection_id = str(uuid.uuid4())
     _active_connections[connection_id] = websocket

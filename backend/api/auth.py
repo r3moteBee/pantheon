@@ -56,3 +56,53 @@ async def login(req: LoginRequest) -> LoginResponse:
 
     sec_log.auth_login_success()
     return LoginResponse(token=expected)
+
+
+def token_is_valid(token: str) -> bool:
+    """True when auth is disabled or ``token`` matches the configured password."""
+    settings = get_settings()
+    if not settings.auth_password:
+        return True
+    expected = compute_token(settings.auth_password, settings.secret_key)
+    try:
+        return hmac.compare_digest(token or "", expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def origin_is_allowed(origin: str | None, host: str | None) -> bool:
+    """Cross-site WebSocket guard.
+
+    Browsers always send ``Origin`` on WebSocket handshakes and CORS does not
+    apply to them, so a page on any site could otherwise open a socket to
+    localhost. Allow: no Origin (non-browser client), same-host origin, or an
+    origin listed in CORS_ORIGINS.
+    """
+    if not origin:
+        return True
+    from urllib.parse import urlparse
+    if origin in get_settings().cors_origins_list:
+        return True
+    return bool(host) and urlparse(origin).netloc.lower() == host.lower()
+
+
+async def authorize_websocket(websocket) -> bool:
+    """Validate Origin + ``?token=`` before accept().
+
+    Starlette's ``@app.middleware("http")`` never runs for WebSocket scopes,
+    so every WebSocket endpoint must call this itself. Closes the socket and
+    returns False when the check fails.
+    """
+    origin = websocket.headers.get("origin")
+    if not origin_is_allowed(origin, websocket.headers.get("host")):
+        sec_log.auth_login_failure(reason=f"ws_bad_origin:{origin}")
+        await websocket.close(code=1008)
+        return False
+    token = websocket.query_params.get("token", "")
+    if not token:
+        token = websocket.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if not token_is_valid(token):
+        sec_log.auth_login_failure(reason="ws_bad_token")
+        await websocket.close(code=1008)
+        return False
+    return True
