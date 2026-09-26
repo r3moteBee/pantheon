@@ -106,6 +106,7 @@ class JobStore:
         runs_db = db_dir / "task_runs.db"
         if not runs_db.exists():
             return
+        src = None
         try:
             src = sqlite3.connect(str(runs_db), timeout=5.0)
             src.row_factory = sqlite3.Row
@@ -127,7 +128,12 @@ class JobStore:
                     (
                         r["id"], "autonomous_task",
                         r["project_id"] or "default",
-                        r["status"] if r["status"] in JobStatus.TERMINAL or r["status"] in JobStatus.ACTIVE else "completed",
+                        # Legacy rows that were still queued/running belong to a
+                        # dead process — importing them as active would make
+                        # orphan recovery / the worker re-run them.
+                        (r["status"] if r["status"] in JobStatus.TERMINAL
+                         else JobStatus.STALLED if r["status"] in JobStatus.ACTIVE
+                         else "completed"),
                         r["task_name"] or "(task)",
                         r["description"] or "",
                         json.dumps({"task_id": r["task_id"]}),
@@ -142,9 +148,11 @@ class JobStore:
                 n += 1
             if n:
                 logger.info("Imported %d task_runs rows into jobs", n)
-            src.close()
         except Exception as e:
             logger.warning("Could not migrate task_runs → jobs: %s", e)
+        finally:
+            if src is not None:
+                src.close()
 
     # ── CRUD ───────────────────────────────────────────────────────────────
 
@@ -356,31 +364,65 @@ class JobStore:
         session_id: str | None = None,
         artifact_id: str | None = None,
         pr_url: str | None = None,
-    ) -> None:
+    ) -> bool:
+        """running → completed. Guarded on status so a job the watchdog
+        already stalled (or a user cancelled) isn't overwritten when its
+        handler finally returns. Returns True if the row transitioned."""
         with self._connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 """UPDATE jobs
                    SET status = ?, completed_at = ?, result = ?,
                        session_id = COALESCE(?, session_id),
                        artifact_id = COALESCE(?, artifact_id),
                        pr_url = COALESCE(?, pr_url)
-                   WHERE id = ?""",
+                   WHERE id = ? AND status = 'running'""",
                 (
                     JobStatus.COMPLETED, _now(),
                     json.dumps(result or {}),
                     session_id, artifact_id, pr_url, job_id,
                 ),
             )
+            return cur.rowcount > 0
 
-    def fail(self, job_id: str, *, error: str, session_id: str | None = None) -> None:
+    def fail(
+        self, job_id: str, *, error: str, session_id: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> bool:
+        """running → failed (status-guarded, see complete())."""
         with self._connect() as conn:
-            conn.execute(
+            cur = conn.execute(
                 """UPDATE jobs SET status = ?, completed_at = ?, error = ?,
-                                   session_id = COALESCE(?, session_id)
-                   WHERE id = ?""",
-                (JobStatus.FAILED, _now(), error[:2000], session_id, job_id),
+                                   session_id = COALESCE(?, session_id),
+                                   result = COALESCE(?, result)
+                   WHERE id = ? AND status = 'running'""",
+                (JobStatus.FAILED, _now(), error[:2000], session_id,
+                 json.dumps(result) if result is not None else None, job_id),
             )
-        _record_failure_to_memory(self, job_id, error)
+            changed = cur.rowcount > 0
+        if changed:
+            _record_failure_to_memory(self, job_id, error)
+        return changed
+
+    def mark_cancelled(
+        self, job_id: str, *, session_id: str | None = None,
+        result: dict[str, Any] | None = None,
+    ) -> bool:
+        """running → cancelled once the handler has actually stopped."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """UPDATE jobs SET status = ?, completed_at = ?,
+                                   session_id = COALESCE(?, session_id),
+                                   result = COALESCE(?, result)
+                   WHERE id = ? AND status = 'running'""",
+                (JobStatus.CANCELLED, _now(), session_id,
+                 json.dumps(result) if result is not None else None, job_id),
+            )
+            return cur.rowcount > 0
+
+    def get_status(self, job_id: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return row["status"] if row else None
 
     def cancel(self, job_id: str) -> bool:
         """User-requested cancel. If queued, terminate immediately. If
@@ -497,10 +539,12 @@ def _record_failure_to_memory(store: "JobStore", job_id: str, error: str) -> Non
             details=(error or "")[:500],
         )
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(coro)
+            asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(coro)
+            asyncio.run(coro)  # no loop (tests, CLI)
+        else:
+            from utils.background import spawn
+            spawn(coro, name="job-failure-note")
     except Exception:
         logger.debug("episodic failure note skipped", exc_info=True)
 

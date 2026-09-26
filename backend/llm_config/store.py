@@ -77,6 +77,9 @@ def list_endpoints() -> list[EndpointPublic]:
 def save_endpoint(payload: EndpointWithKey) -> EndpointPublic:
     """Create or update an endpoint by name. If api_key is None on
     update, the existing key is preserved; passing empty string clears it."""
+    # Migrate first: a later lazy migration rewrites the endpoints list and
+    # would drop an endpoint saved before any read.
+    _ensure_migrated()
     vault = get_vault()
     raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     items = json.loads(raw) if raw else []
@@ -101,6 +104,7 @@ def save_endpoint(payload: EndpointWithKey) -> EndpointPublic:
 def delete_endpoint(name: str) -> None:
     """Delete an endpoint and its API key. Roles that reference it
     are unbound (endpoint set to "")."""
+    _ensure_migrated()
     vault = get_vault()
     raw = vault.get_secret(ENDPOINTS_KEY) or "[]"
     items = [i for i in json.loads(raw or "[]") if i.get("name") != name]

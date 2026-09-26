@@ -415,10 +415,21 @@ def approve_schedule(task_id: str) -> dict[str, Any]:
     kwargs = dict(job.kwargs or {})
     kwargs["plan_status"] = "approved"
     scheduler.modify_job(task_id, kwargs=kwargs)
-    try:
-        scheduler.resume_job(task_id)
-    except Exception:
-        pass
+
+    # A one-shot (date trigger) whose run_date passed while it sat in
+    # review would be treated as a misfire on resume (grace 300s) and
+    # silently dropped. Run it now instead.
+    from apscheduler.triggers.date import DateTrigger
+    from datetime import datetime, timezone as _tz
+    run_date = getattr(job.trigger, "run_date", None) if isinstance(job.trigger, DateTrigger) else None
+    if run_date is not None and run_date <= datetime.now(_tz.utc):
+        scheduler.reschedule_job(task_id, trigger="date", run_date=datetime.now(_tz.utc))
+    else:
+        try:
+            scheduler.resume_job(task_id)
+        except Exception:
+            logger.warning("resume_job failed for %s", task_id, exc_info=True)
+    job = scheduler.get_job(task_id) or job
     return {
         "id": task_id,
         "plan_status": "approved",

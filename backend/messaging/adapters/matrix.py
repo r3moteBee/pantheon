@@ -12,6 +12,8 @@ from config import get_settings
 from messaging.base import BaseMessagingAdapter
 from messaging.models import ChannelInfo
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -353,7 +355,7 @@ class MatrixAdapter(BaseMessagingAdapter):
                             message_type="m.room.message",
                             content={"msgtype": "m.text", "body": f"Error running agent: {str(e)}"}
                         )
-                asyncio.create_task(_process())
+                spawn(_process(), name="matrix-message")
             except Exception as e:
                 logger.error("Error scheduling agent from Matrix: %s", e)
 

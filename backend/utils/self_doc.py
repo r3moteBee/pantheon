@@ -433,15 +433,15 @@ def generate_self_doc() -> str:
     try:
         from messaging.gateway import get_messaging_gateway
         gw = get_messaging_gateway()
-        status = gw.status()
-        adapters = status.get("adapters", [])
+        # generate_self_doc is sync; gw.status() is async (needs running
+        # state). Report what's knowable synchronously.
+        adapters = list(getattr(gw, "_adapters", {}).items())
         if adapters:
-            md.append("| Platform | Display Name | Configured | Running | Channels |")
-            md.append("| --- | --- | --- | --- | --- |")
-            for a in adapters:
-                conf = "Yes" if a["configured"] else "No"
-                run = "Yes" if a["running"] else "No"
-                md.append(f"| `{a['name']}` | {a['display_name']} | {conf} | {run} | {a.get('channel_count', 0)} |")
+            md.append("| Platform | Display Name | Configured |")
+            md.append("| --- | --- | --- |")
+            for name, a in adapters:
+                conf = "Yes" if a.is_configured() else "No"
+                md.append(f"| `{name}` | {a.display_name} | {conf} |")
         else:
             md.append("*No messaging adapters loaded.*")
     except Exception as e:

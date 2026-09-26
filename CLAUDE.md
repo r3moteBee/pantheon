@@ -157,7 +157,7 @@ Run integration tests:
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Currently 228 tests (223 passed, 5 skipped). Expand them when fixing regressions.
+Currently ~343 tests (5 skipped). Expand them when fixing regressions.
 
 ## Versioning convention
 
@@ -273,6 +273,14 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 **Date parsing.** YouTube's MCP returns relative strings like `"4 months ago"`. The YouTube adapter accepts either `extras["published"]` (relative) or `extras["published_at"]` (ISO). When orchestrating an ingest after `mcp_SubDownload_search_youtube`, ALWAYS forward each video's `published` string so paths get real dates instead of `unknown-date/`.
 
 **Job task timeout.** Default is 1800s (30 min) for autonomous_task. Pass `timeout_seconds` on `create_task` for batch ingests that need longer.
+
+**Job terminal states.** The worker runs each handler as a supervised task: user cancel, total timeout, or the watchdog stalling the row all cancel it. A handler returning `{"status": "failed"|"error"}` is recorded FAILED and `{"status": "cancelled"}` CANCELLED — don't return those and expect "completed". `store.complete/fail/mark_cancelled` only transition rows that are still `running`. On worker shutdown the row stays `running` so orphan recovery re-queues it.
+
+**Fire-and-forget tasks.** Use `utils.background.spawn(coro)`, not bare `asyncio.create_task`/`ensure_future` — the loop holds only weak refs.
+
+**Episodic `get_history` returns the newest `limit` messages** (oldest-first order).
+
+**Legacy `/api/settings` LLM keys** are read only by the one-shot migration; once `llm_config_migrated_v1` is set, writes to `llm_*`/`embedding_*`/etc. have no effect. Use `/api/llm/*`.
 
 **Job heartbeats.** The autonomous_task handler emits a heartbeat on every tool call with the current plan step matched. The stall watchdog kills jobs idle for 5 min — the per-step heartbeat keeps it happy.
 

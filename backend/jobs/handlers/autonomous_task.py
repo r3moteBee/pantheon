@@ -188,6 +188,11 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
                 logger.warning("autonomous_task %s: %s", ctx.job_id[:8], err)
                 ctx.update_result({"error": err, "skill_name_requested": skill_name_pl})
                 return {"status": "failed", "error": err, "session_id": session_id}
+            if sk.scan_blocked:
+                err = (f"skill {sk.name!r} failed its security scan and has not "
+                       f"been overridden; task aborted")
+                logger.warning("autonomous_task %s: %s", ctx.job_id[:8], err)
+                return {"status": "failed", "error": err, "session_id": session_id}
 
             # Validate MCP preconditions if the skill declares any.
             requires_mcp = []

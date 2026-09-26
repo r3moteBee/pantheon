@@ -156,6 +156,8 @@ class LoadedSkill(BaseModel):
     is_bundled: bool = False
     enabled_projects: list[str] = Field(default_factory=list)
     disabled_projects: list[str] = Field(default_factory=list)
+    # Set when the user force-enables a skill despite a failed scan.
+    scan_override: bool = False
 
     @property
     def name(self) -> str:
@@ -169,11 +171,26 @@ class LoadedSkill(BaseModel):
     def tags(self) -> list[str]:
         return self.manifest.tags
 
+    @property
+    def scan_blocked(self) -> bool:
+        """A non-bundled skill whose security scan failed and that the user
+        has not explicitly overridden. Never offered to the agent."""
+        scan = self.manifest.security_scan
+        return (
+            not self.is_bundled
+            and scan is not None
+            and not scan.passed
+            and not self.scan_override
+        )
+
     def is_enabled_for(self, project_id: str) -> bool:
         """Check if this skill is enabled for a given project.
 
-        Logic: enabled by default for all projects unless explicitly disabled.
+        Logic: enabled by default for all projects unless explicitly
+        disabled — except skills blocked by a failed security scan.
         """
+        if self.scan_blocked:
+            return False
         return project_id not in self.disabled_projects
 
     def to_summary(self) -> dict[str, Any]:
