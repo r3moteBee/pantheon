@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -96,7 +97,17 @@ class SubprocessSandbox(SandboxBackend):
                     stderr=asyncio.subprocess.PIPE,
                     cwd=cwd,
                     env=env,
+                    # Own process group so we can kill the whole tree
+                    # (test runners, dev servers spawned by the command).
+                    start_new_session=True,
                 )
+
+                def _kill_tree() -> None:
+                    try:
+                        os.killpg(proc.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+
                 try:
                     stdout_b, stderr_b = await asyncio.wait_for(
                         proc.communicate(),
@@ -104,11 +115,15 @@ class SubprocessSandbox(SandboxBackend):
                     )
                     timed_out = False
                 except asyncio.TimeoutError:
-                    proc.kill()
+                    _kill_tree()
                     await proc.communicate()
                     stdout_b = b""
                     stderr_b = b"Inline execution timed out"
                     timed_out = True
+                except BaseException:
+                    # Job cancelled / worker timeout: don't orphan the child.
+                    _kill_tree()
+                    raise
                 elapsed_ms = int((time.monotonic() - start) * 1000)
                 stdout = stdout_b[: cfg.max_output_bytes].decode(
                     "utf-8", errors="replace"

@@ -59,7 +59,7 @@ def resolve_explicit(message: str) -> tuple[str | None, str]:
     # content-ingest-graph.
     for variant in (candidate, candidate.replace("_", "-"), candidate.replace("-", "_")):
         skill = registry.get(variant)
-        if skill:
+        if skill and not skill.scan_blocked:
             return skill.name, rest
 
     # Not a known skill — return original message unchanged

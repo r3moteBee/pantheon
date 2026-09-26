@@ -137,7 +137,17 @@ class SkillRegistry:
             skill_dir=str(skill_dir),
             is_bundled=is_bundled,
             disabled_projects=disabled_projects,
+            scan_override=self._load_state_entry(manifest.name).get("scan_override", False),
         )
+
+    def _load_state_entry(self, skill_name: str) -> dict[str, Any]:
+        state_file = _USER_SKILLS_DIR / ".skill_state.json"
+        if state_file.exists():
+            try:
+                return json.loads(state_file.read_text(encoding="utf-8")).get(skill_name, {}) or {}
+            except Exception:
+                pass
+        return {}
 
     def _load_disabled_projects(self, skill_name: str) -> list[str]:
         """Load which projects have this skill disabled.
@@ -158,10 +168,13 @@ class SkillRegistry:
         """Persist per-skill state (disabled projects) to disk."""
         state: dict[str, Any] = {}
         for name, skill in self._skills.items():
+            entry: dict[str, Any] = {}
             if skill.disabled_projects:
-                state[name] = {
-                    "disabled_projects": skill.disabled_projects,
-                }
+                entry["disabled_projects"] = skill.disabled_projects
+            if skill.scan_override:
+                entry["scan_override"] = True
+            if entry:
+                state[name] = entry
         state_file = _USER_SKILLS_DIR / ".skill_state.json"
         _USER_SKILLS_DIR.mkdir(parents=True, exist_ok=True)
         state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -269,6 +282,8 @@ class SkillRegistry:
                     "overridable": True,
                 }
 
+        if force and skill.manifest.security_scan and not skill.manifest.security_scan.passed:
+            skill.scan_override = True
         if project_id in skill.disabled_projects:
             skill.disabled_projects.remove(project_id)
         self._save_skill_state()

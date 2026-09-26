@@ -594,9 +594,21 @@ class AgentCore:
             yield {"type": "error", "message": str(e)}
 
     async def run_autonomous(self, task_description: str) -> str:
-        """Run a task autonomously (no streaming, returns final response)."""
+        """Run a task autonomously (no streaming, returns final response).
+
+        Raises RuntimeError when the loop ends with an error event and no
+        ``done`` — returning "" there made jobs report success on LLM
+        failures.
+        """
         full_response = ""
+        error: str | None = None
+        got_done = False
         async for event in self.chat(task_description, stream=False):
             if event["type"] == "done":
+                got_done = True
                 full_response = event.get("full_response", "")
+            elif event["type"] == "error":
+                error = event.get("message") or "unknown agent error"
+        if error and not got_done:
+            raise RuntimeError(f"Agent error: {error}")
         return full_response

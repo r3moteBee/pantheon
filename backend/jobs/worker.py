@@ -3,11 +3,17 @@
 Started as an asyncio task during FastAPI lifespan startup. Loops:
   1. claim_next() — atomic queued→running transition
   2. resolve handler from registry
-  3. wait_for(handler.fn(ctx), timeout=job.timeout or handler default)
-  4. on success → store.complete with the partial_result
-     on TimeoutError → store.fail with 'timeout after Ns'
+  3. run handler.fn(ctx) as a task and supervise it: every
+     SUPERVISE_INTERVAL it checks the timeout, the user's cancel flag and
+     whether the watchdog stalled the row — any of those cancels the task
+  4. on success → store.complete, unless the handler returned
+     status=failed/error (→ store.fail) or status=cancelled
+     on timeout → store.fail; on user cancel → store.mark_cancelled
      on Exception → store.fail with the exception text
   5. sleep poll_interval, repeat
+
+All terminal writes are guarded on status='running', so a row the
+watchdog already stalled is never flipped back to completed.
 
 Concurrency: one in-flight job. Bump WORKER_CONCURRENCY env var if it
 becomes painful; for now sequential is fine for single-user pantheon.
@@ -27,6 +33,11 @@ from jobs.store import JobStore, JobStatus, get_store
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = float(os.getenv("JOB_WORKER_POLL_SECONDS", "1.0"))
+SUPERVISE_INTERVAL_SECONDS = float(os.getenv("JOB_WORKER_SUPERVISE_SECONDS", "2.0"))
+# How long to wait for a cancelled handler to unwind before moving on.
+CANCEL_GRACE_SECONDS = 30.0
+
+_FAILED_STATUSES = {"failed", "error"}
 
 
 class JobWorker:
@@ -68,7 +79,15 @@ class JobWorker:
                 if not job:
                     await asyncio.sleep(POLL_INTERVAL_SECONDS)
                     continue
-                await self._dispatch(job)
+                try:
+                    await self._dispatch(job)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # A store error (e.g. "database is locked") must not
+                    # kill the worker loop — nothing would run until restart.
+                    logger.exception("dispatch of job %s crashed; continuing", job.get("id"))
+                    await asyncio.sleep(POLL_INTERVAL_SECONDS)
         except asyncio.CancelledError:
             logger.info("Job worker stopping")
             raise
@@ -97,38 +116,97 @@ class JobWorker:
             job["id"], job["job_type"], job["project_id"], timeout,
         )
 
+        jid = job["id"]
+        task = asyncio.create_task(handler.fn(ctx), name=f"job-{jid[:8]}")
         try:
-            result = await asyncio.wait_for(handler.fn(ctx), timeout=timeout)
-            # Merge any partial_result the handler accumulated, then overlay
-            # whatever the handler returned explicitly.
-            merged = {**(ctx.partial_result or {}), **(result or {})}
+            stop_reason = await self._supervise(jid, task, timeout)
+        except asyncio.CancelledError:
+            # Worker shutting down. Stop the handler but leave the row
+            # 'running': startup orphan recovery re-queues it cleanly.
+            task.cancel()
+            await asyncio.wait({task}, timeout=CANCEL_GRACE_SECONDS)
+            raise
+
+        session_id = (ctx.partial_result or {}).get("session_id")
+        if stop_reason == "timeout":
+            err = f"Handler timed out after {timeout}s"
+            logger.warning("Job %s: %s", jid, err)
+            self.store.fail(jid, error=err, session_id=session_id)
+            return
+        if stop_reason == "cancelled":
+            logger.info("Job %s cancelled by user", jid)
+            self.store.mark_cancelled(jid, session_id=session_id)
+            return
+        if stop_reason == "stalled":
+            logger.warning("Job %s was marked stalled; handler stopped", jid)
+            return
+
+        try:
+            result = task.result()
+        except asyncio.CancelledError:
+            self.store.fail(jid, error="Handler was cancelled", session_id=session_id)
+            return
+        except Exception as e:
+            tb = "".join(traceback.format_exception(e))
+            logger.error("Job %s failed: %s", jid, e, exc_info=e)
+            self.store.fail(
+                jid,
+                error=f"{type(e).__name__}: {e}\n\n{tb[-1500:]}",
+                session_id=session_id,
+            )
+            return
+
+        # Merge any partial_result the handler accumulated, then overlay
+        # whatever the handler returned explicitly.
+        merged = {**(ctx.partial_result or {}), **(result or {})}
+        status = str(merged.get("status") or "").lower()
+        if status in _FAILED_STATUSES:
+            err = str(merged.get("error") or merged.get("reason") or "Handler reported failure")
+            logger.warning("Job %s reported failure: %s", jid, err[:200])
+            self.store.fail(jid, error=err, session_id=merged.get("session_id"), result=merged)
+        elif status == "cancelled":
+            self.store.mark_cancelled(jid, session_id=merged.get("session_id"), result=merged)
+        else:
             self.store.complete(
-                job["id"],
+                jid,
                 result=merged,
                 session_id=merged.get("session_id"),
                 artifact_id=merged.get("artifact_id"),
                 pr_url=merged.get("pr_url"),
             )
-            logger.info("Job %s completed", job["id"])
-        except asyncio.TimeoutError:
-            err = f"Handler timed out after {timeout}s"
-            logger.warning("Job %s: %s", job["id"], err)
-            self.store.fail(job["id"], error=err,
-                            session_id=(ctx.partial_result or {}).get("session_id"))
-        except asyncio.CancelledError:
-            # Worker is stopping; mark the job as cancelled so it can be
-            # re-queued cleanly on next startup.
-            self.store.fail(job["id"], error="Worker stopped before completion")
-            raise
-        except Exception as e:
-            tb = traceback.format_exc()
-            logger.exception("Job %s failed", job["id"])
-            self.store.fail(
-                job["id"],
-                error=f"{type(e).__name__}: {e}\n\n{tb[-1500:]}",
-                session_id=(ctx.partial_result or {}).get("session_id"),
-            )
+            logger.info("Job %s completed", jid)
 
+    async def _supervise(self, job_id: str, task: asyncio.Task, timeout: float) -> str | None:
+        """Wait for ``task``; cancel it on timeout, user cancel, or when the
+        watchdog has stalled the row. Returns the stop reason, or None if
+        the handler finished on its own."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + float(timeout)
+        reason: str | None = None
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                reason = "timeout"
+                break
+            done, _ = await asyncio.wait({task}, timeout=min(SUPERVISE_INTERVAL_SECONDS, remaining))
+            if done:
+                return None
+            try:
+                if self.store.get_status(job_id) != JobStatus.RUNNING:
+                    reason = "stalled"
+                    break
+                if self.store.is_cancel_requested(job_id):
+                    reason = "cancelled"
+                    break
+            except Exception:
+                logger.debug("supervise status check failed", exc_info=True)
+        task.cancel()
+        done, _ = await asyncio.wait({task}, timeout=CANCEL_GRACE_SECONDS)
+        if not done:
+            logger.error("Job %s handler ignored cancellation for %ss", job_id, CANCEL_GRACE_SECONDS)
+        elif not task.cancelled() and task.exception():
+            logger.debug("Job %s raised while cancelling: %s", job_id, task.exception())
+        return reason
 
 _INSTANCE: JobWorker | None = None
 

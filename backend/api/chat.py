@@ -23,6 +23,8 @@ from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
 from skills.registry import get_skill_registry
 from skills.models import SkillDiscoveryMode
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
@@ -183,12 +185,32 @@ async def chat(req: ChatRequest) -> ChatResponse:
         active_skill_name=active_skill_name,
     )
 
+    # Persist like the WebSocket path so the next REST call (and history,
+    # extraction, recall) sees this turn. Saved after _build_agent so
+    # from_session doesn't replay the message agent.chat is about to add.
+    try:
+        await memory.episodic.save_message(
+            session_id=session_id, project_id=req.project_id,
+            role="user", content=message,
+        )
+    except Exception as e:
+        logger.warning("REST chat: failed to save user message: %s", e)
+
     full_response = ""
     async for event in agent.chat(message, stream=False):
         if event["type"] == "done":
             full_response = event.get("full_response", "")
         elif event["type"] == "error":
             raise HTTPException(status_code=500, detail=event["message"])
+
+    if full_response:
+        try:
+            await memory.episodic.save_message(
+                session_id=session_id, project_id=req.project_id,
+                role="assistant", content=full_response,
+            )
+        except Exception as e:
+            logger.warning("REST chat: failed to save assistant message: %s", e)
 
     return ChatResponse(
         session_id=session_id,
@@ -230,6 +252,18 @@ async def websocket_chat(websocket: WebSocket) -> None:
         return
     await websocket.accept()
     connection_id = str(uuid.uuid4())
+
+    client_gone = False
+
+    async def _send(event: dict[str, Any]) -> None:
+        """Send to the client; after the first failure, drop silently."""
+        nonlocal client_gone
+        if client_gone:
+            return
+        try:
+            await websocket.send_json(event)
+        except Exception:
+            client_gone = True
     _active_connections[connection_id] = websocket
     logger.info(f"WebSocket connected: {connection_id}")
 
@@ -304,10 +338,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
                 full_response = ""
                 async for event in agent.chat(message, stream=True):
-                    try:
-                        await websocket.send_json(event)
-                    except Exception:
-                        break
+                    # Keep draining after a disconnect so pending tool calls
+                    # finish and the reply is still saved to history.
+                    await _send(event)
                     if event.get("type") == "done":
                         full_response = event.get("full_response", "")
 
@@ -326,7 +359,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     _session_message_counts[session_id] = count
                     if count >= extraction_interval:
                         _session_message_counts[session_id] = 0
-                        asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+                        spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
                 continue
 
             if data.get("type") == "skill_decline":
@@ -369,10 +402,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
                 full_response = ""
                 async for event in agent.chat(message, stream=True):
-                    try:
-                        await websocket.send_json(event)
-                    except Exception:
-                        break
+                    # Keep draining after a disconnect so pending tool calls
+                    # finish and the reply is still saved to history.
+                    await _send(event)
                     if event.get("type") == "done":
                         full_response = event.get("full_response", "")
 
@@ -391,7 +423,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     _session_message_counts[session_id] = count
                     if count >= extraction_interval:
                         _session_message_counts[session_id] = 0
-                        asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+                        spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
                 continue
 
             if not message:
@@ -516,17 +548,6 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
 
             if len(active_personas) > 1:
-                # Save user message to episodic memory first
-                try:
-                    await memory.episodic.save_message(
-                        session_id=session_id,
-                        project_id=project_id,
-                        role="user",
-                        content=message,
-                    )
-                except Exception as e:
-                    logger.warning("Failed to save user message: %s", e)
-
                 # Determine first responder based on mentions
                 next_responder = None
                 from api.personas import _find_persona
@@ -582,18 +603,31 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         active_skill_name=active_skill_name,
                     )
                     agent.custom_soul = p_soul
+
+                    # Save the user message only after the first agent has
+                    # rehydrated from history — saving first made
+                    # from_session replay it and agent.chat append it again,
+                    # so the model saw the message twice.
+                    if current_turn == 1:
+                        try:
+                            await memory.episodic.save_message(
+                                session_id=session_id,
+                                project_id=project_id,
+                                role="user",
+                                content=message,
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to save user message: %s", e)
                     
                     full_response = ""
                     async for event in agent.chat(current_message, stream=True):
-                        try:
-                            # Forward delta events to client
-                            if event.get("type") == "text_delta":
-                                full_response += event.get("content", "")
-                                await websocket.send_json(event)
-                            elif event.get("type") in ("tool_call", "tool_result"):
-                                await websocket.send_json(event)
-                        except Exception:
-                            break
+                        # Forward delta events to client (keeps draining if the
+                        # client disconnected so the reply is still saved).
+                        if event.get("type") == "text_delta":
+                            full_response += event.get("content", "")
+                            await _send(event)
+                        elif event.get("type") in ("tool_call", "tool_result"):
+                            await _send(event)
                     
                     # Save persona's response to episodic memory
                     complete_content = prefix + full_response
@@ -641,10 +675,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
                 full_response = ""
                 async for event in agent.chat(message, stream=True):
-                    try:
-                        await websocket.send_json(event)
-                    except Exception:
-                        break
+                    # Keep draining after a disconnect so pending tool calls
+                    # finish and the reply is still saved to history.
+                    await _send(event)
                     if event.get("type") == "done":
                         full_response = event.get("full_response", "")
 
@@ -668,7 +701,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 if count >= extraction_interval:
                     _session_message_counts[session_id] = 0
                     # Fire-and-forget extraction
-                    asyncio.ensure_future(_run_background_extraction(memory, project_id, session_id))
+                    spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {connection_id}")

@@ -21,6 +21,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from config import get_settings
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
@@ -126,7 +128,7 @@ async def upload_file(
     # Auto-index the uploaded file if enabled
     indexed = False
     if settings.auto_index_uploads:
-        asyncio.ensure_future(_index_uploaded_file(dest_path, project_id))
+        spawn(_index_uploaded_file(dest_path, project_id), name="index-upload")
         indexed = True
 
     return {

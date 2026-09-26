@@ -14,6 +14,8 @@ from config import get_settings
 from messaging.base import BaseMessagingAdapter
 from messaging.models import ChannelInfo
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -341,7 +343,7 @@ class SlackAdapter(BaseMessagingAdapter):
                     except Exception as e:
                         logger.error("Error running agent from Slack: %s", e)
                         await client.web_client.chat_postMessage(channel=channel_id, text=f"Error running agent: {str(e)}")
-                asyncio.create_task(_process())
+                spawn(_process(), name="slack-message")
             except Exception as e:
                 logger.error("Error scheduling agent from Slack: %s", e)
 

@@ -13,6 +13,8 @@ from config import get_settings
 from messaging.base import BaseMessagingAdapter
 from messaging.models import ChannelInfo
 
+from utils.background import spawn
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -328,7 +330,7 @@ class MattermostAdapter(BaseMessagingAdapter):
                     except Exception as e:
                         logger.error("Error running agent from Mattermost: %s", e)
                         await adapter.send_message(channel_id, f"Error running agent: {str(e)}")
-                asyncio.create_task(_process())
+                spawn(_process(), name="mattermost-message")
             except Exception as e:
                 logger.error("Error scheduling agent from Mattermost: %s", e)
 

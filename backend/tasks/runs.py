@@ -31,27 +31,34 @@ def _db_path() -> str:
     return str(s.db_dir / "task_runs.db")
 
 
+_SCHEMA_READY = False
+
+
 def _connect() -> sqlite3.Connection:
+    global _SCHEMA_READY
     from db_utils import apply_sqlite_pragmas, ClosingConnection
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
+    # Schema setup used to sit after an early `return`, so a fresh install
+    # never created task_runs and every /api/tasks/runs call 500'd.
+    if not _SCHEMA_READY:
+        sql_path = Path(__file__).resolve().parent.parent / "data" / "migrations" / "002_phase_g.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            # Inline fallback for the table this module owns
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS task_runs (
+                    id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL,
+                    project_id TEXT NOT NULL DEFAULT 'default', description TEXT,
+                    status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+                    duration_ms INTEGER, result TEXT, error TEXT, session_id TEXT,
+                    artifact_id TEXT
+                );
+            """)
+        _SCHEMA_READY = True
     return ClosingConnection(conn)  # type: ignore
-    sql_path = Path(__file__).resolve().parent.parent / "data" / "migrations" / "002_phase_g.sql"
-    if sql_path.exists():
-        conn.executescript(sql_path.read_text())
-    else:
-        # Inline fallback for the table this module owns
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS task_runs (
-                id TEXT PRIMARY KEY, task_id TEXT NOT NULL, task_name TEXT NOT NULL,
-                project_id TEXT NOT NULL DEFAULT 'default', description TEXT,
-                status TEXT NOT NULL, started_at TEXT, completed_at TEXT,
-                duration_ms INTEGER, result TEXT, error TEXT, session_id TEXT,
-                artifact_id TEXT
-            );
-        """)
-    return conn
 
 
 def start_run(

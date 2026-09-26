@@ -113,6 +113,7 @@ class EpisodicMemory:
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+                CREATE INDEX IF NOT EXISTS idx_messages_session_ts ON messages(session_id, timestamp);
                 CREATE INDEX IF NOT EXISTS idx_messages_project ON messages(project_id);
                 CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);
                 CREATE INDEX IF NOT EXISTS idx_notes_project ON memory_notes(project_id);
@@ -225,7 +226,8 @@ class EpisodicMemory:
 
         # Fire-and-forget vector indexing (non-blocking)
         if self._embedding_fn and role in ("user", "assistant"):
-            _asyncio.ensure_future(self._index_message_vector(
+            from utils.background import spawn
+            spawn(self._index_message_vector(
                 msg_id, content,
                 {"project_id": project_id, "session_id": session_id, "role": role, "timestamp": now},
             ))
@@ -238,15 +240,23 @@ class EpisodicMemory:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """Get conversation history for a session."""
+        """Return the most recent ``limit`` messages of a session, in
+        chronological order. ``offset`` skips that many of the newest
+        messages (for paging backwards).
+
+        Selecting newest-first matters: with ASC + LIMIT, a resumed chat
+        longer than ``limit`` would rehydrate the agent with its *oldest*
+        turns and none of the recent ones.
+        """
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT id, role, content, timestamp, metadata
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY timestamp ASC
+                ORDER BY timestamp DESC, rowid DESC
                 LIMIT ? OFFSET ?
             """, (session_id, limit, offset)).fetchall()
+        rows = list(reversed(rows))
         return [
             {
                 "id": r["id"],

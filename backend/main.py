@@ -196,7 +196,8 @@ async def lifespan(app: FastAPI):
             logger.info("ChromaDB warmed up successfully")
         except Exception as _e:
             logger.warning("ChromaDB warmup skipped: %s", _e)
-    _asyncio.create_task(_warmup())
+    from utils.background import spawn
+    spawn(_warmup(), name="warmup")
     yield
 
     # Phase H — stop jobs worker + watchdog
