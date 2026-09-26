@@ -211,6 +211,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
     })
 
     from agent.core import AgentCore
+    from agent.tools import host_exec_allowed
     from memory.manager import create_memory_manager
     from memory.episodic import EpisodicMemory
     from models.provider import get_provider
@@ -257,6 +258,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
             project_id=ctx.project_id, session_id=execute_session, provider=provider,
         )
         execute_agent = AgentCore(
+            host_exec=host_exec_allowed("background"),
             provider=provider, memory_manager=execute_memory,
             project_id=ctx.project_id, session_id=execute_session,
             project_name=project_name,
@@ -311,6 +313,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
                 project_id=ctx.project_id, session_id=retry_session, provider=provider,
             )
             retry_agent = AgentCore(
+                host_exec=host_exec_allowed("background"),
                 provider=provider, memory_manager=retry_memory,
                 project_id=ctx.project_id, session_id=retry_session,
                 project_name=project_name,
@@ -343,6 +346,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
             project_id=ctx.project_id, session_id=review_session, provider=provider,
         )
         review_agent = AgentCore(
+            host_exec=host_exec_allowed("background"),
             provider=provider, memory_manager=review_memory,
             project_id=ctx.project_id, session_id=review_session,
             project_name=project_name,

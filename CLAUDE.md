@@ -282,6 +282,12 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Direct-URL download endpoints need `?token=` support.** Any endpoint reached via a bare HTML tag (`<a href download>`, `<img src>`, `<embed>`, WebSocket) cannot carry the `Authorization` header — the browser doesn't include axios's bearer token on those requests. The auth middleware in `backend/main.py` whitelists such paths to accept `?token=` from the query string as a fallback (currently `/ws/`, `/api/files/view`, `/api/files/download`, and `/api/artifacts/<id>/raw`). When adding a new endpoint of this shape: extend the middleware AND make the frontend URL builder append the token, like `artifactsApi.rawUrl` and `filesApi.downloadUrl` do. Symptom of forgetting: download saves as `raw.json` (the 401 JSON body) and the browser reports "wasn't available on site".
 
+**WebSockets bypass the HTTP auth middleware.** `@app.middleware("http")` never runs for WebSocket scopes. Every WebSocket endpoint must call `api.auth.authorize_websocket(ws)` before `accept()` — it checks `?token=` and rejects cross-site `Origin`s.
+
+**Host-exec tools are gated per context.** `run_command`, `code_execute` and `git_*` (`agent.tools.HOST_EXEC_TOOLS`) are hidden and refused unless `AgentCore(host_exec=True)`. Chat (`api/chat.py`) and `coding_task` pass `host_exec_allowed("interactive")`; autonomous/scheduled/iteration jobs and messaging bots pass `host_exec_allowed("background")`. `AGENT_HOST_EXEC=interactive|always|never` controls it. New `AgentCore` call sites default to no host exec.
+
+**Untrusted names → paths.** Use `utils.paths` (`is_within`, `check_project_id`, `safe_filename`) — never `str(p).startswith(str(base))`. Conversion formats go through `document_converter.validate_format`.
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)

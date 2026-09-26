@@ -143,6 +143,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     await ctx.heartbeat(progress="Loading memory + agent…")
 
     from agent.core import AgentCore
+    from agent.tools import host_exec_allowed
     from memory.manager import create_memory_manager
     from memory.episodic import EpisodicMemory
     from models.provider import get_provider
@@ -251,6 +252,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
         pass
 
     agent = AgentCore(
+        host_exec=host_exec_allowed("background"),
         provider=provider, memory_manager=memory,
         project_id=ctx.project_id, session_id=session_id,
         project_name=project_name,

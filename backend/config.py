@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     cors_origins: str = Field(default="http://localhost:8000,http://localhost:5173,http://localhost:80", env="CORS_ORIGINS")
 
+    # Host-execution tools (run_command, code_execute, git_*) run shell on the
+    # host. Content the agent reads (web pages, transcripts, recalled memory)
+    # can carry prompt-injected instructions, so these are only offered where
+    # a human is driving:
+    #   interactive — web UI chat + coding_task jobs (default)
+    #   always      — also autonomous/scheduled jobs and messaging bots
+    #   never       — disabled everywhere
+    agent_host_exec: str = Field(default="interactive", env="AGENT_HOST_EXEC")
+
     # Search
     # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).
     # Leave empty to fall back to DuckDuckGo HTML scraping.

@@ -319,6 +319,7 @@ class TelegramAdapter(BaseMessagingAdapter):
 
             async def _run_agent_and_reply(update, message, project, skill_context=None, active_skill_name=None):
                 from agent.core import AgentCore
+                from agent.tools import host_exec_allowed
                 from memory.manager import create_memory_manager
                 from models.provider import get_provider
 
@@ -330,6 +331,7 @@ class TelegramAdapter(BaseMessagingAdapter):
                     provider=provider,
                 )
                 agent = AgentCore(
+                    host_exec=host_exec_allowed("background"),
                     provider=provider,
                     memory_manager=memory,
                     project_id=project,

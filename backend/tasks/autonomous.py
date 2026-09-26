@@ -48,6 +48,7 @@ async def run_autonomous_task(
 
     try:
         from agent.core import AgentCore
+        from agent.tools import host_exec_allowed
         from memory.manager import create_memory_manager
         from models.provider import get_provider
 
@@ -59,6 +60,7 @@ async def run_autonomous_task(
         )
 
         agent = AgentCore(
+            host_exec=host_exec_allowed("background"),
             provider=provider,
             memory_manager=memory,
             project_id=project_id,

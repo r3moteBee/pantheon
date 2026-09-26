@@ -10,6 +10,7 @@ Supports:
 """
 from __future__ import annotations
 import logging
+import re
 import os
 import shutil
 import subprocess
@@ -19,6 +20,18 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_FORMAT_RE = re.compile(r"[a-z0-9]{1,10}")
+
+
+def validate_format(fmt: str) -> str:
+    """Normalize a target format and reject anything that isn't a bare
+    extension. Callers build ``f"{stem}.{fmt}"`` paths from this value, so a
+    format like ``x/../../etc`` would otherwise escape the output dir."""
+    fmt = (fmt or "").strip().lower().lstrip(".")
+    if not _FORMAT_RE.fullmatch(fmt):
+        raise ValueError(f"Invalid target format: {fmt!r}")
+    return fmt
 
 
 class BinaryMissingError(Exception):
@@ -111,7 +124,7 @@ class DocumentConverter:
         if not target_format:
             target_format = tgt_ext.lstrip(".")
 
-        target_format = target_format.lower()
+        target_format = validate_format(target_format)
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         logger.info(

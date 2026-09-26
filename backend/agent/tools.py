@@ -15,9 +15,34 @@ from typing import Any
 import httpx
 
 from config import get_settings
+from utils.paths import check_project_id, is_within, safe_filename
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+# Tools that execute arbitrary code/commands on the host. Gated per-context
+# by AgentCore(host_exec=...) — see config.agent_host_exec.
+HOST_EXEC_TOOLS = frozenset({
+    "code_execute", "run_command",
+    "git_sync_repo", "git_status", "git_create_branch",
+    "git_merge", "git_commit", "git_push_pr",
+})
+
+
+def host_exec_allowed(context: str) -> bool:
+    """Whether host-exec tools are offered in ``context``.
+
+    context: "interactive" (web UI chat, coding_task) or "background"
+    (autonomous/scheduled jobs, iteration loops, messaging bots).
+    """
+    from config import get_settings
+    mode = (get_settings().agent_host_exec or "interactive").strip().lower()
+    if mode == "never":
+        return False
+    if mode == "always":
+        return True
+    return context == "interactive"
 
 
 def get_all_tool_schemas(project_id: str | None = None) -> list[dict[str, Any]]:
@@ -1787,38 +1812,49 @@ async def execute_tool(
             if not url or not dest_path_str:
                 return "Error: both 'url' and 'path' are required"
 
-            safe_path = _safe_workspace_path(dest_path_str, project_id)
-            safe_path.parent.mkdir(parents=True, exist_ok=True)
+            from urllib.parse import urlparse, unquote
+            if urlparse(url).scheme.lower() not in ("http", "https"):
+                return "Error: only http(s) URLs can be downloaded"
 
-            # If path is a directory-like destination, derive filename from URL
+            base = _get_workspace_base(project_id)
+            safe_path = _safe_workspace_path(dest_path_str, project_id)
+            # Directory-like destination: no extension, or an existing dir.
+            dir_like = safe_path.is_dir() or not safe_path.suffix
+
             filename = tool_args.get("filename")
-            if not filename and not safe_path.suffix:
-                # No extension in path — treat as directory, derive filename from URL
-                from urllib.parse import urlparse, unquote
-                url_path = urlparse(url).path
-                filename = unquote(url_path.split("/")[-1]) or "download"
-                safe_path = safe_path / filename
+            if filename:
+                name = safe_filename(filename)
+                safe_path = (safe_path / name) if dir_like else (safe_path.parent / name)
+            elif dir_like:
+                url_name = unquote(urlparse(url).path.split("/")[-1])
+                safe_path = safe_path / safe_filename(url_name)
 
             try:
                 async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
                     resp = await client.get(url)
                     resp.raise_for_status()
 
-                    # Try to get filename from Content-Disposition if we still need one
-                    if not safe_path.suffix:
+                    # Still no extension — try Content-Disposition. The header
+                    # is server-controlled, so keep only its basename.
+                    if not filename and not safe_path.suffix:
                         cd = resp.headers.get("content-disposition", "")
                         if "filename=" in cd:
                             import re as _re
                             match = _re.search(r'filename[*]?=["\']?([^"\';]+)', cd)
                             if match:
-                                safe_path = safe_path.parent / match.group(1).strip()
+                                safe_path = safe_path.parent / safe_filename(
+                                    unquote(match.group(1).strip()), safe_path.name,
+                                )
 
+                    if not is_within(safe_path, base):
+                        return f"Error: download path escapes the workspace: {safe_path.name}"
+                    safe_path.parent.mkdir(parents=True, exist_ok=True)
                     safe_path.write_bytes(resp.content)
                     size_kb = len(resp.content) / 1024
                     content_type = resp.headers.get("content-type", "unknown")
                     return (
                         f"Downloaded {safe_path.name} ({size_kb:.1f}KB, {content_type}) "
-                        f"to {dest_path_str}. Use show_file to display it or read_file to read its contents."
+                        f"to {safe_path.relative_to(base)}. Use show_file to display it or read_file to read its contents."
                     )
             except httpx.HTTPStatusError as e:
                 return f"Download failed: HTTP {e.response.status_code} from {url}"
@@ -1828,6 +1864,11 @@ async def execute_tool(
                 return f"Download failed: {e}"
 
         elif tool_name == "convert_document":
+            from utils.document_converter import validate_format
+            try:
+                tool_args["target_format"] = validate_format(tool_args.get("target_format", ""))
+            except ValueError as e:
+                return f"Conversion failed: {e}"
             source_path_str = tool_args["source_path"]
             target_format = tool_args["target_format"]
             out_dir = tool_args.get("out_dir")
@@ -1896,6 +1937,11 @@ async def execute_tool(
                 return f"Conversion failed: {e}"
 
         elif tool_name == "batch_convert_documents":
+            from utils.document_converter import validate_format
+            try:
+                tool_args["target_format"] = validate_format(tool_args.get("target_format", ""))
+            except ValueError as e:
+                return f"Conversion failed: {e}"
             paths = tool_args["paths"]
             target_format = tool_args["target_format"]
             out_dir = tool_args.get("out_dir")
@@ -1915,7 +1961,7 @@ async def execute_tool(
                         search_pattern = str(base / pattern)
                         for matched_str in glob.glob(search_pattern, recursive=True):
                             matched_path = Path(matched_str).resolve()
-                            if str(matched_path).startswith(str(base)) and matched_path.is_file():
+                            if is_within(matched_path, base) and matched_path.is_file():
                                 expanded_paths.append(matched_path)
                     else:
                         target = _safe_workspace_path(pattern, project_id)
@@ -2072,7 +2118,7 @@ async def execute_tool(
             sub = tool_args.get("path", "")
             target = (base / sub) if sub else base
             target = target.resolve()
-            if not str(target).startswith(str(base)):
+            if not is_within(target, base):
                 return "Access denied: path outside workspace"
             if not target.exists():
                 return f"Directory not found: {sub}"
@@ -2874,7 +2920,7 @@ async def execute_tool(
             mgr = create_memory_manager(project_id=effective_project)
             base = _get_workspace_base(project_id)
             target = (base / path_arg).resolve() if path_arg else base
-            if not str(target).startswith(str(base)):
+            if not is_within(target, base):
                 return "Access denied: path outside workspace"
             if target.is_file():
                 result = await mgr.index_workspace_file(str(target), force=force)
@@ -4072,7 +4118,7 @@ async def execute_tool(
 
 def _get_workspace_base(project_id: str | None = None) -> Path:
     if project_id and project_id != "default":
-        path = settings.projects_dir / project_id / "workspace"
+        path = settings.projects_dir / check_project_id(project_id) / "workspace"
     else:
         path = settings.workspace_dir
     path.mkdir(parents=True, exist_ok=True)
@@ -4083,7 +4129,7 @@ def _safe_workspace_path(rel_path: str, project_id: str | None = None) -> Path:
     """Resolve path safely within workspace to prevent path traversal."""
     base = _get_workspace_base(project_id)
     target = (base / rel_path).resolve()
-    if not str(target).startswith(str(base)):
+    if not is_within(target, base):
         raise ValueError(f"Path traversal denied: {rel_path}")
     return target
 

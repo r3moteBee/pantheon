@@ -104,6 +104,7 @@ class MatrixAdapter(BaseMessagingAdapter):
 
         async def _run_agent(message_text: str, project: str, session_id: str, skill_context=None, active_skill_name=None) -> str:
             from agent.core import AgentCore
+            from agent.tools import host_exec_allowed
             from memory.manager import create_memory_manager
             from models.provider import get_provider
 
@@ -114,6 +115,7 @@ class MatrixAdapter(BaseMessagingAdapter):
                 provider=provider,
             )
             agent = AgentCore(
+                host_exec=host_exec_allowed("background"),
                 provider=provider,
                 memory_manager=memory,
                 project_id=project,

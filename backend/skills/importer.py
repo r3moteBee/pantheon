@@ -950,13 +950,23 @@ async def import_skill(
         detected_format = adapter.detect_format(tmp_dir)
         manifest = adapter.normalize(tmp_dir)
 
-        skill_name = manifest.name
-        if not skill_name:
+        # The manifest name comes from the archive and becomes a directory
+        # name under data/skills/ (rmtree'd on re-import), so it must be a
+        # plain slug — "../db" would otherwise delete data/db.
+        import re as _re
+        from skills.editor import SLUG_RE
+        skill_name = _re.sub(r"[^a-z0-9_-]+", "-", (manifest.name or "").strip().lower()).strip("-_")
+        if not SLUG_RE.match(skill_name):
             return ImportResult(
                 success=False,
-                message="Skill manifest has no name",
+                message=f"Skill manifest has no valid name (got {manifest.name!r})",
                 source=source,
                 format_detected=detected_format,
+            )
+        if manifest.name != skill_name:
+            manifest.name = skill_name
+            (tmp_dir / "skill.json").write_text(
+                manifest.model_dump_json(indent=2), encoding="utf-8",
             )
 
         # Step 3: Check for name collision with bundled skills
