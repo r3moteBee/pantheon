@@ -28,10 +28,10 @@ export default function App() {
         setAuthState(true)
         return
       }
-      const token = localStorage.getItem('auth_token')
-      if (token) {
+      try {
+        await authApi.session()
         setAuthState(true)
-      } else {
+      } catch {
         setAuthState(false)
       }
     } catch {

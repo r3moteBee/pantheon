@@ -6,7 +6,7 @@ import {
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { useStore } from '../store'
-import { projectsApi } from '../api/client'
+import { authApi, projectsApi } from '../api/client'
 import Tooltip from './Tooltip'
 
 function VersionTag() {
@@ -146,8 +146,8 @@ export default function Layout() {
           </button>
 
           <button
-            onClick={() => {
-              localStorage.removeItem('auth_token')
+            onClick={async () => {
+              await authApi.logout()
               window.dispatchEvent(new Event('auth:logout'))
             }}
             title={collapsed ? 'Sign out' : undefined}
