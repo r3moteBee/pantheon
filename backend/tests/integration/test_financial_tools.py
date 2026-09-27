@@ -86,7 +86,7 @@ async def test_analyze_company_financials_common_size(mock_get):
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.get")
-@patch("models.provider.get_provider")
+@patch("models.provider.get_provider_for")
 async def test_compare_company_strategy_and_risks(mock_get_provider, mock_get):
     """Test compare_company_strategy_and_risks retrieves 10-K and summarizes comparison via LLM."""
     # Mock SEC mapping and submissions endpoints
@@ -135,7 +135,7 @@ async def test_compare_company_strategy_and_risks(mock_get_provider, mock_get):
 
 
 @pytest.mark.asyncio
-@patch("models.provider.get_provider")
+@patch("models.provider.get_provider_for")
 async def test_analyze_earnings_call(mock_get_provider, tmp_path):
     """Test analyze_earnings_call reads a workspace file and runs LLM extraction."""
     # Write a dummy transcript file in a temporary isolated directory

@@ -7,6 +7,11 @@ Layout in the vault:
   - llm_config_migrated_v1    flag set by migration.py, read here only
                               to decide whether resolve_role should
                               trigger migration on first call
+  - llm_routes                JSON object: task class -> [{endpoint, model}, ...]
+                              (primary first, then fallbacks). Seeded once
+                              from llm_role_mapping (llm_routes_migrated_v1).
+  - llm_model_profiles        JSON object: "endpoint/model" -> user-edited
+                              capability profile (else known_models guess)
 """
 from __future__ import annotations
 import json
@@ -15,13 +20,17 @@ from dataclasses import dataclass
 
 from secrets.vault import get_vault
 from llm_config.models import (
-    EndpointPublic, EndpointWithKey, RoleAssignment, ROLES,
+    EndpointPublic, EndpointWithKey, ModelProfile, RoleAssignment, ROLES,
+    ROLE_TO_CLASS, RouteEntry, TASK_CLASSES,
 )
 
 logger = logging.getLogger(__name__)
 
 ENDPOINTS_KEY = "llm_saved_endpoints"
 ROLE_MAPPING_KEY = "llm_role_mapping"
+ROUTES_KEY = "llm_routes"
+ROUTES_MIGRATED_KEY = "llm_routes_migrated_v1"
+PROFILES_KEY = "llm_model_profiles"
 
 
 def key_secret_name(endpoint_name: str) -> str:
@@ -119,6 +128,10 @@ def delete_endpoint(name: str) -> None:
             changed = True
     if changed:
         vault.set_secret(ROLE_MAPPING_KEY, json.dumps(rm))
+    routes = get_routes()
+    scrubbed = {c: [e for e in entries if e["endpoint"] != name] for c, entries in routes.items()}
+    if scrubbed != routes:
+        vault.set_secret(ROUTES_KEY, json.dumps(scrubbed))
 
 
 def get_endpoint(name: str) -> EndpointPublic | None:
@@ -154,30 +167,183 @@ def set_role_mapping(roles: list[RoleAssignment]) -> None:
         if r.endpoint and r.endpoint not in existing_names:
             raise ValueError(f"unknown endpoint {r.endpoint!r} for role {r.role!r}")
     rm = {r.role: {"endpoint": r.endpoint, "model": r.model} for r in roles}
-    get_vault().set_secret(ROLE_MAPPING_KEY, json.dumps(rm))
+    vault = get_vault()
+    vault.set_secret(ROLE_MAPPING_KEY, json.dumps(rm))
+    # Legacy API: once routes exist, a role write sets the primary of the
+    # role's task class (fallbacks are kept; empty binding clears it).
+    if vault.get_secret(ROUTES_MIGRATED_KEY):
+        routes = get_routes()
+        for r in roles:
+            cls = ROLE_TO_CLASS[r.role]
+            rest = [e for e in routes[cls][1:]]
+            routes[cls] = ([{"endpoint": r.endpoint, "model": r.model}] if r.endpoint and r.model else []) + rest
+        vault.set_secret(ROUTES_KEY, json.dumps(routes))
 
 
 def resolve_role(role: str) -> ResolvedRole | None:
-    """Return ResolvedRole for the given role, or None if unmapped.
-
-    Triggers one-shot migration from legacy flat keys on first call
-    if the migration flag isn't set."""
+    """Back-compat: legacy role -> primary entry of its task class."""
     if role not in ROLES:
         return None
+    chain = resolve_route(ROLE_TO_CLASS[role])
+    return chain[0] if chain else None
+
+
+# ── Task-class routes ────────────────────────────────────────────
+
+def _migrate_routes_from_roles() -> None:
+    """One-shot: seed llm_routes from the legacy 5-role mapping."""
+    vault = get_vault()
+    if vault.get_secret(ROUTES_MIGRATED_KEY):
+        return
     _ensure_migrated()
     rm = get_role_mapping()
-    binding = rm.get(role) or {}
-    endpoint_name = binding.get("endpoint") or ""
-    model = binding.get("model") or ""
-    if not endpoint_name or not model:
-        return None
-    ep = get_endpoint(endpoint_name)
-    if ep is None:
-        return None
-    return ResolvedRole(
-        base_url=ep.base_url,
-        api_key=get_endpoint_api_key(endpoint_name) or "",
-        model=model,
-        api_type=ep.api_type,
-        endpoint_name=endpoint_name,
-    )
+
+    def entry(role: str) -> list[dict]:
+        b = rm.get(role) or {}
+        if b.get("endpoint") and b.get("model"):
+            return [{"endpoint": b["endpoint"], "model": b["model"]}]
+        return []
+
+    routes = {c: [] for c in TASK_CLASSES}
+    routes["agent"] = entry("chat")
+    # Ingest topic extraction ran on the chat model; keep that so research
+    # quality doesn't silently change. prefill was the summaries helper.
+    routes["extract"] = entry("chat")
+    routes["summarize"] = entry("prefill")
+    routes["vision"] = entry("vision")
+    routes["embed"] = entry("embed")
+    routes["rerank"] = entry("rerank")
+    # Only write if nothing is there yet (don't clobber a fresh config).
+    if not vault.get_secret(ROUTES_KEY):
+        vault.set_secret(ROUTES_KEY, json.dumps(routes))
+    vault.set_secret(ROUTES_MIGRATED_KEY, "1")
+    logger.info("LLM routing: seeded task-class routes from legacy role mapping")
+
+
+def get_routes() -> dict[str, list[dict[str, str]]]:
+    """Stored routing table: class -> [{endpoint, model}, ...] (all classes present)."""
+    _migrate_routes_from_roles()
+    raw = get_vault().get_secret(ROUTES_KEY) or "{}"
+    try:
+        stored = json.loads(raw)
+    except json.JSONDecodeError:
+        stored = {}
+    out: dict[str, list[dict[str, str]]] = {}
+    for c in TASK_CLASSES:
+        entries = stored.get(c) or []
+        out[c] = [
+            {"endpoint": e.get("endpoint", ""), "model": e.get("model", "")}
+            for e in entries if isinstance(e, dict) and e.get("endpoint") and e.get("model")
+        ]
+    return out
+
+
+def set_routes(routes: dict[str, list[RouteEntry]]) -> list[str]:
+    """Replace the routing table. Raises ValueError for unknown endpoints or
+    too many entries; returns capability warnings (non-blocking)."""
+    _migrate_routes_from_roles()
+    existing_names = {e.name for e in list_endpoints()}
+    out: dict[str, list[dict[str, str]]] = {c: [] for c in TASK_CLASSES}
+    for cls, entries in routes.items():
+        if cls not in TASK_CLASSES:
+            raise ValueError(f"unknown task class {cls!r}")
+        limit = TASK_CLASSES[cls]["max_entries"]
+        if len(entries) > limit:
+            raise ValueError(f"{cls!r} allows at most {limit} model(s)")
+        for e in entries:
+            if e.endpoint not in existing_names:
+                raise ValueError(f"unknown endpoint {e.endpoint!r} in {cls!r}")
+        out[cls] = [{"endpoint": e.endpoint, "model": e.model} for e in entries]
+    get_vault().set_secret(ROUTES_KEY, json.dumps(out))
+    return route_warnings(out)
+
+
+def route_warnings(routes: dict[str, list[dict[str, str]]] | None = None) -> list[str]:
+    """Entries whose model profile lacks the class's required capability."""
+    routes = routes if routes is not None else get_routes()
+    warnings: list[str] = []
+    for cls, entries in routes.items():
+        need = TASK_CLASSES[cls]["requires"]
+        if not need:
+            continue
+        for e in entries:
+            prof = get_profile(e["endpoint"], e["model"])
+            if not getattr(prof, need, False):
+                warnings.append(
+                    f"{TASK_CLASSES[cls]['label']}: {e['endpoint']}/{e['model']} "
+                    f"is not marked as supporting {need.replace('_', ' ')}"
+                    + (" (unknown model — set its profile)" if prof.source == "unknown" else "")
+                )
+    return warnings
+
+
+def resolve_route(task_class: str) -> list[ResolvedRole]:
+    """Ordered candidates for a task class, following inheritance
+    (code -> agent, extract -> summarize -> agent) when a class is empty.
+    Entries whose endpoint no longer exists are skipped."""
+    if task_class not in TASK_CLASSES:
+        raise ValueError(f"unknown task class {task_class!r}")
+    routes = get_routes()
+    cls: str | None = task_class
+    entries: list[dict[str, str]] = []
+    while cls and not entries:
+        entries = routes.get(cls) or []
+        cls = TASK_CLASSES[cls]["inherits"]
+    endpoints = {e.name: e for e in list_endpoints()}
+    out: list[ResolvedRole] = []
+    for e in entries:
+        ep = endpoints.get(e["endpoint"])
+        if ep is None:
+            continue
+        out.append(ResolvedRole(
+            base_url=ep.base_url,
+            api_key=get_endpoint_api_key(ep.name) or "",
+            model=e["model"],
+            api_type=ep.api_type,
+            endpoint_name=ep.name,
+        ))
+    return out
+
+
+# ── Model profiles ───────────────────────────────────────────────
+
+def _profile_key(endpoint: str, model: str) -> str:
+    return f"{endpoint}/{model}"
+
+
+def _stored_profiles() -> dict[str, dict]:
+    raw = get_vault().get_secret(PROFILES_KEY) or "{}"
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def get_profile(endpoint: str, model: str) -> ModelProfile:
+    """User-edited profile if any, else the known-models guess."""
+    stored = _stored_profiles().get(_profile_key(endpoint, model))
+    if stored:
+        try:
+            return ModelProfile(**{**stored, "source": "user"})
+        except Exception:
+            pass
+    from llm_config.known_models import guess_profile
+    return guess_profile(model)
+
+
+def set_profiles(profiles: dict[str, ModelProfile]) -> None:
+    """Merge user edits (keyed "endpoint/model") into stored profiles."""
+    stored = _stored_profiles()
+    for key, prof in profiles.items():
+        if "/" not in key:
+            raise ValueError(f"profile key must be 'endpoint/model', got {key!r}")
+        stored[key] = prof.model_dump(exclude={"source"})
+    get_vault().set_secret(PROFILES_KEY, json.dumps(stored))
+
+
+def delete_profile(endpoint: str, model: str) -> None:
+    """Forget a user edit (revert to the known-models guess)."""
+    stored = _stored_profiles()
+    if stored.pop(_profile_key(endpoint, model), None) is not None:
+        get_vault().set_secret(PROFILES_KEY, json.dumps(stored))

@@ -365,8 +365,8 @@ Respond ONLY with a JSON object (no markdown, no explanation):
 }}"""
 
     try:
-        from models.provider import get_provider
-        provider = get_provider()
+        from models.provider import get_provider_for
+        provider = get_provider_for("extract")
         result = await provider.chat_complete([
             {"role": "system", "content": "You are a security analysis tool. Respond only with valid JSON."},
             {"role": "user", "content": review_prompt},

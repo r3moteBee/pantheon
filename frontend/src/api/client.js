@@ -313,7 +313,7 @@ export const settingsApi = {
     api.post('/api/settings/search/test', null, { params: { query } }),
 }
 
-// LLM Endpoints + Role Mapping API
+// LLM endpoints, task-class routing, model profiles + usage
 export const llmApi = {
   listEndpoints: () =>
     api.get('/api/llm/endpoints').then((r) => r.data.endpoints),
@@ -327,6 +327,17 @@ export const llmApi = {
     api.put('/api/llm/roles', { roles }).then((r) => r.data.roles),
   probe: (payload) =>
     api.post('/api/llm/probe', payload).then((r) => r.data),
+  taskClasses: () =>
+    api.get('/api/llm/task-classes').then((r) => r.data.task_classes),
+  getRoutes: () => api.get('/api/llm/routes').then((r) => r.data),
+  setRoutes: (routes) => api.put('/api/llm/routes', { routes }).then((r) => r.data),
+  getProfile: (endpoint, model) =>
+    api.get('/api/llm/profile', { params: { endpoint, model } }).then((r) => r.data),
+  saveProfile: (endpoint, model, profile) =>
+    api.put('/api/llm/profiles', { profiles: { [`${endpoint}/${model}`]: profile } }).then((r) => r.data),
+  resetProfile: (endpoint, model) =>
+    api.delete('/api/llm/profiles', { params: { endpoint, model } }).then((r) => r.data),
+  usage: (hours = 24) => api.get('/api/llm/usage', { params: { hours } }).then((r) => r.data),
 }
 
 // MCP Connections API

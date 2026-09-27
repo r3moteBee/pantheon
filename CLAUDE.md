@@ -41,7 +41,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── mcp_oauth.py         MCP OAuth2 callback authentication
 │   │   ├── connections.py       GitHub PAT connections
 │   │   ├── conversations.py     Conversation history metadata updates
-│   │   ├── llm_endpoints.py     /api/llm/{endpoints,roles,probe} — named endpoints + role mapping
+│   │   ├── llm_endpoints.py     /api/llm/{endpoints,routes,profiles,usage,probe} — endpoints + task-class routing
 │   │   ├── settings.py          Legacy flat-config CRUD; still in place for backward compat
 │   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match
 │   ├── sources/                 Source-adapter plugin registry — see SOURCE_ADAPTERS.md
@@ -116,8 +116,8 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── pages/ArtifactsPage.jsx
 │   │   ├── components/Chat.jsx, ChatTabs.jsx, Layout.jsx
 │   │   ├── components/chat-tabs/ProjectTasksPanel.jsx (Tasks panel — schedules + jobs)
-│   │   ├── components/settings/    LLM endpoints + role mapping UI (EndpointCard, AddEndpointForm,
-│   │   │                            EndpointList, RoleMapping, RoleMappingRow)
+│   │   ├── components/settings/    LLM endpoints + model routing UI (EndpointCard, AddEndpointForm,
+│   │   │                            EndpointList, ModelRouting, RoutingUsage)
 │   │   ├── api/client.js        Axios wrappers for backend endpoints (incl. llmApi.*)
 │   │   └── store/index.js       Zustand store
 │   ├── tailwind.config.js       Uses @tailwindcss/typography for prose styling
@@ -157,7 +157,7 @@ Run integration tests:
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Currently ~343 tests (5 skipped). Expand them when fixing regressions.
+Currently ~385 tests (5 skipped). `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. Expand them when fixing regressions.
 
 ## Versioning convention
 
@@ -205,20 +205,24 @@ The autonomous_task handler resolves `payload.skill_name` (with underscore↔hyp
 
 System prompt distinguishes these explicitly under the "Skills vs scheduled tasks" section in `agent/prompts.py`. Don't merge them.
 
-## LLM endpoints + role mapping
+## LLM endpoints + task-class routing
 
-Pantheon's LLM configuration is **named endpoints + role mapping**, not flat per-role triplets. Two concepts:
+Pantheon's LLM configuration is **named endpoints + task-class routes + model profiles**.
 
 - **Saved endpoint** — `{name, base_url, api_type, api_key}` stored once. `api_type` is `openai` (covers OpenAI-compat), `anthropic`, `ollama`, or `custom`. The API key lives in the vault keyed by `llm_endpoint_key__<name>`.
-- **Role mapping** — five roles (`chat`, `prefill`, `vision`, `embed`, `rerank`) each point at one saved endpoint + a model id. JSON-serialized in vault under `llm_role_mapping`.
+- **Task class** — what KIND of work a call is (`llm_config.models.TASK_CLASSES`): `agent` (tool-calling loop: chat, jobs, bots), `code` (coding_task; inherits agent), `extract` (JSON extraction: ingest topics, memory entities, skill scans; inherits summarize), `summarize` (consolidation, notes, reports; inherits agent), `vision`, `image_gen`, `embed` (exactly one model, no fallback), `rerank`.
+- **Route** — each class maps to an ordered `[{endpoint, model}, …]` list in vault `llm_routes`: primary first, then fallbacks. `RoutedProvider` (models/provider.py) tries them in order on 404/408/409/425/429/5xx/network errors (streams only fail over before the first chunk) and logs every attempt to `data/db/llm_calls.db` (`llm_config/usage.py`, 30-day retention; `GET /api/llm/usage`).
+- **Model profile** — capabilities per `endpoint/model` (tools, vision, image_gen, embedding, tier fast/standard/frontier, context window). Seeded by regex guesses in `llm_config/known_models.py`, user edits stored in vault `llm_model_profiles` win. Used to warn when a route puts a model on a class it can't serve (e.g. a non-tool model on `agent`).
 
-The 5 role-getter functions in `models/provider.py` (`get_provider`, `get_prefill_provider`, `get_vision_provider`, `get_embedding_provider`, `get_reranker_provider`) all consult `llm_config.store.resolve_role(role)` and instantiate `ModelProvider` with the resolved tuple. There's a per-role cache (`_role_cache`) cleared by `reset_provider()` — every endpoint/role mutation in the API router calls it.
+**Call sites ask by class:** `get_provider_for("extract")`, etc. The legacy getters remain as aliases: `get_provider()`→agent, `get_prefill_provider()`→summarize, `get_vision_provider()`→vision, `get_embedding_provider()`→embed, `get_reranker_provider()`→rerank. Pick the class that matches the work when adding a new LLM call. `reset_provider()` clears the per-class cache — every endpoint/route/profile mutation in the API router calls it.
 
-**Migration.** Legacy `llm_*`, `prefill_*`, `vision_*`, `embedding_*`, `reranker_*` vault keys are auto-migrated to the new shape on first read of `list_endpoints()` / `get_role_mapping()` / `resolve_role()`. Idempotent via the `llm_config_migrated_v1` flag. Heuristic: `:11434` → ollama, `anthropic.com` → anthropic, otherwise openai. The legacy keys are NOT deleted; the legacy `/api/settings` flat-config endpoint still works for backward compat.
+**Migration.** Legacy flat keys → endpoints + 5-role mapping (`llm_config_migrated_v1`), then role mapping → routes once (`llm_routes_migrated_v1`): chat→agent **and** extract (ingest kept on the chat model), prefill→summarize, vision/embed/rerank carried over. The legacy `/api/llm/roles` endpoints still work and write the primary of the mapped class.
 
-**Frontend.** The Settings page has two panels: **Endpoints** (list of cards + add form, each with Probe + Delete) and **Role Mapping** (one row per role with cascading endpoint+model dropdowns + per-row Fetch button). Components under `frontend/src/components/settings/`. API client calls go through `llmApi.*` in `frontend/src/api/client.js`.
+**Image generation.** `generate_image` agent tool → `image_gen` class → OpenAI-compatible `POST {base_url}/images/generations` (handles `b64_json` and `url` responses; URLs fetched via `safe_http_get`). Images are saved as binary artifacts under `<project>/images/generated/<date>/` and the tool result carries `[DISPLAY:artifact://<id>]`, which Chat.jsx renders inline.
 
-**Adding a new role.** Update both `llm_config.models.ROLES` (Python tuple) and `frontend/src/components/settings/RoleMapping.jsx` (`ROLES` array). Then add a getter in `models/provider.py` and any caller. Migration's `_ROLE_TO_LEGACY` only matters if the new role has legacy flat keys.
+**Frontend.** Settings: **Endpoints** (cards + add form), **Model routing** (`components/settings/ModelRouting.jsx` — per-class ordered models, capability badges, inline profile editor, warnings) and **Model usage** (`RoutingUsage.jsx`). API client: `llmApi.*`.
+
+**Adding a task class.** Add it to `TASK_CLASSES` + the `TaskClass` literal in `llm_config/models.py`, handle it in `get_provider_for` if it has special semantics, and use `get_provider_for("<class>")` at the call site. The UI renders classes from `/api/llm/task-classes` automatically.
 
 ## MCP — protocol version + OAuth + structured outputs
 
@@ -344,7 +348,7 @@ These are deliberate architectural calls. If a code review recommends reversing 
 
 **Recent-jobs block is capped low.** `_build_recent_jobs_block` shows the last 5 jobs (24h window) — enough for "you started X earlier" continuity without bloating the system prompt. Don't raise it without a concrete reason; the value is anti-confabulation, not exhaustive history.
 
-**Frontend settings is already componentized.** `frontend/src/components/settings/` contains EndpointCard, AddEndpointForm, EndpointList, RoleMapping, RoleMappingRow. Reviewers who recommend "extract settings into separate files" are looking at stale state — verify against the current tree before acting.
+**Frontend settings is already componentized.** `frontend/src/components/settings/` contains EndpointCard, AddEndpointForm, EndpointList, ModelRouting, RoutingUsage. Reviewers who recommend "extract settings into separate files" are looking at stale state — verify against the current tree before acting.
 
 **Single-user, single-process.** Pantheon does not have multi-tenant request fan-out, separate workers, or horizontal scaling. APScheduler + JobWorker share the FastAPI process by design. Recommendations that assume Pantheon needs the patterns of a multi-tenant SaaS (request-scoped DB pools, per-tenant isolation, queue/worker split) are misapplying tuatha's architecture here.
 

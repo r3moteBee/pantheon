@@ -5,7 +5,8 @@ import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, taskRunsApi, 
 import SecurityLog from './SecurityLog'
 import PersonalityEditor from './PersonalityEditor'
 import EndpointList from './settings/EndpointList'
-import RoleMapping from './settings/RoleMapping'
+import ModelRouting from './settings/ModelRouting'
+import RoutingUsage from './settings/RoutingUsage'
 import HelpDrawer from './help/HelpDrawer'
 import MessagingSettings from './MessagingSettings'
 
@@ -14,7 +15,8 @@ function LLMSection() {
   return (
     <div className='space-y-6'>
       <EndpointList onChange={() => setRefreshKey((k) => k + 1)} />
-      <RoleMapping refreshKey={refreshKey} />
+      <ModelRouting refreshKey={refreshKey} />
+      <RoutingUsage />
     </div>
   )
 }

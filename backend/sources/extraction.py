@@ -204,8 +204,8 @@ class LLMDefaultExtractor(TopicExtractor):
 
         raw_content = ""
         try:
-            from models.provider import get_provider
-            provider = get_provider()
+            from models.provider import get_provider_for
+            provider = get_provider_for("extract")
             result = await provider.chat_complete([
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -337,8 +337,8 @@ class LLMAnnouncementExtractor(LLMDefaultExtractor):
         user = "\n".join(line for line in user_lines if line is not None).strip()
         raw_content = ""
         try:
-            from models.provider import get_provider
-            provider = get_provider()
+            from models.provider import get_provider_for
+            provider = get_provider_for("extract")
             result = await provider.chat_complete([
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -454,8 +454,8 @@ class LLMStructuredSpecsExtractor(LLMDefaultExtractor):
         user = "\n".join(line for line in user_lines if line is not None).strip()
         raw_content = ""
         try:
-            from models.provider import get_provider
-            provider = get_provider()
+            from models.provider import get_provider_for
+            provider = get_provider_for("extract")
             result = await provider.chat_complete([
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -577,8 +577,8 @@ class LLMResearchPaperExtractor(LLMDefaultExtractor):
         user = "\n".join(line for line in user_lines if line is not None).strip()
         raw_content = ""
         try:
-            from models.provider import get_provider
-            provider = get_provider()
+            from models.provider import get_provider_for
+            provider = get_provider_for("extract")
             result = await provider.chat_complete([
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -682,8 +682,8 @@ class LLMChangelogExtractor(LLMDefaultExtractor):
         user = "\n".join(line for line in user_lines if line is not None).strip()
         raw_content = ""
         try:
-            from models.provider import get_provider
-            provider = get_provider()
+            from models.provider import get_provider_for
+            provider = get_provider_for("extract")
             result = await provider.chat_complete([
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

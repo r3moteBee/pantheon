@@ -8,6 +8,13 @@ Routes (mounted under /api/llm by main.py):
   PUT    /roles                  replace role mapping (full set in body)
   POST   /probe                  probe models for an endpoint
                                  (either by saved name, or ad-hoc tuple)
+  GET    /task-classes           task-class metadata (labels, requirements)
+  GET    /routes                 routing table + profiles + warnings
+  PUT    /routes                 replace routing table
+  GET    /profile                capability profile for one endpoint/model
+  PUT    /profiles               save user-edited capability profiles
+  DELETE /profiles               revert one profile to the built-in guess
+  GET    /usage?hours=24         per-class/model call stats
 """
 from __future__ import annotations
 import logging
@@ -17,10 +24,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from llm_config import probe as _probe
-from llm_config.models import EndpointWithKey, ROLES, RoleMappingPayload
+from llm_config.models import (
+    EndpointWithKey, ProfilesPayload, ROLES, RoleMappingPayload, RoutesPayload,
+    TASK_CLASSES,
+)
 from llm_config.store import (
-    delete_endpoint, get_endpoint_api_key, get_role_mapping,
-    list_endpoints, save_endpoint, set_role_mapping,
+    delete_endpoint, delete_profile, get_endpoint_api_key, get_profile,
+    get_role_mapping, get_routes, list_endpoints, route_warnings,
+    save_endpoint, set_profiles, set_role_mapping, set_routes,
 )
 from models.provider import reset_provider
 
@@ -103,3 +114,63 @@ async def probe_endpoint(req: ProbeRequest) -> dict[str, Any]:
         "ok": result.ok, "models": result.models, "error": result.error,
         "base_url": result.base_url, "api_type": result.api_type,
     }
+
+
+# ── Task-class routing ────────────────────────────────────────────
+
+@router.get("/llm/task-classes")
+async def get_task_classes() -> dict[str, Any]:
+    return {"task_classes": [{"id": k, **v} for k, v in TASK_CLASSES.items()]}
+
+
+def _routes_view() -> dict[str, Any]:
+    routes = get_routes()
+    profiles: dict[str, Any] = {}
+    for entries in routes.values():
+        for e in entries:
+            key = f"{e['endpoint']}/{e['model']}"
+            if key not in profiles:
+                profiles[key] = get_profile(e["endpoint"], e["model"]).model_dump()
+    return {"routes": routes, "profiles": profiles, "warnings": route_warnings(routes)}
+
+
+@router.get("/llm/routes")
+async def read_routes() -> dict[str, Any]:
+    return _routes_view()
+
+
+@router.put("/llm/routes")
+async def update_routes(payload: RoutesPayload) -> dict[str, Any]:
+    try:
+        set_routes(payload.routes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reset_provider()
+    return _routes_view()
+
+
+@router.get("/llm/profile")
+async def read_profile(endpoint: str, model: str) -> dict[str, Any]:
+    return get_profile(endpoint, model).model_dump()
+
+
+@router.put("/llm/profiles")
+async def update_profiles(payload: ProfilesPayload) -> dict[str, Any]:
+    try:
+        set_profiles(payload.profiles)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    reset_provider()
+    return _routes_view()
+
+
+@router.delete("/llm/profiles")
+async def revert_profile(endpoint: str, model: str) -> dict[str, Any]:
+    delete_profile(endpoint, model)
+    return _routes_view()
+
+
+@router.get("/llm/usage")
+async def read_usage(hours: float = 24.0) -> dict[str, Any]:
+    from llm_config.usage import summary
+    return summary(max(0.1, min(hours, 24 * 30)))
