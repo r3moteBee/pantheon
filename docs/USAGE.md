@@ -1,6 +1,6 @@
 # Pantheon Usage Guide
 
-A practical guide to getting the most out of your Pantheon agent. This covers how to drive the agent effectively via the web UI, Telegram, and autonomous tasks.
+A practical guide to getting the most out of your Pantheon agent. This covers how to drive the agent effectively via the web UI, the messaging bots (Telegram, Slack, Discord, Matrix, Mattermost), and autonomous tasks.
 
 ## 1. Projects
 
@@ -13,7 +13,7 @@ Projects are Pantheon's unit of isolation. Each project has its own:
 
 **Rule of thumb:** one project per domain or long-running initiative. Don't use a single project for unrelated work — it pollutes memory and makes recall noisy.
 
-Switch projects from the sidebar in the web UI, or via `/project <name>` in Telegram.
+Switch projects from the sidebar in the web UI, or via `/project <name>` in a messaging bot (`!project` on Matrix).
 
 ### Example Project Setup
 * **Project 1: `semiconductor-research`**: Dedicated to market research on chip manufacturing. Contains spec sheets, company filings, and news articles.
@@ -40,19 +40,25 @@ The agent's tool layer has no implicit handle on your previous messages or its o
 ### Chain tools in one prompt
 The agent can execute multiple tools per turn. *"Search for X, then save a summary to `research/X-summary.md`"* is usually faster than doing it in two turns.
 
+### Chat slash commands
+The web chat understands two kinds of leading `/` command:
+
+- **`/<skill-slug> [args]`** — run an installed skill explicitly (typing `/` opens the skill picker; `_` and `-` are interchangeable).
+- **`/model <class|auto> [message]`** — pin this conversation to a model class: `agent`, `quick`, `code`, `long_context` or `vision`. `/model auto` returns to automatic routing; `/model` alone shows the current pin. The model picker next to the chat input does the same thing. Pins last until the backend restarts, and a class only takes effect if it has its own route under Settings → LLMs → Model routing.
+
 ## 4. Memory tiers
 
 Pantheon has five memory stores the agent can read and write:
 
-- **Working** — short-term scratch within a single conversation
-- **Episodic** — conversational facts, who said what, when
-- **Semantic** — key insights, facts, distilled knowledge
+- **Working** — in-process scratch for the current conversation; not persisted
+- **Episodic** — chat history and task logs: who said what, when
+- **Semantic** — embedded chunks from indexed artifacts and workspace files
 - **Graph** — entities and their relationships
-- **Archival** — reserved for whole-document storage (mostly unused today)
+- **Archival** — markdown notes and a project summary (Memory → Archival tab)
 
 When you want the agent to remember something across sessions, ask it to `remember` in the appropriate tier. *"Remember in semantic memory that…"* is more durable than just *"remember that…"*.
 
-To recall, say *"what do you know about X"* — the agent will search across tiers. You can also use `/memory <query>` in Telegram.
+To recall, say *"what do you know about X"* — the agent will search across tiers. You can also use `/memory <query>` in a messaging bot. Recall runs on every chat turn anyway, so you don't need magic phrases to reach earlier work.
 
 ## 5. Saving the agent's own output
 
@@ -92,7 +98,7 @@ Pantheon's `web_search` tool walks a configurable chain of providers (default: *
 - Exhausted daily or monthly quota (tracked locally per provider)
 - Rate-limit cap (per-provider RPS, e.g. Brave free tier = 1 req/sec)
 
-Configure the chain in **Settings → Web Search Provider Chain**: reorder providers, set per-provider daily/monthly limits and RPS caps, add API keys, enable/disable individual providers, and watch live usage progress bars. Reset counters at the start of each billing cycle. Results are cached for 10 minutes per query so retry loops don't burn quota.
+Configure the chain in **Connections → Web search**: reorder providers, set per-provider daily/monthly limits and RPS caps, add API keys, enable/disable individual providers, and watch live usage progress bars. Reset counters at the start of each billing cycle. Results are cached for 10 minutes per query so retry loops don't burn quota.
 
 When a fallthrough happens, the result is prefixed with a one-line trace like `[searched via ddg — fallthrough: brave: skipped (monthly quota 2000 reached); searxng: error (HTTPError)]` so you (and the agent) can see exactly why a provider was skipped.
 
@@ -106,14 +112,14 @@ Pantheon also ships with:
   - **Google Custom Search** (requires Custom Search Engine ID + Custom Search JSON API Key)
   - **Bing Web Search** (requires Bing Web Search API Key)
   - **Wikipedia** (returns structured Wiki summaries and articles)
-- `web_fetch` — plain HTTP GET for static pages
+- `web_fetch` — reads a page as markdown **without saving it**. To keep a source (indexed, searchable, linked into the graph), use `ingest_source` instead.
 - **Browser tools** (if you installed with `--with-browser`) — Playwright-backed `browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_screenshot`. Use these for JavaScript-heavy sites, logged-in pages, or multi-step interactions. The browser session persists per project across tool calls.
 
 Set `BROWSER_HEADLESS=false` in `.env` to watch the browser drive itself during debugging.
 
 ## 7. Autonomous tasks
 
-Use `create_task` (or `/task <description>` in Telegram) to schedule the agent to work on something independently:
+Use `create_task` (or `/task <description>` in a messaging bot) to schedule the agent to work on something independently:
 
 - `schedule: "now"` — run immediately
 - `schedule: "interval:60"` — every 60 minutes
@@ -129,13 +135,22 @@ Long-running tasks should call `send_telegram` at key checkpoints so you stay in
   * **Description**: *"Check the releases page of GitHub repository 'ollama/ollama', ingest any new release notes via the github/release adapter, index it into memory, and alert me if a new version is released."*
   * **Schedule**: `"interval:1440"` (every 24 hours/1440 minutes)
 
-## 8. Telegram integration
+## 8. Messaging bots
 
-After setting `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_IDS` in `.env`, your bot supports:
+Pantheon ships five messaging adapters: **Telegram, Slack, Discord, Matrix and Mattermost**. Configure them in **Settings → Channels** (stored in the vault) or via `.env` (`TELEGRAM_*`, `SLACK_*`, `DISCORD_*`, `MATRIX_*`, `MATTERMOST_*`).
+
+**Allowlists are deny-by-default.** An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means *nobody* can talk to that bot. Messages from unlisted chats are ignored and logged with the ID to add.
+
+All five support the same commands (`/project`, `/projects`, `/status`, `/files`, `/task`, `/memory`, `/note`) plus plain-text chat. Matrix uses a `!` prefix (`!project`), Mattermost accepts `!` or `/`. Bots run as background contexts, so host-exec tools (`run_command`, `git_*`) are off there unless `AGENT_HOST_EXEC=always`. Setup details per platform: [messaging.md](messaging.md).
+
+### Telegram
+
+After setting the bot token and allowed chat IDs, your bot supports:
 
 | Command | Description |
 |---|---|
 | `/start` | Greeting + help |
+| `/chat <text>` | Chat with the agent (same as plain text) |
 | `/project <name>` | Switch active project |
 | `/projects` | List projects |
 | `/status` | Agent status |
@@ -160,6 +175,11 @@ All notes are also indexed into semantic memory so you can recall them later via
 Drop files into the project workspace and tell the agent: *"index the workspace"* (or call `index_workspace` directly). This ingests Markdown (with frontmatter), text, CSV, PDF, and code files into semantic + graph memory. After indexing, recall and chat become much richer.
 
 Re-index with `force: true` when you edit files.
+
+### Ingesting sources (URLs, videos, filings)
+For web sources you want to keep, ask the agent to *"ingest <url> as a blog/announcement"* — it calls `ingest_source` (or `batch_ingest_sources`), which fetches, extracts typed topics, saves an artifact and links it into the graph. `list_source_adapters` shows every source type (YouTube, blog, PDF, web, forum, podcast, GitHub, CFR, MA Legislature, SEC EDGAR). Re-ingesting the same source updates the existing artifact instead of duplicating it.
+
+For YouTube, connect a YouTube transcript MCP server; the agent searches with that MCP's tools (`mcp_<server>_search_youtube` …) and forwards each video's `published` date to `ingest_source` so paths get real dates.
 
 ### Ingestion Example
 If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/pantheon/data/projects/<project-slug>/workspace/`, you can query the agent:

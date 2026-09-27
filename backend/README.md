@@ -53,7 +53,7 @@ Notable endpoints:
 - `GET /api/health` — version string (drives deploy verification)
 - `POST /api/auth/login` — sets the HttpOnly `pantheon_session` cookie; scripts may send `Authorization: Bearer <token>`. Query-string tokens are never accepted.
 - `GET /api/artifacts/feed` — agent-shaped cursor-paged feed; see [`docs/api/artifacts-feed.md`](../docs/api/artifacts-feed.md)
-- `/api/llm/endpoints`, `/api/llm/probe`, `/api/llm/task-classes`, `/api/llm/routes`, `/api/llm/profiles`, `/api/llm/usage` — LLM endpoints, routing and usage
+- `/api/llm/endpoints`, `/api/llm/probe`, `/api/llm/task-classes`, `/api/llm/routes`, `/api/llm/profile(s)`, `/api/llm/usage` — LLM endpoints, routing and usage
 - `/api/llm/router`, `/api/llm/router/{decisions,feedback,tuning,simulate,apply}` — per-turn chat router + tuning
 - `POST /api/chat/attach` — uploads to ArtifactStore + enqueues `image_extraction` for images
 
