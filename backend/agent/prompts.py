@@ -38,8 +38,12 @@ def build_system_prompt(
     extra_context: str | None = None,
     personality_weight: str | None = None,
     custom_soul: str | None = None,
+    host_exec: bool = True,
 ) -> str:
-    """Assemble the full system prompt from all sources."""
+    """Assemble the full system prompt from all sources.
+
+    ``host_exec`` must match AgentCore.host_exec: without it the git_* and
+    run_command tools are hidden, so the local repo protocol isn't shown."""
     if custom_soul:
         soul = custom_soul
         agent_config = ""
@@ -105,7 +109,17 @@ def build_system_prompt(
             _repo_spec = get_project_repo_for_tools(project_id)
         except Exception:
             _repo_spec = None
-        if _repo_spec:
+        if _repo_spec and not host_exec:
+            repo_section = (
+                f"\n\n## Repository\n"
+                f"This project is bound to GitHub repo "
+                f"`{_repo_spec['owner']}/{_repo_spec['repo']}` (default branch "
+                f"`{_repo_spec['default_branch']}`). Local git and shell tools "
+                "are not available in this context — use the github_* tools to "
+                "read or open PRs, or start_coding_task for changes that need "
+                "a checkout, builds or tests.\n"
+            )
+        elif _repo_spec:
             repo_section = (
                 f"\n\n## Repository work protocol\n"
                 f"This project is bound to GitHub repo "

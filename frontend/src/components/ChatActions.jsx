@@ -3,7 +3,7 @@ import {
   History, Save, Plus, Sparkles, Target, Wand2, UserCircle,
 } from 'lucide-react'
 import { useStore } from '../store'
-import { conversationsApi, skillsApi } from '../api/client'
+import { conversationsApi, projectSettingsApi } from '../api/client'
 import Tooltip from './Tooltip'
 
 /**
@@ -28,54 +28,44 @@ export default function ChatActions() {
   const personalityWeight = useStore((s) => s.personalityWeight)
   const setPersonalityWeight = useStore((s) => s.setPersonalityWeight)
 
-  const cycle = (current, options, setter) => {
-    const i = options.indexOf(current)
-    setter(options[(i + 1) % options.length])
-  }
+  const projectId = activeProject?.id || 'default'
 
-  // Persist skill-discovery mode to backend and rehydrate on project switch.
-  // The frontend store alone is insufficient — the chat handlers read this
-  // from the backend vault, so a UI-only toggle has no effect.
-  //
-  // When the backend has no value for the active project, keep the
-  // current local value (the user's cross-project preference, populated
-  // from localStorage on store init). Only the explicit backend value
-  // overrides the local preference.
+  // These are per-project chat settings (with global fallback) that the
+  // backend reads on every turn — load the effective values on project
+  // switch and persist every toggle, or the buttons change nothing.
   React.useEffect(() => {
-    const pid = activeProject?.id || 'default-project'
     let cancelled = false
-    skillsApi.getDiscovery(pid).then((res) => {
+    projectSettingsApi.get(projectId).then((res) => {
       if (cancelled) return
-      const remote = res?.data?.skill_discovery
-      if (remote && remote !== skillDiscovery) {
-        // Backend has a value for this project — adopt it.
-        setSkillDiscovery(remote)
-      }
-      // No remote value → keep local; nothing to do.
-    }).catch(() => { /* offline / no vault — keep local */ })
+      const eff = res?.data?.effective || {}
+      setMemoryRecall(eff.memory_recall !== false)
+      setContextFocus(eff.context_focus || 'balanced')
+      setPersonalityWeight(eff.tone_weight || 'balanced')
+      setSkillDiscovery(eff.skill_discovery || 'off')
+    }).catch(() => { /* keep current values */ })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProject?.id])
+  }, [projectId])
 
-  const cycleSkillDiscovery = async () => {
-    const options = ['off', 'suggest', 'auto']
-    const next = options[(options.indexOf(skillDiscovery) + 1) % options.length]
-    setSkillDiscovery(next)
+  const persist = async (knob, value, setter, previous) => {
+    setter(value)
     try {
-      const pid = activeProject?.id || 'default-project'
-      await skillsApi.setDiscovery(pid, next)
+      await projectSettingsApi.update(projectId, { [knob]: value })
     } catch (e) {
-      addNotification({
-        type: 'error',
-        message: 'Failed to persist skill-discovery mode: ' + (e?.response?.data?.detail || e.message),
-      })
+      setter(previous)
+      addNotification({ type: 'error', message: `Couldn't save ${knob.replace('_', ' ')}: ${e.message}` })
     }
   }
+
+  const next = (current, options) => options[(options.indexOf(current) + 1) % options.length]
+
+  const cycleSkillDiscovery = () =>
+    persist('skill_discovery', next(skillDiscovery, ['off', 'suggest', 'auto']), setSkillDiscovery, skillDiscovery)
 
   const onSaveChat = async () => {
     if (!sessionId) return
     try {
-      const res = await conversationsApi.saveAsArtifact(sessionId, activeProject?.id || 'default')
+      const res = await conversationsApi.saveAsArtifact(sessionId, projectId)
       addNotification({ type: 'success', message: `Saved chat to artifact: ${res.data.path}` })
     } catch (e) {
       addNotification({ type: 'error', message: 'Save failed: ' + (e?.response?.data?.detail || e.message) })
@@ -119,17 +109,17 @@ export default function ChatActions() {
       <IconButton
         icon={Sparkles}
         label={memoryRecall
-          ? 'Memory recall: ON. The agent searches past chats and indexed files for relevant context before answering. Click to toggle.'
-          : 'Memory recall: OFF. The agent searches past chats and indexed files for relevant context before answering. Click to toggle.'}
+          ? 'Memory recall: ON. The agent searches past chats and indexed files for relevant context before answering. Click to toggle for this project.'
+          : 'Memory recall: OFF. The agent searches past chats and indexed files for relevant context before answering. Click to toggle for this project.'}
         active={memoryRecall}
         activeColor="text-brand-400"
-        onClick={() => setMemoryRecall(!memoryRecall)}
+        onClick={() => persist('memory_recall', !memoryRecall, setMemoryRecall, memoryRecall)}
       />
       <IconButton
         icon={Target}
         label={`Thread focus: ${contextFocus}. How tightly the agent stays on the current message vs. the wider conversation. Cycle: broad → balanced → focused.`}
         toneClass={focusTone}
-        onClick={() => cycle(contextFocus, ['broad', 'balanced', 'focused'], setContextFocus)}
+        onClick={() => persist('context_focus', next(contextFocus, ['broad', 'balanced', 'focused']), setContextFocus, contextFocus)}
       />
       <IconButton
         icon={Wand2}
@@ -141,7 +131,7 @@ export default function ChatActions() {
         icon={UserCircle}
         label={`Persona presence: ${personalityWeight}. How strongly the persona's tone colors responses. Cycle: minimal → balanced → strong.`}
         toneClass={personaTone}
-        onClick={() => cycle(personalityWeight, ['minimal', 'balanced', 'strong'], setPersonalityWeight)}
+        onClick={() => persist('tone_weight', next(personalityWeight, ['minimal', 'balanced', 'strong']), setPersonalityWeight, personalityWeight)}
       />
     </div>
   )

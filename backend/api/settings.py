@@ -148,15 +148,6 @@ def _get_effective_settings() -> dict[str, Any]:
     }
 
 
-def is_memory_recall_enabled() -> bool:
-    """Check whether the memory pre-recall augmentation toggle is on."""
-    try:
-        vault = get_vault()
-        return (vault.get_secret("memory_recall_enabled") or "true").lower() == "true"
-    except Exception:
-        return False
-
-
 @router.get("/settings")
 async def get_settings_endpoint() -> dict[str, Any]:
     """Get current configuration (no secrets)."""

@@ -332,17 +332,21 @@ class AgentCore:
           {"type": "error", "message": "..."}
         """
         try:
-            # Load conversation behaviour settings
-            from secrets.vault import get_vault
-            _vault = get_vault()
-            _personality_weight = _vault.get_secret("personality_weight") or "balanced"
-            _context_focus = _vault.get_secret("context_focus") or "balanced"
+            # Conversation behaviour: the project's overrides, else the
+            # global values (utils.chat_settings — the one read path).
+            try:
+                from utils.chat_settings import effective as _chat_settings
+                _cs = _chat_settings(self.project_id or "default")
+            except Exception:
+                logger.warning("chat settings unavailable — using defaults", exc_info=True)
+                _cs = {"tone_weight": "balanced", "context_focus": "balanced", "memory_recall": True}
+            _personality_weight = _cs["tone_weight"]
+            _context_focus = _cs["context_focus"]
 
             # Pre-recall relevant memories to inject into system prompt context
             recalled_memories = None
             try:
-                from api.settings import is_memory_recall_enabled
-                if is_memory_recall_enabled() and self.memory_manager:
+                if _cs["memory_recall"] and self.memory_manager:
                     mgr = self.memory_manager
                     try:
                         results = await asyncio.wait_for(
@@ -385,6 +389,7 @@ class AgentCore:
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
                 custom_soul=self.custom_soul,
+                host_exec=self.host_exec,
             )
 
             # Phase H.5 — append a "recent background jobs" block so the
