@@ -82,13 +82,27 @@ export default function EndpointCard({ endpoint, onChange }) {
               {probeResult.ok ? (
                 <div className='text-emerald-300 text-xs'>
                   Found {probeResult.models.length} models
+                  {' — '}
+                  {Object.keys(probeResult.capabilities || {}).length
+                    ? `${Object.keys(probeResult.capabilities).length} publish their capabilities`
+                    : 'none publish capabilities (profiles are guessed from names)'}
                   {probeResult.models.length > 0 && (
                     <ul className='mt-1 max-h-40 overflow-auto text-gray-400'>
-                      {probeResult.models.map((m) => (
-                        <li key={m}>
-                          <code className='text-xs'>{m}</code>
-                        </li>
-                      ))}
+                      {probeResult.models.map((m) => {
+                        const c = (probeResult.capabilities || {})[m]
+                        const tags = c ? ['tools', 'vision', 'embedding', 'image_gen'].filter((k) => c[k]) : []
+                        return (
+                          <li key={m}>
+                            <code className='text-xs'>{m}</code>
+                            {c && (
+                              <span className='ml-2 text-[10px] text-gray-500'>
+                                {tags.join(', ') || 'text only'}
+                                {c.context_window ? ` · ${Math.round(c.context_window / 1000)}k ctx` : ''}
+                              </span>
+                            )}
+                          </li>
+                        )
+                      })}
                     </ul>
                   )}
                 </div>

@@ -257,7 +257,7 @@ function EntryRow({
           ))}
           {missing && <span className='text-[10px] text-amber-300'>missing {requires.replace('_', ' ')}</span>}
           <span className='text-[10px] text-gray-600'>
-            {profile.source === 'user' ? 'edited' : profile.source === 'known' ? 'auto-detected' : 'unknown model'}
+            {profile.source === 'user' ? 'edited' : profile.source === 'endpoint' ? 'from endpoint' : profile.source === 'known' ? 'guessed from name' : 'unknown model'}
           </span>
           <button type='button' onClick={() => setEditing((v) => !v)} className='text-[10px] text-brand-400 hover:text-brand-300'>
             {editing ? 'close' : 'edit'}

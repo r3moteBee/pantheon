@@ -31,6 +31,7 @@ ROLE_MAPPING_KEY = "llm_role_mapping"
 ROUTES_KEY = "llm_routes"
 ROUTES_MIGRATED_KEY = "llm_routes_migrated_v1"
 PROFILES_KEY = "llm_model_profiles"
+ADVERTISED_KEY = "llm_model_advertised"   # endpoint/model -> capabilities the server published
 
 
 def key_secret_name(endpoint_name: str) -> str:
@@ -132,6 +133,7 @@ def delete_endpoint(name: str) -> None:
     scrubbed = {c: [e for e in entries if e["endpoint"] != name] for c, entries in routes.items()}
     if scrubbed != routes:
         vault.set_secret(ROUTES_KEY, json.dumps(scrubbed))
+    record_advertised(name, {})
 
 
 def get_endpoint(name: str) -> EndpointPublic | None:
@@ -321,7 +323,8 @@ def _stored_profiles() -> dict[str, dict]:
 
 
 def get_profile(endpoint: str, model: str) -> ModelProfile:
-    """User-edited profile if any, else the known-models guess."""
+    """Precedence: a user edit, else what the endpoint advertises (layered
+    over the name-based guess for fields it didn't state), else the guess."""
     stored = _stored_profiles().get(_profile_key(endpoint, model))
     if stored:
         try:
@@ -329,7 +332,37 @@ def get_profile(endpoint: str, model: str) -> ModelProfile:
         except Exception:
             pass
     from llm_config.known_models import guess_profile
-    return guess_profile(model)
+    guess = guess_profile(model)
+    adv = _advertised().get(_profile_key(endpoint, model))
+    if adv:
+        fields = {k: v for k, v in adv.items() if k in _ADVERTISABLE}
+        if fields:
+            return guess.model_copy(update={**fields, "source": "endpoint"})
+    return guess
+
+
+_ADVERTISABLE = ("tools", "vision", "embedding", "image_gen", "context_window")
+
+
+def _advertised() -> dict[str, dict]:
+    raw = get_vault().get_secret(ADVERTISED_KEY) or "{}"
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def record_advertised(endpoint: str, capabilities: dict[str, dict]) -> int:
+    """Replace what ``endpoint`` advertises (from a probe). Models the server
+    no longer describes fall back to the name guess. Returns the count."""
+    data = {k: v for k, v in _advertised().items() if not k.startswith(f"{endpoint}/")}
+    for model, caps in capabilities.items():
+        clean = {k: v for k, v in caps.items() if k in _ADVERTISABLE}
+        if clean:
+            data[_profile_key(endpoint, model)] = clean
+    get_vault().set_secret(ADVERTISED_KEY, json.dumps(data))
+    return sum(1 for k in data if k.startswith(f"{endpoint}/"))
 
 
 def set_profiles(profiles: dict[str, ModelProfile]) -> None:
@@ -347,3 +380,22 @@ def delete_profile(endpoint: str, model: str) -> None:
     stored = _stored_profiles()
     if stored.pop(_profile_key(endpoint, model), None) is not None:
         get_vault().set_secret(PROFILES_KEY, json.dumps(stored))
+
+
+async def refresh_advertised(endpoint_name: str | None = None) -> dict[str, int]:
+    """Probe saved endpoints and record the capabilities they publish.
+    Called by the Probe button and once at startup (best-effort)."""
+    from llm_config import probe as _probe
+    out: dict[str, int] = {}
+    for ep in list_endpoints():
+        if endpoint_name and ep.name != endpoint_name:
+            continue
+        try:
+            res = await _probe.probe_models(base_url=ep.base_url, api_type=ep.api_type,
+                                            api_key=get_endpoint_api_key(ep.name) or "")
+        except Exception as e:
+            logger.info("capability refresh for %s failed: %s", ep.name, e)
+            continue
+        if res.ok:
+            out[ep.name] = record_advertised(ep.name, res.capabilities)
+    return out
