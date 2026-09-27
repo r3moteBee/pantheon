@@ -14,7 +14,6 @@ import math
 from datetime import datetime, timezone
 from typing import Any
 
-from memory.working import WorkingMemory
 from memory.episodic import EpisodicMemory
 from memory.semantic import SemanticMemory
 from memory.graph import GraphMemory
@@ -143,8 +142,8 @@ class MemoryManager:
         self.embedding_model = embedding_model
         self.context_budget = context_budget or ContextBudget()
 
-        # Initialize all tiers
-        self.working = WorkingMemory(max_tokens=max_working_tokens)
+        # Initialize all tiers. (Per-conversation working memory lives in
+        # AgentCore.working_memory; consolidation reads episodic history.)
         self.episodic = EpisodicMemory(
             project_id=project_id,
             embedding_fn=embedding_fn,
@@ -186,22 +185,31 @@ class MemoryManager:
         sid = session_id or self.session_id or "default"
         meta = metadata or {}
 
-        if tier == "working":
-            self.working.add_message("system", content)
-            return "stored:working"
-
-        elif tier == "episodic":
+        if tier in ("episodic", "working"):
+            # "working" is accepted for old callers: a session-scoped note.
             note_id = await self.episodic.add_note(
                 content=content,
                 project_id=self.project_id,
                 session_id=sid,
-                tags=meta.get("tags", []),
+                tags=meta.get("tags", []) + (["working"] if tier == "working" else []),
             )
             return f"stored:episodic:{note_id}"
 
         elif tier == "semantic":
             doc_id = await self.semantic.store(content=content, metadata=meta)
             return f"stored:semantic:{doc_id}"
+
+        elif tier == "graph":
+            # Extract entities/relationships from the text into the graph
+            # (same pipeline as conversation extraction).
+            from memory.extraction import run_extraction
+            stats = await run_extraction(
+                messages=[{"role": "user", "content": content}],
+                memory_manager=self, project_id=self.project_id, session_id=sid,
+                min_messages=1,
+            )
+            return (f"stored:graph:{stats.get('entities', 0)} entities, "
+                    f"{stats.get('relationships', 0)} relationships")
 
         elif tier == "archival":
             filename = await self.archival.append_note(content)
@@ -468,17 +476,7 @@ class MemoryManager:
         """Return all memories for a tier (for inspection/editing in the UI)."""
         active_project = project_id or self.project_id
 
-        if tier == "working":
-            return {
-                "tier": "working",
-                "items": [
-                    {"role": m.role, "content": m.content, "timestamp": m.timestamp}
-                    for m in self.working.get_messages(as_dicts=False)
-                ],
-                "token_count": self.working.get_token_count(),
-            }
-
-        elif tier == "episodic":
+        if tier == "episodic":
             messages = await self.episodic.get_all_messages(project_id=active_project, limit=200)
             notes = await self.episodic.get_notes(project_id=active_project, limit=50)
             return {
@@ -519,13 +517,21 @@ class MemoryManager:
 
         return {"tier": tier, "error": "Unknown tier"}
 
-    async def consolidate_session(self) -> str:
-        """Consolidate current session: summarize + extract structured knowledge.
+    async def consolidate_session(self, message_count: int = 40) -> str:
+        """Consolidate this session: summarize + extract structured knowledge.
 
-        Enhanced to run the extraction pipeline in addition to the
-        original summarization flow.
+        Reads the session's recent messages from episodic memory (the
+        persisted chat history), so it works from chat, the API and jobs.
         """
-        messages = self.working.get_messages(as_dicts=True)
+        if not self.session_id or self.session_id == "current":
+            return "No session to consolidate (pass the chat's session id)."
+        recent = await self.episodic.get_recent_messages(
+            project_id=self.project_id, session_id=self.session_id, limit=message_count,
+        )
+        messages = [
+            {"role": m.get("role"), "content": m.get("content") or ""}
+            for m in recent                    # already oldest-first
+        ]
         if not messages:
             return "No messages to consolidate."
 
@@ -590,9 +596,6 @@ class MemoryManager:
             logger.info("Extraction during consolidation: %s", extraction_stats)
         except Exception as e:
             logger.warning("Extraction during consolidation failed: %s", e)
-
-        # Clear working memory
-        self.working.clear()
 
         total_extracted = sum(extraction_stats.values())
         logger.info(f"Session consolidated: summary={doc_id}, extracted={total_extracted} items")

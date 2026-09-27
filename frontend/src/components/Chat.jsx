@@ -4,7 +4,7 @@ import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, P
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi, artifactsApi, llmApi } from '../api/client'
+import { createChatSocket, chatApi, filesApi, conversationsApi, artifactsApi, llmApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 import { mermaidMarkdownComponents } from './markdownComponents'
 
@@ -430,17 +430,6 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState([])
   const [uploading, setUploading] = useState(false)
-  // Chat settings live in the global store now so the unified ChatTabs
-  // top bar can read & toggle them across tab switches.
-  const memoryRecall = useStore((s) => s.memoryRecall)
-  const setMemoryRecall = useStore((s) => s.setMemoryRecall)
-  const personalityWeight = useStore((s) => s.personalityWeight)
-  const setPersonalityWeight = useStore((s) => s.setPersonalityWeight)
-  const contextFocus = useStore((s) => s.contextFocus)
-  const setContextFocus = useStore((s) => s.setContextFocus)
-  const skillDiscovery = useStore((s) => s.skillDiscovery)
-  const setSkillDiscovery = useStore((s) => s.setSkillDiscovery)
-  const [recallLoading, setRecallLoading] = useState(false)
   const [showSkillPicker, setShowSkillPicker] = useState(false)
   const [skillQuery, setSkillQuery] = useState('')
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
@@ -516,72 +505,6 @@ export default function Chat() {
       })
   }, [sessionId, activeProject?.id, setActivePersonas])
 
-
-  useEffect(() => {
-    settingsApi.get().then((res) => {
-      setMemoryRecall(res.data.memory_recall_enabled !== false)
-      setPersonalityWeight(res.data.personality_weight || 'balanced')
-      setContextFocus(res.data.context_focus || 'balanced')
-    }).catch(() => {})
-    // Load skill discovery setting for active project
-    const pid = activeProject?.id || 'default'
-    skillsApi.getDiscovery(pid).then((res) => {
-      setSkillDiscovery(res.data.skill_discovery || 'off')
-    }).catch(() => {})
-  }, [activeProject?.id])
-
-  const toggleMemoryRecall = async () => {
-    const next = !memoryRecall
-    setRecallLoading(true)
-    try {
-      await settingsApi.update({ memory_recall_enabled: next })
-      setMemoryRecall(next)
-      addNotification({
-        type: 'success',
-        message: next ? 'Memory recall on' : 'Memory recall off',
-      })
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-    setRecallLoading(false)
-  }
-
-  const cyclePersonalityWeight = async () => {
-    const order = ['minimal', 'balanced', 'strong']
-    const next = order[(order.indexOf(personalityWeight) + 1) % order.length]
-    try {
-      await settingsApi.update({ personality_weight: next })
-      setPersonalityWeight(next)
-      addNotification({ type: 'success', message: `Personality: ${next}` })
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-  }
-
-  const cycleContextFocus = async () => {
-    const order = ['broad', 'balanced', 'focused']
-    const next = order[(order.indexOf(contextFocus) + 1) % order.length]
-    try {
-      await settingsApi.update({ context_focus: next })
-      setContextFocus(next)
-      addNotification({ type: 'success', message: `Focus: ${next}` })
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-  }
-
-  const cycleSkillDiscovery = async () => {
-    const order = ['off', 'suggest', 'auto']
-    const next = order[(order.indexOf(skillDiscovery) + 1) % order.length]
-    const pid = activeProject?.id || 'default'
-    try {
-      await skillsApi.setDiscovery(pid, next)
-      setSkillDiscovery(next)
-      addNotification({ type: 'success', message: `Auto-Skill: ${next}` })
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-  }
 
   // ── File attachment handling ────────────────────────────────────────
 

@@ -126,6 +126,12 @@ async def lifespan(app: FastAPI):
             if settings.allow_insecure_defaults else "",
         )
 
+    try:
+        from memory.archival import migrate_stray_notes
+        migrate_stray_notes()
+    except Exception:
+        logger.warning("archival stray-note migration failed", exc_info=True)
+
     # Initialize default personality files if missing or empty
     import shutil
     soul_path = settings.personality_dir / "soul.md"

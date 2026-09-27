@@ -71,7 +71,6 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── file_indexer.py      FileIndexer — chunk + embed + extract entities to graph.
 │   │   │                        _index_typed_topics_to_graph handles the canonical frontmatter shape.
 │   │   ├── topic_embeddings.py  Topic-label embeddings keyed by (project_id, topic_type, label)
-│   │   ├── working.py           WorkingMemory — per-conversation scratch workspace
 │   │   ├── merge_proposals.py   SQLite store for reviewable graph node merges
 │   │   ├── extraction.py        Conversation entity extractor (different from sources/extraction.py)
 │   │   └── archival.py          Archival memory (mostly unused)
@@ -290,6 +289,12 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Episodic `get_history` returns the newest `limit` messages** (oldest-first order).
 
+**Memory consolidation reads episodic history.** `MemoryManager.consolidate_session()` (tool `consolidate_memory`, `POST /api/memory/consolidate?session_id=`) summarises + extracts from the session's recent persisted messages; it needs a real session id. `remember(tier="graph")` runs the conversation extractor (`min_messages=1`) on the text so entities/relationships land in the graph.
+
+**Chat settings: one read path.** `utils/chat_settings.py` — `tone_weight` (minimal|balanced|strong), `context_focus` (broad|balanced|focused), `memory_recall` — per-project override in phase_g.db `project_settings` (NULL = inherit) over the global vault values Settings writes; `skill_discovery` stays in vault `skill_discovery_<project>` (what chat and the bots read). `AgentCore.chat` reads `effective(project_id)`; the chat-header toggles and Project Settings write `PUT /api/projects/{id}/settings` (`null` clears an override). The frontend never keeps its own copy — it loads `effective` on project switch.
+
+**Repo protocol follows host exec.** `build_system_prompt(host_exec=…)` (AgentCore passes its own) shows the local git/run_command protocol only where those tools exist; background contexts get a short note pointing at github_* / start_coding_task.
+
 **Legacy `/api/settings` LLM keys** are read only by the one-shot migration; once `llm_config_migrated_v1` is set, writes to `llm_*`/`embedding_*`/etc. have no effect. Use `/api/llm/*`.
 
 **Job heartbeats.** The autonomous_task handler emits a heartbeat on every tool call with the current plan step matched. The stall watchdog kills jobs idle for 5 min — the per-step heartbeat keeps it happy.
@@ -367,8 +372,8 @@ These are deliberate architectural calls. If a code review recommends reversing 
 - **Episodic** — chat history + task logs. Searchable by content/timestamp. Persistent.
 - **Semantic** — embedded chunks from indexed artifacts and workspace files. Topic-label embeddings stored here too with `metadata.kind=topic_node`.
 - **Graph** — typed nodes + edges. Source / video / topic / person / concept node types. Edges: PRODUCES, DISCUSSES, FEATURES_SPEAKER, SEMANTICALLY_SIMILAR_TO.
-- **Working** — in-process AgentCore working_memory; not persisted.
-- **Archival** — mostly unused; reserved for whole-document storage.
+- **Working** — in-process `AgentCore.working_memory`; not persisted. (`memory/working.py` is gone; `remember(tier="working")` from old callers becomes a session-tagged episodic note.)
+- **Archival** — markdown notes + project summary under `<data_dir>/projects/<id>/notes` (Memory → Archival tab). Always the configured data dir; `migrate_stray_notes()` at startup moves notes an older build wrote under a CWD-relative `data/`.
 
 `mgr.recall(query, tiers=[...])` searches across them and returns provenance-tagged hits: `[semantic/artifact] ... ↳ source: NBJ/... id=... tags=[...]` for artifact chunks, `[semantic/file:foo.md]` for workspace file chunks, `[episodic session=abc12345 ts=...]` for chat history, `[graph:concept] ...` for graph nodes.
 

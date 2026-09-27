@@ -138,8 +138,15 @@ async def _route_turn(agent, message: str, session_id: str, skill_name: str | No
 
 import re as _re
 
-# A tool result that reports failure ("Error executing …", "Image generation failed: …").
-_TOOL_ERROR_RE = _re.compile(r"\s*(error\b|.{0,80}?\bfailed\b)", _re.I)
+# A tool result that reports failure. Tools don't share an error envelope
+# yet, so match the prefixes they actually return ("Error executing …",
+# "Download refused: …", "Access denied: …", "Unknown tool: …",
+# "Artifact not found: …", "Image generation failed: …"), near the start.
+_TOOL_ERROR_RE = _re.compile(
+    r"\s*(error\b|refus|access denied|unknown tool|invalid\b"
+    r"|.{0,60}?\b(failed|refused|denied|not found|not allowed|escapes)\b)",
+    _re.I,
+)
 
 
 def _finish_route(decision, served: list, session_id: str, message: str,
@@ -192,9 +199,11 @@ async def _stream_turn(agent, message: str, session_id: str, send, *,
     try:
         async for event in agent.chat(message, stream=stream):
             etype = event.get("type")
-            if etype == "tool_call":
+            # context_loaded is AgentCore's synthetic pre-recall event, not a
+            # tool the model chose — don't count it.
+            if etype == "tool_call" and event.get("name") != "context_loaded":
                 outcome["tool_calls"] += 1
-            elif etype == "tool_result":
+            elif etype == "tool_result" and event.get("name") != "context_loaded":
                 if _TOOL_ERROR_RE.match(str(event.get("result") or "")[:200]):
                     outcome["tool_errors"] += 1
             elif etype == "error":

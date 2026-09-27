@@ -78,14 +78,14 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "remember",
-            "description": "Store information in memory for future recall. Choose the tier based on importance: 'working' for temporary context, 'episodic' for conversation facts, 'semantic' for key insights/knowledge, 'graph' for relationships between concepts.",
+            "description": "Store information in memory for future recall: 'episodic' for a dated note about this conversation, 'semantic' for a key insight or fact to find by meaning later, 'graph' to extract the entities and relationships in the text into the knowledge graph. For documents or reports use save_to_artifact instead.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "content": {"type": "string", "description": "The information to remember"},
                     "tier": {
                         "type": "string",
-                        "enum": ["working", "episodic", "semantic"],
+                        "enum": ["episodic", "semantic", "graph"],
                         "description": "Memory tier to store in"
                     },
                     "metadata": {
@@ -1766,7 +1766,8 @@ async def execute_tool(
             content = tool_args["content"]
             metadata = tool_args.get("metadata", {})
             ref = await mgr.remember(content=content, tier=tier, metadata=metadata)
-            return f"Stored in {tier} memory: {content[:100]} ({ref})"
+            stored_tier = ref.split(":", 2)[1] if ref.startswith("stored:") else tier
+            return f"Stored in {stored_tier} memory: {content[:100]} ({ref})"
 
         elif tool_name == "recall":
             from memory.manager import create_memory_manager

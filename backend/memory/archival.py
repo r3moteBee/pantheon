@@ -20,8 +20,15 @@ class ArchivalMemory:
     """
 
     def __init__(self, project_id: str = "default", base_dir: str | None = None):
-        self.project_id = project_id
-        self._base = Path(base_dir or "data")
+        from utils.paths import check_project_id
+        self.project_id = check_project_id(project_id)
+        if base_dir is None:
+            # Always the configured data dir — a relative "data" resolved
+            # against the CWD (backend/ on the dev box), so notes written by
+            # the memory manager and read by the API landed in different places.
+            from config import get_settings
+            base_dir = str(get_settings().data_dir)
+        self._base = Path(base_dir)
         self._personality_dir = self._base / "personality"
         self._projects_dir = self._base / "projects"
 
@@ -52,7 +59,8 @@ class ArchivalMemory:
             self._personality_dir.resolve(),
             self.project_dir.resolve(),
         ]
-        if not any(str(target).startswith(str(b)) for b in allowed_bases):
+        from utils.paths import is_within
+        if not any(is_within(target, b) for b in allowed_bases):
             raise ValueError(f"Path outside allowed directories: {rel_path}")
         return target
 
@@ -154,3 +162,32 @@ class ArchivalMemory:
         except Exception as e:
             logger.error(f"Archival delete error: {e}")
             return False
+
+
+def migrate_stray_notes() -> int:
+    """Move archival notes written under a CWD-relative ``data/projects``
+    (backend/data/ when run from backend/) into the configured data dir,
+    where the Memory page reads them. Existing files are never overwritten.
+    Returns the number of files moved."""
+    import shutil
+    from config import get_settings
+    canonical = Path(get_settings().data_dir).resolve() / "projects"
+    candidates = {Path(__file__).resolve().parents[1] / "data" / "projects",
+                  Path.cwd().resolve() / "data" / "projects"}
+    moved = 0
+    for stray in candidates:
+        if not stray.is_dir() or stray.resolve() == canonical:
+            continue
+        for note in stray.glob("*/notes/**/*"):
+            if not note.is_file():
+                continue
+            dest = canonical / note.relative_to(stray)
+            if dest.exists():
+                logger.warning("archival: not moving %s — %s already exists", note, dest)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(note), str(dest))
+            moved += 1
+    if moved:
+        logger.info("archival: moved %d stray note file(s) into %s", moved, canonical)
+    return moved

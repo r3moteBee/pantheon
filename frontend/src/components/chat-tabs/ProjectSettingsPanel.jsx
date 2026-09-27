@@ -9,7 +9,8 @@ import {
 import { useStore } from '../../store'
 import InfoTooltip from '../help/InfoTooltip'
 
-const TONES   = ['focused', 'balanced', 'broad']
+const TONES   = ['minimal', 'balanced', 'strong']
+const FOCUSES = ['broad', 'balanced', 'focused']
 const SKILLS  = ['off', 'suggest', 'auto']
 
 /**
@@ -30,10 +31,11 @@ export default function ProjectSettingsPanel({ projectId }) {
   const [metaDirty, setMetaDirty] = useState(false)
 
   // Chat defaults
+  // '' = inherit the global value (Settings); anything else overrides it here.
   const [chatDefaults, setChatDefaults] = useState({
-    persona: '', tone_weight: 'balanced',
-    context_focus: 'balanced', skill_discovery: 'off',
+    persona: '', tone_weight: '', context_focus: '', memory_recall: '', skill_discovery: 'off',
   })
+  const [globals, setGlobals] = useState({})
   const [chatDirty, setChatDirty] = useState(false)
 
   // Personas list
@@ -60,11 +62,14 @@ export default function ProjectSettingsPanel({ projectId }) {
       setMetaDirty(false)
 
       const cd = settings.data
+      const ov = cd.overrides || {}
+      setGlobals(cd.global || {})
       setChatDefaults({
         persona:         cd.persona || '',
-        tone_weight:     cd.tone_weight || 'balanced',
-        context_focus:   cd.context_focus || 'balanced',
-        skill_discovery: cd.skill_discovery || 'off',
+        tone_weight:     ov.tone_weight || '',
+        context_focus:   ov.context_focus || '',
+        memory_recall:   ov.memory_recall === undefined ? '' : (ov.memory_recall ? 'on' : 'off'),
+        skill_discovery: cd.effective?.skill_discovery || 'off',
       })
       setChatDirty(false)
 
@@ -101,7 +106,10 @@ export default function ProjectSettingsPanel({ projectId }) {
         setMetaDirty(false)
       }
       if (chatDirty) {
-        await projectSettingsApi.update(projectId, chatDefaults)
+        await projectSettingsApi.update(projectId, {
+          ...chatDefaults,
+          memory_recall: chatDefaults.memory_recall === '' ? null : chatDefaults.memory_recall === 'on',
+        })
         setChatDirty(false)
       }
       addNotification?.({ type: 'success', message: 'Project settings saved' })
@@ -196,7 +204,7 @@ export default function ProjectSettingsPanel({ projectId }) {
         </Section>
 
         {/* Chat defaults */}
-        <Section title="Chat defaults" hint="Drives the per-message toggles in the chat header.">
+        <Section title="Chat defaults" hint="Used by chat in this project; the chat-header toggles change the same values. “Global” follows Settings.">
           <Field label="Default persona">
             <select
               value={chatDefaults.persona}
@@ -209,7 +217,7 @@ export default function ProjectSettingsPanel({ projectId }) {
               ))}
             </select>
           </Field>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <Field
               label="Tone weight"
               tooltip="How strongly the persona's tone colors responses. Use minimal for matter-of-fact answers, strong for fully in-character."
@@ -219,6 +227,7 @@ export default function ProjectSettingsPanel({ projectId }) {
                 onChange={(e) => updateChat('tone_weight', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-800 text-sm"
               >
+                <option value="">Global ({globals.tone_weight || 'balanced'})</option>
                 {TONES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </Field>
@@ -231,7 +240,22 @@ export default function ProjectSettingsPanel({ projectId }) {
                 onChange={(e) => updateChat('context_focus', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-800 text-sm"
               >
-                {TONES.map((t) => <option key={t} value={t}>{t}</option>)}
+                <option value="">Global ({globals.context_focus || 'balanced'})</option>
+                {FOCUSES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+            <Field
+              label="Memory recall"
+              tooltip="Search past chats, artifacts and the graph for relevant context before each reply."
+            >
+              <select
+                value={chatDefaults.memory_recall}
+                onChange={(e) => updateChat('memory_recall', e.target.value)}
+                className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-800 text-sm"
+              >
+                <option value="">Global ({globals.memory_recall === false ? 'off' : 'on'})</option>
+                <option value="on">on</option>
+                <option value="off">off</option>
               </select>
             </Field>
             <Field
