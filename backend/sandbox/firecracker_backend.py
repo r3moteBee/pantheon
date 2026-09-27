@@ -64,37 +64,6 @@ class FirecrackerSandbox(SandboxBackend):
             rootfs_dir=fc_dir / "rootfs",
         )
 
-    # ── execute_skill: not yet implemented for Firecracker ──
-    async def execute_skill(
-        self,
-        skill: Any,
-        script_name: str,
-        *,
-        args: list[str] | None = None,
-        input_data: str | None = None,
-        timeout: int = 30,
-        workspace_dir: Path | None = None,
-        extra_env: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        # Fall back to subprocess for declared skills until we reconcile
-        # skill bundle layout with Firecracker rootfs injection. Inline
-        # execution is the high-value path for v1.
-        from skills.executor import execute_script
-        logger.info(
-            "FirecrackerSandbox: skill execution falls back to subprocess "
-            "(skill=%s). Inline code_execute uses microVM isolation.",
-            getattr(skill, "name", "?"),
-        )
-        return await execute_script(
-            skill=skill,
-            script_name=script_name,
-            args=args,
-            input_data=input_data,
-            timeout=timeout,
-            workspace_dir=workspace_dir,
-            extra_env=extra_env,
-        )
-
     async def execute_inline(
         self,
         language: str,

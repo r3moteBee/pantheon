@@ -111,15 +111,6 @@ async def test_create_job_rejects_internal_types():
         assert e.value.status_code == 400
 
 
-@pytest.mark.asyncio
-async def test_webhook_sink_refuses_non_webhook_vault_key(monkeypatch):
-    from jobs.sinks.webhook_sink import to_webhook
-    ctx = SimpleNamespace(job_id="j", project_id="p", title="t")
-    res = await to_webhook(ctx, "x", {"webhook_url": "https://example.com/h",
-                                      "webhook_token_key": "llm_api_key"})
-    assert res["status"] == "failed" and "webhook_token__" in res["reason"]
-
-
 # ── SEC-3: project ids can't escape projects_dir ─────────────────────────────
 
 def test_personality_rejects_traversal(tmp_path):

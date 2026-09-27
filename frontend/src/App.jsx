@@ -14,7 +14,6 @@ const SkillsPage = lazy(() => import('./pages/SkillsPage'))
 const MCPPage = lazy(() => import('./pages/MCPPage'))
 const ConnectionsPage = lazy(() => import('./pages/ConnectionsPage'))
 const PersonasPage = lazy(() => import('./pages/PersonasPage'))
-const TasksPage = lazy(() => import('./pages/TasksPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
 
 export default function App() {
@@ -83,7 +82,7 @@ export default function App() {
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="personas" element={<PersonasPage />} />
           <Route path="personality" element={<Navigate to="/settings" replace />} />
-          <Route path="tasks" element={<TasksPage />} />
+          <Route path="tasks" element={<Navigate to="/settings" replace />} />
           <Route path="projects" element={<ProjectsPage />} />
           <Route path="settings" element={<SettingsPage />} />
         </Route>

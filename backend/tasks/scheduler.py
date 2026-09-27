@@ -351,77 +351,12 @@ async def _enqueue_autonomous_job(
     )
 
 
-async def _enqueue_scheduled_job(
-    *, name: str, prompt: str, project_id: str, payload: dict, schedule_id: str,
-) -> None:
-    """APScheduler target for schedule_scheduled_job — enqueues one run."""
-    from jobs.store import get_store
-    get_store().create(
-        job_type="scheduled_job", project_id=project_id,
-        title=name, description=prompt[:200],
-        payload=payload, schedule_id=schedule_id,
-    )
-
-
-async def schedule_scheduled_job(
-    name: str,
-    prompt: str,
-    schedule: str,
-    *,
-    project_id: str = "default",
-    output_sink: dict | None = None,
-    interval_seconds: int | None = None,
-) -> str:
-    """Register a scheduled_job in APScheduler. Each fire enqueues a
-    'scheduled_job' jobs row with the configured prompt + output_sink.
-    """
-    schedule_id = str(uuid.uuid4())[:8]
-    scheduler = get_scheduler()
-
-    payload = {
-        "schedule_id": schedule_id,
-        "prompt": prompt,
-        "output_sink": output_sink or {"kind": "artifact"},
-        "interval_seconds": interval_seconds or 0,
-    }
-
-    # The job store persists jobs via SQLAlchemy, so the callable must be a
-    # module-level function (a closure raised "This Job cannot be
-    # serialized") and its data must travel in kwargs.
-    _enqueue = _enqueue_scheduled_job
-    job_kwargs = {
-        "name": name, "prompt": prompt, "project_id": project_id,
-        "payload": payload, "schedule_id": schedule_id,
-    }
-
-    if schedule == "now":
-        scheduler.add_job(_enqueue, trigger="date", id=schedule_id, name=name,
-                          kwargs=job_kwargs, replace_existing=True)
-    elif schedule.startswith("delay:"):
-        from datetime import datetime, timedelta, timezone
-        minutes = float(schedule.split(":")[1])
-        run_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-        scheduler.add_job(_enqueue, trigger="date", run_date=run_at,
-                          id=schedule_id, name=name, kwargs=job_kwargs, replace_existing=True)
-    elif schedule.startswith("interval:"):
-        minutes = int(schedule.split(":")[1])
-        if not interval_seconds:
-            payload["interval_seconds"] = minutes * 60
-        scheduler.add_job(_enqueue, trigger="interval", minutes=minutes,
-                          id=schedule_id, name=name, kwargs=job_kwargs, replace_existing=True)
-    else:
-        from apscheduler.triggers.cron import CronTrigger
-        parts = schedule.split()
-        if len(parts) != 5:
-            raise ValueError(f"Invalid schedule format: {schedule}")
-        m, h, d, mo, dow = parts
-        scheduler.add_job(_enqueue, trigger=CronTrigger(minute=m, hour=h, day=d,
-                                                       month=mo, day_of_week=dow),
-                          id=schedule_id, name=name, kwargs=job_kwargs, replace_existing=True)
-
-    logger.info("scheduled_job registered: %s (id=%s, schedule=%s, sink=%s)",
-                name, schedule_id, schedule, (output_sink or {}).get("kind", "artifact"))
-    return schedule_id
+async def _enqueue_scheduled_job(**kwargs) -> None:
+    """Retired: the scheduled_job type and its output sinks were removed
+    (nothing created them). Kept only so an APScheduler job persisted by an
+    older build still deserialises; firing it just logs."""
+    logger.warning("Ignoring retired scheduled_job schedule %r (%s) — recreate it with create_task",
+                   kwargs.get("name"), kwargs.get("schedule_id"))
 
 
 

@@ -98,20 +98,12 @@ export default function ProjectTasksPanel({ projectId }) {
     if (!confirm('Cancel this job?')) return
     await jobsApi.cancel(id); await refresh()
   }
-  const retry = async (id) => {
-    const res = await jobsApi.retry(id)
-    setSelectedJob(res.data)
-    await refresh()
-  }
+  // Retry (failed/stalled) and Rerun (finished) both queue a copy of the
+  // job; the endpoint returns the new job.
   const rerun = async (id) => {
     try {
       const res = await jobsApi.rerun(id)
-      // Response shape is {ok, new_job_id, queued_at, from_job_id}
-      // — fetch the new job record so the detail panel updates.
-      if (res?.data?.new_job_id) {
-        const newJob = await jobsApi.get(res.data.new_job_id)
-        setSelectedJob(newJob.data)
-      }
+      setSelectedJob(res.data)
       await refresh()
     } catch (err) {
       alert('Rerun failed: ' + (err?.response?.data?.detail || err.message))
@@ -395,7 +387,7 @@ export default function ProjectTasksPanel({ projectId }) {
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onCancel={() => cancel(selectedJob.id)}
-          onRetry={() => retry(selectedJob.id)}
+          onRetry={() => rerun(selectedJob.id)}
           onRerun={() => rerun(selectedJob.id)}
           onDelete={() => remove(selectedJob.id)}
           onRefresh={refresh}

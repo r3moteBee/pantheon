@@ -2934,7 +2934,7 @@ async def execute_tool(
 
         elif tool_name == "send_telegram":
             try:
-                from telegram_bot.bot import send_message_to_all
+                from messaging.adapters.telegram import send_message_to_all
                 await send_message_to_all(tool_args["message"])
                 return "Telegram message sent."
             except Exception as e:
@@ -4437,69 +4437,6 @@ async def _web_search(query: str) -> str:
     except Exception as e:
         logger.exception("search provider chain failed; falling back to DDG-only")
         return await _ddg_search(query)
-
-
-async def _configured_search(query: str, base_url: str, api_key: str) -> str:
-    """Call a configured JSON search endpoint and parse common response shapes."""
-    headers: dict[str, str] = {
-        "User-Agent": "Mozilla/5.0 (compatible; AgentHarness/1.0)",
-        "Accept": "application/json",
-    }
-    if api_key:
-        # Brave uses X-Subscription-Token; everything else gets Bearer
-        if "brave.com" in base_url:
-            headers["X-Subscription-Token"] = api_key
-        else:
-            headers["Authorization"] = f"Bearer {api_key}"
-
-    # SearXNG expects the path to be /search
-    if "searx" in base_url.lower() and not base_url.endswith("/search"):
-        endpoint = base_url + "/search"
-    else:
-        endpoint = base_url
-
-    params: dict[str, str] = {"q": query, "format": "json"}
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(endpoint, params=params, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as e:
-        logger.warning(f"Configured search failed ({base_url}): {e} — falling back to DuckDuckGo")
-        return await _ddg_search(query)
-
-    # ── Normalise the result shape ────────────────────────────────────────────
-    # SearXNG: {"results": [{"title","url","content","engine"}, ...]}
-    # Brave:   {"web": {"results": [{"title","url","description"}, ...]}}
-    # Generic: [{"title","url","snippet"/"description"/"content"}, ...]
-
-    raw: list[dict] = []
-    if isinstance(data, list):
-        raw = data
-    elif isinstance(data, dict):
-        if "results" in data:
-            raw = data["results"]
-        elif "web" in data and isinstance(data["web"], dict):
-            raw = data["web"].get("results", [])
-
-    if not raw:
-        return "No results found."
-
-    lines = []
-    for i, item in enumerate(raw[:6]):
-        title   = item.get("title", "").strip()
-        url_str = item.get("url", item.get("href", "")).strip()
-        snippet = (
-            item.get("content")
-            or item.get("description")
-            or item.get("snippet")
-            or ""
-        ).strip()
-        if title and url_str:
-            lines.append(f"{i+1}. {title}\n   {url_str}\n   {snippet}")
-
-    return "\n\n".join(lines) if lines else "No results found."
 
 
 async def _ddg_search(query: str) -> str:

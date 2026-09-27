@@ -265,23 +265,41 @@ async def _record(beats):
     beats.append(1)
 
 
-# ── schedule_scheduled_job ───────────────────────────────────────────────────
+# ── retired scheduled_job ───────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_schedule_scheduled_job_is_serializable(tmp_path, monkeypatch):
-    pytest.importorskip("sqlalchemy")
-    from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+async def test_retired_scheduled_job_target_is_a_noop(caplog):
+    """An APScheduler job persisted by an older build still deserialises and
+    firing it creates nothing."""
     from tasks import scheduler as sched_mod
+    await sched_mod._enqueue_scheduled_job(name="old", prompt="x", project_id="p",
+                                           payload={}, schedule_id="abc")
+    assert "retired scheduled_job" in caplog.text
+    assert not hasattr(sched_mod, "schedule_scheduled_job")
 
-    s = AsyncIOScheduler(jobstores={"default": SQLAlchemyJobStore(url=f"sqlite:///{tmp_path}/aps.db")})
-    s.start(paused=True)
-    try:
-        monkeypatch.setattr(sched_mod, "get_scheduler", lambda: s)
-        sid = await sched_mod.schedule_scheduled_job(
-            "digest", "summarize news", "interval:60", project_id="p1",
-        )
-        job = s.get_job(sid)
-        assert job is not None and job.kwargs["prompt"] == "summarize news"
-    finally:
-        s.shutdown(wait=False)
+
+def test_only_live_job_types_are_registered():
+    from jobs.handlers.bootstrap import bootstrap_handlers
+    from jobs.handlers import HANDLERS
+    bootstrap_handlers()
+    assert {"autonomous_task", "coding_task", "image_extraction", "iteration_loop"} <= set(HANDLERS)
+    assert not {"scheduled_job", "extraction", "file_indexing"} & set(HANDLERS)
+
+
+@pytest.mark.asyncio
+async def test_rerun_endpoint_replaces_retry(store, monkeypatch):
+    from fastapi import HTTPException
+    from api import jobs as jobs_api
+    monkeypatch.setattr(jobs_api, "get_store", lambda: store)
+    job = store.create(job_type="autonomous_task", project_id="p", title="t", payload={"k": 1})
+    with pytest.raises(HTTPException) as e:          # still queued
+        await jobs_api.rerun_job(job["id"])
+    assert e.value.status_code == 400
+    with store._connect() as conn:
+        conn.execute("UPDATE jobs SET status='failed' WHERE id=?", (job["id"],))
+    new = await jobs_api.rerun_job(job["id"])
+    assert new["parent_job_id"] == job["id"] and new["payload"] == {"k": 1} and new["status"] == "queued"
+    with pytest.raises(HTTPException) as e:
+        await jobs_api.rerun_job("missing")
+    assert e.value.status_code == 404
+    assert not hasattr(store, "retry")

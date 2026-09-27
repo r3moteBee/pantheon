@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
 from agent.prompts import build_system_prompt
-from agent.tools import TOOL_SCHEMAS, HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
+from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from config import get_settings
 from models.provider import ModelProvider
 

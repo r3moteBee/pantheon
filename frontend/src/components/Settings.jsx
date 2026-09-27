@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Save, Eye, EyeOff, Trash2, Plus, Check, X, RefreshCw, Search, MessageCircle, RotateCw, Shield, Cpu, Plug, Key, Globe, Library, Clock, ArrowUpDown, Server, User as UserIcon, AlertTriangle, Terminal, Copy, Lock } from 'lucide-react'
 import { useStore } from '../store'
-import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, taskRunsApi, jobsApi } from '../api/client'
+import { settingsApi, skillsApi, tasksApi, projectsApi, systemApi, jobsApi } from '../api/client'
 import SecurityLog from './SecurityLog'
 import PersonalityEditor from './PersonalityEditor'
 import EndpointList from './settings/EndpointList'
@@ -1004,7 +1004,7 @@ function SandboxSection() {
 
 
 
-// ── Cross-project task-run dashboard (uses /api/tasks/runs) ─────────────────
+// ── Cross-project job dashboard (uses /api/jobs) ─────────────────────────────
 const RUN_STATUS_BADGE = {
   running:   'bg-blue-900 text-blue-200',
   completed: 'bg-green-900 text-green-200',

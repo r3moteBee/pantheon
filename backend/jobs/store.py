@@ -93,68 +93,6 @@ class JobStore:
         sql = sql_path.read_text() if sql_path.exists() else _INLINE_SCHEMA
         with self._connect() as conn:
             conn.executescript(sql)
-            self._migrate_from_task_runs(conn)
-
-    def _migrate_from_task_runs(self, conn: sqlite3.Connection) -> None:
-        """One-shot import of existing task_runs rows into jobs.
-
-        Idempotent — only imports rows whose id isn't already in jobs.
-        Marks them with job_type='autonomous_task'.
-        """
-        # Check if task_runs.db exists in the same db_dir
-        db_dir = Path(self.db_path).parent
-        runs_db = db_dir / "task_runs.db"
-        if not runs_db.exists():
-            return
-        src = None
-        try:
-            src = sqlite3.connect(str(runs_db), timeout=5.0)
-            src.row_factory = sqlite3.Row
-            rows = src.execute(
-                "SELECT * FROM task_runs WHERE id NOT IN "
-                "(SELECT id FROM (SELECT '' as id WHERE 0))"  # placeholder
-            ).fetchall()
-            existing = {r["id"] for r in conn.execute("SELECT id FROM jobs").fetchall()}
-            n = 0
-            for r in rows:
-                if r["id"] in existing:
-                    continue
-                conn.execute(
-                    """INSERT INTO jobs
-                       (id, job_type, project_id, status, title, description,
-                        payload, result, error, started_at, completed_at,
-                        session_id, artifact_id, created_at, attempts, max_attempts)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        r["id"], "autonomous_task",
-                        r["project_id"] or "default",
-                        # Legacy rows that were still queued/running belong to a
-                        # dead process — importing them as active would make
-                        # orphan recovery / the worker re-run them.
-                        (r["status"] if r["status"] in JobStatus.TERMINAL
-                         else JobStatus.STALLED if r["status"] in JobStatus.ACTIVE
-                         else "completed"),
-                        r["task_name"] or "(task)",
-                        r["description"] or "",
-                        json.dumps({"task_id": r["task_id"]}),
-                        r["result"] or None,
-                        r["error"] or None,
-                        r["started_at"], r["completed_at"],
-                        r["session_id"], r["artifact_id"],
-                        r["started_at"] or _now(),
-                        1, 1,
-                    ),
-                )
-                n += 1
-            if n:
-                logger.info("Imported %d task_runs rows into jobs", n)
-        except Exception as e:
-            logger.warning("Could not migrate task_runs → jobs: %s", e)
-        finally:
-            if src is not None:
-                src.close()
-
-    # ── CRUD ───────────────────────────────────────────────────────────────
 
     def create(
         self,
@@ -478,23 +416,6 @@ class JobStore:
         for jid in ids_to_stall:
             _record_failure_to_memory(self, jid, msg)
         return cur.rowcount
-
-    def retry(self, job_id: str) -> dict[str, Any]:
-        """Re-queue a failed/stalled job with the same payload."""
-        old = self.get(job_id)
-        if old["status"] not in {JobStatus.FAILED, JobStatus.STALLED, JobStatus.CANCELLED}:
-            raise ValueError(f"job is {old['status']}, cannot retry")
-        return self.create(
-            job_type=old["job_type"],
-            project_id=old["project_id"],
-            title=old.get("title") or "",
-            description=old.get("description") or "",
-            payload=old.get("payload") or {},
-            timeout_seconds=old.get("timeout_seconds"),
-            max_attempts=old.get("max_attempts") or 1,
-            parent_job_id=old["id"],
-            schedule_id=old.get("schedule_id"),
-        )
 
     def delete(self, job_id: str) -> bool:
         """Delete a record (does not affect a running job — it'll just

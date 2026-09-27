@@ -14,7 +14,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 
 2. **Source adapters.** The ingestion pipeline that turns "a URL or video_id" into a typed-topics-frontmatter markdown artifact + graph nodes/edges. Adapters live in `backend/sources/adapters/` and self-register at import time. Currently 28 adapters across 9 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`). Each adapter declares its `source_type`, `bucket_aliases`, `extractor_strategy`, `auto_extract`, and `auto_link_similarity`. See `backend/sources/SOURCE_ADAPTERS.md` for the full design.
 
-3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `scheduled_job`, `coding_task`, `extraction`, `file_indexing`, `image_extraction`, `iteration_loop`. APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
+3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop` (clients may create the first, second and fourth via `POST /api/jobs`; memory extraction and file indexing run inline, not as jobs). APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
 
 ## Directory layout
 
@@ -29,8 +29,8 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   └── browser_tools.py     Playwright browser tools (optional)
 │   ├── api/                     FastAPI routers (18 mounted routers)
 │   │   ├── chat.py              REST + websocket chat. Both run resolve_explicit + resolve_auto.
-│   │   ├── tasks.py             Schedule CRUD; run-now; rerun_job
-│   │   ├── jobs.py              Jobs CRUD
+│   │   ├── tasks.py             Schedule CRUD; run-now; approve; logs
+│   │   ├── jobs.py              Jobs CRUD + rerun (one endpoint for retry/rerun)
 │   │   ├── artifacts.py         Artifact CRUD + bulk export
 │   │   ├── files.py             Workspace files CRUD + document conversions
 │   │   ├── projects.py          Project metadata; reads/writes data/db/projects.json
@@ -42,7 +42,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── connections.py       GitHub PAT connections
 │   │   ├── conversations.py     Conversation history metadata updates
 │   │   ├── llm_endpoints.py     /api/llm/{endpoints,routes,profiles,usage,probe} — endpoints + task-class routing
-│   │   ├── settings.py          Legacy flat-config CRUD; still in place for backward compat
+│   │   ├── settings.py          App/messaging/chunking settings, secrets, search providers (LLM config is /api/llm/*)
 │   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match
 │   ├── sources/                 Source-adapter plugin registry — see SOURCE_ADAPTERS.md
 │   │   ├── base.py              SourceAdapter, IngestRequest, FetchedContent, AdapterResult
@@ -82,10 +82,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 │   │   ├── watchdog.py          Stall detector — kills jobs idle for 5 min
 │   │   └── handlers/            One file per job_type
 │   │       ├── autonomous_task.py    The big one — runs an agent loop with skill resolution
-│   │       ├── scheduled_job.py      Lightweight scheduled prompts
 │   │       ├── coding_task.py        Github sub-agent for PR-shaped coding work
-│   │       ├── extraction.py         Memory extractor
-│   │       ├── file_indexing.py      Workspace file indexer
 │   │       ├── image_extraction.py   Vision + OCR + topic extraction for uploaded image artifacts
 │   │       └── iteration_loop.py     Multi-turn execute/review loop with per-turn artifacts
 │   ├── skills/                  Skill system (callable recipes, distinct from scheduled tasks)
@@ -295,7 +292,9 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Repo protocol follows host exec.** `build_system_prompt(host_exec=…)` (AgentCore passes its own) shows the local git/run_command protocol only where those tools exist; background contexts get a short note pointing at github_* / start_coding_task.
 
-**Legacy `/api/settings` LLM keys** are read only by the one-shot migration; once `llm_config_migrated_v1` is set, writes to `llm_*`/`embedding_*`/etc. have no effect. Use `/api/llm/*`.
+**Legacy LLM vault keys** (`llm_*`, `embedding_*`, `prefill_*`, …) are read only by the one-shot migration in `llm_config/migration.py`; `/api/settings` no longer accepts or returns them. Use `/api/llm/*`.
+
+**Retired `scheduled_job`.** The type, its output sinks and `schedule_scheduled_job` are gone; `tasks.scheduler._enqueue_scheduled_job` survives only as a logging no-op so an APScheduler job persisted by an older build still loads.
 
 **Job heartbeats.** The autonomous_task handler emits a heartbeat on every tool call with the current plan step matched. The stall watchdog kills jobs idle for 5 min — the per-step heartbeat keeps it happy.
 

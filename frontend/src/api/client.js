@@ -131,20 +131,6 @@ export const systemApi = {
   executeUpdate: (payload) => api.post('/api/system/update/execute', payload),
 }
 
-export const sourcesApi = {
-  // Legacy aliases — kept for any existing call sites; new code should
-  // use connectionsApi.
-  listGitHub: (projectId) =>
-    api.get('/api/connections/github', { params: { project_id: projectId } }),
-  listRepos: (token) =>
-    api.post('/api/connections/github/repos', { token }),
-  createGitHub: (projectId, token, repo, defaultBranch) =>
-    api.post('/api/connections/github', {
-      project_id: projectId, token, repo, default_branch: defaultBranch,
-    }),
-  deleteGitHub: (id) => api.delete(`/api/connections/github/${id}`),
-}
-
 export const connectionsApi = {
   list: () => api.get('/api/connections/github'),
   listRepos: (token) =>
@@ -170,20 +156,12 @@ export const projectSettingsApi = {
   update: (projectId, body) => api.put(`/api/projects/${projectId}/settings`, body),
 }
 
-export const taskRunsApi = {
-  list: (params = {}) => api.get('/api/tasks/runs', { params }),
-  get: (id) => api.get(`/api/tasks/runs/${id}`),
-  delete: (id) => api.delete(`/api/tasks/runs/${id}`),
-  cancel: (id) => api.post(`/api/tasks/runs/${id}/cancel`),
-}
-
 // Phase H — unified jobs API
 export const jobsApi = {
   list: (params = {}) => api.get('/api/jobs', { params }),
   get: (id) => api.get(`/api/jobs/${id}`),
   create: (body) => api.post('/api/jobs', body),
   cancel: (id) => api.post(`/api/jobs/${id}/cancel`),
-  retry: (id) => api.post(`/api/jobs/${id}/retry`),
   rerun: (id) => api.post(`/api/jobs/${id}/rerun`),
   delete: (id) => api.delete(`/api/jobs/${id}`),
 }
@@ -295,12 +273,9 @@ export const filesApi = {
 export const settingsApi = {
   get: () => api.get('/api/settings'),
   update: (data) => api.put('/api/settings', data),
-  listModels: () => api.get('/api/settings/models'),
-  testConnection: () => api.get('/api/settings/test-connection'),
   listSecrets: () => api.get('/api/secrets'),
   setSecret: (key, value) => api.put(`/api/secrets/${key}`, { value }),
   deleteSecret: (key) => api.delete(`/api/secrets/${key}`),
-  restartTelegram: () => api.post('/api/settings/restart-telegram'),
   getSecurityLog: (limit = 200, offset = 0) =>
     api.get('/api/settings/security-log', { params: { limit, offset } }),
   clearSecurityLog: () => api.delete('/api/settings/security-log'),
@@ -321,10 +296,6 @@ export const llmApi = {
     api.post('/api/llm/endpoints', payload).then((r) => r.data),
   deleteEndpoint: (name) =>
     api.delete(`/api/llm/endpoints/${encodeURIComponent(name)}`).then((r) => r.data),
-  getRoles: () =>
-    api.get('/api/llm/roles').then((r) => r.data.roles),
-  setRoles: (roles) =>
-    api.put('/api/llm/roles', { roles }).then((r) => r.data.roles),
   probe: (payload) =>
     api.post('/api/llm/probe', payload).then((r) => r.data),
   taskClasses: () =>

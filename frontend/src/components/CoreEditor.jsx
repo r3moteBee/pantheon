@@ -1,6 +1,6 @@
 /**
  * CoreEditor — shared CodeMirror primitive used by SkillEditor,
- * PersonalityEditor, and FileRepository.
+ * PersonalityEditor and the artifact editors.
  *
  * Props:
  *   value       — string (controlled)
