@@ -188,7 +188,8 @@ def generate_self_doc() -> str:
                 routing_rows.append({
                     "class": cls, "position": "—",
                     "endpoint": "", "model": "",
-                    "note": f"not set — uses {parent}" if parent else "NOT CONFIGURED",
+                    "note": ("not set — chat router never picks it" if cls in ("quick", "long_context")
+                             else f"not set — uses {parent}" if parent else "NOT CONFIGURED"),
                 })
                 continue
             for i, e in enumerate(entries):
@@ -317,11 +318,27 @@ def generate_self_doc() -> str:
     md.append("\n### Model Routing (task classes)")
     md.append(
         "Every LLM call declares a task class; each class uses its primary model and falls "
-        "back down the list on errors. Classes: agent (chat/jobs/bots), code, extract "
-        "(JSON extraction), summarize, vision, image_gen (the generate_image tool), embed, "
-        "rerank. There are no 'chat'/'prefill' roles anymore — those were migrated to agent "
-        "and summarize. Configure in Settings → Model routing."
+        "back down the list on errors. Classes: agent (chat/jobs/bots), code, quick and "
+        "long_context (chat router only), extract (JSON extraction), summarize, vision, "
+        "image_gen (the generate_image tool), embed, rerank. There are no 'chat'/'prefill' "
+        "roles anymore — those were migrated to agent and summarize. Configure in "
+        "Settings → Model routing."
     )
+    try:
+        from llm_config import router as _chat_router
+        _rc = _chat_router.get_config()
+        md.append(
+            f"\n**Chat router:** {'on' if _rc['enabled'] else 'off'}"
+            f" (classifier {'on' if _rc['classifier'] else 'off'}, quick ≤ {_rc['quick_max_chars']} chars). "
+            "Each interactive chat turn picks a class before the tool loop starts: /model pin → "
+            "image the agent model can't see → context too long → skill's model_class → "
+            "code/traceback → recent code turns → short no-tool message (quick) → agent. A rule "
+            "only fires when its class has its own tool-capable model. The user can pin a "
+            "conversation with `/model <agent|quick|code|long_context|vision|auto>` or the model "
+            "picker next to the chat input; each reply shows which model answered."
+        )
+    except Exception:
+        pass
     if routing_rows:
         md.append("| Class | Position | Endpoint | Model | Profile / note |")
         md.append("| --- | --- | --- | --- | --- |")

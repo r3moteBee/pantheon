@@ -77,7 +77,17 @@ TASK_CLASSES: dict[str, dict] = {
     },
     "code": {
         "label": "Coding",
-        "description": "coding_task jobs (git/run_command). Empty = use Agent.",
+        "description": "coding_task jobs, and chat turns with code/tracebacks (chat router). Empty = use Agent.",
+        "requires": "tools", "inherits": "agent", "max_entries": 5,
+    },
+    "quick": {
+        "label": "Quick chat",
+        "description": "Chat router: short conversational turns with no tool intent. Use a fast tool-capable model. Empty = never routed here.",
+        "requires": "tools", "inherits": "agent", "max_entries": 5,
+    },
+    "long_context": {
+        "label": "Long context",
+        "description": "Chat router: turns whose history won't fit the Agent model's window. Needs a larger context window. Empty = never routed here.",
         "requires": "tools", "inherits": "agent", "max_entries": 5,
     },
     "extract": {
@@ -112,7 +122,7 @@ TASK_CLASSES: dict[str, dict] = {
     },
 }
 
-TaskClass = Literal["agent", "code", "extract", "summarize", "vision", "image_gen", "embed", "rerank"]
+TaskClass = Literal["agent", "code", "quick", "long_context", "extract", "summarize", "vision", "image_gen", "embed", "rerank"]
 
 # Legacy role -> task class (for resolve_role() back-compat and migration).
 ROLE_TO_CLASS = {"chat": "agent", "prefill": "summarize", "vision": "vision",

@@ -338,6 +338,10 @@ export const llmApi = {
   resetProfile: (endpoint, model) =>
     api.delete('/api/llm/profiles', { params: { endpoint, model } }).then((r) => r.data),
   usage: (hours = 24) => api.get('/api/llm/usage', { params: { hours } }).then((r) => r.data),
+  getRouter: () => api.get('/api/llm/router').then((r) => r.data),
+  setRouter: (patch) => api.put('/api/llm/router', patch).then((r) => r.data),
+  routerDecisions: (hours = 24) =>
+    api.get('/api/llm/router/decisions', { params: { hours } }).then((r) => r.data),
 }
 
 // MCP Connections API

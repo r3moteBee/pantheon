@@ -7,6 +7,7 @@ import PersonalityEditor from './PersonalityEditor'
 import EndpointList from './settings/EndpointList'
 import ModelRouting from './settings/ModelRouting'
 import RoutingUsage from './settings/RoutingUsage'
+import ChatRouter from './settings/ChatRouter'
 import HelpDrawer from './help/HelpDrawer'
 import MessagingSettings from './MessagingSettings'
 
@@ -15,7 +16,8 @@ function LLMSection() {
   return (
     <div className='space-y-6'>
       <EndpointList onChange={() => setRefreshKey((k) => k + 1)} />
-      <ModelRouting refreshKey={refreshKey} />
+      <ModelRouting refreshKey={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
+      <ChatRouter refreshKey={refreshKey} />
       <RoutingUsage />
     </div>
   )

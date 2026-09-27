@@ -174,3 +174,52 @@ async def revert_profile(endpoint: str, model: str) -> dict[str, Any]:
 async def read_usage(hours: float = 24.0) -> dict[str, Any]:
     from llm_config.usage import summary
     return summary(max(0.1, min(hours, 24 * 30)))
+
+
+# ── Chat router (per-turn model selection) ──────────────────────────
+
+class RouterConfigPayload(BaseModel):
+    enabled: bool | None = None
+    classifier: bool | None = None
+    quick_max_chars: int | None = None
+    sticky_turns: int | None = None
+
+
+def _router_view() -> dict[str, Any]:
+    from llm_config import router as chat_router
+    from llm_config.models import TASK_CLASSES
+    classes = []
+    for cls in chat_router.CHAT_CLASSES:
+        if cls == "agent":
+            entry = chat_router._agent_primary()
+            usable, why = (entry is not None), ("" if entry else "no agent model configured")
+        else:
+            entry = chat_router._own_primary(cls)
+            usable, why = chat_router._usable(cls, need_vision=(cls == "vision"))
+        classes.append({
+            "name": cls, "label": TASK_CLASSES[cls]["label"], "usable": usable,
+            "reason": why, "model": (entry or {}).get("model", ""),
+            "endpoint": (entry or {}).get("endpoint", ""),
+        })
+    return {"config": chat_router.get_config(), "classes": classes}
+
+
+@router.get("/llm/router")
+async def read_router() -> dict[str, Any]:
+    return _router_view()
+
+
+@router.put("/llm/router")
+async def update_router(payload: RouterConfigPayload) -> dict[str, Any]:
+    from llm_config import router as chat_router
+    try:
+        chat_router.set_config(payload.model_dump(exclude_none=True))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _router_view()
+
+
+@router.get("/llm/router/decisions")
+async def read_router_decisions(hours: float = 24.0) -> dict[str, Any]:
+    from llm_config.usage import decision_summary
+    return decision_summary(max(0.1, min(hours, 24 * 30)))
