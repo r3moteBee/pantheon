@@ -391,3 +391,11 @@ async def test_generate_image_tool_accepts_presets_and_ratios():
             assert "invalid size" not in res, (size, res)
         res = await execute_tool("generate_image", {"prompt": "x", "size": "big; rm -rf"}, None)
         assert "invalid size" in res
+
+
+def test_gemma4_is_tool_capable():
+    from llm_config.known_models import guess_profile
+    for m in ("gemma4-26b-chat", "gemma-4-27b-it", "google/gemma4:26b"):
+        p = guess_profile(m)
+        assert p.tools and p.source == "known", m
+    assert not guess_profile("gemma2-9b").tools
