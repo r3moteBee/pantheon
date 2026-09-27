@@ -42,6 +42,8 @@ _RULES: list[tuple[str, dict]] = [
     # ── Google ──
     (r"gemini.*(flash|lite)", dict(tools=True, vision=True, tier="fast", context_window=1_000_000)),
     (r"gemini", dict(tools=True, vision=True, tier="frontier", context_window=1_000_000)),
+    # Gemma 4 has native function calling; Gemma 3 only via prompting.
+    (r"gemma-?4", dict(tools=True, vision=True, tier="standard")),
     (r"gemma-?3", dict(vision=True, tier="fast", context_window=128_000)),
     (r"gemma", dict(tier="fast", context_window=8_000)),
 
