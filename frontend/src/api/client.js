@@ -21,8 +21,20 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !error.config?.url?.includes('/api/auth/')) {
       window.dispatchEvent(new Event('auth:logout'))
     }
-    const message = error.response?.data?.detail || error.message || 'Request failed'
-    return Promise.reject(new Error(message))
+    // One place turns an API failure into a readable Error: callers use
+    // err.message (FastAPI's detail may be a string, a validation list or
+    // an object) and err.status.
+    const detail = error.response?.data?.detail
+    let message
+    if (typeof detail === 'string') message = detail
+    else if (Array.isArray(detail)) message = detail.map((d) => d?.msg || JSON.stringify(d)).join('; ')
+    else if (detail) message = detail.message || JSON.stringify(detail)
+    else message = error.message || 'Request failed'
+    const err = new Error(message)
+    err.status = error.response?.status
+    err.data = error.response?.data
+    err.response = error.response
+    return Promise.reject(err)
   }
 )
 
