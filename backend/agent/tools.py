@@ -997,16 +997,25 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "generate_image",
             "description": (
-                "Generate image(s) from a text prompt with the configured image "
-                "model (Settings → Model Routing → Image generation). Saves each "
-                "image as a durable artifact and shows it in the chat. Write a "
-                "specific, visual prompt (subject, composition, style, lighting). "
-                "Do not call show_file afterwards — the image is already displayed."
+                "Generate image(s) with the configured image model, or edit an existing "
+                "image. Saves each result as an artifact and shows it in the chat — do "
+                "not call show_file afterwards.\n"
+                "Prompt writing: start with the main subject and what it IS or DOES "
+                "(e.g. 'a basketball whose surface is the cratered moon, dribbled by a "
+                "bunny'); name each object once — image models draw every noun they "
+                "see, so 'the moon and a basketball' yields two objects, and writing "
+                "'no basketball' tends to ADD one — never mention what should not "
+                "appear. Then setting, composition, style, lighting.\n"
+                "To fix or change a previous image, pass its artifact id as "
+                "source_image and describe only the change ('make the bunny dribble "
+                "the moon-ball with its front paw; remove the orange basketball') — "
+                "this keeps what was right instead of starting over."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "Detailed description of the image"},
+                    "prompt": {"type": "string", "description": "What to draw (or, with source_image, what to change)"},
+                    "source_image": {"type": "string", "description": "Optional: artifact id (or path) of an image to edit — e.g. the id from a previous generate_image result"},
                     "size": {"type": "string", "description": "WxH (1024x1024 default, 1536x1024, 1024x1536), an aspect ratio (16:9), or a named preset (square_hd, landscape_16_9, portrait_4_3, …). Any form works with any backend — it is converted automatically.", "default": "1024x1024"},
                     "n": {"type": "integer", "description": "Number of images (1-4)", "default": 1},
                     "quality": {"type": "string", "description": "Optional provider quality hint (e.g. low/medium/high, standard/hd)"},
@@ -4214,8 +4223,27 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
         n = 1
     quality = (tool_args.get("quality") or "").strip() or None
 
+    source_ref = (tool_args.get("source_image") or "").strip()
+    source_bytes: list[bytes] | None = None
+    source_artifact = None
+    if source_ref:
+        store_ = get_store()
+        ref = source_ref.removeprefix("artifact://")
+        a = store_.get(ref)
+        if a is None:
+            slug_ = project_slug(project_id)
+            p_ = ref if ref.startswith(f"{slug_}/") else f"{slug_}/{ref.lstrip('/')}"
+            a = store_.get_by_path(project_id, p_) or store_.get_by_path(project_id, ref)
+        if a is None:
+            return f"generate_image: source_image {source_ref!r} not found (use an artifact id from a previous result)."
+        if not str(a.get("content_type") or "").startswith("image/") or not a.get("blob_path"):
+            return f"generate_image: source_image {source_ref!r} is not an image artifact."
+        source_bytes = [store_._load_blob(a["blob_path"])]
+        source_artifact = a
+
     try:
-        images = await provider.generate_image(prompt, size=size, n=n, quality=quality)
+        images = await provider.generate_image(prompt, size=size, n=n, quality=quality,
+                                               images=source_bytes)
     except Exception as e:
         return (f"Image generation failed: {e}\n"
                 "Size format is converted automatically (WxH / ratio / preset), so "
@@ -4244,6 +4272,7 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
                     project_id=project_id, path=path, content=data, content_type=mime,
                     title=prompt[:120], tags=["generated-image"],
                     source={"kind": "image_generation", "prompt": prompt[:2000],
+                            "edited_from": source_artifact["id"] if source_artifact else None,
                             "model": getattr(provider, "model", ""), "size": size,
                             "session_id": session_id or ""},
                     edited_by=session_id or "agent",
@@ -4257,7 +4286,8 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
             continue
         lines.append(f"[DISPLAY:artifact://{a['id']}]")
         lines.append(f"Saved image artifact {a['path']} (id={a['id']}, {len(data) // 1024}KB).")
-    lines.append("The image is displayed to the user. Do not call show_file for it.")
+    lines.append("The image is displayed to the user. Do not call show_file for it. "
+                 "To adjust it, call generate_image again with source_image=<its id>.")
     return "\n".join(lines)
 
 

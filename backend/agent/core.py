@@ -12,6 +12,7 @@ from typing import Any, AsyncGenerator
 from agent.personality import get_full_personality
 from agent.prompts import build_system_prompt
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
+from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from config import get_settings
 from models.provider import ModelProvider
 
@@ -437,6 +438,8 @@ class AgentCore:
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
 
+            tool_names = {t.get("function", {}).get("name") for t in all_tools}
+
             while iterations < iteration_limit:
                 iterations += 1
                 self._progress()
@@ -444,8 +447,13 @@ class AgentCore:
                 current_text = ""
 
                 if stream:
-                    # Streaming mode
+                    # Streaming mode. A reply that starts like a textual tool
+                    # call ("{", "```", "<tool_call") is held back until the
+                    # round ends so it can be recovered as a real call
+                    # instead of shown to the user (agent/text_tool_calls.py).
                     stream_error = False
+                    hold: bool | None = None
+                    held = ""
                     async for chunk in self.provider.chat(
                         messages=messages,
                         tools=all_tools,
@@ -454,7 +462,14 @@ class AgentCore:
                         self._progress()
                         if chunk["type"] == "text_delta":
                             current_text += chunk["content"]
-                            yield chunk
+                            if hold is False:
+                                yield chunk
+                                continue
+                            held += chunk["content"]
+                            hold = might_be_tool_call(held)
+                            if hold is False:
+                                yield {"type": "text_delta", "content": held}
+                                held = ""
                         elif chunk["type"] == "tool_call":
                             tool_calls_this_round.append(chunk)
                             yield chunk
@@ -463,6 +478,18 @@ class AgentCore:
                             stream_error = True
                         elif chunk["type"] == "done":
                             pass
+                    if held and not stream_error and not tool_calls_this_round:
+                        recovered = recover_tool_calls(held, tool_names)
+                        if recovered:
+                            logger.info("Recovered %d tool call(s) the model wrote as text: %s",
+                                        len(recovered), [c["name"] for c in recovered])
+                            tool_calls_this_round = recovered
+                            current_text = ""
+                            for tc in recovered:
+                                yield tc
+                            held = ""
+                    if held:
+                        yield {"type": "text_delta", "content": held}
                     if stream_error:
                         break
                 else:
@@ -473,6 +500,13 @@ class AgentCore:
                     )
                     current_text = response.get("content", "")
                     tool_calls_this_round = response.get("tool_calls", [])
+                    if current_text and not tool_calls_this_round:
+                        recovered = recover_tool_calls(current_text, tool_names)
+                        if recovered:
+                            logger.info("Recovered %d tool call(s) the model wrote as text: %s",
+                                        len(recovered), [c["name"] for c in recovered])
+                            tool_calls_this_round = recovered
+                            current_text = ""
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}
                     # Streaming mode yields tool_call chunks as they arrive.
