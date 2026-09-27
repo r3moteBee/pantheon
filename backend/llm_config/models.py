@@ -151,7 +151,9 @@ class ModelProfile(BaseModel):
     embedding: bool = False
     tier: Literal["fast", "standard", "frontier"] = "standard"
     notes: str = ""
-    source: Literal["known", "user", "unknown"] = "unknown"
+    # user = edited in the UI; endpoint = advertised by the model server's
+    # /models (or Ollama /api/show); known = guessed from the model name.
+    source: Literal["known", "user", "endpoint", "unknown"] = "unknown"
 
 
 class ProfilesPayload(BaseModel):

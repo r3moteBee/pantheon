@@ -104,6 +104,11 @@ async def probe_endpoint(req: ProbeRequest) -> dict[str, Any]:
         result = await _probe.probe_models(
             base_url=ep.base_url, api_type=ep.api_type, api_key=api_key,
         )
+        if result.ok:
+            # What the server says about each model now feeds its profile.
+            from llm_config.store import record_advertised
+            record_advertised(ep.name, result.capabilities)
+            reset_provider()
     else:
         if not (req.base_url and req.api_type):
             raise HTTPException(status_code=400, detail="base_url and api_type required for ad-hoc probe")
@@ -113,6 +118,7 @@ async def probe_endpoint(req: ProbeRequest) -> dict[str, Any]:
     return {
         "ok": result.ok, "models": result.models, "error": result.error,
         "base_url": result.base_url, "api_type": result.api_type,
+        "capabilities": result.capabilities,
     }
 
 

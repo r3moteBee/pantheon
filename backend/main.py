@@ -118,6 +118,15 @@ async def lifespan(app: FastAPI):
             if settings.allow_insecure_defaults else "",
         )
 
+    # Learn model capabilities the configured endpoints publish (best-effort,
+    # in the background so a slow or offline server can't delay startup).
+    try:
+        from llm_config.store import refresh_advertised
+        from utils.background import spawn
+        spawn(refresh_advertised(), name="llm-capability-refresh")
+    except Exception:
+        logger.warning("model capability refresh not started", exc_info=True)
+
     try:
         from memory.archival import migrate_stray_notes
         migrate_stray_notes()
