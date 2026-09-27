@@ -5,9 +5,8 @@ import {
   Save, Download, X, Tag, Edit3, Eye, History, Pin, MoreVertical, FileCode,
   PanelLeftClose, PanelLeftOpen, Move, Copy,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { useSearchParams } from 'react-router-dom'
 import DOMPurify from 'dompurify'
-import remarkGfm from 'remark-gfm'
 import CodeMirror from '@uiw/react-codemirror'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
@@ -17,7 +16,7 @@ import FolderTree from '../components/FolderTree'
 import MoveModal from '../components/MoveModal'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
-import { mermaidMarkdownComponents } from '../components/markdownComponents'
+import Markdown from '../components/Markdown'
 import Mermaid from '../components/Mermaid'
 import ExportMenu from '../components/ExportMenu'
 
@@ -34,6 +33,8 @@ function iconForType(ct) {
   if (ct === 'application/pdf') return FileType
   return FileText
 }
+
+const notify = (type, message) => useStore.getState().addNotification({ type, message })
 
 function formatBytes(n) {
   if (n < 1024) return `${n} B`
@@ -77,7 +78,12 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const [sort, setSort] = useState('modified_desc')
 
   const [selected, setSelected] = useState(new Set()) // ids checked in list
-  const [activeId, setActiveId] = useState(null)
+  // /artifacts?id=<artifact id> opens that artifact (e.g. a job's output).
+  // The embedded per-project tab (lockedProjectId) ignores the URL.
+  const [searchParams] = useSearchParams()
+  const linkedId = lockedProjectId ? null : searchParams.get('id')
+  const [activeId, setActiveId] = useState(linkedId)
+  useEffect(() => { if (linkedId) setActiveId(linkedId) }, [linkedId])
 
   const [allFoldersByProject, setAllFoldersByProject] = useState({})
   const [allProjects, setAllProjects] = useState([])
@@ -120,7 +126,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       setTagCounts(tagsRes.data.tags || {})
     } catch (e) {
       if (seq !== refreshSeq.current) return
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       if (seq === refreshSeq.current) setLoading(false)
     }
@@ -174,7 +180,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       const ct = (res.headers?.['content-type'] || '').toLowerCase()
       if (!ct.includes('zip') && !ct.includes('octet-stream')) {
         const text = await res.data.text?.()
-        alert('Export returned non-zip response: ' + (text || ct).slice(0, 200))
+        notify('error', 'Export returned non-zip response: ' + (text || ct).slice(0, 200))
         return
       }
       const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: 'application/zip' })
@@ -183,7 +189,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       a.href = url; a.download = 'artifacts.zip'; a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      alert('Export failed: ' + (e?.response?.data?.detail || e.message))
+      notify('error', 'Export failed: ' + e.message)
     }
   }
 
@@ -216,7 +222,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       const verb = mode === 'duplicate' ? 'Duplicated' : 'Moved'
       setToast(`${verb} ${basename} → ${newPath}${renamed ? ' (renamed to avoid conflict)' : ''}`)
     } catch (e) {
-      setToast(`${mode === 'duplicate' ? 'Duplicate' : 'Move'} failed: ${e?.response?.data?.detail || e.message}`)
+      setToast(`${mode === 'duplicate' ? 'Duplicate' : 'Move'} failed: ${e.message}`)
     }
   }
 
@@ -645,7 +651,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
       setEditSummary('')
       await load(); onChanged?.()
     } catch (e) {
-      alert('Save failed: ' + (e?.response?.data?.detail || e.message))
+      notify('error', 'Save failed: ' + e.message)
     } finally { setSaving(false) }
   }
 
@@ -801,7 +807,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
             onRestore={async (n) => { await artifactsApi.restoreVersion(id, n); await load(); onChanged?.() }}
             onDiff={async (a, b) => {
               const res = await artifactsApi.diff(id, a, b)
-              alert(res.data.diff)
+              return res.data.diff
             }}
           />
         )}
@@ -867,9 +873,9 @@ function PreviewBody({ artifact, preview }) {
     if (ct === 'text/markdown') {
       return (
         <div className="prose prose-invert max-w-3xl mx-auto p-6">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mermaidMarkdownComponents}>
+          <Markdown>
             {cleanMarkdownForPreview(preview.content || '')}
-          </ReactMarkdown>
+          </Markdown>
         </div>
       )
     }
@@ -954,6 +960,11 @@ function CrossProjectMoveConfirm({ info, projects, onCancel, onConfirm }) {
 function VersionPanel({ artifactId, versions, onRestore, onDiff }) {
   const [diffA, setDiffA] = useState(null)
   const [diffB, setDiffB] = useState(null)
+  const [diffText, setDiffText] = useState(null)
+  const runDiff = async () => {
+    try { setDiffText(await onDiff(diffA, diffB)) }
+    catch (e) { notify('error', 'Diff failed: ' + e.message) }
+  }
   return (
     <div className="w-72 border-l border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-2 text-xs">
       <div className="font-semibold text-gray-300 flex items-center gap-1">
@@ -976,11 +987,20 @@ function VersionPanel({ artifactId, versions, onRestore, onDiff }) {
       ))}
       {diffA && diffB && diffA !== diffB && (
         <button
-          onClick={() => onDiff(diffA, diffB)}
+          onClick={runDiff}
           className="w-full px-2 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white text-xs"
         >
           Diff v{diffA} → v{diffB}
         </button>
+      )}
+      {diffText !== null && (
+        <div className="border border-gray-800 rounded">
+          <div className="flex items-center justify-between px-2 py-1 border-b border-gray-800 text-gray-400">
+            <span>Diff</span>
+            <button onClick={() => setDiffText(null)} className="hover:text-gray-200">Close</button>
+          </div>
+          <pre className="p-2 max-h-96 overflow-auto whitespace-pre font-mono text-[11px] text-gray-300">{diffText || '(no differences)'}</pre>
+        </div>
       )}
     </div>
   )
@@ -1017,7 +1037,7 @@ function CreateArtifactModal({ projects, currentProjectId, currentFolder, onClos
       })
       onComplete()
     } catch (err) {
-      setError(err?.response?.data?.detail || err.message)
+      setError(err.message)
     } finally {
       setSubmitting(false)
     }
@@ -1165,7 +1185,7 @@ function UploadArtifactModal({ projects, currentProjectId, currentFolder, onClos
       })
       onComplete()
     } catch (err) {
-      setError(err?.response?.data?.detail || err.message)
+      setError(err.message)
     } finally {
       setSubmitting(false)
     }
