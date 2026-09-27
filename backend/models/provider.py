@@ -155,6 +155,29 @@ def _presets_in_error(err: BaseException) -> list[str]:
     return list(dict.fromkeys(_PRESET_RE.findall(str(err).lower())))
 
 
+def _image_mime_of(data: bytes) -> str:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
+def _image_prompt_content(prompt: str, images: list[bytes] | None) -> Any:
+    """Chat-mode user content: plain prompt, or prompt + source images
+    (image-edit models such as qwen-image-edit read them from here)."""
+    if not images:
+        return prompt
+    import base64
+    return [{"type": "text", "text": prompt}] + [
+        {"type": "image_url",
+         "image_url": {"url": f"data:{_image_mime_of(img)};base64,{base64.b64encode(img).decode()}"}}
+        for img in images
+    ]
+
+
 def _image_refs_from_chat(data: dict[str, Any]) -> list[str]:
     """Image URLs / data URIs from a chat-completions image response.
     Handles message.images[].image_url.url, content parts of type
@@ -487,7 +510,7 @@ class ModelProvider:
 
     async def generate_image(
         self, prompt: str, *, size: str = "1024x1024", n: int = 1,
-        quality: str | None = None,
+        quality: str | None = None, images: list[bytes] | None = None,
     ) -> list[bytes]:
         """Generate images; returns raw image bytes.
 
@@ -504,32 +527,34 @@ class ModelProvider:
         style = _IMAGE_API_STYLE.get(key)
         if style != "chat":
             try:
-                images = await self._images_with_preset_retry(
-                    self._generate_image_openai, prompt, size=size, n=n, quality=quality)
+                out = await self._images_with_preset_retry(
+                    self._generate_image_openai, prompt, size=size, n=n, quality=quality,
+                    images=images)
                 _IMAGE_API_STYLE[key] = "images"
-                return images
+                return out
             except LLMHTTPError as e:
                 if style == "images" or e.status not in (400, 404, 405, 422):
                     raise
                 logger.info("%s: /images/generations failed (%s) — trying chat image mode",
                             self.model, e.status)
-        images = await self._images_with_preset_retry(
-            self._generate_image_chat, prompt, size=size, n=n, quality=quality)
+        out = await self._images_with_preset_retry(
+            self._generate_image_chat, prompt, size=size, n=n, quality=quality, images=images)
         _IMAGE_API_STYLE[key] = "chat"
-        return images
+        return out
 
     async def _images_with_preset_retry(self, fn, prompt: str, *, size: str, n: int,
-                                        quality: str | None) -> list[bytes]:
+                                        quality: str | None,
+                                        images: list[bytes] | None = None) -> list[bytes]:
         """Call ``fn`` with the size in its native spelling; if the backend
         rejects it with an error naming presets (``square_hd`` …), retry once
         with the nearest preset and remember that this model wants presets."""
         key = (self.base_url, self.model)
         field = _IMAGE_WANTS_PRESET.get(key)
         if field:
-            return await fn(prompt, size=size, n=n, quality=quality,
+            return await fn(prompt, size=size, n=n, quality=quality, images=images,
                             preset=(field, _size_preset(size)))
         try:
-            return await fn(prompt, size=size, n=n, quality=quality, preset=None)
+            return await fn(prompt, size=size, n=n, quality=quality, images=images, preset=None)
         except LLMHTTPError as e:
             allowed = _presets_in_error(e)
             if e.status not in (400, 422) or not allowed:
@@ -537,13 +562,14 @@ class ModelProvider:
             field = "image_size" if "image_size" in str(e).lower() else "aspect_ratio"
             preset = _size_preset(size, allowed)
             logger.info("%s wants named image sizes — retrying with %s=%s", self.model, field, preset)
-            images = await fn(prompt, size=size, n=n, quality=quality, preset=(field, preset))
+            out = await fn(prompt, size=size, n=n, quality=quality, images=images, preset=(field, preset))
             _IMAGE_WANTS_PRESET[key] = field
-            return images
+            return out
 
     async def _generate_image_openai(self, prompt: str, *, size: str, n: int,
                                      quality: str | None,
-                                     preset: tuple[str, str] | None = None) -> list[bytes]:
+                                     preset: tuple[str, str] | None = None,
+                                     images: list[bytes] | None = None) -> list[bytes]:
         import base64
         # /images/generations always carries size in "size", preset or pixels.
         payload: dict[str, Any] = {"model": self.model, "prompt": prompt, "n": n,
@@ -551,8 +577,16 @@ class ModelProvider:
         if quality:
             payload["quality"] = quality
         async with pooled_client(timeout=300.0) as client:
-            resp = await client.post(f"{self.base_url}/images/generations",
-                                     headers=self._headers(), json=payload)
+            if images:
+                # Edit: OpenAI /images/edits takes multipart with the source image(s).
+                headers = {k: v for k, v in self._headers().items() if k.lower() != "content-type"}
+                files = [("image[]" if len(images) > 1 else "image",
+                          (f"source-{i}.png", img, _image_mime_of(img))) for i, img in enumerate(images)]
+                resp = await client.post(f"{self.base_url}/images/edits", headers=headers,
+                                         data={k: str(v) for k, v in payload.items()}, files=files)
+            else:
+                resp = await client.post(f"{self.base_url}/images/generations",
+                                         headers=self._headers(), json=payload)
         if resp.status_code >= 400:
             raise LLMHTTPError(resp.status_code, _format_llm_error(resp.status_code, resp.text))
         images: list[bytes] = []
@@ -567,7 +601,8 @@ class ModelProvider:
 
     async def _generate_image_chat(self, prompt: str, *, size: str, n: int,
                                    quality: str | None,
-                                   preset: tuple[str, str] | None = None) -> list[bytes]:
+                                   preset: tuple[str, str] | None = None,
+                                   images: list[bytes] | None = None) -> list[bytes]:
         image_config: dict[str, Any] = {"num_images": n, "aspect_ratio": _aspect_ratio(size)}
         if preset:
             image_config[preset[0]] = preset[1]
@@ -576,7 +611,7 @@ class ModelProvider:
         payload: dict[str, Any] = {
             "model": self.model,
             "modalities": ["image", "text"],
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": _image_prompt_content(prompt, images)}],
             "image_config": image_config,
             "stream": False,
         }
