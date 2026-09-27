@@ -1,5 +1,7 @@
 # Minimal Pantheon MCP Registry
 
+> ⚠️ **Proposal — not implemented.** Pantheon has no MCP-registry client or Settings → MCP → Registries UI; MCP servers are added one at a time under Connections → MCP servers. Only the *skill* registry protocol ([skill-registry-protocol.md](../../skill-registry-protocol.md)) is built.
+
 A ~150-line FastAPI reference implementation of the
 [Pantheon MCP Registry Protocol](../../mcp-registry-protocol.md) v1.0.
 

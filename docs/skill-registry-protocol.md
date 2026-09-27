@@ -235,7 +235,7 @@ Returns `image/png` or `image/svg+xml`. Max 256 KiB. Cached for 24 hours.
   document, sees a diff against the currently installed version, and
   explicitly accepts. If the user has locally evolved the skill since
   install, the conflict resolution flow from Section 11.5 of
-  `SKILLS_FEATURE_PLAN.md` applies (accept hub / keep local / AI-assisted
+  `archive/SKILLS_FEATURE_PLAN.md` applies (accept hub / keep local / AI-assisted
   merge).
 
 ---

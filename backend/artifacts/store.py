@@ -617,7 +617,7 @@ class ArtifactStore:
         limit: int = 500,
     ) -> list[dict[str, Any]]:
         """Chronological forward-walk over artifacts. See spec
-        docs/superpowers/specs/2026-05-17-agent-list-api-design.md.
+        docs/archive/superpowers/specs/2026-05-17-agent-list-api-design.md.
         """
         if after_id is not None and updated_since is None:
             raise ValueError("after_id requires updated_since")

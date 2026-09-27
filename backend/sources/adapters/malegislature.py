@@ -14,7 +14,7 @@ Genres:
   - malegis/roll-call             one floor roll call
   - malegis/committee-vote        one committee vote on a document
 
-See ``docs/superpowers/specs/2026-05-08-massachusetts-legislature-adapter-design.md``
+See ``docs/archive/superpowers/specs/2026-05-08-massachusetts-legislature-adapter-design.md``
 for the full design.
 """
 from __future__ import annotations
@@ -558,7 +558,7 @@ def _extract_mgl_citations(text: str) -> list[dict[str, "str | None"]]:
     FOLLOW-UP: bills and session laws populate `mgl_citations` in
     frontmatter, but the file_indexer's typed-topics graph branch
     doesn't yet consume them. See the deferred-follow-ups section in
-    docs/superpowers/plans/2026-05-08-massachusetts-legislature-adapter.md.
+    docs/archive/superpowers/plans/2026-05-08-massachusetts-legislature-adapter.md.
     """
     if not text:
         return []

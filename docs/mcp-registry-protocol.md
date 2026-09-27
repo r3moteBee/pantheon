@@ -1,9 +1,11 @@
 # Pantheon MCP Registry Protocol
 
 **Version:** 1.0
-**Status:** Draft
+**Status:** Proposal (not implemented)
 **Audience:** Enterprise platform teams standing up an internal MCP server registry
 that Pantheon agents can browse and install from.
+
+> ⚠️ **Proposal — not implemented.** Pantheon has no MCP-registry client or Settings → MCP → Registries UI; MCP servers are added one at a time under Connections → MCP servers. Only the *skill* registry protocol ([skill-registry-protocol.md](skill-registry-protocol.md)) is built.
 
 ---
 

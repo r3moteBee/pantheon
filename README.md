@@ -25,10 +25,10 @@ curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh |
 ## ✨ Core Features
 
 * **🧠 Five-Tier Memory:** Combines working (in-conversation), episodic (SQLite chat logs), semantic (ChromaDB embeddings), graph (concepts and relationships in SQLite), and archival memory in a single `recall()` query.
-* **📥 Ingestion Pipeline:** Includes 28 built-in source adapters (YouTube, blogs, PDFs, websites, GitHub, etc.) that fetch URLs and generate structured artifacts and graph nodes.
+* **📥 Ingestion Pipeline:** 29 built-in source adapters across 10 mechanisms (YouTube, blog, PDF, web, forum, podcast, GitHub, eCFR, MA Legislature, SEC EDGAR) that turn a URL or ID into a structured artifact plus graph nodes. The agent's `ingest_source` tool keeps a source; `web_fetch` just reads a page without saving it.
 * **🕸️ Knowledge Graph:** Automatically extracts entities and relationships (e.g. concepts, organizations, authors) to find semantic overlaps and connect related ideas.
 * **⚙️ Async Jobs & Skills:** Unified background worker powered by APScheduler supporting autonomous workflows, scheduled tasks, and modular prompt recipes (skills).
-* **🔌 MCP & LLM Flexibility:** Compliant Model Context Protocol (MCP) client supporting API keys and OAuth 2.1 authentication. Map different models to distinct roles (chat, prefill, embedding, vision, rerank).
+* **🔌 MCP & LLM Flexibility:** Model Context Protocol (MCP) client with API-key or OAuth 2.1 auth. LLMs are configured as named endpoints plus per-task-class routes (`agent`, `code`, `quick`, `long_context`, `extract`, `summarize`, `vision`, `image_gen`, `embed`, `rerank`) with ordered fallbacks, and an optional per-turn chat router (`/model <class|auto>` pins a class).
 * **🔒 Encrypted Vault:** Securely manages sensitive credentials, API keys, and OAuth tokens using Fernet encryption.
 * **🖥️ Web UI:** Integrated responsive dashboard for chatting, viewing artifacts, exploring the knowledge graph, configuring MCP connections, and tuning model parameters.
 
@@ -59,32 +59,29 @@ Runs all components in isolated Docker containers.
   make logs       # Follow logs from all services
   make ps         # List running containers
   ```
-* **Endpoints:** Web UI is served at `http://localhost:8000`, API documentation at `http://localhost:8000/docs`.
+* **Endpoints:** nginx serves the Web UI at `http://localhost` (port 80) and proxies `/api`, `/ws` and `/docs` to the backend; the backend's own port 8000 is bound to 127.0.0.1 only.
 
 ---
 
 ## 🔧 Configuration
 
-Your primary configuration resides in `~/pantheon/.env`. You can also configure named LLM endpoints and map roles directly in the Web UI under **Settings → LLM Endpoints** (which overrides env values).
+Your primary configuration resides in `~/pantheon/.env`. LLMs are best configured in the Web UI under **Settings → LLMs**: add named endpoints, then route models to task classes. The `LLM_*` / `EMBEDDING_MODEL` env values are only the fallback used when no route is configured for the agent / embed class.
 
 ### Common `.env` Settings:
 ```env
-# Primary LLM Connection
+# Fallback LLM connection (used until routes are set in Settings → LLMs)
 LLM_BASE_URL=insert-llm-base-url-here
 LLM_API_KEY=insert-llm-api-key-here
 LLM_MODEL=insert-llm-model-name-here
-
-# Optional Fast/Prefill Model (for summarization/background tasks)
-LLM_PREFILL_MODEL=insert-optional-prefill-model-here
-
-# Embedding Model Configuration
 EMBEDDING_MODEL=insert-embedding-model-here
 
 # Security & Secrets (Vault keys are auto-generated on install)
 VAULT_MASTER_KEY=...
 SECRET_KEY=...
-AUTH_PASSWORD=insert-auth-password-here  # Leave empty to disable authentication
+AUTH_PASSWORD=insert-auth-password-here  # Empty = no login; then only IP, localhost and private-TLD Host names (or ALLOWED_HOSTS) are served
 ```
+
+Logging in sets an HttpOnly `pantheon_session` cookie (expires after `AUTH_SESSION_DAYS`, default 30); scripts can send `Authorization: Bearer <token>` instead. If `VAULT_MASTER_KEY`, `SECRET_KEY` or `AUTH_PASSWORD` are left at their placeholder values, Pantheon only answers loopback clients.
 
 ---
 
@@ -92,10 +89,10 @@ AUTH_PASSWORD=insert-auth-password-here  # Leave empty to disable authentication
 
 Pantheon is built to be easily customizable:
 
-* **Add an LLM Endpoint:** Go to **Settings → LLM Endpoints** in the Web UI, add a custom provider/base URL, click **Probe** to pull models, and assign them to roles.
+* **Add an LLM Endpoint:** In **Settings → LLMs**, add an endpoint (OpenAI-compatible, Anthropic, Ollama or custom), click **Probe** to pull its models, then add them to task-class routes under **Model routing**.
 * **Add a Custom Tool:** Edit `backend/agent/tools.py` to add a new schema to `TOOL_SCHEMAS` and implement its execution block in the dispatch method.
 * **Create a Source Adapter:** Subclass `SourceAdapter` in `backend/sources/adapters/` and import/register it in `backend/sources/adapters/__init__.py`.
-* **Add a Custom Skill:** Type `/create-skill` in chat to let the agent scaffold one for you, or manually write a `skill.json` and `instructions.md` inside `data/skills/<slug>/`.
+* **Add a Custom Skill:** Ask the agent to create one (it uses the `create_skill` tool), use **New** on the Skills page, or write `skill.json` + `instructions.md` under `data/skills/<slug>/`. Invoke a skill with `/<slug>` in chat.
 
 ---
 
@@ -111,8 +108,12 @@ cd ~/pantheon/backend
 
 # Start Frontend Vite Server
 cd ~/pantheon/frontend
-npm run dev      # Serves at http://localhost:5173 and proxies API requests
+npm ci
+npm run dev      # Serves at http://localhost:5173 and proxies /api + /ws to :8000
 ```
+
+### Rebuild after pulling changes (local mode)
+See the "Deploy / build / test workflow" section of [`CLAUDE.md`](CLAUDE.md). In short: `npm ci && VITE_API_URL="" npm run build` in `frontend/`, restart with `./stop.sh && ./start.sh`, then `curl -s http://localhost:8000/api/health` and check the version changed. The version comes from `"version"` in `frontend/package.json` (`YYYY.MM.DD.HXX`); after bumping it, run `npm install --package-lock-only` and commit the lockfile so `npm ci` keeps working.
 
 ### Run Python Tests
 ```bash
@@ -134,9 +135,11 @@ cd ~/pantheon/backend
 ~/pantheon/
 ├── backend/               # FastAPI backend + Agent execution loop
 │   ├── agent/             # Core agent logic and tools definitions
-│   ├── api/               # FastAPI routers (19 endpoints)
+│   ├── api/               # FastAPI routers (19 mounted under /api)
 │   ├── sources/           # Ingestion pipelines and adapters
 │   ├── memory/            # Five-tier memory manager classes
+│   ├── jobs/              # Async job store, worker, watchdog, handlers
+│   ├── llm_config/        # LLM endpoints, task-class routes, chat router
 │   └── requirements.txt   # Python dependency list
 ├── frontend/              # Vite + React dashboard code
 ├── data/                  # Runtime storage (SQLite DBs, ChromaDB, workspaces)
@@ -153,9 +156,10 @@ cd ~/pantheon/backend
 
 * [`CLAUDE.md`](CLAUDE.md) — Hacking guidelines, testing instructions, and codebase constraints.
 * [`docs/USAGE.md`](docs/USAGE.md) — User guide for projects, ingestion, memory retrieval, and skills.
-* [`backend/README.md`](backend/README.md) — Backend services layout and memory architecture deep dive.
+* [`backend/README.md`](backend/README.md) — Backend layout, mounted routers and memory tiers.
+* [`frontend/README.md`](frontend/README.md) — Frontend dev server, build and structure.
 * [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) — How to design new ingestion adapters.
-* [`docs/SECURITY_FEATURES.md`](docs/SECURITY_FEATURES.md) — Secrets vault and authentication architecture details.
+* [`docs/security.md`](docs/security.md) — auth, vault, outbound-fetch guards, host exec, sandbox, skill scanning.
 
 ---
 

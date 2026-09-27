@@ -109,9 +109,9 @@ class SourceAdapter:
     extractor_strategy: str = "llm_default"
 
     # Whether ingest() should auto-run the extractor immediately
-    # after fetch(). Skills that prefer to drive extraction
-    # manually (e.g. for chunked long-form sources) can leave this
-    # False and call /api/sources/extract on the saved artifact.
+    # after fetch(). Leave False to save without topics (callers can
+    # also pass extras.skip_extraction); re-run ingest_source with
+    # extras.extractor_strategy to extract later.
     auto_extract: bool = True
 
     # Whether ingest() should kick off cross-artifact similarity

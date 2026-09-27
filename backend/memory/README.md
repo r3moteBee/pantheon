@@ -1,345 +1,80 @@
-# Agent-Harness 5-Tier Memory System
+# backend/memory
 
-A complete, production-grade memory architecture for AI agents with five distinct tiers, each optimized for specific use cases and performance characteristics.
+Pantheon's memory tiers and the `MemoryManager` that fronts them. All
+SQLite stores live under `settings.db_dir` (`data/db/`) and go through
+`db_utils.apply_sqlite_pragmas`; vectors live in ChromaDB under
+`<data_dir>/chroma/` (or a remote Chroma when `chroma_host` is set).
 
-## Overview
+## Tiers and storage
 
-The 5-tier memory system provides persistent context retention, semantic knowledge storage, associative reasoning, and long-term archival for agent-based systems.
+| Tier | Class | Storage |
+|---|---|---|
+| Episodic | `EpisodicMemory` | `data/db/episodic.db` (`conversations`, `messages`, `task_logs`, `memory_notes`); optional message vectors in `data/chroma/episodic-<project>` |
+| Semantic | `SemanticMemory` | ChromaDB, one collection per project (`proj-<id>`) at `data/chroma/<project>`; each vector tagged with its embedding model |
+| Graph | `GraphMemory` | `data/db/graph.db` (`graph_nodes`, `graph_edges`); `add_node` / `add_edge` idempotent |
+| File index | `FileIndex` / `FileIndexer` | `data/db/file_index.db` (`indexed_files`: content hash per path); chunks go to semantic, frontmatter topics to graph |
+| Archival | `ArchivalMemory` | Markdown under `<data_dir>/projects/<id>/notes/` plus `project_summary.md` |
+| Topic embeddings | `topic_embeddings.py` | Semantic collection, `metadata.kind=topic_node`, deterministic id per `(project_id, topic_type, label)` |
+| Merge proposals | `merge_proposals.py` | `data/db/merge_proposals.db` (`topic_merge_proposals`); never auto-applied |
+
+**Working memory** is `AgentCore.working_memory` (in-process list, not
+persisted). There is no `memory/working.py`; `remember(tier="working")`
+from old callers becomes a session-tagged episodic note.
+
+## MemoryManager
+
+Build one with `create_memory_manager(project_id, session_id)`, which
+wires the `embed` route's `embed` / `embed_many`.
+
+- `recall(query, tiers=None, project_id=None, limit_per_tier=3, context_focus=None)`:
+  searches semantic, episodic and graph (the default tiers), sorts by score,
+  reranks when a `rerank` route exists, appends 1-hop graph context for
+  entities named in the top hits, applies context-focus recency weighting,
+  then dedups and trims to the `ContextBudget` recall budget.
+- `remember(content, tier="semantic", metadata=None, session_id=None)`:
+  `semantic` stores a vector; `episodic` / `working` add an episodic note;
+  `graph` runs the conversation extractor (`run_extraction`, `min_messages=1`)
+  on the text; `archival` appends a note file.
+- `consolidate_session(message_count=40)`: reads the session's recent
+  messages from episodic, summarises them with the summarize-class model into
+  a semantic `session_summary`, then runs extraction. Needs a real `session_id`.
+- `run_extraction_on_recent(message_count=20)`: extraction only.
+- `index_artifact(artifact_id, force=False)`: runs `FileIndexer.index_text`
+  on a text artifact and upserts its frontmatter topics as topic embeddings.
+- `index_workspace_file(path)` / `index_workspace_directory(dir)`.
+- `audit_memory(tier)`: dump a tier for the Memory UI.
+- `set_active_project(project_id)`: rebuild every tier for another project.
+
+## Recall provenance tags
+
+`recall` returns dicts (`content`, `tier`, `source`, `score`, `metadata`).
+Graph hits have content `[graph:<node_type>] <label>` plus `→` / `←` edge
+lines; augmentation blocks read `[graph context for '<label>']`. The
+`recall` agent tool (`agent/tools.py`) renders them as:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Tier 1: Working Memory (In-context, ~8KB)         │
-│  Fast, recent conversation buffer with tokens       │
-└─────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│  Tier 2: Episodic Memory (SQLite, indexed)          │
-│  Persistent conversation history & task logs        │
-└─────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│  Tier 3: Semantic Memory (ChromaDB, vectors)        │
-│  Embeddings for similarity search & knowledge base  │
-└─────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│  Tier 4: Graph Memory (SQLite, relationships)       │
-│  Concept networks and entity relationships          │
-└─────────────────────────────────────────────────────┘
-                       ↓
-┌─────────────────────────────────────────────────────┐
-│  Tier 5: Archival Memory (File-based)               │
-│  Long-term summaries and personality profiles       │
-└─────────────────────────────────────────────────────┘
+[semantic/artifact] <chunk>
+  ↳ source: <artifact path>  id=<artifact_id> tags=[...]
+[semantic/file:<path>] <chunk>
+[episodic session=<first 8 chars> <timestamp>] [<role>] <message>
+[graph] [graph:<node_type>] <label>
 ```
 
-## Tier Details
-
-### Tier 1: Working Memory (working.py)
-
-**Purpose**: In-context conversation buffer  
-**Backend**: Python deque (in-memory)  
-**Performance**: O(1) add/retrieve  
-**Capacity**: ~8,000 tokens (configurable)  
-
-Fast rolling buffer for recent conversation history. Automatically evicts old messages when exceeding token budget.
-
-```python
-working = WorkingMemory(max_tokens=8000, max_messages=50)
-working.add_message("user", "Hello!")
-messages = working.get_messages()  # Returns list of recent messages
-```
-
-### Tier 2: Episodic Memory (episodic.py)
-
-**Purpose**: Persistent conversation history and task logs  
-**Backend**: SQLite  
-**Performance**: O(log n) indexed search  
-**Capacity**: Unlimited (disk-bound)  
-
-Stores all messages, conversations, task events, and notes with full-text search capabilities.
-
-```python
-episodic = EpisodicMemory(db_path="data/episodic.db")
-await episodic.save_message(session_id, project_id, "user", "content")
-history = await episodic.get_history(session_id)
-results = await episodic.search_messages("keyword", project_id)
-```
-
-**Schema**:
-- `conversations`: Session metadata and grouping
-- `messages`: Individual conversation turns
-- `task_logs`: Timestamped events (started, completed, failed)
-- `memory_notes`: Hand-written notes with tagging
-
-### Tier 3: Semantic Memory (semantic.py)
-
-**Purpose**: Vector embeddings for semantic search  
-**Backend**: ChromaDB (with fallback to local persistent)  
-**Performance**: O(1) vector similarity search  
-**Capacity**: Millions of vectors  
-
-Stores embeddings of facts, insights, and summaries for semantic recall.
-
-```python
-semantic = SemanticMemory(project_id="default")
-doc_id = await semantic.store("Machine learning is ...", metadata={"type": "fact"})
-results = await semantic.search("what is ML?", n=5)
-# Returns: [{"id": "...", "content": "...", "score": 0.95, ...}]
-```
-
-**Features**:
-- Automatic embedding via ChromaDB default (or custom embedding function)
-- Cosine distance for similarity (converted to 0-1 score)
-- Per-project namespacing
-- HTTP or local persistent backends
-
-### Tier 4: Graph Memory (graph.py)
-
-**Purpose**: Associative knowledge graph for multi-hop reasoning  
-**Backend**: SQLite with graph tables  
-**Performance**: O(n) per hop, BFS path finding  
-**Capacity**: Unlimited nodes and relationships  
-
-Represents entities (concepts, people, projects) and their relationships.
-
-```python
-graph = GraphMemory(project_id="default")
-alice_id = await graph.add_node("person", "Alice", metadata={"role": "engineer"})
-project_id = await graph.add_node("project", "ProjectX")
-await graph.add_edge(alice_id, project_id, "works_on")
-
-# Find what Alice is related to
-related = await graph.find_related(alice_id, depth=2)
-
-# Find path from Alice to ProjectX
-path = await graph.get_path("Alice", "ProjectX")
-```
-
-**Node Types**: `concept`, `person`, `project`, `event`, `fact`
-
-### Tier 5: Archival Memory (archival.py)
-
-**Purpose**: Long-term file-based storage  
-**Backend**: Filesystem (Markdown, JSON, plain text)  
-**Performance**: O(1) sequential read, O(1) append  
-**Capacity**: Bounded by disk  
-
-Persistent profiles, summaries, and personality settings loaded into system prompts.
-
-```python
-archival = ArchivalMemory(project_id="default")
-
-# Append notes
-filename = await archival.append_note("Learned: Alice prefers async APIs")
-
-# Read/write files
-await archival.write_file("notes/project_summary.md", "# ProjectX\n...")
-content = await archival.read_file("notes/project_summary.md")
-
-# List all notes
-notes = await archival.list_notes()
-```
-
-**Structure**:
-```
-data/
-  personality/          # Shared personality settings
-  projects/
-    {project_id}/
-      notes/            # Timestamped markdown notes
-      project_summary.md
-```
-
-## Memory Manager (manager.py)
-
-Central orchestration for all 5 tiers.
-
-```python
-from memory.manager import MemoryManager
-
-manager = MemoryManager(project_id="my-app", session_id="sess_123")
-
-# Store in any tier
-await manager.remember("Alice is the lead", tier="semantic")
-await manager.remember("Task completed", tier="episodic")
-
-# Recall from multiple tiers
-results = await manager.recall("who is the lead?", tiers=["semantic", "episodic"])
-
-# Audit mode: retrieve all memories for a tier
-audit = await manager.audit_memory("semantic")
-
-# Consolidate session at end
-summary = await manager.consolidate_session()
-
-# Switch projects
-manager.set_active_project("other-project")
-```
-
-## Usage Patterns
-
-### Pattern 1: Recent Context (Tier 1)
-```python
-# Add to working memory for immediate context
-manager.working.add_message("user", "Let's build a REST API")
-messages = manager.working.get_messages()
-# Use in next API call to Claude
-```
-
-### Pattern 2: Session Recall (Tier 2)
-```python
-# Get full conversation history from previous session
-history = await manager.episodic.get_history(session_id="old-session")
-# Reconstruct context
-```
-
-### Pattern 3: Semantic Search (Tier 3)
-```python
-# Store facts as you learn them
-await manager.remember("REST APIs use HTTP verbs", tier="semantic")
-
-# Later: retrieve relevant knowledge
-results = await manager.recall("how do I design an API?", tiers=["semantic"])
-```
-
-### Pattern 4: Relationship Queries (Tier 4)
-```python
-# Build knowledge graph
-await manager.graph.add_node("concept", "REST")
-await manager.graph.add_node("concept", "HTTP")
-await manager.graph.add_edge_by_label("REST", "HTTP", "uses_protocol")
-
-# Find related concepts
-related = await manager.graph.find_related(rest_node_id)
-
-# Navigate paths
-path = await manager.graph.get_path("REST", "HTTP")
-```
-
-### Pattern 5: Persistent Personality (Tier 5)
-```python
-# Update personality file
-personality = """
-# Agent Personality
-
-- Prefers async/await patterns
-- Favors Python over JavaScript
-- Emphasizes testing and documentation
-"""
-await manager.archival.write_file("personality/preferences.md", personality)
-
-# Load for system prompt at startup
-personality_text = await manager.archival.read_file("personality/preferences.md")
-# Include in system prompt
-```
-
-## Configuration
-
-All tiers use sensible defaults but can be configured:
-
-```python
-# Working Memory
-working = WorkingMemory(max_tokens=12000, max_messages=100)
-
-# Episodic Memory
-episodic = EpisodicMemory(db_path="/custom/path/episodic.db")
-
-# Semantic Memory (ChromaDB server)
-semantic = SemanticMemory(project_id="default")
-# Falls back to local persistent if ChromaDB server unavailable
-
-# Graph Memory
-graph = GraphMemory(project_id="default", db_path="/custom/path/graph.db")
-
-# Archival Memory
-archival = ArchivalMemory(project_id="default", base_dir="/custom/data")
-```
-
-## Performance Characteristics
-
-| Tier | Read | Write | Search | Capacity | Cost |
-|------|------|-------|--------|----------|------|
-| 1 Working | O(1) | O(1) | O(n) | ~8K tokens | Memory |
-| 2 Episodic | O(log n) | O(1) | O(log n) | Unlimited | Disk |
-| 3 Semantic | O(1)* | O(1) | O(1)* | Millions | GPU (vector DB) |
-| 4 Graph | O(n/hop) | O(1) | O(n) | Unlimited | Disk |
-| 5 Archival | O(1) | O(1) | O(n) | Disk | Disk |
-
-*Vector similarity is approximate but constant time in practice
-
-## Error Handling
-
-All async methods handle exceptions gracefully:
-
-```python
-try:
-    results = await manager.recall("query")
-except Exception as e:
-    logger.error(f"Recall failed: {e}")
-    # Falls back to other tiers automatically
-```
-
-## Concurrency
-
-- Tier 1 (Working): Not thread-safe, designed for single-threaded use
-- Tiers 2-4 (SQLite): Thread-safe via SQLite's built-in locking
-- Tier 3 (ChromaDB): Handled by ChromaDB's concurrency model
-- Tier 5 (Files): Simple file operations, atomic writes recommended
-
-## Testing
-
-```python
-import asyncio
-from memory.manager import MemoryManager
-
-async def test_memory():
-    manager = MemoryManager(project_id="test", session_id="test_1")
-    
-    # Test Tier 1
-    manager.working.add_message("user", "Hello")
-    assert len(manager.working) == 1
-    
-    # Test Tier 2
-    await manager.episodic.add_note("Test note", "default", "test_1")
-    notes = await manager.episodic.get_notes("default")
-    assert len(notes) > 0
-    
-    # Test Tier 3
-    doc_id = await manager.semantic.store("Test content")
-    assert doc_id
-    
-    # Test Tier 4
-    node_id = await manager.graph.add_node("concept", "Test")
-    assert node_id
-    
-    # Test Tier 5
-    await manager.archival.append_note("Test archival")
-    notes = await manager.archival.list_notes()
-    assert len(notes) > 0
-
-asyncio.run(test_memory())
-```
-
-## Architecture Notes
-
-1. **No External Dependencies (Tiers 1-2, 4-5)**: SQLite is stdlib, file I/O is built-in
-2. **Optional ChromaDB (Tier 3)**: Vector search only if chromadb is installed
-3. **Graceful Degradation**: Falls back to local persistent ChromaDB if server unavailable
-4. **Project Namespacing**: All tiers support multi-project isolation
-5. **Async Throughout**: All I/O operations are async-ready
-6. **Type Hints**: Full type annotations for IDE support
-
-## Future Enhancements
-
-- Compression for archival tier (gzip for old notes)
-- Automatic migration of stale semantic memories to archival
-- Graph visualization endpoints
-- Memory analytics (most-recalled concepts, etc.)
-- Custom embedding function support per project
-- SQLite connection pooling for concurrent access
-- Incremental backups of episodic/graph databases
-
-## License
-
-Part of the pantheon project.
+## Modules
+
+| File | Purpose |
+|---|---|
+| `__init__.py` | Package docstring only |
+| `manager.py` | `MemoryManager`, `ContextBudget`, `create_memory_manager` |
+| `episodic.py` | Chat history, task logs and notes; vector search with LIKE fallback |
+| `semantic.py` | ChromaDB wrapper: `store` / `store_many`, `search`, `delete_where`, `strip_artifact`, `reembed_stale` |
+| `graph.py` | Nodes and edges: traversal (`find_related`, `get_path(s)`), `search_nodes`, `merge_nodes` (one transaction), `strip_artifact` |
+| `file_indexer.py` | Text extraction (md, txt, csv, pdf with OCR fallback, images via vision), chunk and embed, frontmatter to graph (`_index_typed_topics_to_graph`) |
+| `chunker.py` | `chunk_text`: `headings`, `paragraphs` or `fixed` strategies |
+| `extraction.py` | `MemoryExtractor` / `run_extraction`: LLM extraction of entities, relationships, facts and preferences from messages |
+| `archival.py` | `ArchivalMemory` notes and project summary; `migrate_stray_notes()` runs at startup |
+| `topic_embeddings.py` | `upsert_topic_embedding`, `find_similar_topics` (type-gated), `delete_topic_embeddings_for_label` |
+| `merge_proposals.py` | `propose`, `list_proposals`, `get_proposal`, `set_status` |
+
+The similarity pipeline and merge execution that use the last two live in
+`backend/sources/similarity.py`.
