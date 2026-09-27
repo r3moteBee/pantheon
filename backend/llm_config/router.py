@@ -121,7 +121,7 @@ _sessions: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 def _state(session_id: str) -> dict[str, Any]:
     st = _sessions.get(session_id)
     if st is None:
-        st = {"override": None, "sticky": None, "sticky_left": 0}
+        st = {"override": None, "sticky": None, "sticky_left": 0, "last_decision": None}
         _sessions[session_id] = st
         while len(_sessions) > _MAX_SESSIONS:
             _sessions.popitem(last=False)
@@ -131,13 +131,48 @@ def _state(session_id: str) -> dict[str, Any]:
 
 
 def set_override(session_id: str, task_class: str | None) -> None:
-    """Pin a session to a class (None / "auto" clears the pin)."""
+    """Pin a session to a class (None / "auto" clears the pin).
+
+    Re-pinning away from the class the router just used counts as a
+    correction of that turn (a tuning signal)."""
     if task_class in (None, "", "auto"):
-        _state(session_id)["override"] = None
-        return
-    if task_class not in CHAT_CLASSES:
+        task_class = None
+    elif task_class not in CHAT_CLASSES:
         raise ValueError(f"unknown chat class {task_class!r} — use one of {', '.join(CHAT_CLASSES)} or auto")
-    _state(session_id)["override"] = task_class
+    st = _state(session_id)
+    if task_class != st["override"]:
+        last = st.get("last_decision")
+        if task_class and last and last[1] != task_class:
+            from llm_config.usage import mark_corrected
+            mark_corrected(last[0])
+    st["override"] = task_class
+
+
+# The user pushing back on the previous answer — a tuning signal.
+_CORRECTION_RE = re.compile(
+    r"^\W*(no\b|nope\b|wrong\b|incorrect\b|that'?s (not|wrong|incorrect)\b|not what i\b"
+    r"|try again\b|you (didn'?t|missed|forgot|ignored)\b|that didn'?t work\b|still (wrong|broken|not)\b)",
+    re.I,
+)
+
+
+def looks_like_correction(message: str) -> bool:
+    return bool(_CORRECTION_RE.match(message or ""))
+
+
+def note_user_message(session_id: str, message: str) -> None:
+    """Before routing a new turn: flag the previous turn if this message
+    pushes back on it."""
+    st = _sessions.get(session_id)
+    last = st.get("last_decision") if st else None
+    if last and looks_like_correction(message):
+        from llm_config.usage import mark_corrected
+        mark_corrected(last[0])
+        st["last_decision"] = None  # count each turn once
+
+
+def remember_decision(session_id: str, decision_id: str, task_class: str) -> None:
+    _state(session_id)["last_decision"] = (decision_id, task_class)
 
 
 def get_override(session_id: str) -> str | None:
@@ -233,9 +268,12 @@ async def decide(
     history_chars: int = 0,
     skill: Any = None,
     config: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> RouteDecision:
+    """``state`` lets a what-if replay use private per-session state
+    instead of the live sessions' pins/stickiness."""
     cfg = config or get_config()
-    st = _state(session_id)
+    st = state if state is not None else _state(session_id)
     est = estimate_tokens(history_chars + len(message or ""))
     notes: list[str] = []
 
@@ -298,8 +336,9 @@ async def decide(
     else:
         st["sticky"] = None
 
-    # 7. Short conversational turn.
-    if looks_quick(message, int(cfg.get("quick_max_chars", 240))):
+    # 7. Short conversational turn — but never a push-back on the last
+    # answer ("no, that's wrong"): that deserves the stronger model.
+    if looks_quick(message, int(cfg.get("quick_max_chars", 240))) and not looks_like_correction(message):
         ok, _ = _usable("quick")
         if ok:
             return done("quick", "quick", "short message, no tool intent")

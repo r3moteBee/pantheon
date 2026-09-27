@@ -337,6 +337,13 @@ def generate_self_doc() -> str:
             "conversation with `/model <agent|quick|code|long_context|vision|auto>` or the model "
             "picker next to the chat input; each reply shows which model answered."
         )
+        from llm_config import tuning as _tuning
+        _recs = [r for r in _tuning.recommendations(24 * 7) if r["id"] != "more-data"]
+        if _recs:
+            md.append("\n**Routing tuning suggestions (last 7 days, from outcomes of routed turns; "
+                      "the user applies them in Settings → Routing tuning):**")
+            for r in _recs:
+                md.append(f"- [{r['severity']}] {r['title']}: {r['detail']}")
     except Exception:
         pass
     if routing_rows:

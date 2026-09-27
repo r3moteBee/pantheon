@@ -342,6 +342,14 @@ export const llmApi = {
   setRouter: (patch) => api.put('/api/llm/router', patch).then((r) => r.data),
   routerDecisions: (hours = 24) =>
     api.get('/api/llm/router/decisions', { params: { hours } }).then((r) => r.data),
+  routerFeedback: (decisionId, rating) =>
+    api.post('/api/llm/router/feedback', { decision_id: decisionId, rating }).then((r) => r.data),
+  routerTuning: (hours = 168) =>
+    api.get('/api/llm/router/tuning', { params: { hours } }).then((r) => r.data),
+  routerSimulate: (patch, days = 14) =>
+    api.post('/api/llm/router/simulate', { patch, days }).then((r) => r.data),
+  routerApply: (id, hours = 168) =>
+    api.post('/api/llm/router/apply', { id, hours }).then((r) => r.data),
 }
 
 // MCP Connections API
