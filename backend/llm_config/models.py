@@ -62,3 +62,88 @@ class EndpointPublic(SavedEndpoint):
 class RoleMappingPayload(BaseModel):
     """PUT /api/llm/roles body — full role map at once."""
     roles: list[RoleAssignment]
+
+
+# ── Task-class routing ────────────────────────────────────────────────
+# Each LLM call site declares what KIND of work it is; each task class
+# maps to an ordered list of endpoint+model entries (primary, then
+# fallbacks tried on 429/5xx/network errors). Replaces the 5 fixed roles.
+
+TASK_CLASSES: dict[str, dict] = {
+    "agent": {
+        "label": "Agent (tool use)",
+        "description": "Chat, autonomous/scheduled jobs and bots — the tool-calling agent loop.",
+        "requires": "tools", "inherits": None, "max_entries": 5,
+    },
+    "code": {
+        "label": "Coding",
+        "description": "coding_task jobs (git/run_command). Empty = use Agent.",
+        "requires": "tools", "inherits": "agent", "max_entries": 5,
+    },
+    "extract": {
+        "label": "Structured extraction",
+        "description": "JSON extraction: ingest topics, memory entities, skill scans. Empty = use Summarize, then Agent.",
+        "requires": None, "inherits": "summarize", "max_entries": 5,
+    },
+    "summarize": {
+        "label": "Summarize / write",
+        "description": "Consolidation, notes, reports. Empty = use Agent.",
+        "requires": None, "inherits": "agent", "max_entries": 5,
+    },
+    "vision": {
+        "label": "Vision",
+        "description": "Image understanding (uploaded images, OCR assist). Optional.",
+        "requires": "vision", "inherits": None, "max_entries": 5,
+    },
+    "image_gen": {
+        "label": "Image generation",
+        "description": "generate_image tool — OpenAI-compatible /images/generations. Optional.",
+        "requires": "image_gen", "inherits": None, "max_entries": 5,
+    },
+    "embed": {
+        "label": "Embeddings",
+        "description": "Semantic memory. Exactly one model — switching invalidates stored vectors, so no fallback.",
+        "requires": "embedding", "inherits": None, "max_entries": 1,
+    },
+    "rerank": {
+        "label": "Reranker",
+        "description": "Re-orders retrieval results. Optional.",
+        "requires": None, "inherits": None, "max_entries": 1,
+    },
+}
+
+TaskClass = Literal["agent", "code", "extract", "summarize", "vision", "image_gen", "embed", "rerank"]
+
+# Legacy role -> task class (for resolve_role() back-compat and migration).
+ROLE_TO_CLASS = {"chat": "agent", "prefill": "summarize", "vision": "vision",
+                 "embed": "embed", "rerank": "rerank"}
+
+
+class RouteEntry(BaseModel):
+    endpoint: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+
+
+class RoutesPayload(BaseModel):
+    """PUT /api/llm/routes — full routing table. Classes left out are cleared."""
+    routes: dict[TaskClass, list[RouteEntry]]
+
+
+TIERS = ("fast", "standard", "frontier")
+
+
+class ModelProfile(BaseModel):
+    """What a model can do. Seeded from llm_config.known_models, editable."""
+    context_window: int | None = None
+    tools: bool = False
+    vision: bool = False
+    image_gen: bool = False
+    embedding: bool = False
+    tier: Literal["fast", "standard", "frontier"] = "standard"
+    notes: str = ""
+    source: Literal["known", "user", "unknown"] = "unknown"
+
+
+class ProfilesPayload(BaseModel):
+    """PUT /api/llm/profiles — user edits keyed "endpoint/model"."""
+    profiles: dict[str, ModelProfile]

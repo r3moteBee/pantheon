@@ -74,8 +74,8 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
 
     from agent.core import AgentCore
     from memory.manager import create_memory_manager
-    from models.provider import get_provider
-    provider = get_provider()
+    from models.provider import get_provider_for
+    provider = get_provider_for("code")
     memory = create_memory_manager(
         project_id=ctx.project_id, session_id=session_id, provider=provider,
     )

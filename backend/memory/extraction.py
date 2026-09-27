@@ -107,8 +107,8 @@ class MemoryExtractor:
         if self._provider:
             return self._provider
         try:
-            from models.provider import get_prefill_provider
-            return get_prefill_provider()
+            from models.provider import get_provider_for
+            return get_provider_for("extract")
         except Exception:
             from models.provider import get_provider
             return get_provider()

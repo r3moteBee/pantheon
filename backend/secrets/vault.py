@@ -52,12 +52,12 @@ class SecretsVault:
         return Fernet(base64.urlsafe_b64encode(kdf.derive(key_bytes)))
 
     @classmethod
-    def _v2_fernet(cls, master_key: str, salt: bytes) -> Fernet:
+    def _v2_fernet(cls, master_key: str, salt: bytes, iterations: int | None = None) -> Fernet:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
-            iterations=cls._V2_ITERATIONS,
+            iterations=iterations or cls._V2_ITERATIONS,
         )
         return Fernet(base64.urlsafe_b64encode(kdf.derive(master_key.encode("utf-8"))))
 
@@ -70,10 +70,14 @@ class SecretsVault:
             version = self._get_meta(conn, "kdf_version")
             salt_hex = self._get_meta(conn, "kdf_salt")
             if version == self._KDF_VERSION and salt_hex:
-                return self._v2_fernet(self._master_key, bytes.fromhex(salt_hex))
+                # Iteration count is stored per vault so it can be raised
+                # later without breaking existing vaults.
+                iters = int(self._get_meta(conn, "kdf_iterations") or 600_000)
+                return self._v2_fernet(self._master_key, bytes.fromhex(salt_hex), iters)
 
             salt = os.urandom(16)
-            new = self._v2_fernet(self._master_key, salt)
+            iters = self._V2_ITERATIONS
+            new = self._v2_fernet(self._master_key, salt, iters)
             legacy = self._legacy_fernet(self._master_key)
             rows = conn.execute("SELECT key, encrypted_value FROM secrets").fetchall()
             migrated = failed = 0
@@ -95,6 +99,10 @@ class SecretsVault:
                 conn.execute(
                     "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_salt', ?)",
                     (salt.hex(),),
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_iterations', ?)",
+                    (str(iters),),
                 )
                 conn.execute(
                     "INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)",

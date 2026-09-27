@@ -109,6 +109,29 @@ function FilePreview({ filePath, caption }) {
   )
 }
 
+// generate_image results carry one [DISPLAY:artifact://<id>] per image
+function parseArtifactDisplays(result) {
+  if (!result) return []
+  return [...result.matchAll(/\[DISPLAY:artifact:\/\/([0-9a-fA-F-]+)\]/g)].map((m) => m[1])
+}
+
+function GeneratedImages({ ids, caption }) {
+  return (
+    <div className="my-2 flex flex-wrap gap-2">
+      {ids.map((id) => (
+        <a key={id} href={artifactsApi.rawUrl(id)} target="_blank" rel="noopener noreferrer">
+          <img
+            src={artifactsApi.rawUrl(id)}
+            alt={caption || 'generated image'}
+            className="rounded-lg max-h-96 max-w-full border border-gray-700"
+          />
+        </a>
+      ))}
+      {caption && <div className="w-full text-xs text-gray-400">{caption}</div>}
+    </div>
+  )
+}
+
 function ToolCallBlock({ toolCall }) {
   const [expanded, setExpanded] = useState(false)
   const isContextLoad = toolCall.name === 'context_loaded'
@@ -118,6 +141,11 @@ function ToolCallBlock({ toolCall }) {
   // show_file with a successful result: render file preview, collapse the tool block
   if (isShowFile && showFileData) {
     return <FilePreview filePath={showFileData.path} caption={showFileData.caption} />
+  }
+
+  const imageIds = toolCall.name === 'generate_image' ? parseArtifactDisplays(toolCall.result) : []
+  if (imageIds.length) {
+    return <GeneratedImages ids={imageIds} caption={toolCall.args?.prompt} />
   }
 
   return (

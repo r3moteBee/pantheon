@@ -238,8 +238,8 @@ def _strip_fence(s: str) -> str:
 
 
 async def _llm_json(system: str, user: str) -> dict[str, Any]:
-    from models.provider import get_provider
-    provider = get_provider()
+    from models.provider import get_provider_for
+    provider = get_provider_for("extract")
     result = await provider.chat_complete([
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -249,8 +249,8 @@ async def _llm_json(system: str, user: str) -> dict[str, Any]:
 
 
 async def _llm_text(system: str, user: str) -> str:
-    from models.provider import get_provider
-    provider = get_provider()
+    from models.provider import get_provider_for
+    provider = get_provider_for("summarize")
     result = await provider.chat_complete([
         {"role": "system", "content": system},
         {"role": "user", "content": user},
