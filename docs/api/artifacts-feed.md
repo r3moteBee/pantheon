@@ -1,5 +1,7 @@
 # `GET /api/artifacts/feed`
 
+Route: `backend/api/artifacts.py` (`feed`); query: `ArtifactStore.feed` in `backend/artifacts/store.py`.
+
 Agent-facing forward-walk over a project's artifacts. Designed for two patterns:
 
 - **Change-detection polling** — "what changed since I last checked?" Steady-state empty responses are cheap (single indexed range scan, zero rows).
@@ -13,11 +15,17 @@ The list-shaped `GET /api/artifacts` is **not** an agent endpoint. It is UI-shap
 
 ## Authentication
 
-Same as every other `/api/...` route: bearer token in the `Authorization` header.
+Same as every other `/api/...` route. Two ways to authenticate:
 
-```
-Authorization: Bearer <token>
-```
+- **Scripts / agents:** log in once with `POST /api/auth/login` (`{"password": "..."}`); the response body carries a session token. Send it as a header:
+
+  ```
+  Authorization: Bearer <token>
+  ```
+
+- **Browser:** the same login sets the `pantheon_session` cookie (`HttpOnly; SameSite=Strict`). Page JavaScript never sees the token; `fetch()` from the Pantheon UI is authenticated by the cookie automatically.
+
+Tokens are **never** accepted in the query string (`?token=...` returns `401`). Sessions expire after `AUTH_SESSION_DAYS` (default 30) and are all invalidated when `AUTH_PASSWORD` or `SECRET_KEY` changes. With `AUTH_PASSWORD` unset, no token is needed.
 
 ---
 
@@ -25,8 +33,8 @@ Authorization: Bearer <token>
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `project_id` | string | `"default"` | Scope. Use `"all"` (or `""`) for cross-project. |
-| `updated_since` | ISO-8601 | none | Exclusive lower bound on `updated_at`. Doubles as the cursor on subsequent pages. |
+| `project_id` | string | `"default"` | Scope. Use `"all"` (or `""`) for cross-project. An unknown id is not an error; it returns an empty page. |
+| `updated_since` | ISO-8601 | none | Exclusive lower bound on `updated_at`. Doubles as the cursor on subsequent pages. Compared as a string against the stored UTC ISO timestamps, so pass back the exact value the feed returned. |
 | `after_id` | UUID | none | Tiebreaker — required when paginating within rows that share the same `updated_at`. Must be paired with `updated_since`; passing `after_id` alone returns `400`. |
 | `limit` | int | `500` | Page size. `1 ≤ limit ≤ 5000`; out-of-range returns `422`. |
 | `include_deleted` | bool | `false` | If true, soft-deleted rows appear as tombstones (with `deleted_at` populated). |
@@ -68,7 +76,7 @@ Authorization: Bearer <token>
 }
 ```
 
-- `next_cursor` is `null` when the page returned fewer rows than `limit` (no more rows).
+- `next_cursor` is `null` when the page returned fewer rows than `limit`. A final page of exactly `limit` rows still returns a cursor; the next call comes back empty.
 - `has_more` is the convenience boolean. Equivalent to `next_cursor is not None`.
 - `count` is the size of THIS page. There is no total count by design (would require an extra `COUNT(*)` query and isn't worth the cost for either polling or bulk use).
 - `content` and `blob_path` are always stripped. Fetch a single artifact via `GET /api/artifacts/{id}` if you need the body.
@@ -87,9 +95,11 @@ Sort is **not** configurable. If you want recency-DESC for human display, use `G
 
 | Status | When |
 |---|---|
-| `400` | Invalid ISO-8601 in `updated_since`; `after_id` passed without `updated_since`; unknown column in `fields`. |
-| `404` | Unknown `project_id` (when not `"all"`/`""`). |
+| `400` | `after_id` passed without `updated_since`; unknown column in `fields`. |
+| `401` | Missing, expired or query-string token (when `AUTH_PASSWORD` is set). |
 | `422` | FastAPI validation (e.g. `limit` out of range). |
+
+`updated_since` is not parsed, so a malformed value does not return `400`; it just filters by string comparison.
 
 ---
 
@@ -153,7 +163,7 @@ include_deleted=true&\
 fields=id,sha256,deleted_at,updated_at"
 ```
 
-For each returned row: if `deleted_at` is non-null, drop it from your index; otherwise re-embed if `sha256` changed.
+For each returned row: if `deleted_at` is non-null, drop it from your index; otherwise re-embed if `sha256` changed. Soft delete bumps `updated_at`, so tombstones show up in the forward walk.
 
 ---
 
@@ -175,4 +185,4 @@ For each returned row: if `deleted_at` is non-null, drop it from your index; oth
 - MCP tool wrapping
 - Sort options beyond the locked forward walk
 
-Design spec: [`docs/superpowers/specs/2026-05-17-agent-list-api-design.md`](../superpowers/specs/2026-05-17-agent-list-api-design.md)
+Design spec (archived): [`docs/archive/superpowers/specs/2026-05-17-agent-list-api-design.md`](../archive/superpowers/specs/2026-05-17-agent-list-api-design.md)
