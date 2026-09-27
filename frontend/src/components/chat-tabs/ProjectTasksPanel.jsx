@@ -3,10 +3,13 @@ import {
   ListTodo, RefreshCw, X, Check, Clock, AlertTriangle, RotateCcw, Trash2,
   ExternalLink, FileText, Play, Repeat, Zap, ClipboardCheck, Pencil,
 } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
+import { Link } from 'react-router-dom'
 import { jobsApi, tasksApi } from '../../api/client'
 import HelpDrawer from '../help/HelpDrawer'
-import { mermaidMarkdownComponents } from '../markdownComponents'
+import Markdown from '../Markdown'
+import { useStore } from '../../store'
+
+const toastError = (message) => useStore.getState().addNotification({ type: 'error', message })
 
 function renderCadence(schedule) {
   if (!schedule) return '—'
@@ -106,7 +109,7 @@ export default function ProjectTasksPanel({ projectId }) {
       setSelectedJob(res.data)
       await refresh()
     } catch (err) {
-      alert('Rerun failed: ' + (err?.response?.data?.detail || err.message))
+      toastError('Rerun failed: ' + err.message)
     }
   }
   const remove = async (id) => {
@@ -258,7 +261,7 @@ export default function ProjectTasksPanel({ projectId }) {
                           e.stopPropagation()
                           if (!confirm(`Approve and activate "${sch.name}" with the current plan?`)) return
                           try { await tasksApi.approve(sch.id); await refresh() }
-                          catch (err) { alert('Approve failed: ' + (err?.response?.data?.detail || err.message)) }
+                          catch (err) { toastError('Approve failed: ' + err.message) }
                         }}
                         className="text-emerald-300 hover:text-emerald-100 flex items-center gap-1"
                         title="Approve plan as-is and activate the schedule"
@@ -281,7 +284,7 @@ export default function ProjectTasksPanel({ projectId }) {
                         await tasksApi.runNow(sch.id)
                         await refresh()
                       } catch (err) {
-                        alert('Run Now failed: ' + (err?.response?.data?.detail || err.message))
+                        toastError('Run Now failed: ' + err.message)
                       }
                     }}
                     className="text-gray-400 hover:text-brand-300"
@@ -296,7 +299,7 @@ export default function ProjectTasksPanel({ projectId }) {
                       e.stopPropagation()
                       if (!confirm(`Cancel schedule "${sch.name || sch.id}"?`)) return
                       try { await tasksApi.cancel(sch.id); await refresh() }
-                      catch (err) { alert(err?.response?.data?.detail || err.message) }
+                      catch (err) { toastError(err.message) }
                     }}
                     className="text-gray-500 hover:text-red-400"
                     title="Cancel schedule"
@@ -457,9 +460,9 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
         {j.session_id && <KV label="session" value={<code className="text-brand-300 break-all">{j.session_id}</code>} />}
         {j.artifact_id && (
           <KV label="artifact" value={
-            <a href={`/artifacts?tab=`} className="text-brand-400 underline flex items-center gap-1">
+            <Link to={`/artifacts?id=${encodeURIComponent(j.artifact_id)}`} className="text-brand-400 underline flex items-center gap-1">
               <FileText className="w-3 h-3" /> {j.artifact_id.slice(0,8)}
-            </a>
+            </Link>
           } />
         )}
         {j.pr_url && (
@@ -538,7 +541,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
       await tasksApi.updatePlan(schedule.id, plan)
       setEditing(false)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setSaving(false) }
   }
 
@@ -549,14 +552,14 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
       await tasksApi.approve(schedule.id)
       onApproved?.()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setSaving(false) }
   }
 
   const discard = async () => {
     if (!confirm(`Discard the proposed schedule "${schedule.name}"?`)) return
     try { await tasksApi.cancel(schedule.id); onApproved?.() }
-    catch (e) { setError(e?.response?.data?.detail || e.message) }
+    catch (e) { setError(e.message) }
   }
 
   return (
@@ -615,7 +618,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
         />
       ) : (
         <div className="prose prose-invert prose-sm max-w-none p-2 rounded bg-gray-900 border border-gray-800">
-          {plan ? <ReactMarkdown components={mermaidMarkdownComponents}>{plan}</ReactMarkdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
+          {plan ? <Markdown>{plan}</Markdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
         </div>
       )}
 

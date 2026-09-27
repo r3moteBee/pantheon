@@ -1,10 +1,26 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { Save, RefreshCw, Globe, AlertCircle, CheckCircle, RotateCcw, Info, ChevronDown, BookOpen, Search, Pencil, Eye } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import Markdown from './Markdown'
 import { useStore } from '../store'
 import { personalityApi, personasApi, projectsApi } from '../api/client'
 import CoreEditor from './CoreEditor'
+
+const PERSONALITY_MD_COMPONENTS = {
+  code: ({ node, inline, className, children, ...props }) => {
+    if (inline) {
+      return (
+        <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+          {children}
+        </code>
+      )
+    }
+    return (
+      <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
+        <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
+      </pre>
+    )
+  },
+}
 
 // Extract the first heading or "You are X" line from soul.md as the agent name
 function extractAgentName(content) {
@@ -410,28 +426,12 @@ export default function PersonalityEditor() {
               ) : isEmpty ? (
                 <p className="text-sm text-gray-600 italic">No content — apply a persona or use Reset to populate, then click Edit to author it.</p>
               ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
+                <Markdown
                   className="prose prose-invert prose-sm max-w-3xl mx-auto"
-                  components={{
-                    code: ({ node, inline, className, children, ...props }) => {
-                      if (inline) {
-                        return (
-                          <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
-                            {children}
-                          </code>
-                        )
-                      }
-                      return (
-                        <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-                          <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
-                        </pre>
-                      )
-                    },
-                  }}
+                  components={PERSONALITY_MD_COMPONENTS}
                 >
                   {currentContent}
-                </ReactMarkdown>
+                </Markdown>
               )}
             </div>
           )}
