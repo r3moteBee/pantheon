@@ -495,6 +495,35 @@ class GraphMemory:
             out.append(d)
         return out
 
+    async def count_nodes(self) -> int:
+        """Number of nodes in this project."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT count(*) FROM graph_nodes WHERE project_id = ?",
+                (self.project_id,),
+            ).fetchone()[0]
+
+    async def edges_along_path(self, path_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """For consecutive node pairs on a path, return the first edge joining
+        them (either direction) as {id, source, target, relationship, weight}.
+        Pairs with no edge are skipped."""
+        edges: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            for a, b in zip(path_nodes, path_nodes[1:]):
+                row = conn.execute(
+                    """SELECT id, node_a_id as source, node_b_id as target,
+                              relationship, weight
+                       FROM graph_edges
+                       WHERE project_id = ?
+                         AND ((node_a_id = ? AND node_b_id = ?)
+                           OR (node_a_id = ? AND node_b_id = ?))
+                       LIMIT 1""",
+                    (self.project_id, a["id"], b["id"], b["id"], a["id"]),
+                ).fetchone()
+                if row:
+                    edges.append(dict(row))
+        return edges
+
     async def delete_node(self, node_id: str) -> bool:
         """Delete a node and all its edges."""
         with self._connect() as conn:

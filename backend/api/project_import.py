@@ -573,7 +573,11 @@ def _import_episodic(
 
     logger.info("Importing episodic to %s (project=%s)", db_path, project_id)
 
+    from db_utils import apply_sqlite_pragmas
+    # Writes into the live episodic store's file, so use the store's
+    # standard PRAGMAs (WAL etc.).
     conn = sqlite3.connect(db_path)
+    apply_sqlite_pragmas(conn)
     try:
         # Ensure tables exist
         conn.executescript("""
@@ -698,7 +702,13 @@ def _import_graph(
 
     logger.info("Importing graph to %s (project=%s)", db_path, project_id)
 
+    from db_utils import apply_sqlite_pragmas
+    # Writes into the live graph store's file, so use the store's standard
+    # PRAGMAs — but keep foreign keys off as before: the import tolerates
+    # edges whose nodes arrive out of order / belong to skipped rows.
     conn = sqlite3.connect(db_path)
+    apply_sqlite_pragmas(conn)
+    conn.execute("PRAGMA foreign_keys = OFF")
     try:
         # Ensure tables exist — no foreign keys during import to avoid ordering issues
         conn.executescript("""

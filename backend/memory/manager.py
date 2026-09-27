@@ -305,8 +305,8 @@ class MemoryManager:
         # Rerank if available
         if all_results:
             try:
-                from models.provider import get_reranker_provider
-                reranker = get_reranker_provider()
+                from models.provider import get_provider_for
+                reranker = get_provider_for("rerank")
                 if reranker is not None:
                     all_results = await self._rerank(query, all_results, reranker)
             except Exception as e:
@@ -551,8 +551,8 @@ class MemoryManager:
         # 1. Summarize with prefill model (existing behavior)
         session_summary = None
         try:
-            from models.provider import get_prefill_provider
-            prefill = get_prefill_provider()
+            from models.provider import get_provider_for
+            prefill = get_provider_for("summarize")
             logger.info("Using prefill model (%s) for session consolidation", prefill.model)
             result = await prefill.chat_complete([
                 {"role": "system", "content": (
@@ -746,8 +746,8 @@ def create_memory_manager(
     embedding_batch_fn = None
     embedding_model = None
     try:
-        from models.provider import get_embedding_provider
-        emb_provider = get_embedding_provider()
+        from models.provider import get_provider_for
+        emb_provider = get_provider_for("embed")
         embedding_fn = emb_provider.embed
         embedding_batch_fn = getattr(emb_provider, "embed_many", None)
         embedding_model = getattr(emb_provider, "embedding_model", None)

@@ -146,9 +146,9 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     from agent.tools import host_exec_allowed
     from memory.manager import create_memory_manager
     from memory.episodic import EpisodicMemory
-    from models.provider import get_provider
+    from models.provider import get_provider_for
 
-    provider = get_provider()
+    provider = get_provider_for("agent")
     memory = create_memory_manager(
         project_id=ctx.project_id, session_id=session_id, provider=provider,
     )
@@ -627,14 +627,7 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
     # Set a useful conversation title so the chat history drawer shows
     # something more recognizable than 'Chat <id>'.
     try:
-        import sqlite3
-        ep_path = memory.episodic.db_path
-        conn = sqlite3.connect(ep_path)
-        conn.execute(
-            "UPDATE conversations SET title = ? WHERE session_id = ? AND (title IS NULL OR title = '')",
-            (task_name[:80], session_id),
-        )
-        conn.commit(); conn.close()
+        await memory.episodic.set_conversation_title(session_id, task_name[:80])
     except Exception:
         logger.debug("could not set conversation title", exc_info=True)
 

@@ -132,9 +132,9 @@ class DiscordAdapter(BaseMessagingAdapter):
             from agent.core import AgentCore
             from agent.tools import host_exec_allowed
             from memory.manager import create_memory_manager
-            from models.provider import get_provider
+            from models.provider import get_provider_for
 
-            provider = get_provider()
+            provider = get_provider_for("agent")
             memory = create_memory_manager(
                 project_id=project,
                 session_id=session_id,

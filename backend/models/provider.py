@@ -845,7 +845,8 @@ def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
     return prov
 
 
-# ── Legacy role getters (kept for existing call sites) ─────────────────
+# ── Legacy role getters: back-compat aliases for get_provider_for(<class>).
+# New code (and every in-tree call site) should call get_provider_for directly.
 
 def get_provider() -> Any:
     """Agent-class provider (the old "chat" role)."""

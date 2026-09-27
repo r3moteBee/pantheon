@@ -100,35 +100,14 @@ async def update_conversation_metadata(
 ) -> dict[str, Any]:
     """Update conversation metadata (like active_personas)."""
     ep = EpisodicMemory()
-    with sqlite3.connect(ep.db_path) as conn:
-        # Check if conversation exists
-        cur = conn.execute("SELECT metadata FROM conversations WHERE session_id = ?", (session_id,))
-        row = cur.fetchone()
-        if not row:
-            now = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                "INSERT INTO conversations (id, project_id, session_id, title, created_at, updated_at, metadata) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (session_id, "default", session_id, "New Chat", now, now, json.dumps(req.metadata))
-            )
-        else:
-            existing = json.loads(row[0] or "{}")
-            existing.update(req.metadata)
-            conn.execute(
-                "UPDATE conversations SET metadata = ?, updated_at = ? WHERE session_id = ?",
-                (json.dumps(existing), datetime.now(timezone.utc).isoformat(), session_id)
-            )
-        conn.commit()
+    await ep.merge_conversation_metadata(session_id, req.metadata)
     return {"status": "updated", "session_id": session_id, "metadata": req.metadata}
 
 
 @router.delete("/conversations/{session_id}")
 async def delete_conversation(session_id: str) -> dict[str, str]:
     ep = EpisodicMemory()
-    with sqlite3.connect(ep.db_path) as conn:
-        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-        conn.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
-        conn.commit()
+    await ep.delete_conversation(session_id)
     return {"status": "deleted", "session_id": session_id}
 
 

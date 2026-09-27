@@ -12,6 +12,7 @@ from config import get_settings
 from models.provider import reset_provider
 from secrets.vault import get_vault
 from security_log import sec_log
+from utils.runtime_settings import get_active_chunk_settings
 
 logger = logging.getLogger(__name__)
 settings_config = get_settings()
@@ -52,32 +53,6 @@ class SecretUpdate(BaseModel):
 
 # In-memory settings overrides (persisted in vault)
 _runtime_overrides: dict[str, str] = {}
-
-
-def get_active_chunk_settings() -> tuple[int, int, str]:
-    """Helper to retrieve current active chunking configuration."""
-    vault = get_vault()
-    
-    size_val = vault.get_secret("file_chunk_size")
-    if size_val is not None:
-        try:
-            size = int(size_val)
-        except ValueError:
-            size = settings_config.file_chunk_size
-    else:
-        size = settings_config.file_chunk_size
-
-    overlap_val = vault.get_secret("file_chunk_overlap")
-    if overlap_val is not None:
-        try:
-            overlap = int(overlap_val)
-        except ValueError:
-            overlap = settings_config.file_chunk_overlap
-    else:
-        overlap = settings_config.file_chunk_overlap
-
-    strategy = vault.get_secret("file_chunk_strategy") or settings_config.file_chunk_strategy
-    return size, overlap, strategy
 
 
 def _get_effective_settings() -> dict[str, Any]:
