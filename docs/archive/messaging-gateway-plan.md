@@ -1,10 +1,10 @@
 # Messaging Gateway — Implementation Plan
 
-> ⚠️ **Proposed — not yet implemented.** This is a forward-looking design doc. The codebase still ships Telegram only via `backend/telegram_bot/`; no `backend/messaging/` gateway, Discord adapter, or `/api/messaging/*` routes exist yet. Treat this as a roadmap, not a description of current behavior.
+> 📦 **Archived plan — implemented.** The gateway shipped as `backend/messaging/` (Telegram, Slack, Discord, Matrix, Mattermost) with `/api/messaging/*` routes and a Settings tab; see [docs/messaging.md](../messaging.md) for current behavior. Details below are the original plan and may differ from the code.
 
 **Date:** 2026-04-13  
 **Version:** 1.0  
-**Status:** Proposed
+**Status:** Implemented (archived)
 
 ## Overview
 

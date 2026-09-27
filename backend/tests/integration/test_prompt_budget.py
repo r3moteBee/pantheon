@@ -154,3 +154,14 @@ def test_backticked_tool_names_in_agent_guide_exist():
     guide = (Path(__file__).resolve().parents[2] / "data" / "personality" / "agent.md").read_text()
     for ref in re.findall(r"`([a-z_]+)(?:\(|`)", guide):
         assert ref in names, ref
+
+
+def test_tools_doc_is_current():
+    import importlib.util
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[3]
+    spec = importlib.util.spec_from_file_location("gen_tools_doc", root / "scripts" / "gen_tools_doc.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert (root / "docs" / "tools.md").read_text() == mod.render(), \
+        "docs/tools.md is stale — run scripts/gen_tools_doc.py"

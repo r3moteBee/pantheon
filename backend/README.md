@@ -1,40 +1,40 @@
 # Pantheon Backend
 
-FastAPI service for the Pantheon agent harness — multi-tier memory, source-adapter ingestion, autonomous jobs, and a knowledge-graph substrate.
+FastAPI service for the Pantheon agent harness — multi-tier memory, source-adapter ingestion, async jobs, and a knowledge-graph substrate.
 
-For working conventions, gotchas, deploy workflow, and the "things explicitly not done yet" list, see [`/CLAUDE.md`](../CLAUDE.md). This README covers backend layout only.
+For working conventions, gotchas, the deploy workflow and the "not done yet" list, see [`/CLAUDE.md`](../CLAUDE.md). This README covers backend layout only.
 
 ## Architecture (three layers)
 
-1. **Memory** — `memory/` orchestrates SQLite (episodic, graph, file_index), ChromaDB (semantic), and JSON (projects metadata). `MemoryManager.recall(query, tiers=[...])` queries across them.
-2. **Source adapters** — `sources/` turns a URL or video_id into a typed-topics-frontmatter markdown artifact + graph nodes/edges. 28 adapters across 9 mechanisms (youtube, blog, pdf, web, forum, podcast, github, cfr, malegis). Self-register at import. See [`sources/SOURCE_ADAPTERS.md`](sources/SOURCE_ADAPTERS.md).
-3. **Jobs** — `jobs/` is the unified async job system. Job types: `autonomous_task`, `scheduled_job`, `coding_task`, `extraction`, `file_indexing`, `image_extraction`, `iteration_loop`. APScheduler fires → `JobStore` persists → `JobWorker` polls and dispatches to handlers.
+1. **Memory** — `memory/` orchestrates SQLite (episodic, graph, file index), ChromaDB (semantic) and JSON (project metadata). `MemoryManager.recall(query, tiers=[...])` queries across them.
+2. **Source adapters** — `sources/` turns a URL or ID into a typed-topics-frontmatter markdown artifact + graph nodes/edges. 29 adapters across 10 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`, `sec`), self-registered at import. See [`sources/SOURCE_ADAPTERS.md`](sources/SOURCE_ADAPTERS.md).
+3. **Jobs** — `jobs/` is the unified async job system. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop` (`POST /api/jobs` accepts all but `image_extraction`). APScheduler fires → `JobStore` persists → `JobWorker` (asyncio task in the FastAPI process) dispatches to `jobs/handlers/`; a watchdog stalls idle jobs.
 
 ## Directory layout
 
 ```
 backend/
-├── main.py             FastAPI app entry; reads version from frontend/package.json
+├── main.py             FastAPI app entry, auth middleware; reads version from frontend/package.json
 ├── config.py           Pydantic v2 Settings; settings.db_dir is canonical
-├── agent/              AgentCore + tool dispatch + system prompts
-├── api/                FastAPI routers (one per resource, see below)
-├── sources/            Source-adapter plugin registry + adapters/
-├── memory/             5-tier memory implementations + extraction
-├── artifacts/          Artifact store (SQLite + blob storage)
-├── jobs/               Unified async job system + handlers/
-├── skills/             Skill registry + resolver + editor
+├── db_utils.py         apply_sqlite_pragmas() — WAL/NORMAL/foreign_keys for every store
+├── security_log.py     Security audit log
+├── agent/              AgentCore loop, tools.py (schemas + dispatch), prompts, browser tools, textual tool-call recovery
+├── api/                FastAPI routers (see below)
+├── artifacts/          Artifact store (SQLite + blobs), embedder, previews, conversions
+├── integrations/       GitHub API client
+├── jobs/               JobStore, JobWorker, watchdog, orphan recovery, handlers/
+├── llm_config/         Named endpoints, task-class routes, model profiles, probe, chat router, usage log, tuning
+├── mcp_client/         MCP client (protocol 2025-11-25), connection manager, OAuth 2.1
+├── memory/             Episodic, semantic, graph, file index, archival, topic embeddings, merge proposals
+├── messaging/          Bot gateway + adapters (Telegram, Slack, Discord, Matrix, Mattermost)
+├── models/             ModelProvider / RoutedProvider; get_provider_for(<task class>)
+├── sandbox/            Code-execution backends (subprocess default, Firecracker opt-in via PANTHEON_SANDBOX)
+├── secrets/            Encrypted vault (PBKDF2-derived Fernet key)
+├── skills/             Skill registry, resolver, editor, importer/exporter, scanner, versioning
+├── sources/            Source-adapter registry, extractors, similarity + adapters/
 ├── tasks/              APScheduler integration
-├── mcp_client/         MCP server connection pool
-├── llm_config/         Named endpoints + role mapping (chat/prefill/vision/embed/rerank)
-├── models/             ModelProvider + per-role getters
-├── secrets/            Fernet-encrypted vault
-├── secret_storage/     Storage backend for the vault
-├── plugins/            Plugin loader (sources + tools)
-├── integrations/       External-service integrations
-├── telegram_bot/       Telegram bot (still in place; messaging gateway is planned)
-├── sandbox/            Sandboxed execution helpers
-├── utils/              Shared helpers
-├── data/               BUNDLED defaults (personas, personality) — tracked in git
+├── utils/              Shared helpers (safe_http_get, paths, progress, background.spawn, self-doc, …)
+├── data/               BUNDLED defaults (personas, personality, migrations) — tracked in git
 ├── tests/integration/  Pytest integration tests
 └── requirements.txt
 ```
@@ -43,42 +43,45 @@ Runtime data (databases, projects, user skills, Chroma collections) lives under 
 
 ## API surface
 
-19 routers mounted under `/api` from `main.py`:
+19 routers mounted under `/api` in `main.py`:
 
-`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `mcp-oauth` · `skills` · `tasks` · `personas` · `system` · `sources` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints`
+`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `mcp_oauth` · `skills` · `tasks` · `personas` · `system` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints` · `messaging`
 
-`project_export` / `project_import` mount on the `projects` router.
+`project_export` / `project_import` are helpers called from the `projects` router, not mounted separately.
 
 Notable endpoints:
 - `GET /api/health` — version string (drives deploy verification)
+- `POST /api/auth/login` — sets the HttpOnly `pantheon_session` cookie; scripts may send `Authorization: Bearer <token>`. Query-string tokens are never accepted.
 - `GET /api/artifacts/feed` — agent-shaped cursor-paged feed; see [`docs/api/artifacts-feed.md`](../docs/api/artifacts-feed.md)
-- `GET /api/artifacts` — UI-shaped artifacts list
-- `GET /api/llm/endpoints`, `GET /api/llm/roles`, `POST /api/llm/probe` — named endpoints + role mapping
+- `/api/llm/endpoints`, `/api/llm/probe`, `/api/llm/task-classes`, `/api/llm/routes`, `/api/llm/profiles`, `/api/llm/usage` — LLM endpoints, routing and usage
+- `/api/llm/router`, `/api/llm/router/{decisions,feedback,tuning,simulate,apply}` — per-turn chat router + tuning
 - `POST /api/chat/attach` — uploads to ArtifactStore + enqueues `image_extraction` for images
+
+WebSocket endpoints bypass the HTTP middleware and call `api.auth.authorize_websocket()` themselves.
 
 ## LLM configuration
 
-Named endpoints + role mapping (NOT flat per-role triplets). Stored in the vault under `llm_endpoint_key__<name>` and `llm_role_mapping`. Legacy flat-config keys are auto-migrated on first read. See the "LLM endpoints + role mapping" section of `/CLAUDE.md`.
+Named endpoints (`{name, base_url, api_type, api_key}`, key in the vault as `llm_endpoint_key__<name>`) + task-class routes (vault `llm_routes`: ordered primary + fallbacks per class) + model profiles. Classes are defined in `llm_config/models.py` `TASK_CLASSES`: `agent`, `code`, `quick`, `long_context`, `extract`, `summarize`, `vision`, `image_gen`, `embed`, `rerank`. Call sites ask by class: `get_provider_for("extract")`. Legacy flat keys and the old role mapping are migrated once by `llm_config/migration.py`; `/api/llm/roles` still works as a compatibility shim.
 
-To add a role: update `llm_config.models.ROLES` and the matching getter in `models/provider.py`, plus the frontend `RoleMapping.jsx`.
+To add a task class: add it to `TASK_CLASSES` + the `TaskClass` literal, handle any special semantics in `get_provider_for`, and call `get_provider_for("<class>")`. The UI renders classes from `/api/llm/task-classes`. Details: "LLM endpoints + task-class routing" in `/CLAUDE.md`.
 
 ## Memory tiers
 
 | Tier      | Backend             | Purpose                                       |
 | --------- | ------------------- | --------------------------------------------- |
-| Working   | in-process          | Per-conversation scratch (not persisted)      |
+| Working   | in-process          | `AgentCore.working_memory` (not persisted)    |
 | Episodic  | SQLite              | Chat history + task logs                      |
 | Semantic  | ChromaDB            | Embedded chunks + topic-label embeddings      |
 | Graph     | SQLite              | Typed nodes + edges, idempotent inserts       |
-| Archival  | SQLite (mostly unused) | Reserved for whole-document storage        |
+| Archival  | Markdown files      | Notes + project summary under `<data_dir>/projects/<id>/notes` |
 
 ## Install + run
 
-Use the repo-root lifecycle scripts; don't invoke `uvicorn` directly.
+Use the repo-root lifecycle scripts:
 
 ```bash
 # From repo root
-./start.sh                  # boots backend + frontend
+./start.sh                  # boots the backend (serves frontend/dist)
 ./stop.sh                   # graceful stop
 curl -s localhost:8000/api/health   # verify version
 ```
@@ -89,7 +92,7 @@ Backend deps install into the project venv (`~/pantheon/.venv`):
 ~/pantheon/.venv/bin/pip install -r backend/requirements.txt
 ```
 
-Full rebuild-after-change workflow is documented in `/CLAUDE.md` (Deploy / build / test workflow).
+For hot reload during development: `cd backend && ../.venv/bin/uvicorn main:app --reload --port 8000`. Full rebuild-after-change workflow is in `/CLAUDE.md` (Deploy / build / test workflow).
 
 ## Tests
 
@@ -97,8 +100,8 @@ Full rebuild-after-change workflow is documented in `/CLAUDE.md` (Deploy / build
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Coverage is sparse — expand as you go. The autonomous-skill-resolution test (`tests/integration/test_autonomous_skill_resolution.py`) is the canary for the autonomous job path.
+`tests/integration/conftest.py` lowers the vault KDF iteration count for speed. `tests/integration/test_autonomous_skill_resolution.py` is the canary for the autonomous job path.
 
 ## Versioning
 
-Single source of truth: `frontend/package.json` `"version"` field, format `YYYY.MM.DD.HXX`. Backend reads it at startup via `_resolve_app_version()` in `main.py` and surfaces it at `/api/health`. Bump on every push.
+Single source of truth: `frontend/package.json` `"version"`, format `YYYY.MM.DD.HXX`. The backend reads it at startup via `_resolve_app_version()` in `main.py` and surfaces it at `/api/health`. Bump on every push, then run `npm install --package-lock-only` in `frontend/` and commit the lockfile.

@@ -1,11 +1,11 @@
 """Multi-tier memory system with active curation.
 
-Tiers:
-  1. Working   — in-context conversation buffer (ephemeral)
-  2. Episodic  — SQLite conversation history with semantic search
-  3. Semantic  — ChromaDB vector store for knowledge retrieval
-  4. Graph     — SQLite associative concept network
-  5. Archival  — file-based long-term personality and project notes
+Tiers (see memory/README.md):
+  Episodic  — SQLite conversation history with semantic search
+  Semantic  — ChromaDB vector store for knowledge retrieval
+  Graph     — SQLite associative concept network
+  Archival  — file-based project notes
+Working memory is AgentCore.working_memory (in-process, not persisted).
 
 Active components:
   - Extraction  — LLM-powered post-conversation knowledge extraction

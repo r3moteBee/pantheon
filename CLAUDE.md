@@ -12,120 +12,52 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 
 1. **Memory.** SQLite for episodic / graph / file index (one DB each under `data/db/`). ChromaDB for semantic memory at `data/chroma/`. JSON for project metadata at `data/db/projects.json`. The `MemoryManager` orchestrates all four tiers; agents call `mgr.recall(query, tiers=[...])` to query across them.
 
-2. **Source adapters.** The ingestion pipeline that turns "a URL or video_id" into a typed-topics-frontmatter markdown artifact + graph nodes/edges. Adapters live in `backend/sources/adapters/` and self-register at import time. Currently 28 adapters across 9 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`). Each adapter declares its `source_type`, `bucket_aliases`, `extractor_strategy`, `auto_extract`, and `auto_link_similarity`. See `backend/sources/SOURCE_ADAPTERS.md` for the full design.
+2. **Source adapters.** The ingestion pipeline that turns "a URL or video_id" into a typed-topics-frontmatter markdown artifact + graph nodes/edges. Adapters live in `backend/sources/adapters/` and self-register at import time. Currently 29 adapters across 10 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`, `sec`). Each adapter declares its `source_type`, `bucket_aliases`, `extractor_strategy`, `auto_extract`, and `auto_link_similarity`. See `backend/sources/SOURCE_ADAPTERS.md` for the full design.
 
 3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop` (clients may create the first, second and fourth via `POST /api/jobs`; memory extraction and file indexing run inline, not as jobs). APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
 
 ## Directory layout
 
+Directories only — read the code for files. `docs/tools.md` lists every agent tool.
+
 ```
 ~/pantheon/
 ├── backend/
-│   ├── main.py                  FastAPI app entry; reads version from frontend/package.json
-│   ├── agent/                   AgentCore + tool dispatch + system prompts
-│   │   ├── core.py              AgentCore class; runs the agent loop
-│   │   ├── tools.py             ALL agent tools (schemas + dispatch). 1500+ lines.
-│   │   ├── prompts.py           build_system_prompt(); appends recent-jobs + available-skills blocks
-│   │   └── browser_tools.py     Playwright browser tools (optional)
-│   ├── api/                     FastAPI routers (18 mounted routers)
-│   │   ├── chat.py              REST + websocket chat. Both run resolve_explicit + resolve_auto.
-│   │   ├── tasks.py             Schedule CRUD; run-now; approve; logs
-│   │   ├── jobs.py              Jobs CRUD + rerun (one endpoint for retry/rerun)
-│   │   ├── artifacts.py         Artifact CRUD + bulk export
-│   │   ├── files.py             Workspace files CRUD + document conversions
-│   │   ├── projects.py          Project metadata; reads/writes data/db/projects.json
-│   │   ├── project_export.py    Export project as zip (artifacts, episodic, graph, semantic)
-│   │   ├── project_import.py    Import a project zip
-│   │   ├── personas.py          Persona CRUD (apollo, athena, zeus, ...)
-│   │   ├── mcp.py               MCP server registry + port scanning
-│   │   ├── mcp_oauth.py         MCP OAuth2 callback authentication
-│   │   ├── connections.py       GitHub PAT connections
-│   │   ├── conversations.py     Conversation history metadata updates
-│   │   ├── llm_endpoints.py     /api/llm/{endpoints,routes,profiles,usage,probe} — endpoints + task-class routing
-│   │   ├── settings.py          App/messaging/chunking settings, secrets, search providers (LLM config is /api/llm/*)
-│   │   └── skills.py            Skill registry CRUD + auto-discovery toggle + debug-match
-│   ├── sources/                 Source-adapter plugin registry — see SOURCE_ADAPTERS.md
-│   │   ├── base.py              SourceAdapter, IngestRequest, FetchedContent, AdapterResult
-│   │   ├── registry.py          register_adapter, ingest, batch_ingest
-│   │   ├── extraction.py        TopicExtractor + 6 built-in strategies
-│   │   ├── similarity.py        link_artifact_topics + execute_merge + backfill
-│   │   ├── util.py              slugify, parse_relative_date, html_to_markdown
-│   │   └── adapters/
-│   │       ├── youtube.py       3 adapters (interview, keynote, other)
-│   │       ├── blog.py          4 adapters (announcement, influencer, technical, news)
-│   │       ├── pdf.py           4 adapters (datasheet, whitepaper, research, marketing)
-│   │       ├── web.py           3 adapters (product-page, service-page, changelog)
-│   │       ├── forum.py         2 adapters (reddit, hackernews)
-│   │       ├── podcast.py       1 adapter  (episode — trafilatura or extras['transcript'])
-│   │       ├── github.py        2 adapters (release, changelog) — uses GH API + raw fetch
-│   │       ├── cfr.py           2 adapters (section, part) — eCFR Versioner API → markdown
-│   │       └── malegislature.py 7 adapters (general-law-section, general-law-chapter,
-│   │                            session-law, bill, hearing, roll-call, committee-vote) —
-│   │                            malegislature.gov public REST API → markdown
-│   ├── memory/                  Memory tiers — episodic, semantic, graph, file_index
-│   │   ├── manager.py           MemoryManager — orchestrates all tiers
-│   │   ├── episodic.py          EpisodicMemory — chat history + task logs
-│   │   ├── semantic.py          SemanticMemory — ChromaDB wrapper
-│   │   ├── graph.py             GraphMemory — SQLite nodes + edges. add_edge is idempotent.
-│   │   ├── chunker.py           Text chunking strategies (headings, paragraphs, fixed characters)
-│   │   ├── file_indexer.py      FileIndexer — chunk + embed + extract entities to graph.
-│   │   │                        _index_typed_topics_to_graph handles the canonical frontmatter shape.
-│   │   ├── topic_embeddings.py  Topic-label embeddings keyed by (project_id, topic_type, label)
-│   │   ├── merge_proposals.py   SQLite store for reviewable graph node merges
-│   │   ├── extraction.py        Conversation entity extractor (different from sources/extraction.py)
-│   │   └── archival.py          Archival memory (mostly unused)
-│   ├── artifacts/               Artifact store
-│   │   └── store.py             SQLite + blob storage; project_slug() used everywhere
-│   ├── jobs/                    Unified async job system
-│   │   ├── store.py             JobStore — create / get / list / fail / rerun
-│   │   ├── worker.py            JobWorker — asyncio polling loop in same process as FastAPI
-│   │   ├── watchdog.py          Stall detector — kills jobs idle for 5 min
-│   │   └── handlers/            One file per job_type
-│   │       ├── autonomous_task.py    The big one — runs an agent loop with skill resolution
-│   │       ├── coding_task.py        Github sub-agent for PR-shaped coding work
-│   │       ├── image_extraction.py   Vision + OCR + topic extraction for uploaded image artifacts
-│   │       └── iteration_loop.py     Multi-turn execute/review loop with per-turn artifacts
-│   ├── skills/                  Skill system (callable recipes, distinct from scheduled tasks)
-│   │   ├── registry.py          SkillRegistry — bundled skills + user skills
-│   │   ├── resolver.py          resolve_explicit (/slug) + resolve_auto (keyword scoring)
-│   │   ├── editor.py            create_blank_skill — used by the create_skill agent tool
-│   │   └── models.py            SkillManifest (Pydantic), MemoryAccess (Enum), etc.
-│   ├── tasks/scheduler.py       APScheduler integration; schedule_agent_task accepts skill_name
-│   ├── mcp_client/manager.py    MCP server connection pool
-│   ├── llm_config/              Named endpoints + role-mapping registry (replaces flat per-role config)
-│   │   ├── models.py            Pydantic: SavedEndpoint, EndpointWithKey, EndpointPublic, RoleAssignment
-│   │   ├── store.py             Vault-backed CRUD; resolve_role(role) → ResolvedRole
-│   │   ├── migration.py         One-shot migrator from legacy llm_*/prefill_*/vision_*/embedding_*/reranker_* keys
-│   │   └── probe.py             Generic /models discovery for openai / ollama / anthropic / custom
-│   ├── models/provider.py       ModelProvider + 5 role getters that consult llm_config.store.resolve_role
-│   ├── secrets/vault.py         Encrypted secret storage in data/db/vault.db
-│   ├── config.py                Settings (Pydantic v2). settings.db_dir is canonical.
-│   ├── utils/                   Shared helpers
-│   │   ├── autoresearch.py      Evolutionary self-improvement loop CLI runner
-│   │   ├── document_converter.py Unified Pandoc/LibreOffice document format converter
-│   │   └── vision.py            OCR and image analysis helper
-│   ├── data/                    BUNDLED defaults — personas/, personality/. Tracked in git.
-│   ├── tests/integration/       Pytest integration tests. Sparse coverage; expand as you go.
-│   └── requirements.txt         Backend deps
-├── frontend/                    Vite + React. package.json's "version" drives backend version too.
-│   ├── src/
-│   │   ├── pages/ArtifactsPage.jsx
-│   │   ├── components/Chat.jsx, ChatTabs.jsx, Layout.jsx
-│   │   ├── components/chat-tabs/ProjectTasksPanel.jsx (Tasks panel — schedules + jobs)
-│   │   ├── components/settings/    LLM endpoints + model routing UI (EndpointCard, AddEndpointForm,
-│   │   │                            EndpointList, ModelRouting, RoutingUsage)
-│   │   ├── api/client.js        Axios wrappers for backend endpoints (incl. llmApi.*)
-│   │   └── store/index.js       Zustand store
-│   ├── tailwind.config.js       Uses @tailwindcss/typography for prose styling
-│   └── package.json
-├── data/                        RUNTIME data — NOT in git
-│   ├── db/                      All SQLite + projects.json + vault
-│   ├── chroma/                  ChromaDB collections
-│   ├── projects/                Per-project workspace files
-│   ├── skills/                  User-installed skills (skill.json + instructions.md)
-│   └── personality/             User-overridden soul.md / agent.md (defaults in backend/data/personality)
-├── start.sh / stop.sh           Lifecycle scripts
-└── deploy.sh                    Pull + rebuild on the local dev box
+│   ├── main.py            FastAPI app; mounts 19 routers; version from frontend/package.json
+│   ├── config.py          Settings (Pydantic); settings.db_dir is canonical
+│   ├── db_utils.py        apply_sqlite_pragmas — every SQLite store uses it
+│   ├── security_log.py    Security audit log
+│   ├── agent/             AgentCore loop (core.py), all built-in tools (tools.py), system prompt
+│   │                      (prompts.py), tool-result cap/error flag, text tool-call recovery, browser tools
+│   ├── api/               FastAPI routers (auth, chat, files, memory, personality, projects +
+│   │                      export/import, settings, mcp, mcp_oauth, skills, tasks, personas, system,
+│   │                      connections, artifacts, conversations, jobs, llm_endpoints, messaging)
+│   ├── artifacts/         Artifact store (SQLite + blobs), previews, conversions
+│   ├── data/              BUNDLED defaults (personas, personality, migrations). Tracked.
+│   ├── integrations/      GitHub API client
+│   ├── jobs/              JobStore, JobWorker, watchdog, handlers/ (one per job type)
+│   ├── llm_config/        Endpoints, task-class routes, model profiles, chat router, tuning, usage
+│   ├── mcp_client/        MCP client (protocol, OAuth) + connection manager
+│   ├── memory/            Episodic, semantic, graph, file index, archival — see memory/README.md
+│   ├── messaging/         Gateway + Telegram/Slack/Discord/Matrix/Mattermost adapters
+│   ├── models/            ModelProvider / RoutedProvider, model discovery
+│   ├── sandbox/           code_execute sandbox (subprocess or Firecracker; PANTHEON_SANDBOX)
+│   ├── secrets/           Encrypted vault (data/db/vault.db)
+│   ├── skills/            Skill registry, resolver, editor, importer/exporter, scanner, publisher
+│   ├── sources/           Source-adapter registry, extractors, similarity — SOURCE_ADAPTERS.md
+│   ├── tasks/             APScheduler integration (scheduler.py)
+│   ├── utils/             net (safe_http_get), http pool, paths, progress, chat_settings, self_doc…
+│   └── tests/integration/ Pytest suite
+├── frontend/              Vite + React. package.json "version" is THE app version.
+│   └── src/               pages/, components/ (chat-tabs/, settings/), api/client.js, store/
+├── data/                  RUNTIME data, untracked — except data/personality/*.md (tracked copies
+│                          of the bundled defaults; user overrides live here)
+├── docs/                  User/reference docs (USAGE, tools, jobs, skills, messaging, security);
+│                          docs/archive/ holds old plans and specs
+├── scripts/               rotate_vault_key.py, gen_tools_doc.py, one-off migrations
+├── skills/                Bundled skills (skill.json + instructions.md)
+├── start.sh / stop.sh     Lifecycle scripts
+└── deploy.sh / update.sh  Install / pull + rebuild
 ```
 
 ## Deploy / build / test workflow
@@ -153,7 +85,7 @@ Run integration tests:
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Currently ~425 tests (5 skipped). `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. Expand them when fixing regressions.
+Currently ~490 tests (5 skipped). `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. Expand them when fixing regressions.
 
 ## Versioning convention
 
@@ -362,7 +294,7 @@ These are deliberate architectural calls. If a code review recommends reversing 
 
 **Memory recall is unconditional, not pattern-gated.** Every chat turn runs `mgr.recall` across episodic/semantic/graph. Reviewers sometimes suggest gating it on phrases like "what did we discuss" to save latency — don't. The whole product premise is implicit continuity: the user should be able to refer to last week's work without saying the magic words. Pattern-gating silently breaks the exact cases that matter most. If recall latency is the actual concern, lower `limit_per_tier` or cache within a turn — don't gate on phrasing.
 
-**Skills are markdown recipes, not executable code.** A "skill" is `skill.json` + `instructions.md` that the agent reads as prompt context. There is no executor, no subprocess, no sandbox to harden. Recommendations to add WASM/process isolation for skills are confusing skills with arbitrary user code. See `backend/skills/`.
+**Skills are markdown recipes, not executable code.** A "skill" is `skill.json` + `instructions.md` that the agent reads as prompt context. There is no skill executor and skills never run in a subprocess. Recommendations to add WASM/process isolation for skills are confusing skills with arbitrary user code. (`backend/sandbox/` exists, but it isolates the `code_execute` tool, not skills.) Imported skills go through `skills/scanner.py` because their text becomes prompt. See `backend/skills/` and `docs/skills.md`.
 
 **No in-app conversation summarization.** Claude/Anthropic harness handles context compaction; the FastAPI app does not maintain its own summary turn. Adding a second layer in `AgentCore.from_session` duplicates work and risks lossy double-summarization. Persistent context lives in episodic memory + the recent-jobs block, not in a synthesized summary.
 
@@ -418,9 +350,10 @@ Merges are NEVER auto-applied. The user reviews via `list_merge_proposals` agent
 
 **Add a new agent tool:**
 1. Add schema entry to `TOOL_SCHEMAS` in `backend/agent/tools.py` (or insert before `create_skill` if it's a content-related tool)
-2. Add dispatch branch in the giant `if/elif` block at the bottom of `tools.py`
-3. Bump version in `frontend/package.json`
-4. Restart backend
+2. Add dispatch branch in the giant `if/elif` block in `execute_tool`
+3. Regenerate `docs/tools.md`: `.venv/bin/python scripts/gen_tools_doc.py` (a test fails if it's stale)
+4. Bump version in `frontend/package.json` (+ lockfile)
+5. Restart backend
 
 **Add a new source adapter:**
 1. Create `backend/sources/adapters/<name>.py`
