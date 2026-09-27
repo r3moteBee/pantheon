@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -54,6 +55,8 @@ def _format_llm_error(status_code: int, raw_body: str | None) -> str:
     appends an actionable hint for the common failure modes (model can't do
     tool calling, bad key, wrong model id)."""
     detail = _extract_error_message(raw_body)
+    if detail is not None and not isinstance(detail, str):
+        detail = json.dumps(detail)[:500]  # e.g. FastAPI/pydantic 422 detail lists
     if not detail:
         detail = (raw_body or "").strip()[:300] or "(no response body)"
     low = detail.lower()
@@ -78,17 +81,78 @@ def _format_llm_error(status_code: int, raw_body: str | None) -> str:
 
 # (base_url, model) -> "images" | "chat": which image API style worked.
 _IMAGE_API_STYLE: dict[tuple[str, str], str] = {}
+# (base_url, model) -> request field that carries a named size preset
+# ("square_hd", "landscape_16_9", … — fal.ai-style), set once the backend
+# has rejected WxH / W:H with an error naming those presets.
+_IMAGE_WANTS_PRESET: dict[tuple[str, str], str] = {}
+
+# Named size presets (fal.ai naming, used by RouteLLM and others) -> (w, h).
+_SIZE_PRESETS: dict[str, tuple[int, int]] = {
+    "square_hd": (1024, 1024),
+    "square": (512, 512),
+    "landscape_4_3": (1024, 768),
+    "landscape_16_9": (1024, 576),
+    "portrait_4_3": (768, 1024),
+    "portrait_16_9": (576, 1024),
+}
+_PRESET_RE = re.compile(r"\b(square_hd|square|landscape_4_3|landscape_16_9|portrait_4_3|portrait_16_9)\b")
+
+
+def _size_dims(size: str) -> tuple[int, int]:
+    """(w, h) for "1536x1024", "16:9" or a named preset; (1024, 1024) if unparseable."""
+    s = (size or "").strip().lower()
+    if s in _SIZE_PRESETS:
+        return _SIZE_PRESETS[s]
+    for sep in ("x", ":"):
+        if sep in s:
+            try:
+                w, h = (float(x) for x in s.split(sep, 1))
+            except ValueError:
+                break
+            if w > 0 and h > 0:
+                if sep == ":":  # ratio -> ~1MP-ish pixels on the long side 1024
+                    scale = 1024 / max(w, h)
+                    return int(round(w * scale / 8) * 8), int(round(h * scale / 8) * 8)
+                return int(w), int(h)
+    return 1024, 1024
+
+
+def _pixel_size(size: str) -> str:
+    """Any accepted size spelling -> "WxH" for /images/generations."""
+    w, h = _size_dims(size)
+    return f"{w}x{h}"
 
 
 def _aspect_ratio(size: str) -> str:
     """"1536x1024" -> "3:2" (chat-style image APIs take a ratio, not pixels)."""
     from math import gcd
-    try:
-        w, h = (int(x) for x in size.lower().split("x"))
-        g = gcd(w, h) or 1
-        return f"{w // g}:{h // g}"
-    except ValueError:
-        return "1:1"
+    w, h = _size_dims(size)
+    g = gcd(w, h) or 1
+    return f"{w // g}:{h // g}"
+
+
+def _size_preset(size: str, allowed: list[str] | None = None) -> str:
+    """Nearest named preset by aspect ratio, restricted to ``allowed`` when the
+    backend's error listed the values it accepts."""
+    s = (size or "").strip().lower()
+    candidates = [p for p in (allowed or _SIZE_PRESETS) if p in _SIZE_PRESETS] or list(_SIZE_PRESETS)
+    if s in candidates:
+        return s
+    w, h = _size_dims(size)
+    want = w / h
+    # Prefer square_hd over square unless the request is small.
+    ranked = sorted(
+        candidates,
+        key=lambda p: (abs(_SIZE_PRESETS[p][0] / _SIZE_PRESETS[p][1] - want),
+                       0 if (p == "square") == (max(w, h) <= 512) else 1),
+    )
+    return ranked[0]
+
+
+def _presets_in_error(err: BaseException) -> list[str]:
+    """Named presets mentioned in a provider error — non-empty means the
+    backend wants preset names rather than WxH / W:H."""
+    return list(dict.fromkeys(_PRESET_RE.findall(str(err).lower())))
 
 
 def _image_refs_from_chat(data: dict[str, Any]) -> list[str]:
@@ -440,22 +504,50 @@ class ModelProvider:
         style = _IMAGE_API_STYLE.get(key)
         if style != "chat":
             try:
-                images = await self._generate_image_openai(prompt, size=size, n=n, quality=quality)
+                images = await self._images_with_preset_retry(
+                    self._generate_image_openai, prompt, size=size, n=n, quality=quality)
                 _IMAGE_API_STYLE[key] = "images"
                 return images
             except LLMHTTPError as e:
                 if style == "images" or e.status not in (400, 404, 405, 422):
                     raise
-                logger.info("%s has no /images/generations (%s) — trying chat image mode",
+                logger.info("%s: /images/generations failed (%s) — trying chat image mode",
                             self.model, e.status)
-        images = await self._generate_image_chat(prompt, size=size, n=n, quality=quality)
+        images = await self._images_with_preset_retry(
+            self._generate_image_chat, prompt, size=size, n=n, quality=quality)
         _IMAGE_API_STYLE[key] = "chat"
         return images
 
+    async def _images_with_preset_retry(self, fn, prompt: str, *, size: str, n: int,
+                                        quality: str | None) -> list[bytes]:
+        """Call ``fn`` with the size in its native spelling; if the backend
+        rejects it with an error naming presets (``square_hd`` …), retry once
+        with the nearest preset and remember that this model wants presets."""
+        key = (self.base_url, self.model)
+        field = _IMAGE_WANTS_PRESET.get(key)
+        if field:
+            return await fn(prompt, size=size, n=n, quality=quality,
+                            preset=(field, _size_preset(size)))
+        try:
+            return await fn(prompt, size=size, n=n, quality=quality, preset=None)
+        except LLMHTTPError as e:
+            allowed = _presets_in_error(e)
+            if e.status not in (400, 422) or not allowed:
+                raise
+            field = "image_size" if "image_size" in str(e).lower() else "aspect_ratio"
+            preset = _size_preset(size, allowed)
+            logger.info("%s wants named image sizes — retrying with %s=%s", self.model, field, preset)
+            images = await fn(prompt, size=size, n=n, quality=quality, preset=(field, preset))
+            _IMAGE_WANTS_PRESET[key] = field
+            return images
+
     async def _generate_image_openai(self, prompt: str, *, size: str, n: int,
-                                     quality: str | None) -> list[bytes]:
+                                     quality: str | None,
+                                     preset: tuple[str, str] | None = None) -> list[bytes]:
         import base64
-        payload: dict[str, Any] = {"model": self.model, "prompt": prompt, "n": n, "size": size}
+        # /images/generations always carries size in "size", preset or pixels.
+        payload: dict[str, Any] = {"model": self.model, "prompt": prompt, "n": n,
+                                   "size": preset[1] if preset else _pixel_size(size)}
         if quality:
             payload["quality"] = quality
         async with pooled_client(timeout=300.0) as client:
@@ -474,8 +566,11 @@ class ModelProvider:
         return images
 
     async def _generate_image_chat(self, prompt: str, *, size: str, n: int,
-                                   quality: str | None) -> list[bytes]:
+                                   quality: str | None,
+                                   preset: tuple[str, str] | None = None) -> list[bytes]:
         image_config: dict[str, Any] = {"num_images": n, "aspect_ratio": _aspect_ratio(size)}
+        if preset:
+            image_config[preset[0]] = preset[1]
         if quality:
             image_config["quality"] = quality
         payload: dict[str, Any] = {
