@@ -18,8 +18,12 @@ _RULES: list[tuple[str, dict]] = [
     (r"rerank", dict(tier="fast")),
     (r"(text-embedding|embed|^bge-|/bge-|^e5-|gte-|nomic-embed|mxbai-embed|snowflake-arctic-embed)",
      dict(embedding=True, tier="fast")),
-    (r"(gpt-image|dall-e|flux|stable-diffusion|sdxl|sd3|imagen|playground-v|recraft|ideogram)",
+    (r"(gpt-image|dall-e|flux|stable-diffusion|sdxl|sd3|imagen|playground-v|recraft|ideogram"
+     r"|midjourney|seedream|nano-banana|hidream|kolors)",
      dict(image_gen=True)),
+    # Multimodal chat models with image OUTPUT ("gemini-2.5-flash-image",
+    # "qwen_image_edit", …) — served via chat-completions image mode.
+    (r"(^|[-_/.])image([-_.]|$)", dict(image_gen=True, vision=True, tier="fast")),
 
     # ── OpenAI ──
     (r"gpt-5.*(mini|nano)", dict(tools=True, vision=True, tier="fast", context_window=400_000)),

@@ -169,89 +169,51 @@ def generate_self_doc() -> str:
         except Exception:
             pass
 
-    # 3. Active Runtime LLM Providers (Source of truth for what is actually used in memory)
-    active_llm = {}
-    try:
-        from models.provider import (
-            get_provider,
-            get_embedding_provider,
-            get_prefill_provider,
-            get_vision_provider,
-            get_reranker_provider,
-        )
-        
-        # Chat
-        chat_p = get_provider()
-        active_llm["chat"] = {
-            "base_url": chat_p.base_url,
-            "model": chat_p.model,
-            "api_key": _mask_value("api_key", chat_p.api_key),
-        }
-        
-        # Embedding
-        embed_p = get_embedding_provider()
-        active_llm["embed"] = {
-            "base_url": embed_p.base_url,
-            "model": embed_p.embedding_model,
-            "api_key": _mask_value("api_key", embed_p.api_key),
-        }
-        
-        # Prefill
-        prefill_p = get_prefill_provider()
-        active_llm["prefill"] = {
-            "base_url": prefill_p.base_url,
-            "model": prefill_p.model,
-            "api_key": _mask_value("api_key", prefill_p.api_key),
-        }
-        
-        # Vision
-        vision_p = get_vision_provider()
-        if vision_p:
-            active_llm["vision"] = {
-                "base_url": vision_p.base_url,
-                "model": vision_p.model,
-                "api_key": _mask_value("api_key", vision_p.api_key),
-            }
-        else:
-            active_llm["vision"] = {"base_url": "none", "model": "none", "api_key": "none"}
-            
-        # Reranker
-        rerank_p = get_reranker_provider()
-        if rerank_p:
-            active_llm["rerank"] = {
-                "base_url": rerank_p.base_url,
-                "model": rerank_p.model,
-                "api_key": _mask_value("api_key", rerank_p.api_key),
-            }
-        else:
-            active_llm["rerank"] = {"base_url": "none", "model": "none", "api_key": "none"}
-    except Exception as e:
-        logger.warning("Could not read live LLM provider setup: %s", e)
-            
-    # 4. Mapped LLM Roles & Endpoints (Vault Configuration Store)
-    llm_roles = {}
+    # 3+4. Task-class routing (source of truth for which model serves what)
+    routing_rows: list[dict] = []
+    routing_warnings: list[str] = []
     endpoints = []
     try:
-        from llm_config.store import list_endpoints, get_role_mapping
+        from llm_config.models import TASK_CLASSES
+        from llm_config.store import get_profile, get_routes, list_endpoints, route_warnings
         endpoints = [
-            {
-                "name": ep.name,
-                "base_url": ep.base_url,
-                "api_type": ep.api_type,
-            }
+            {"name": ep.name, "base_url": ep.base_url, "api_type": ep.api_type}
             for ep in list_endpoints()
         ]
-        role_map = get_role_mapping()
-        for role, assignment in role_map.items():
-            if assignment:
-                llm_roles[role] = {
-                    "endpoint": assignment.endpoint_name,
-                    "model": assignment.model_id,
-                }
-            else:
-                llm_roles[role] = {"endpoint": "none", "model": "none"}
+        routes = get_routes()
+        for cls, meta in TASK_CLASSES.items():
+            entries = routes.get(cls) or []
+            if not entries:
+                parent = meta.get("inherits")
+                routing_rows.append({
+                    "class": cls, "position": "—",
+                    "endpoint": "", "model": "",
+                    "note": f"not set — uses {parent}" if parent else "NOT CONFIGURED",
+                })
+                continue
+            for i, e in enumerate(entries):
+                prof = get_profile(e["endpoint"], e["model"])
+                caps = [c for c in ("tools", "vision", "image_gen", "embedding") if getattr(prof, c)]
+                routing_rows.append({
+                    "class": cls, "position": "primary" if i == 0 else f"fallback {i}",
+                    "endpoint": e["endpoint"], "model": e["model"],
+                    "note": f"{prof.tier}; {', '.join(caps) or 'no special caps'}",
+                })
+        routing_warnings = route_warnings(routes)
     except Exception as e:
-        logger.warning("Could not read LLM config: %s", e)
+        logger.warning("Could not read LLM routing: %s", e)
+
+    recent_llm_errors: list[str] = []
+    try:
+        from llm_config.usage import summary as _usage_summary
+        for row in _usage_summary(24).get("rows", []):
+            if row.get("errors"):
+                recent_llm_errors.append(
+                    f"{row['task_class']} {row['endpoint']}/{row['model']}: "
+                    f"{row['errors']} error(s) in 24h — last: {row.get('last_error') or '?'}"
+                )
+    except Exception as e:
+        logger.debug("Could not read LLM usage: %s", e)
 
     # 5. Live Search Chain (from SearchProviderManager)
     search_chain = []
@@ -352,26 +314,31 @@ def generate_self_doc() -> str:
     # Section: Active Configuration State
     md.append("\n## ⚙️ Configuration State & LLM Settings")
     
-    md.append("\n### Active Runtime LLM Providers (Live Status)")
-    md.append("This table displays the actual endpoints and models currently resolved in-memory and used for API execution:")
-    if active_llm:
-        md.append("| Role | Live Model ID | Endpoint URL | API Key |")
-        md.append("| --- | --- | --- | --- |")
-        for role, r_info in active_llm.items():
-            md.append(f"| `{role}` | `{r_info['model']}` | `{r_info['base_url']}` | `{r_info['api_key']}` |")
+    md.append("\n### Model Routing (task classes)")
+    md.append(
+        "Every LLM call declares a task class; each class uses its primary model and falls "
+        "back down the list on errors. Classes: agent (chat/jobs/bots), code, extract "
+        "(JSON extraction), summarize, vision, image_gen (the generate_image tool), embed, "
+        "rerank. There are no 'chat'/'prefill' roles anymore — those were migrated to agent "
+        "and summarize. Configure in Settings → Model routing."
+    )
+    if routing_rows:
+        md.append("| Class | Position | Endpoint | Model | Profile / note |")
+        md.append("| --- | --- | --- | --- | --- |")
+        for r in routing_rows:
+            md.append(f"| `{r['class']}` | {r['position']} | `{r['endpoint'] or '—'}` | "
+                      f"`{r['model'] or '—'}` | {r['note']} |")
     else:
-        md.append("*No active LLM providers loaded.*")
-    
-    md.append("\n### Mapped LLM Roles (Vault Config Store)")
-    md.append("This table displays the role-to-endpoint mapping configurations stored in the secure Vault:")
-    if llm_roles:
-        md.append("| Role | Mapped Endpoint | Model ID |")
-        md.append("| --- | --- | --- |")
-        for role, r_info in llm_roles.items():
-            md.append(f"| `{role}` | `{r_info['endpoint']}` | `{r_info['model']}` |")
-    else:
-        md.append("*No LLM role mappings configured in Vault.*")
-        
+        md.append("*Routing table unavailable.*")
+    if routing_warnings:
+        md.append("\n**Routing warnings:**")
+        for w in routing_warnings:
+            md.append(f"- {w}")
+    if recent_llm_errors:
+        md.append("\n**LLM errors in the last 24h (from the call log):**")
+        for w in recent_llm_errors:
+            md.append(f"- {w}")
+
     md.append("\n### Configured LLM Endpoints")
     if endpoints:
         md.append("| Endpoint Name | API Type | Base URL |")

@@ -255,3 +255,58 @@ def test_routes_api_round_trip(vault):
     assert body["profiles"]["a/gpt-image-1"]["image_gen"] is True
     assert c.get("/api/llm/task-classes").json()["task_classes"][0]["id"] == "agent"
     assert c.put("/api/llm/routes", json={"routes": {"bogus": []}}).status_code == 422
+
+
+# ── Chat-completions image mode (Abacus RouteLLM / OpenRouter style) ────────
+
+@pytest.mark.asyncio
+async def test_generate_image_falls_back_to_chat_modalities_and_remembers():
+    import json as _json
+    from models import provider as pmod
+    p = _prov("gemini-3.1-flash-image")
+    pmod._IMAGE_API_STYLE.clear()
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.path.endswith("/images/generations"):
+            return httpx.Response(404, json={"error": {"message": "Not Found"}})
+        body = _json.loads(req.content)
+        assert body["modalities"] == ["image", "text"]
+        assert body["image_config"] == {"num_images": 1, "aspect_ratio": "3:2"}
+        return httpx.Response(200, json={"choices": [{"message": {
+            "content": "here you go",
+            "images": [{"type": "image_url", "image_url": {
+                "url": "data:image/png;base64," + base64.b64encode(_PNG).decode()}}],
+        }}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("utils.http.shared_client", return_value=client):
+        assert await p.generate_image("a puppy", size="1536x1024") == [_PNG]
+        assert await p.generate_image("a kitten", size="1536x1024") == [_PNG]
+    await client.aclose()
+    # Second call goes straight to chat mode.
+    assert calls == ["/v1/images/generations", "/v1/chat/completions", "/v1/chat/completions"]
+
+
+@pytest.mark.asyncio
+async def test_chat_image_mode_explains_text_only_reply():
+    from models import provider as pmod
+    p = _prov("text-only-model")
+    pmod._IMAGE_API_STYLE[(p.base_url, p.model)] = "chat"
+
+    def handler(req):
+        return httpx.Response(200, json={"choices": [{"message": {"content": "I can't draw"}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("utils.http.shared_client", return_value=client):
+        with pytest.raises(RuntimeError, match="no image.*can't draw"):
+            await p.generate_image("x")
+    await client.aclose()
+
+
+def test_image_model_names_detected():
+    from llm_config.known_models import guess_profile
+    for m in ("qwen_image_edit", "gemini-3.1-flash-image", "nano-banana-pro", "flux-2-pro"):
+        assert guess_profile(m).image_gen, m
+    assert not guess_profile("gpt-5.4-nano").image_gen
