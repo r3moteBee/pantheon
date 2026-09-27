@@ -86,14 +86,6 @@ def _resolve_app_version() -> str:
         except Exception:
             pass
 
-    # 3. Look for VERSION file in root directory or parent of parent
-    version_file = Path(__file__).resolve().parent.parent / "VERSION"
-    if version_file.exists():
-        try:
-            return version_file.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-
     return "0.0.0-dev"
 
 

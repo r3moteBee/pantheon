@@ -1,7 +1,6 @@
 """SubprocessSandbox — local subprocess with timeout/memory limits.
 
-Wraps the existing skills/executor.execute_script logic for declared
-skills, and adds an inline path for ad-hoc agent code execution.
+Runs ad-hoc agent code (the code_execute tool) in a subprocess.
 """
 from __future__ import annotations
 import asyncio
@@ -28,30 +27,6 @@ logger = logging.getLogger(__name__)
 
 class SubprocessSandbox(SandboxBackend):
     name = "subprocess"
-
-    async def execute_skill(
-        self,
-        skill: Any,
-        script_name: str,
-        *,
-        args: list[str] | None = None,
-        input_data: str | None = None,
-        timeout: int = 30,
-        workspace_dir: Path | None = None,
-        extra_env: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        # Delegate to the legacy executor — preserves all existing
-        # permission checks, env filtering, security logging.
-        from skills.executor import execute_script
-        return await execute_script(
-            skill=skill,
-            script_name=script_name,
-            args=args,
-            input_data=input_data,
-            timeout=timeout,
-            workspace_dir=workspace_dir,
-            extra_env=extra_env,
-        )
 
     async def execute_inline(
         self,

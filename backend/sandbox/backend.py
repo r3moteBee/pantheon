@@ -72,29 +72,12 @@ def language_to_default_filename(language: str) -> str:
 class SandboxBackend(abc.ABC):
     """Pluggable execution environment.
 
-    `execute_skill` runs a permission-checked skill script (the existing
-    Pantheon path). `execute_inline` runs an ad-hoc snippet supplied by
-    the agent (the `code_execute` tool path).
+    `execute_inline` runs an ad-hoc snippet supplied by the agent (the
+    `code_execute` tool path). Skills are markdown recipes and are never
+    executed.
     """
 
     name: str = "abstract"
-
-    @abc.abstractmethod
-    async def execute_skill(
-        self,
-        skill: Any,
-        script_name: str,
-        *,
-        args: list[str] | None = None,
-        input_data: str | None = None,
-        timeout: int = 30,
-        workspace_dir: Path | None = None,
-        extra_env: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
-        """Execute a declared skill script. Returns a dict in the same
-        shape skills.executor.execute_script has historically produced
-        (stdout, stderr, exit_code, timed_out, duration_ms, script, skill).
-        """
 
     @abc.abstractmethod
     async def execute_inline(

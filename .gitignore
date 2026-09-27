@@ -46,7 +46,8 @@ frontend/dist/
 
 # Data (persisted volumes — don't commit runtime data)
 data/*
-# Keep default personality templates
+# data/personality/*.md is tracked: it is the live global personality on
+# installs where DATA_DIR is ./data (don't untrack — a pull would delete it)
 !data/personality/
 !data/personality/*.md
 
@@ -85,10 +86,16 @@ ehthumbs.db
 # prevent agent-generated noise from sneaking back in.
 BACKEND_*.txt
 DELIVERY_CHECKLIST.md
-FILES_CREATED.txt
 **/BUILD_SUMMARY.txt
 **/COMPLETION_REPORT.md
 **/BACKEND_BUILD_COMPLETE.md
 **/VERIFICATION_REPORT.txt
-backend/data/
 backend/package.json
+
+# backend/data/ holds tracked bundled defaults (migrations, personality,
+# personas — those stay tracked). This only hides runtime files older builds
+# wrote there via CWD-relative paths.
+backend/data/*
+!backend/data/migrations/
+!backend/data/personality/
+!backend/data/personas/

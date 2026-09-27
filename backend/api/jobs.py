@@ -83,15 +83,19 @@ async def cancel_job(job_id: str) -> dict[str, str]:
     return {"status": "cancel_requested", "id": job_id}
 
 
-@router.post("/jobs/{job_id}/retry")
-async def retry_job(job_id: str) -> dict[str, Any]:
+@router.post("/jobs/{job_id}/rerun")
+async def rerun_job(job_id: str) -> dict[str, Any]:
+    """Queue a new job with the same type, payload, title, schedule binding
+    and timeout as a finished one (completed/failed/cancelled/stalled).
+    The original row stays as history; the new one links to it via
+    parent_job_id. Returns the new job."""
     try:
-        return get_store().retry(job_id)
+        new_job = get_store().rerun(job_id)
     except JobNotFound:
         raise HTTPException(status_code=404, detail="job not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
+    return new_job
 
 @router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str) -> dict[str, str]:
