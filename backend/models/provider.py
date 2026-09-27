@@ -76,6 +76,63 @@ def _format_llm_error(status_code: int, raw_body: str | None) -> str:
     return f"LLM API error {status_code}: {detail}{hint}"
 
 
+# (base_url, model) -> "images" | "chat": which image API style worked.
+_IMAGE_API_STYLE: dict[tuple[str, str], str] = {}
+
+
+def _aspect_ratio(size: str) -> str:
+    """"1536x1024" -> "3:2" (chat-style image APIs take a ratio, not pixels)."""
+    from math import gcd
+    try:
+        w, h = (int(x) for x in size.lower().split("x"))
+        g = gcd(w, h) or 1
+        return f"{w // g}:{h // g}"
+    except ValueError:
+        return "1:1"
+
+
+def _image_refs_from_chat(data: dict[str, Any]) -> list[str]:
+    """Image URLs / data URIs from a chat-completions image response.
+    Handles message.images[].image_url.url, content parts of type
+    image_url, and Gemini-style inline_data."""
+    refs: list[str] = []
+    try:
+        msg = (data.get("choices") or [{}])[0].get("message") or {}
+    except (AttributeError, IndexError):
+        return refs
+    for img in msg.get("images") or []:
+        if isinstance(img, dict):
+            url = (img.get("image_url") or {}).get("url") or img.get("url")
+            if url:
+                refs.append(url)
+    content = msg.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image_url":
+                url = (part.get("image_url") or {}).get("url")
+                if url:
+                    refs.append(url)
+            inline = part.get("inline_data") or part.get("inlineData")
+            if isinstance(inline, dict) and inline.get("data"):
+                mime = inline.get("mime_type") or inline.get("mimeType") or "image/png"
+                refs.append(f"data:{mime};base64,{inline['data']}")
+    return refs
+
+
+async def _fetch_image_ref(ref: str) -> bytes:
+    """Bytes for a data: URI or an http(s) URL (via the SSRF guard)."""
+    import base64
+    if ref.startswith("data:"):
+        _, _, b64 = ref.partition(",")
+        return base64.b64decode(b64)
+    from utils.net import safe_http_get
+    r = await safe_http_get(ref, timeout=120)
+    r.raise_for_status()
+    return r.content
+
+
 _EMBED_CACHE: "OrderedDict[tuple[str, str, str], tuple[float, ...]]" = OrderedDict()
 _EMBED_CACHE_SIZE = 512
 _EMBED_CACHE_MAX_CHARS = 2000
@@ -368,11 +425,35 @@ class ModelProvider:
         self, prompt: str, *, size: str = "1024x1024", n: int = 1,
         quality: str | None = None,
     ) -> list[bytes]:
-        """OpenAI-compatible /images/generations. Returns raw image bytes.
+        """Generate images; returns raw image bytes.
 
-        Handles both response styles: ``b64_json`` (gpt-image-*, most local
-        servers) and ``url`` (dall-e-*; fetched through the SSRF guard).
+        Two API styles exist in the wild and we support both:
+          - "images": OpenAI ``POST /images/generations`` (OpenAI, LocalAI, …)
+          - "chat":   ``POST /chat/completions`` with ``modalities:
+            ["image","text"]`` — images come back in
+            ``choices[0].message.images[].image_url.url`` (Abacus RouteLLM,
+            OpenRouter, Gemini-style multimodal models).
+        The style that works is remembered per base_url+model; the first
+        call tries /images/generations and falls back to chat on 404/405.
         """
+        key = (self.base_url, self.model)
+        style = _IMAGE_API_STYLE.get(key)
+        if style != "chat":
+            try:
+                images = await self._generate_image_openai(prompt, size=size, n=n, quality=quality)
+                _IMAGE_API_STYLE[key] = "images"
+                return images
+            except LLMHTTPError as e:
+                if style == "images" or e.status not in (400, 404, 405, 422):
+                    raise
+                logger.info("%s has no /images/generations (%s) — trying chat image mode",
+                            self.model, e.status)
+        images = await self._generate_image_chat(prompt, size=size, n=n, quality=quality)
+        _IMAGE_API_STYLE[key] = "chat"
+        return images
+
+    async def _generate_image_openai(self, prompt: str, *, size: str, n: int,
+                                     quality: str | None) -> list[bytes]:
         import base64
         payload: dict[str, Any] = {"model": self.model, "prompt": prompt, "n": n, "size": size}
         if quality:
@@ -387,13 +468,43 @@ class ModelProvider:
             if item.get("b64_json"):
                 images.append(base64.b64decode(item["b64_json"]))
             elif item.get("url"):
-                from utils.net import safe_http_get
-                r = await safe_http_get(item["url"], timeout=120)
-                r.raise_for_status()
-                images.append(r.content)
+                images.append(await _fetch_image_ref(item["url"]))
         if not images:
             raise RuntimeError("image endpoint returned no images")
         return images
+
+    async def _generate_image_chat(self, prompt: str, *, size: str, n: int,
+                                   quality: str | None) -> list[bytes]:
+        image_config: dict[str, Any] = {"num_images": n, "aspect_ratio": _aspect_ratio(size)}
+        if quality:
+            image_config["quality"] = quality
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "modalities": ["image", "text"],
+            "messages": [{"role": "user", "content": prompt}],
+            "image_config": image_config,
+            "stream": False,
+        }
+        async with pooled_client(timeout=300.0) as client:
+            resp = await client.post(f"{self.base_url}/chat/completions",
+                                     headers=self._headers(), json=payload)
+        if resp.status_code >= 400:
+            raise LLMHTTPError(resp.status_code, _format_llm_error(resp.status_code, resp.text))
+        data = resp.json()
+        refs = _image_refs_from_chat(data)
+        if not refs:
+            text = ""
+            try:
+                text = (data["choices"][0]["message"].get("content") or "")
+                text = text if isinstance(text, str) else ""
+            except (KeyError, IndexError, TypeError, AttributeError):
+                pass
+            raise RuntimeError(
+                "model returned no image"
+                + (f" (it replied: {text[:200]!r})" if text else "")
+                + " — check that this model supports image output"
+            )
+        return [await _fetch_image_ref(r) for r in refs[:max(1, n)]]
 
     async def list_models(self) -> list[str]:
         """Fetch available models from the provider."""
