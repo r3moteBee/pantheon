@@ -141,7 +141,7 @@ Standard rebuild after code changes:
 ```bash
 cd ~/pantheon && git pull
 ~/pantheon/.venv/bin/pip install -r backend/requirements.txt   # if deps changed
-cd frontend && VITE_API_URL="" npm run build && cd ..          # if frontend changed
+cd frontend && npm ci && VITE_API_URL="" npm run build && cd ..  # if frontend changed
 ./stop.sh && pkill -f "uvicorn main:app" 2>/dev/null
 find backend -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
 ./start.sh && sleep 3 && curl -s http://localhost:8000/api/health
@@ -149,7 +149,7 @@ find backend -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null
 
 The curl at the end shows the version string — confirm it changed before declaring a deploy successful.
 
-If a frontend dep changes, also `cd frontend && npm install` before the build.
+Use `npm ci` (not `npm install`) on the dev box: it installs exactly what `package-lock.json` pins and never rewrites it, so `git pull` doesn't conflict. `npm ci` fails if `package.json` and the lockfile disagree — whenever you change a dependency **or bump the version in package.json**, run `npm install --package-lock-only` (or `npm install <pkg>`) and commit the updated lockfile.
 
 Run integration tests:
 
