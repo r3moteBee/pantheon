@@ -67,9 +67,7 @@ class EpisodicMemory:
 
     def _init_db(self) -> None:
         """Initialize database schema."""
-        from db_utils import apply_sqlite_pragmas
-        with sqlite3.connect(self.db_path) as conn:
-            apply_sqlite_pragmas(conn)
+        with self._connect() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY,
@@ -575,6 +573,71 @@ class EpisodicMemory:
             cursor = conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
             conn.commit()
         return cursor.rowcount > 0
+
+    async def set_conversation_title(
+        self, session_id: str, title: str, *, only_if_empty: bool = True,
+    ) -> bool:
+        """Set a conversation's title. By default only fills a NULL/empty
+        title so a user-chosen one is never overwritten. Returns True when
+        a row changed."""
+        sql = "UPDATE conversations SET title = ? WHERE session_id = ?"
+        if only_if_empty:
+            sql += " AND (title IS NULL OR title = '')"
+        with self._connect() as conn:
+            cursor = conn.execute(sql, (title, session_id))
+            conn.commit()
+        return cursor.rowcount > 0
+
+    async def merge_conversation_metadata(
+        self, session_id: str, metadata: dict[str, Any],
+    ) -> None:
+        """Merge ``metadata`` into a conversation's metadata JSON. Creates
+        the conversation row (project 'default', title 'New Chat') when it
+        doesn't exist yet."""
+        now = _now_iso()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT metadata FROM conversations WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                conn.execute(
+                    "INSERT INTO conversations (id, project_id, session_id, title, "
+                    "created_at, updated_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (session_id, "default", session_id, "New Chat", now, now,
+                     json.dumps(metadata)),
+                )
+            else:
+                existing = json.loads(row["metadata"] or "{}")
+                existing.update(metadata)
+                conn.execute(
+                    "UPDATE conversations SET metadata = ?, updated_at = ? WHERE session_id = ?",
+                    (json.dumps(existing), now, session_id),
+                )
+            conn.commit()
+
+    async def delete_conversation(self, session_id: str) -> None:
+        """Delete a conversation row and all its messages."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
+            conn.commit()
+
+    async def project_stats(self, project_id: str) -> dict[str, Any]:
+        """Diagnostic counts for one project: messages, conversations, and
+        (up to 20) distinct project_ids present in the messages table."""
+        with self._connect() as conn:
+            msg_count = conn.execute(
+                "SELECT count(*) FROM messages WHERE project_id = ?", (project_id,)
+            ).fetchone()[0]
+            conv_count = conn.execute(
+                "SELECT count(*) FROM conversations WHERE project_id = ?", (project_id,)
+            ).fetchone()[0]
+            pids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT project_id FROM messages LIMIT 20"
+            ).fetchall()]
+        return {"messages": msg_count, "conversations": conv_count,
+                "project_ids_in_db": pids}
 
     async def get_all_messages(
         self,

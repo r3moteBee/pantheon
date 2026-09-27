@@ -49,7 +49,7 @@ def _manager(session_id="s1"):
 async def test_consolidate_uses_episodic_history():
     m = _manager()
     fake_llm = SimpleNamespace(model="x", chat_complete=AsyncMock(return_value={"content": "They chose A."}))
-    with patch("models.provider.get_prefill_provider", return_value=fake_llm), \
+    with patch("models.provider.get_provider_for", return_value=fake_llm), \
          patch("memory.extraction.run_extraction", AsyncMock(return_value={
              "entities": 2, "relationships": 1, "facts": 1, "user_preferences": 0})) as rx:
         out = await m.consolidate_session()

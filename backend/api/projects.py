@@ -297,7 +297,6 @@ async def export_debug(project_id: str) -> dict[str, Any]:
         _resolve_graph_db_path,
     )
     from pathlib import Path as _P
-    import sqlite3
 
     info: dict[str, Any] = {"project_id": project_id}
 
@@ -309,21 +308,11 @@ async def export_debug(project_id: str) -> dict[str, Any]:
     ep_path = _resolve_episodic_db_path()
     info["episodic"] = {"db_path": ep_path, "exists": _P(ep_path).exists()}
     try:
-        conn = sqlite3.connect(ep_path)
-        msg_count = conn.execute(
-            "SELECT count(*) FROM messages WHERE project_id = ?", (project_id,)
-        ).fetchone()[0]
-        conv_count = conn.execute(
-            "SELECT count(*) FROM conversations WHERE project_id = ?", (project_id,)
-        ).fetchone()[0]
-        # Also show distinct project_ids in the DB for debugging
-        pids = [r[0] for r in conn.execute(
-            "SELECT DISTINCT project_id FROM messages LIMIT 20"
-        ).fetchall()]
-        conn.close()
-        info["episodic"]["messages"] = msg_count
-        info["episodic"]["conversations"] = conv_count
-        info["episodic"]["project_ids_in_db"] = pids
+        from memory.episodic import EpisodicMemory
+        # Also shows distinct project_ids in the DB for debugging
+        info["episodic"].update(
+            await EpisodicMemory(db_path=ep_path).project_stats(project_id)
+        )
     except Exception as e:
         info["episodic"]["error"] = str(e)
 
@@ -331,12 +320,10 @@ async def export_debug(project_id: str) -> dict[str, Any]:
     gr_path = _resolve_graph_db_path()
     info["graph"] = {"db_path": gr_path, "exists": _P(gr_path).exists()}
     try:
-        conn = sqlite3.connect(gr_path)
-        node_count = conn.execute(
-            "SELECT count(*) FROM graph_nodes WHERE project_id = ?", (project_id,)
-        ).fetchone()[0]
-        conn.close()
-        info["graph"]["nodes"] = node_count
+        from memory.graph import GraphMemory
+        info["graph"]["nodes"] = await GraphMemory(
+            project_id=project_id, db_path=gr_path
+        ).count_nodes()
     except Exception as e:
         info["graph"]["error"] = str(e)
 

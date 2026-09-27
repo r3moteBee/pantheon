@@ -110,8 +110,8 @@ class MemoryExtractor:
             from models.provider import get_provider_for
             return get_provider_for("extract")
         except Exception:
-            from models.provider import get_provider
-            return get_provider()
+            from models.provider import get_provider_for
+            return get_provider_for("agent")
 
     def _build_transcript(self, messages: list[dict[str, Any]]) -> str:
         """Build a transcript string from message dicts, respecting char limit."""
