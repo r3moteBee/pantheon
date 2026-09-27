@@ -96,6 +96,9 @@ class PantheonExtensions(BaseModel):
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
+    # Chat router hint: run this skill's turns on a task class
+    # ("code", "quick", "long_context", "vision"); None = let the router decide.
+    model_class: str | None = None
 
 
 # ── Security Scan Result ─────────────────────────────────────────────────────

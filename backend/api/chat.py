@@ -47,6 +47,7 @@ class ChatResponse(BaseModel):
     session_id: str
     response: str
     project_id: str
+    route: dict[str, Any] | None = None
 
 
 class HistoryRequest(BaseModel):
@@ -106,6 +107,106 @@ async def _build_agent(
     )
 
 
+# ── Per-turn model routing (llm_config/router.py) ─────────────────────
+
+async def _route_turn(agent, message: str, session_id: str, skill_name: str | None):
+    """Pick this turn's task class and point the agent at its provider.
+    Runs before agent.chat so the model never changes inside a tool loop.
+    Any router failure leaves the agent on its default (agent) provider."""
+    from llm_config import router as chat_router
+    from models.provider import get_provider_for
+    try:
+        skill = get_skill_registry().get(skill_name) if skill_name else None
+        try:
+            history_chars = sum(len(str(m.get("content") or "")) for m in agent._get_working_messages())
+        except Exception:
+            history_chars = 0
+        decision = await chat_router.decide(
+            message, session_id=session_id, history_chars=history_chars, skill=skill,
+        )
+    except Exception:
+        logger.exception("chat router failed — using agent class")
+        return None
+    if decision.task_class != "agent":
+        prov = get_provider_for(decision.task_class)
+        if prov is not None:
+            agent.provider = prov
+    logger.info("chat route: %s via %s (%s) -> %s/%s", decision.task_class, decision.rule,
+                decision.reason, decision.endpoint, decision.model)
+    return decision
+
+
+def _finish_route(decision, served: list, session_id: str, message: str) -> dict[str, Any] | None:
+    """Log the decision (with the model that actually answered after any
+    fallback) and return the dict sent to the UI / stored on the message."""
+    if decision is None:
+        return None
+    from llm_config.usage import record_decision
+    served_model = served[-1][1] if served else None
+    record_decision(
+        session_id=session_id, task_class=decision.task_class, rule=decision.rule,
+        reason=decision.public()["reason"], endpoint=decision.endpoint, model=decision.model,
+        served_model=served_model, message_chars=len(message or ""), est_tokens=decision.est_tokens,
+    )
+    route = decision.public()
+    if served:
+        route["served_endpoint"], route["served_model"] = served[-1]
+    return route
+
+
+async def _stream_turn(agent, message: str, session_id: str, send, *,
+                       skill_name: str | None = None, stream: bool = True):
+    """Route, run one agent turn and forward its events via ``send``.
+    Returns (full_response, route). Keeps draining after a client
+    disconnect (send drops silently) so pending tool calls finish and the
+    reply is still saved."""
+    from models.provider import served_models
+    decision = await _route_turn(agent, message, session_id, skill_name)
+    if decision is not None:
+        await send({"type": "model_route", **decision.public()})
+    served: list = []
+    token = served_models.set(served)
+    full_response, route, finished = "", None, False
+    try:
+        async for event in agent.chat(message, stream=stream):
+            if event.get("type") == "done":
+                full_response = event.get("full_response", "")
+                route = _finish_route(decision, served, session_id, message)
+                finished = True
+                if route:
+                    event = {**event, "route": route}
+            await send(event)
+    finally:
+        served_models.reset(token)
+        if not finished:
+            route = _finish_route(decision, served, session_id, message)
+    return full_response, route
+
+
+def _model_command_reply(session_id: str, message: str) -> tuple[str | None, str | None, str | None]:
+    """Handle a leading "/model [class] [message]".
+    Returns (reply, remaining_message, pinned_class); reply is None when the
+    message isn't a /model command."""
+    from llm_config import router as chat_router
+    cmd = chat_router.parse_model_command(message)
+    if cmd is None:
+        return None, message, None
+    cls, rest = cmd
+    if cls is None:
+        pinned = chat_router.get_override(session_id) or "auto"
+        return (f"Model routing for this conversation: **{pinned}**. "
+                f"Use `/model <{'|'.join(chat_router.CHAT_CLASSES)}|auto>`."), "", pinned
+    try:
+        chat_router.set_override(session_id, cls)
+    except ValueError as e:
+        return str(e), "", None
+    pinned = chat_router.get_override(session_id) or "auto"
+    reply = ("Routing is automatic again for this conversation." if pinned == "auto"
+             else f"This conversation is pinned to **{pinned}**. `/model auto` to undo.")
+    return reply, rest, pinned
+
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     """Send a message to the agent and get a response (non-streaming).
@@ -127,6 +228,10 @@ async def chat(req: ChatRequest) -> ChatResponse:
     message = req.message
     skill_context: str | None = None
     active_skill_name: str | None = None
+
+    reply, message, _pinned = _model_command_reply(session_id, message)
+    if reply is not None and not message:
+        return ChatResponse(session_id=session_id, response=reply, project_id=req.project_id)
 
     # 1. Explicit /skill-name invocation
     explicit_skill, remaining_message = resolve_explicit(message)
@@ -196,18 +301,24 @@ async def chat(req: ChatRequest) -> ChatResponse:
     except Exception as e:
         logger.warning("REST chat: failed to save user message: %s", e)
 
-    full_response = ""
-    async for event in agent.chat(message, stream=False):
-        if event["type"] == "done":
-            full_response = event.get("full_response", "")
-        elif event["type"] == "error":
-            raise HTTPException(status_code=500, detail=event["message"])
+    errors: list[str] = []
+
+    async def _collect(event: dict[str, Any]) -> None:
+        if event.get("type") == "error":
+            errors.append(event.get("message") or "agent error")
+
+    full_response, route = await _stream_turn(
+        agent, message, session_id, _collect, skill_name=active_skill_name, stream=False,
+    )
+    if errors:
+        raise HTTPException(status_code=500, detail=errors[0])
 
     if full_response:
         try:
             await memory.episodic.save_message(
                 session_id=session_id, project_id=req.project_id,
                 role="assistant", content=full_response,
+                metadata={"route": route} if route else None,
             )
         except Exception as e:
             logger.warning("REST chat: failed to save assistant message: %s", e)
@@ -216,6 +327,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         session_id=session_id,
         response=full_response,
         project_id=req.project_id,
+        route=route,
     )
 
 
@@ -336,19 +448,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 except Exception as e:
                     logger.warning("Failed to save user message to episodic: %s", e)
 
-                full_response = ""
-                async for event in agent.chat(message, stream=True):
-                    # Keep draining after a disconnect so pending tool calls
-                    # finish and the reply is still saved to history.
-                    await _send(event)
-                    if event.get("type") == "done":
-                        full_response = event.get("full_response", "")
+                full_response, route = await _stream_turn(
+                    agent, message, session_id, _send, skill_name=active_skill_name,
+                )
 
                 if full_response:
                     try:
                         await memory.episodic.save_message(
                             session_id=session_id, project_id=project_id,
                             role="assistant", content=full_response,
+                            metadata={"route": route} if route else None,
                         )
                     except Exception as e:
                         logger.warning("Failed to save assistant message to episodic: %s", e)
@@ -400,19 +509,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 except Exception as e:
                     logger.warning("Failed to save user message to episodic: %s", e)
 
-                full_response = ""
-                async for event in agent.chat(message, stream=True):
-                    # Keep draining after a disconnect so pending tool calls
-                    # finish and the reply is still saved to history.
-                    await _send(event)
-                    if event.get("type") == "done":
-                        full_response = event.get("full_response", "")
+                full_response, route = await _stream_turn(
+                    agent, message, session_id, _send, skill_name=active_skill_name,
+                )
 
                 if full_response:
                     try:
                         await memory.episodic.save_message(
                             session_id=session_id, project_id=project_id,
                             role="assistant", content=full_response,
+                            metadata={"route": route} if route else None,
                         )
                     except Exception as e:
                         logger.warning("Failed to save assistant message to episodic: %s", e)
@@ -425,6 +531,25 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         _session_message_counts[session_id] = 0
                         spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
                 continue
+
+            # Model pin from the chat UI's picker ("auto" clears it).
+            if data.get("model_class") is not None:
+                from llm_config import router as chat_router
+                try:
+                    chat_router.set_override(session_id, data.get("model_class"))
+                except ValueError as e:
+                    await websocket.send_json({"type": "error", "message": str(e)})
+                    continue
+
+            # "/model <class> [message]" — pin this conversation to a class.
+            reply, message, pinned = _model_command_reply(session_id, message)
+            if reply is not None:
+                await websocket.send_json({"type": "session_start", "session_id": session_id})
+                await websocket.send_json({"type": "model_pin", "task_class": pinned})
+                if not message:
+                    await websocket.send_json({"type": "text_delta", "content": reply})
+                    await websocket.send_json({"type": "done", "full_response": reply})
+                    continue
 
             if not message:
                 await websocket.send_json({"type": "error", "message": "Empty message"})
@@ -603,6 +728,10 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         active_skill_name=active_skill_name,
                     )
                     agent.custom_soul = p_soul
+                    _decision = await _route_turn(agent, current_message, session_id, active_skill_name)
+                    if _decision is not None:
+                        await _send({"type": "model_route", **_decision.public()})
+                        _finish_route(_decision, [], session_id, current_message)
 
                     # Save the user message only after the first agent has
                     # rehydrated from history — saving first made
@@ -673,13 +802,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 except Exception as e:
                     logger.warning("Failed to save user message to episodic: %s", e)
 
-                full_response = ""
-                async for event in agent.chat(message, stream=True):
-                    # Keep draining after a disconnect so pending tool calls
-                    # finish and the reply is still saved to history.
-                    await _send(event)
-                    if event.get("type") == "done":
-                        full_response = event.get("full_response", "")
+                full_response, route = await _stream_turn(
+                    agent, message, session_id, _send, skill_name=active_skill_name,
+                )
 
                 # Save assistant response to episodic memory
                 if full_response:
@@ -689,6 +814,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                             project_id=project_id,
                             role="assistant",
                             content=full_response,
+                            metadata={"route": route} if route else None,
                         )
                     except Exception as e:
                         logger.warning("Failed to save assistant message to episodic: %s", e)

@@ -47,6 +47,20 @@ def _connect():
                 completion_tokens INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts);
+            CREATE TABLE IF NOT EXISTS route_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts REAL NOT NULL,
+                session_id TEXT,
+                task_class TEXT NOT NULL,
+                rule TEXT NOT NULL,
+                reason TEXT,
+                endpoint TEXT,
+                model TEXT,
+                served_model TEXT,
+                message_chars INTEGER,
+                est_tokens INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_route_decisions_ts ON route_decisions(ts);
         """)
         _ready_paths.add(path)
     return ClosingConnection(conn)  # type: ignore
@@ -71,6 +85,7 @@ def record(
             )
             if now - _last_prune > 3600:
                 conn.execute("DELETE FROM llm_calls WHERE ts < ?", (now - RETENTION_DAYS * 86400,))
+                conn.execute("DELETE FROM route_decisions WHERE ts < ?", (now - RETENTION_DAYS * 86400,))
                 _last_prune = now
             conn.commit()
     except Exception:
@@ -114,3 +129,40 @@ def summary(hours: float = 24.0) -> dict[str, Any]:
         out.append(g)
     out.sort(key=lambda g: (g["task_class"], -g["calls"]))
     return {"hours": hours, "rows": out}
+
+
+def record_decision(
+    *, session_id: str | None, task_class: str, rule: str, reason: str,
+    endpoint: str = "", model: str = "", served_model: str | None = None,
+    message_chars: int = 0, est_tokens: int = 0,
+) -> None:
+    """One row per routed chat turn (best-effort)."""
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """INSERT INTO route_decisions (ts, session_id, task_class, rule, reason,
+                       endpoint, model, served_model, message_chars, est_tokens)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (time.time(), session_id, task_class, rule, (reason or "")[:300],
+                 endpoint, model, served_model, message_chars, est_tokens),
+            )
+            conn.commit()
+    except Exception:
+        logger.debug("route decision record failed", exc_info=True)
+
+
+def decision_summary(hours: float = 24.0) -> dict[str, Any]:
+    """Chat-router decisions grouped by (task_class, rule) over ``hours``."""
+    since = time.time() - hours * 3600
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT task_class, rule, COUNT(*), MAX(ts),
+                      SUM(CASE WHEN served_model IS NOT NULL AND served_model != model THEN 1 ELSE 0 END)
+               FROM route_decisions WHERE ts >= ?
+               GROUP BY task_class, rule ORDER BY COUNT(*) DESC""",
+            (since,),
+        ).fetchall()
+    return {"hours": hours, "rows": [
+        {"task_class": c, "rule": r, "turns": n, "last_ts": ts, "fell_back": fb or 0}
+        for c, r, n, ts, fb in rows
+    ]}

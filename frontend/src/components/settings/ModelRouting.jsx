@@ -13,7 +13,7 @@ const CAPS = [
 
 const profileKey = (e) => `${e.endpoint}/${e.model}`
 
-export default function ModelRouting({ refreshKey }) {
+export default function ModelRouting({ refreshKey, onSaved }) {
   const [classes, setClasses] = useState([])
   const [endpoints, setEndpoints] = useState([])
   const [routes, setRoutes] = useState({})
@@ -73,6 +73,7 @@ export default function ModelRouting({ refreshKey }) {
       applyView(await llmApi.setRoutes(clean))
       setDirty(false)
       setStatus('Saved')
+      onSaved?.()
     } catch (e) {
       setStatus(`Error: ${String(e?.message || e)}`)
     } finally {

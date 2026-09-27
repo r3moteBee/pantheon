@@ -4,7 +4,7 @@ import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, P
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
-import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi, artifactsApi } from '../api/client'
+import { createChatSocket, settingsApi, chatApi, skillsApi, filesApi, conversationsApi, artifactsApi, llmApi } from '../api/client'
 import SkillPicker from './SkillPicker'
 import { mermaidMarkdownComponents } from './markdownComponents'
 
@@ -310,6 +310,21 @@ function MessageActions({ content, onSaveMessage }) {
   )
 }
 
+// Which task class / model answered (set by the per-turn chat router).
+function RouteBadge({ route }) {
+  if (!route || !route.task_class) return null
+  const model = route.served_model || route.model
+  const fellBack = route.served_model && route.model && route.served_model !== route.model
+  return (
+    <span
+      className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700'
+      title={`${route.rule}: ${route.reason}${fellBack ? ` — primary ${route.model} failed, answered by fallback` : ''}`}
+    >
+      {route.task_class}{model ? ` · ${model}` : ''}{fellBack ? ' ↩' : ''}
+    </span>
+  )
+}
+
 function Message({ msg, onSaveMessage }) {
   const isUser = msg.role === 'user'
   const mdComponents = useMarkdownComponents()
@@ -322,6 +337,7 @@ function Message({ msg, onSaveMessage }) {
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
             <span className="text-xs text-gray-500">Agent</span>
+            <RouteBadge route={msg.route} />
             {msg.timestamp && (
               <span className="text-xs text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
             )}
@@ -403,6 +419,12 @@ export default function Chat() {
   const [skillQuery, setSkillQuery] = useState('')
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
   const [pendingSuggestion, setPendingSuggestion] = useState(null)
+  // Chat router: per-conversation model pin ("auto" = let the router pick),
+  // the classes that can take a turn, and the current turn's route.
+  const [modelClass, setModelClass] = useState('auto')
+  const [routeOptions, setRouteOptions] = useState([])
+  const [liveRoute, setLiveRoute] = useState(null)
+  const liveRouteRef = useRef(null)
   const messagesEndRef = useRef(null)
   const socketRef = useRef(null)
   const textareaRef = useRef(null)
@@ -420,6 +442,15 @@ export default function Chat() {
   const clearToolCalls = useStore((s) => s.clearToolCalls)
   const sessionId = useStore((s) => s.sessionId)
   const setSessionId = useStore((s) => s.setSessionId)
+
+  useEffect(() => {
+    llmApi.getRouter()
+      .then((v) => setRouteOptions((v.classes || []).filter((c) => c.usable && c.name !== 'agent')))
+      .catch(() => setRouteOptions([]))
+  }, [])
+
+  // A new conversation starts unpinned.
+  useEffect(() => { if (!sessionId) setModelClass('auto') }, [sessionId])
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
   const projectIdForSave = activeProject?.id || 'default'
@@ -627,6 +658,13 @@ export default function Chat() {
         case 'skill_active':
           setActiveSkillBadge(event.skill)
           break
+        case 'model_route':
+          liveRouteRef.current = event
+          setLiveRoute(event)
+          break
+        case 'model_pin':
+          setModelClass(event.task_class || 'auto')
+          break
         case 'skill_suggestion':
           setIsStreaming(false)
           setPendingSuggestion({
@@ -657,6 +695,7 @@ export default function Chat() {
               role: 'assistant',
               content: finalContent,
               toolCalls: [...finalToolCalls],
+              route: event.route || liveRouteRef.current,
               timestamp: new Date().toISOString(),
             })
           }
@@ -664,6 +703,8 @@ export default function Chat() {
           clearToolCalls()
           setIsStreaming(false)
           setActiveSkillBadge(null)
+          liveRouteRef.current = null
+          setLiveRoute(null)
           break
         }
         case 'error':
@@ -728,6 +769,7 @@ export default function Chat() {
       session_id: sessionId,
       project_id: activeProject?.id || 'default',
       active_personas: useStore.getState().activePersonas,
+      model_class: modelClass,
     })
 
     if (socketRef.current?.readyState === WebSocket.OPEN) {
@@ -738,7 +780,7 @@ export default function Chat() {
         sock.onopen = () => sock.send(payload)
       }
     }
-  }, [input, attachments, isStreaming, sessionId, activeProject])
+  }, [input, attachments, isStreaming, sessionId, activeProject, modelClass])
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -839,6 +881,7 @@ export default function Chat() {
                   <Brain className="w-3.5 h-3.5 text-white" />
                 </div>
                 <span className="text-xs text-gray-500">Agent</span>
+                <RouteBadge route={liveRoute} />
                 {activeSkillBadge && (
                   <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-brand-900 text-brand-300">
                     <Zap className="w-2.5 h-2.5" />
@@ -924,6 +967,22 @@ export default function Chat() {
       {/* Input area */}
       <div className="p-4 bg-gray-900 border-t border-gray-800">
         <div className="flex gap-2 items-end max-w-4xl mx-auto">
+          {/* Model picker — only when the router has somewhere else to send turns */}
+          {routeOptions.length > 0 && (
+            <select
+              value={modelClass}
+              onChange={(e) => setModelClass(e.target.value)}
+              disabled={isStreaming}
+              title="Model for this conversation. Auto lets the chat router pick per turn; /model <class> works too."
+              className="flex-shrink-0 h-12 bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-300 focus:outline-none focus:border-brand-500 disabled:opacity-40"
+            >
+              <option value="auto">Auto</option>
+              <option value="agent">Agent</option>
+              {routeOptions.map((c) => (
+                <option key={c.name} value={c.name}>{c.label}</option>
+              ))}
+            </select>
+          )}
           {/* Attach button */}
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -964,9 +1023,11 @@ export default function Chat() {
               onChange={(e) => {
                 const val = e.target.value
                 setInput(val)
-                // Detect / at start of input for skill picker
-                if (val.startsWith('/')) {
-                  const afterSlash = val.slice(1).split(/\s/)[0]
+                // Skill picker only while typing the command name: closes
+                // after a space (so "/skill args" + Enter sends) and for the
+                // built-in /model command.
+                if (val.startsWith('/') && !/\s/.test(val) && val !== '/model') {
+                  const afterSlash = val.slice(1)
                   setSkillQuery(afterSlash)
                   setShowSkillPicker(true)
                 } else {
@@ -1062,6 +1123,7 @@ function ChatHistoryDrawer() {
         role: m.role,
         content: m.content,
         timestamp: m.timestamp,
+        route: m.metadata?.route,
       }))
       clearMessages()
       setMessages(msgs)

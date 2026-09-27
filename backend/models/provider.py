@@ -616,6 +616,19 @@ class ModelProvider:
 
 _RETRYABLE_STATUS = {404, 408, 409, 425, 429}
 
+# Set to a list by a caller (the chat router) that wants to know which
+# endpoint/model actually served its calls after fallbacks. A list rather
+# than a value so tasks spawned from the turn (copied contexts) still
+# report into it.
+from contextvars import ContextVar
+served_models: ContextVar[list | None] = ContextVar("served_models", default=None)
+
+
+def _note_served(endpoint: str, model: str) -> None:
+    sink = served_models.get()
+    if sink is not None:
+        sink.append((endpoint, model))
+
 
 def _is_retryable(status: Any) -> bool:
     if status == "network":
@@ -693,6 +706,7 @@ class RoutedProvider:
                 raise
             self._log(endpoint=ep, model=prov.model, op="complete", attempt=i,
                       ok=True, started=started, usage=result.get("usage"))
+            _note_served(ep, prov.model)
             return result
         raise last_exc or RuntimeError("no candidates")
 
@@ -729,6 +743,7 @@ class RoutedProvider:
                 if event.get("type") == "done":
                     self._log(endpoint=ep, model=prov.model, op="stream", attempt=i,
                               ok=True, started=started)
+                    _note_served(ep, prov.model)
                 yield event
             if not failed_early:
                 return
