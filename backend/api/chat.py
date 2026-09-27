@@ -136,19 +136,33 @@ async def _route_turn(agent, message: str, session_id: str, skill_name: str | No
     return decision
 
 
-def _finish_route(decision, served: list, session_id: str, message: str) -> dict[str, Any] | None:
-    """Log the decision (with the model that actually answered after any
-    fallback) and return the dict sent to the UI / stored on the message."""
+import re as _re
+
+# A tool result that reports failure ("Error executing …", "Image generation failed: …").
+_TOOL_ERROR_RE = _re.compile(r"\s*(error\b|.{0,80}?\bfailed\b)", _re.I)
+
+
+def _finish_route(decision, served: list, session_id: str, message: str,
+                  outcome: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Log the decision with the model that actually answered (after any
+    fallback) and the turn's outcome; return the dict sent to the UI and
+    stored on the message."""
     if decision is None:
         return None
+    import uuid as _uuid
+    from llm_config import router as chat_router
     from llm_config.usage import record_decision
+    decision_id = _uuid.uuid4().hex[:16]
     served_model = served[-1][1] if served else None
     record_decision(
         session_id=session_id, task_class=decision.task_class, rule=decision.rule,
         reason=decision.public()["reason"], endpoint=decision.endpoint, model=decision.model,
         served_model=served_model, message_chars=len(message or ""), est_tokens=decision.est_tokens,
+        decision_id=decision_id, outcome=outcome,
     )
+    chat_router.remember_decision(session_id, decision_id, decision.task_class)
     route = decision.public()
+    route["decision_id"] = decision_id
     if served:
         route["served_endpoint"], route["served_model"] = served[-1]
     return route
@@ -159,19 +173,38 @@ async def _stream_turn(agent, message: str, session_id: str, send, *,
     """Route, run one agent turn and forward its events via ``send``.
     Returns (full_response, route). Keeps draining after a client
     disconnect (send drops silently) so pending tool calls finish and the
-    reply is still saved."""
+    reply is still saved. Records the turn's outcome for tuning."""
+    import time as _time
+    from llm_config import router as chat_router
     from models.provider import served_models
+    try:
+        chat_router.note_user_message(session_id, message)
+    except Exception:
+        logger.debug("correction check failed", exc_info=True)
     decision = await _route_turn(agent, message, session_id, skill_name)
     if decision is not None:
         await send({"type": "model_route", **decision.public()})
     served: list = []
     token = served_models.set(served)
+    outcome: dict[str, Any] = {"tool_calls": 0, "tool_errors": 0, "stream_error": False}
+    started = _time.monotonic()
     full_response, route, finished = "", None, False
     try:
         async for event in agent.chat(message, stream=stream):
-            if event.get("type") == "done":
+            etype = event.get("type")
+            if etype == "tool_call":
+                outcome["tool_calls"] += 1
+            elif etype == "tool_result":
+                if _TOOL_ERROR_RE.match(str(event.get("result") or "")[:200]):
+                    outcome["tool_errors"] += 1
+            elif etype == "error":
+                outcome["stream_error"] = True
+            elif etype == "done":
                 full_response = event.get("full_response", "")
-                route = _finish_route(decision, served, session_id, message)
+                outcome.update(latency_ms=int((_time.monotonic() - started) * 1000),
+                               iterations=event.get("iterations"),
+                               truncated=bool(event.get("truncated")))
+                route = _finish_route(decision, served, session_id, message, outcome)
                 finished = True
                 if route:
                     event = {**event, "route": route}
@@ -179,7 +212,10 @@ async def _stream_turn(agent, message: str, session_id: str, send, *,
     finally:
         served_models.reset(token)
         if not finished:
-            route = _finish_route(decision, served, session_id, message)
+            outcome.setdefault("latency_ms", int((_time.monotonic() - started) * 1000))
+            if not outcome["stream_error"] and decision is not None:
+                outcome["stream_error"] = True  # turn died without a done event
+            route = _finish_route(decision, served, session_id, message, outcome)
     return full_response, route
 
 

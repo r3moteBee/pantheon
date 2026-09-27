@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import SandboxedHtml from './SandboxedHtml'
-import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus, Bookmark, Copy, Loader } from 'lucide-react'
+import { Send, Square, ChevronDown, ChevronRight, Zap, Brain, Clock, Sparkles, Paperclip, X, FileText, Image, File, Target, UserCircle, Wand2, Check, XCircle, History, Save, Plus, Bookmark, Copy, Loader, ThumbsUp, ThumbsDown } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useStore } from '../store'
@@ -310,17 +310,43 @@ function MessageActions({ content, onSaveMessage }) {
   )
 }
 
-// Which task class / model answered (set by the per-turn chat router).
-function RouteBadge({ route }) {
+// Which task class / model answered (set by the per-turn chat router),
+// with 👍/👎 that feed routing tuning (Settings → Routing tuning).
+function RouteBadge({ route, rateable = false }) {
+  const [rating, setRating] = React.useState(route?.rating || 0)
   if (!route || !route.task_class) return null
   const model = route.served_model || route.model
   const fellBack = route.served_model && route.model && route.served_model !== route.model
+  const rate = async (value) => {
+    const next = rating === value ? 0 : value
+    setRating(next)
+    try {
+      await llmApi.routerFeedback(route.decision_id, next)
+      route.rating = next
+    } catch {
+      setRating(rating)
+    }
+  }
   return (
-    <span
-      className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700'
-      title={`${route.rule}: ${route.reason}${fellBack ? ` — primary ${route.model} failed, answered by fallback` : ''}`}
-    >
-      {route.task_class}{model ? ` · ${model}` : ''}{fellBack ? ' ↩' : ''}
+    <span className='flex items-center gap-1'>
+      <span
+        className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700'
+        title={`${route.rule}: ${route.reason}${fellBack ? ` — primary ${route.model} failed, answered by fallback` : ''}`}
+      >
+        {route.task_class}{model ? ` · ${model}` : ''}{fellBack ? ' ↩' : ''}
+      </span>
+      {rateable && route.decision_id && (
+        <span className={`flex items-center ${rating ? '' : 'opacity-60 lg:opacity-0 lg:group-hover:opacity-100'} transition-opacity`}>
+          <button onClick={() => rate(1)} title='Good answer for this model' aria-label='Good answer'
+            className={`p-0.5 rounded ${rating > 0 ? 'text-emerald-400' : 'text-gray-500 hover:text-gray-300'}`}>
+            <ThumbsUp className='w-3 h-3' />
+          </button>
+          <button onClick={() => rate(-1)} title='Wrong model / bad answer' aria-label='Bad answer'
+            className={`p-0.5 rounded ${rating < 0 ? 'text-red-400' : 'text-gray-500 hover:text-gray-300'}`}>
+            <ThumbsDown className='w-3 h-3' />
+          </button>
+        </span>
+      )}
     </span>
   )
 }
@@ -337,7 +363,7 @@ function Message({ msg, onSaveMessage }) {
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
             <span className="text-xs text-gray-500">Agent</span>
-            <RouteBadge route={msg.route} />
+            <RouteBadge route={msg.route} rateable />
             {msg.timestamp && (
               <span className="text-xs text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
             )}

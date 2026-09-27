@@ -8,6 +8,7 @@ import EndpointList from './settings/EndpointList'
 import ModelRouting from './settings/ModelRouting'
 import RoutingUsage from './settings/RoutingUsage'
 import ChatRouter from './settings/ChatRouter'
+import RouterTuning from './settings/RouterTuning'
 import HelpDrawer from './help/HelpDrawer'
 import MessagingSettings from './MessagingSettings'
 
@@ -19,6 +20,7 @@ function LLMSection() {
       <ModelRouting refreshKey={refreshKey} onSaved={() => setRefreshKey((k) => k + 1)} />
       <ChatRouter refreshKey={refreshKey} />
       <RoutingUsage />
+      <RouterTuning onApplied={() => setRefreshKey((k) => k + 1)} />
     </div>
   )
 }

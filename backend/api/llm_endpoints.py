@@ -223,3 +223,60 @@ async def update_router(payload: RouterConfigPayload) -> dict[str, Any]:
 async def read_router_decisions(hours: float = 24.0) -> dict[str, Any]:
     from llm_config.usage import decision_summary
     return decision_summary(max(0.1, min(hours, 24 * 30)))
+
+
+# ── Routing tuning (phase 3) ────────────────────────────────────────
+
+class RouterFeedbackPayload(BaseModel):
+    decision_id: str
+    rating: int  # 1 = good, -1 = bad, 0 = clear
+
+
+class SimulatePayload(BaseModel):
+    patch: dict[str, Any]
+    days: float = 14
+
+
+class ApplyRecommendationPayload(BaseModel):
+    id: str
+    hours: float = 24 * 7
+
+
+def _hours(h: float) -> float:
+    return max(1.0, min(h, 24 * 30))
+
+
+@router.post("/llm/router/feedback")
+async def router_feedback(payload: RouterFeedbackPayload) -> dict[str, Any]:
+    from llm_config.usage import set_rating
+    if payload.rating not in (-1, 0, 1):
+        raise HTTPException(status_code=400, detail="rating must be -1, 0 or 1")
+    if not set_rating(payload.decision_id, payload.rating):
+        raise HTTPException(status_code=404, detail="unknown decision (older than 30 days?)")
+    return {"ok": True}
+
+
+@router.get("/llm/router/tuning")
+async def router_tuning(hours: float = 24 * 7) -> dict[str, Any]:
+    from llm_config import tuning
+    h = _hours(hours)
+    return {"stats": tuning.stats(h), "recommendations": tuning.recommendations(h)}
+
+
+@router.post("/llm/router/simulate")
+async def router_simulate(payload: SimulatePayload) -> dict[str, Any]:
+    from llm_config import tuning
+    try:
+        return await tuning.simulate(payload.patch, days=max(1.0, min(payload.days, 30)))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/llm/router/apply")
+async def router_apply(payload: ApplyRecommendationPayload) -> dict[str, Any]:
+    from llm_config import tuning
+    try:
+        rec = tuning.apply_recommendation(payload.id, _hours(payload.hours))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"applied": rec, "router": _router_view()}

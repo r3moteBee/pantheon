@@ -18,6 +18,19 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 
 RETENTION_DAYS = 30
+
+# Outcome of a routed chat turn — what phase-3 tuning learns from.
+_DECISION_OUTCOME_COLUMNS = (
+    ("decision_id", "TEXT"),
+    ("latency_ms", "INTEGER"),
+    ("iterations", "INTEGER"),
+    ("tool_calls", "INTEGER"),
+    ("tool_errors", "INTEGER"),
+    ("truncated", "INTEGER"),
+    ("stream_error", "INTEGER"),
+    ("corrected", "INTEGER DEFAULT 0"),
+    ("rating", "INTEGER"),
+)
 _last_prune = 0.0
 _ready_paths: set[str] = set()
 
@@ -62,6 +75,13 @@ def _connect():
             );
             CREATE INDEX IF NOT EXISTS idx_route_decisions_ts ON route_decisions(ts);
         """)
+        # Phase 3 outcome columns (added to existing DBs in place).
+        have = {r[1] for r in conn.execute("PRAGMA table_info(route_decisions)")}
+        for col, typ in _DECISION_OUTCOME_COLUMNS:
+            if col not in have:
+                conn.execute(f"ALTER TABLE route_decisions ADD COLUMN {col} {typ}")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_route_decisions_did ON route_decisions(decision_id)")
+        conn.commit()
         _ready_paths.add(path)
     return ClosingConnection(conn)  # type: ignore
 
@@ -134,21 +154,58 @@ def summary(hours: float = 24.0) -> dict[str, Any]:
 def record_decision(
     *, session_id: str | None, task_class: str, rule: str, reason: str,
     endpoint: str = "", model: str = "", served_model: str | None = None,
-    message_chars: int = 0, est_tokens: int = 0,
+    message_chars: int = 0, est_tokens: int = 0, decision_id: str | None = None,
+    outcome: dict[str, Any] | None = None,
 ) -> None:
-    """One row per routed chat turn (best-effort)."""
+    """One row per routed chat turn (best-effort). ``outcome`` carries
+    latency_ms, iterations, tool_calls, tool_errors, truncated, stream_error."""
+    o = outcome or {}
     try:
         with _connect() as conn:
             conn.execute(
                 """INSERT INTO route_decisions (ts, session_id, task_class, rule, reason,
-                       endpoint, model, served_model, message_chars, est_tokens)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       endpoint, model, served_model, message_chars, est_tokens,
+                       decision_id, latency_ms, iterations, tool_calls, tool_errors,
+                       truncated, stream_error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (time.time(), session_id, task_class, rule, (reason or "")[:300],
-                 endpoint, model, served_model, message_chars, est_tokens),
+                 endpoint, model, served_model, message_chars, est_tokens,
+                 decision_id, o.get("latency_ms"), o.get("iterations"), o.get("tool_calls"),
+                 o.get("tool_errors"), int(bool(o.get("truncated"))), int(bool(o.get("stream_error")))),
             )
             conn.commit()
     except Exception:
         logger.debug("route decision record failed", exc_info=True)
+
+
+def mark_corrected(decision_id: str) -> None:
+    """The user's next move said the routed turn went wrong."""
+    try:
+        with _connect() as conn:
+            conn.execute("UPDATE route_decisions SET corrected = 1 WHERE decision_id = ?", (decision_id,))
+            conn.commit()
+    except Exception:
+        logger.debug("mark_corrected failed", exc_info=True)
+
+
+def set_rating(decision_id: str, rating: int) -> bool:
+    """Thumbs up (1) / down (-1) / clear (0) from the chat UI."""
+    with _connect() as conn:
+        cur = conn.execute("UPDATE route_decisions SET rating = ? WHERE decision_id = ?",
+                           (rating or None, decision_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def decision_rows(hours: float = 24.0 * 7) -> list[dict[str, Any]]:
+    """Raw routed-turn rows (with outcomes) for tuning."""
+    since = time.time() - hours * 3600
+    with _connect() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM route_decisions WHERE ts >= ? ORDER BY ts", (since,)
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def decision_summary(hours: float = 24.0) -> dict[str, Any]:
