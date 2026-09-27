@@ -13,6 +13,7 @@ from agent.personality import get_full_personality
 from agent.prompts import build_system_prompt
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
+from agent import tool_results
 from config import get_settings
 from models.provider import ModelProvider
 
@@ -574,12 +575,16 @@ class AgentCore:
                             interactive=self.interactive,
                         )
                     self._progress()
-                    yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id}
+                    yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
+                           "is_error": tool_results.is_error(result)}
 
+                    # The UI gets the full result; the model gets it capped
+                    # (TOOL_RESULT_MAX_CHARS) so one huge reply can't blow the
+                    # context window.
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_id,
-                        "content": result,
+                        "content": tool_results.cap(result),
                     })
 
                 # Re-anchor: long tool loops bury the original instructions

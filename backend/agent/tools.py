@@ -172,11 +172,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "read_file",
             "description": (
-                "Read a transient file from the workspace SCRATCH AREA "
-                "(data/workspace/, used by sandbox runs). DOES NOT read "
-                "artifacts. To read a saved artifact (notes, transcripts, "
-                "code, chat exports, anything created via save_to_artifact "
-                "or save_last_response), use `read_artifact` instead."
+                "Read a scratch file from the project workspace (sandbox runs, "
+                "raw uploads). Saved notes, transcripts and reports are "
+                "artifacts — use read_artifact for those."
             ),
             "parameters": {
                 "type": "object",
@@ -192,12 +190,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "write_file",
             "description": (
-                "Write a transient file to the workspace SCRATCH AREA "
-                "(data/workspace/). NOT for durable content — to save "
-                "anything the user might want to keep, search, or open "
-                "later (notes, transcripts, code, reports, etc), use "
-                "`save_to_artifact` instead. Workspace files are not "
-                "indexed into memory and may be cleaned up."
+                "Write a scratch file to the project workspace. Not indexed and "
+                "may be cleaned up — anything worth keeping goes to "
+                "save_to_artifact."
             ),
             "parameters": {
                 "type": "object",
@@ -214,13 +209,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "list_workspace_files",
             "description": (
-                "List files in the workspace SCRATCH AREA only "
-                "(data/workspace/). DOES NOT list artifacts. To verify "
-                "or browse saved artifacts (everything created via "
-                "save_to_artifact, save_last_response, save_chat_as_artifact, or scheduled-task output sinks), use `list_artifacts` "
-                "with the appropriate path_prefix. Example for "
-                "verifying a folder of saved transcripts: "
-                "list_artifacts(path_prefix='NBJ/')."
+                "List scratch files in the project workspace. Saved artifacts "
+                "are not here — use list_artifacts(path_prefix='NBJ/') to "
+                "browse or verify them."
             ),
             "parameters": {
                 "type": "object",
@@ -247,192 +238,106 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "web_fetch",
+            "description": "Read a web page (article text as markdown) without saving it. To keep a source — indexed, searchable and linked into the graph — use ingest_source instead.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "http(s) URL"},
+                    "max_chars": {"type": "integer", "description": "Truncate the text (default 20000)"}
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_task",
             "description": (
-                "Schedule an autonomous task. By default the schedule is "
-                "created in PAUSED state with plan_status='proposed' so "
-                "the user can REVIEW and APPROVE the plan before it runs. "
-                "The task only fires after they click Approve in the Tasks "
-                "tab.\n\n"
-                "BEFORE calling this tool you should:\n"
-                "  1. Survey what tools you actually have available — MCP "
-                "     tools (mcp_*), skills, github_*, save_to_artifact, "
-                "     web_search — and reference SPECIFIC ONES by NAME in "
-                "     the plan. Don't write 'fetch the transcript'; write "
-                "     'fetch via mcp_SubDownload_fetch_transcript'.\n"
-                "  2. If the user mentioned a specific tool / skill / MCP, "
-                "     anchor the relevant step on that exact name.\n"
-                "  3. If a step needs a tool you don't have, write that "
-                "     into the plan explicitly so the user can correct you "
-                "     before approval — DO NOT pretend you have it.\n\n"
-                "Use skip_review=true ONLY when the user explicitly said "
-                "'just do it' or 'no need to review'. Default to plan "
-                "review for any multi-step or non-trivial work."
+                "Schedule an autonomous background task. Unless skip_review=true it is created "
+                "PAUSED with a proposed plan; it runs only after the user approves it in the Tasks tab. "
+                "In the plan, name the exact tools each step uses (look at the tools you actually have — "
+                "mcp_*, github_*, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
+                "say so in the plan rather than pretending."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": (
-                            "Short recognizable label shown in the Tasks list "
-                            "(3-7 words, imperative). Examples: 'Daily PR digest', "
-                            "'SUSE blog research'. DO NOT use 'task', 'job', "
-                            "or 'reminder'."
-                        )
+                        "description": "Short label for the Tasks list, 3-7 words, e.g. 'Daily PR digest'."
                     },
                     "description": {
                         "type": "string",
-                        "description": "Detailed task description — what the agent should do."
+                        "description": "What the agent should do, in full — the background run sees only this, the plan and project memory."
                     },
                     "schedule": {
                         "type": "string",
                         "description": (
-                            "ONE-SHOT: 'now' / 'delay:N' (run once in N "
-                            "minutes — e.g. delay:2). RECURRING: 'interval:N' "
-                            "(every N minutes, forever — e.g. interval:60 = "
-                            "hourly); cron expression like '0 9 * * *' = "
-                            "daily at 9am. 'in 2 minutes' is delay:2 NOT "
-                            "interval:120."
+                            "One-shot: 'now' or 'delay:N' (N minutes from now). Recurring: 'interval:N' "
+                            "(every N minutes) or a cron expression ('0 9 * * *' = daily 9am). "
+                            "'in 2 minutes' is delay:2, not interval:2."
                         )
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": (
-                            "Optional max wall-clock time the task is "
-                            "allowed to run. Default 1800 (30 min). "
-                            "Bump to 3600 or 7200 for batch ingests "
-                            "(20+ items) where each item takes 30-60s; "
-                            "the watchdog kills the job at this limit "
-                            "regardless of whether work remains. "
-                            "Per-step heartbeats keep the stall watch- "
-                            "dog (5 min idle) happy independently."
-                        )
+                        "description": "Max run time, default 1800. Use 3600-7200 for batch ingests of 20+ items."
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": (
-                            "Optional agent-loop iteration budget (default "
-                            "100). One iteration ≈ one round of tool calls. "
-                            "Raise (e.g. 300) for long multi-step tasks like "
-                            "batch merges or large refactors; if the cap is "
-                            "hit the task is marked truncated rather than "
-                            "complete. Scale timeout_seconds along with it."
-                        )
+                        "description": "Agent-loop round budget, default 100. Raise (e.g. 300) for long multi-step work, with timeout_seconds."
                     },
                     "skill_name": {
                         "type": "string",
                         "description": (
-                            "Optional skill slug to drive the task (e.g. "
-                            "'content-ingest-graph', 'research-ingest'). "
-                            "When set, the autonomous agent boots with the "
-                            "skill\'s instructions injected into its system "
-                            "prompt — equivalent to invoking /<slug> in chat. "
-                            "Use this for any scheduled task that should run "
-                            "a registered skill; do NOT bury the slash "
-                            "invocation in the description (it won\'t resolve "
-                            "the way it does in chat). Skills with declared "
-                            "MCP requirements (requires_mcp) are validated at "
-                            "task start — task fails fast if a required "
-                            "connector is offline."
+                            "Skill slug to drive the task (its instructions are loaded, like /<slug> in chat). "
+                            "Use this instead of writing '/slug' in the description. Required MCP connectors are checked at start."
                         )
                     },
                     "plan": {
                         "type": "string",
                         "description": (
-                            "REQUIRED. Markdown plan with numbered steps. "
-                            "For each step name the EXACT tool you intend to "
-                            "use. Example:\n"
-                            "  1. Resolve channel via "
-                            "     `mcp_SubDownload_resolve_channel` (query="
-                            "     \"Nate B Jones\").\n"
-                            "  2. Fetch latest 3 videos via "
-                            "     `mcp_SubDownload_get_channel_latest_videos`.\n"
-                            "  3. For each, fetch transcript via "
-                            "     `mcp_SubDownload_fetch_transcript`.\n"
-                            "  4. Save each via `save_to_artifact` with path "
-                            "     NBJ/{date}-{title}.md.\n"
-                            "  5. Use the topic-extractor skill to add 3-5 "
-                            "     tags to each artifact via `update_artifact`.\n"
-                            "If the user mentions a specific skill or MCP, "
-                            "wire it in by exact name."
+                            "Required. Numbered markdown steps, each naming its tool, e.g. "
+                            "'1. List the channel's latest videos with `mcp_<server>_get_channel_latest_videos`. "
+                            "2. Ingest each with `ingest_source`.'"
                         )
                     },
                     "skip_review": {
                         "type": "boolean",
                         "default": False,
-                        "description": (
-                            "Default false. Set true ONLY when the user "
-                            "explicitly says they don't want to review the "
-                            "plan before it runs."
-                        )
+                        "description": "True only when the user explicitly said not to review the plan."
                     },
                     "job_type": {
                         "type": "string",
                         "enum": ["autonomous_task", "iteration_loop"],
                         "default": "autonomous_task",
                         "description": (
-                            "Pick the handler that runs this task.\n"
-                            " - 'autonomous_task' (default): one-shot agent "
-                            "run that executes the plan and stops.\n"
-                            " - 'iteration_loop': multi-turn execute / "
-                            "review loop. Each turn the agent does work, "
-                            "then a review phase critiques it and proposes "
-                            "the next step. Per-turn state is persisted to "
-                            "iteration/<job_id>/turn-N.md artifacts. Use "
-                            "this when the user asks for a 'loop', "
-                            "'iterate N times', a 'generator / reviewer "
-                            "loop', or self-perpetuating multi-turn work. "
-                            "Pair with max_turns / execute_instruction / "
-                            "review_instruction."
+                            "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
+                            "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
+                            "each turn is saved as iteration/<job_id>/turn-N.md."
                         )
                     },
                     "max_turns": {
                         "type": "integer",
                         "default": 10,
-                        "description": (
-                            "Only used when job_type='iteration_loop'. "
-                            "Hard upper bound on turns; the loop also stops "
-                            "early if the reviewer emits 'STATUS: done'."
-                        )
+                        "description": "iteration_loop only: max turns (stops early when the reviewer says STATUS: done)."
                     },
                     "execute_instruction": {
                         "type": "string",
-                        "description": (
-                            "Only used when job_type='iteration_loop'. "
-                            "Per-turn execute-phase instruction. "
-                            "If omitted, the task description is used."
-                        )
+                        "description": "iteration_loop only: per-turn execute instruction (default: the description)."
                     },
                     "review_instruction": {
                         "type": "string",
-                        "description": (
-                            "Only used when job_type='iteration_loop'. "
-                            "Per-turn review-phase instruction. If omitted, "
-                            "a sensible default is used (surface bugs / "
-                            "gaps, propose the single most important next "
-                            "step, emit STATUS: continue|done)."
-                        )
+                        "description": "iteration_loop only: per-turn review instruction (default: find gaps, pick the next step, emit STATUS: continue|done)."
                     },
                     "branch_strategy": {
                         "type": "string",
                         "enum": ["single_feature", "main", "branch_per_turn"],
                         "default": "single_feature",
                         "description": (
-                            "Only used when job_type='iteration_loop'. "
-                            "Controls how loop turns interact with the "
-                            "bound GitHub repo:\n"
-                            " - 'single_feature' (default): all turns commit "
-                            "to ONE branch named `iteration/<job_id>`. The "
-                            "next turn sees the prior turn's code naturally. "
-                            "One optional PR at loop end consolidates the "
-                            "arc.\n"
-                            " - 'main': all turns commit directly to main. "
-                            "Fastest compound visibility; riskiest if a turn "
-                            "breaks the build.\n"
-                            " - 'branch_per_turn': each turn creates its own "
-                            "feature branch. Legacy / opt-in only — produces "
-                            "branch sprawl unless you really want PR-per-turn."
+                            "iteration_loop with a bound repo: 'single_feature' (default) commits every turn to "
+                            "iteration/<job_id>; 'main' commits to main; 'branch_per_turn' makes a branch per turn."
                         )
                     }
                 },
@@ -665,24 +570,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "create_skill",
             "description": (
-                "Create a reusable, callable SKILL — NOT a scheduled "
-                "task. Use this when the user says 'create a skill', "
-                "'make this reusable', 'turn this workflow into a "
-                "skill', 'I want to do this again later', or describes "
-                "a multi-step procedure they\'ll want to run multiple "
-                "times. After creation the user can invoke the skill "
-                "with `/skill-name` in any chat, and it injects the "
-                "instructions into the agent\'s system prompt for that "
-                "turn. Distinct from create_task (which schedules an "
-                "AUTONOMOUS RUN). Skills are reusable; tasks fire on "
-                "a schedule and produce job runs.\n\n"
-                "The instructions field should be the full markdown "
-                "workflow definition the agent will follow each time "
-                "the skill fires — list exact tool names per step "
-                "(e.g. mcp_SubDownload_search_youtube, save_to_artifact, "
-                "create_graph_node) so the agent knows what to call. "
-                "Include any schemas, output contracts, or thresholds "
-                "the user already agreed to."
+                "Create a reusable SKILL (invoked with /skill-name in chat) — not a scheduled task "
+                "(create_task). Use when the user wants a workflow they'll repeat. instructions is "
+                "the full markdown recipe: name the exact tool per step and include any schemas, "
+                "output paths or thresholds already agreed."
             ),
             "parameters": {
                 "type": "object",
@@ -766,24 +657,10 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "save_transcript_artifact",
             "description": (
-                "Server-side fetch + save for YouTube transcripts. "
-                "Use this INSTEAD OF copying the transcript text into "
-                "save_to_artifact's content field — that pattern gets "
-                "the transcript silently truncated when the LLM "
-                "abbreviates long strings with \"...\".\n\n"
-                "Pass the video_id, the desired artifact path "
-                "(bare folder; project slug auto-prepended), and the "
-                "YAML frontmatter as a string. The backend will:\n"
-                "  1. Call mcp_SubDownload_fetch_transcript(video_id) "
-                "internally.\n"
-                "  2. Stitch '---\\n{frontmatter}\\n---\\n\\n"
-                "{transcript}' as the artifact body.\n"
-                "  3. Save via the artifact store (with auto-suffix "
-                "for path collisions and graph indexing).\n\n"
-                "Use for every YouTube transcript ingest in skills "
-                "like /content-ingest-graph. The agent supplies "
-                "structure (frontmatter, path, title); the server "
-                "supplies the verbatim transcript content."
+                "Fetch a YouTube transcript server-side (via the YouTube MCP) and save it as an "
+                "artifact with your frontmatter. Use this instead of pasting transcript text into "
+                "save_to_artifact, which truncates long text. Prefer ingest_source for new work — "
+                "it also extracts topics and links the graph."
             ),
             "parameters": {
                 "type": "object",
@@ -829,21 +706,9 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "ingest_source",
             "description": (
-                "Canonical end-to-end ingest for one item from a "
-                "registered source adapter. Replaces "
-                "save_transcript_artifact as the preferred ingest "
-                "call.\n\n"
-                "Behavior: fetch the content via the adapter "
-                "(server-side, no transcript truncation), run the "
-                "adapter\'s topic extractor (default LLM-based) to "
-                "populate topics/speakers/claims in the frontmatter, "
-                "save as a Pantheon artifact at the adapter\'s path "
-                "template (with collision-safe -1/-2/... suffixing), "
-                "schedule embedding, and run the typed-topics graph "
-                "extractor so source/content/topic/speaker nodes "
-                "and edges materialize.\n\n"
-                "Use list_source_adapters first to discover supported "
-                "source_types. For batches, prefer batch_ingest_sources."
+                "Ingest one item through a source adapter: fetch server-side, extract topics, save as "
+                "an artifact (re-ingesting the same item updates it), embed and link the graph. Use "
+                "list_source_adapters for source_types; batch_ingest_sources for many."
             ),
             "parameters": {
                 "type": "object",
@@ -858,7 +723,7 @@ TOOL_SCHEMAS = [
                     },
                     "extras": {
                         "type": "object",
-                        "description": "Optional per-call hints. Recognized keys: published (relative string from search like '4 months ago' — adapter parses to ISO), published_at (absolute YYYY-MM-DD; wins over published if both set), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int). When ingesting YouTube results from mcp_SubDownload_search_youtube, ALWAYS forward each video's 'published' string so artifact paths get a real date instead of unknown-date/.",
+                        "description": "Optional per-call hints. Recognized keys: published (relative string from search like '4 months ago' — adapter parses to ISO), published_at (absolute YYYY-MM-DD; wins over published if both set), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int). When ingesting YouTube search results, ALWAYS forward each video's 'published' string so artifact paths get a real date instead of unknown-date/.",
                         "additionalProperties": True
                     }
                 },
@@ -940,7 +805,12 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "save_last_response",
-            "description": "Save conversation history as a durable, searchable artifact (read it back with read_artifact / list_artifacts). By default saves your immediately preceding assistant message verbatim. Can also summarize, expand via research, or apply a custom transform across the last N messages. Use this whenever the user says 'save this', 'remember that observation', 'write a note about the last N messages', 'summarize the above and save it', etc. — do NOT ask the user to restate content that is already in the conversation.",
+            "description": (
+                "Save recent conversation as an artifact. Default: your previous reply verbatim; "
+                "history_count widens it, and mode can summarize, research or custom-transform it. "
+                "Use for 'save this', 'note the last few messages' — never ask the user to restate "
+                "what's already in the conversation."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1328,27 +1198,11 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "start_coding_task",
             "description": (
-                "STRICT SCOPE: Use ONLY when the user explicitly asks "
-                "you to AUTHOR CODE in their GitHub repo — write a "
-                "function, fix a bug, add a feature, refactor, open a "
-                "PR, etc. The background agent will branch off the "
-                "bound repo, edit files, commit, and open a pull "
-                "request.\n\n"
-                "Do NOT use this tool for: data ingestion, running a "
-                "workflow/skill, fetching transcripts, indexing "
-                "artifacts, building a graph, summarizing, research, "
-                "search, or any non-code task — even if the user says "
-                "'do this in the background'. For those, run the steps "
-                "inline this turn or invoke the matching skill (see "
-                "'Available skills'). For scheduled fire-and-forget "
-                "runs, use create_task.\n\n"
-                "Triggers that DO match: 'fix bug X', 'implement "
-                "feature Y', 'open a PR that adds Z', 'refactor module "
-                "M'. Triggers that DO NOT match: 'fetch X', 'ingest "
-                "Y', 'summarize Z', 'index W', 'research V'.\n\n"
-                "BEFORE calling, use github_list_directory + "
-                "github_read_file to build a coding_context string. "
-                "Returns a job_id; track via get_job_status."
+                "Background coding agent that edits the bound GitHub repo and opens a PR. ONLY for "
+                "authoring code (fix a bug, add a feature, refactor, open a PR) — never for ingest, "
+                "research, summarizing, indexing or running a skill; do those inline or with "
+                "create_task. First build coding_context with github_list_directory / "
+                "github_read_file. Returns a job_id (get_job_status)."
             ),
             "parameters": {
                 "type": "object",
@@ -2277,6 +2131,9 @@ async def execute_tool(
         elif tool_name == "web_search":
             return await _web_search(tool_args["query"])
 
+        elif tool_name == "web_fetch":
+            return await _web_fetch(tool_args.get("url") or "", tool_args.get("max_chars"))
+
         elif tool_name.startswith("browser_"):
             from agent.browser_tools import browser_enabled, execute_browser_tool
             if not browser_enabled():
@@ -2847,8 +2704,8 @@ async def execute_tool(
                 if not resolved:
                     return (
                         f"create_task rejected: skill {tool_args.get('skill_name')!r} "
-                        f"is not registered. Use list_skills (or list_source_adapters "
-                        f"for adapter-driven skills) to confirm the slug, then retry."
+                        f"is not registered. Pick a slug from the available-skills list in "
+                        f"your instructions (or create it with create_skill), then retry."
                     )
                 skill_name = resolved
             timeout_seconds = tool_args.get("timeout_seconds")
@@ -4452,6 +4309,50 @@ async def _run_git_cmd(
             proc.kill()
         raise
     return proc.returncode or 0, stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip()
+
+
+async def _web_fetch(url: str, max_chars: Any = None) -> str:
+    """Fetch a public page through the SSRF guard and return readable markdown."""
+    import re as _re
+    from utils.net import safe_http_get
+    url = (url or "").strip()
+    if not _re.match(r"^https?://", url, _re.I):
+        return "Error: web_fetch needs an http(s) URL."
+    try:
+        limit = max(1000, min(int(max_chars or 20000), 60000))
+    except (TypeError, ValueError):
+        limit = 20000
+    try:
+        resp = await safe_http_get(url, timeout=30)
+    except Exception as e:
+        return f"Error: web_fetch failed for {url}: {e}"
+    if resp.status_code >= 400:
+        return f"Error: web_fetch got HTTP {resp.status_code} from {url}"
+    ctype = (resp.headers.get("content-type") or "").lower()
+    if "pdf" in ctype:
+        return f"{url} is a PDF — use ingest_source to read and keep it."
+    if not any(t in ctype for t in ("html", "text", "json", "xml")) and ctype:
+        return f"{url} returned {ctype}, not a readable page."
+    body = resp.text
+    title = ""
+    if "html" in ctype or body.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+        m = _re.search(r"<title[^>]*>(.*?)</title>", body, _re.I | _re.S)
+        title = _re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+        try:
+            import trafilatura
+            from sources.util import html_to_markdown
+            article = trafilatura.extract(body, output_format="html", include_links=True) or ""
+            text = html_to_markdown(article) if article else html_to_markdown(body)
+        except Exception:
+            text = _re.sub(r"<[^>]+>", " ", body)
+    else:
+        text = body
+    text = text.strip()
+    total = len(text)
+    if total > limit:
+        text = text[:limit] + f"\n\n[… truncated {total - limit} of {total} chars — pass max_chars or use ingest_source for the full text]"
+    head = f"# {title}\n" if title else ""
+    return f"{head}Source: {url}\n\n{text or '(no readable text)'}"
 
 
 async def _web_search(query: str) -> str:
