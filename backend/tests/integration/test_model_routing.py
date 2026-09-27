@@ -310,3 +310,84 @@ def test_image_model_names_detected():
     for m in ("qwen_image_edit", "gemini-3.1-flash-image", "nano-banana-pro", "flux-2-pro"):
         assert guess_profile(m).image_gen, m
     assert not guess_profile("gpt-5.4-nano").image_gen
+
+
+# ── Named size presets (fal-style "square_hd", …) ───────────────────────────
+
+def test_size_conversions():
+    from models.provider import _aspect_ratio, _pixel_size, _size_preset
+    assert _aspect_ratio("16:9") == "16:9" and _aspect_ratio("square_hd") == "1:1"
+    assert _pixel_size("landscape_16_9") == "1024x576" and _pixel_size("1536x1024") == "1536x1024"
+    assert _size_preset("1024x1024") == "square_hd"
+    assert _size_preset("512x512") == "square"
+    assert _size_preset("1536x1024") == "landscape_4_3"
+    assert _size_preset("1024x1792") == "portrait_16_9"
+    assert _size_preset("16:9", ["square_hd", "portrait_4_3"]) == "square_hd"
+
+
+@pytest.mark.asyncio
+async def test_chat_image_mode_retries_with_named_preset_and_remembers():
+    import json as _json
+    from models import provider as pmod
+    p = _prov("qwen_image_edit")
+    pmod._IMAGE_API_STYLE[(p.base_url, p.model)] = "chat"
+    pmod._IMAGE_WANTS_PRESET.clear()
+    seen = []
+
+    def handler(req):
+        cfg = _json.loads(req.content)["image_config"]
+        seen.append(cfg)
+        if cfg.get("image_size") != "landscape_16_9":
+            return httpx.Response(422, json={"detail": [{
+                "loc": ["body", "image_size"],
+                "msg": "Input should be 'square_hd', 'square', 'portrait_4_3', "
+                       "'portrait_16_9', 'landscape_4_3' or 'landscape_16_9'"}]})
+        return httpx.Response(200, json={"choices": [{"message": {"images": [{"image_url": {
+            "url": "data:image/png;base64," + base64.b64encode(_PNG).decode()}}]}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("utils.http.shared_client", return_value=client):
+        assert await p.generate_image("a skyline", size="16:9") == [_PNG]
+        assert await p.generate_image("a skyline", size="1792x1024") == [_PNG]
+    await client.aclose()
+    assert len(seen) == 3  # rejected, retried with preset, then preset directly
+    assert seen[1]["image_size"] == "landscape_16_9" and seen[1]["aspect_ratio"] == "16:9"
+    assert pmod._IMAGE_WANTS_PRESET[(p.base_url, p.model)] == "image_size"
+
+
+@pytest.mark.asyncio
+async def test_images_api_retries_with_named_preset():
+    import json as _json
+    from models import provider as pmod
+    p = _prov("flux-dev")
+    pmod._IMAGE_API_STYLE.clear()
+    pmod._IMAGE_WANTS_PRESET.clear()
+    sizes = []
+
+    def handler(req):
+        assert req.url.path.endswith("/images/generations")
+        size = _json.loads(req.content)["size"]
+        sizes.append(size)
+        if size != "square_hd":
+            return httpx.Response(400, json={"error": {"message": "size must be one of square_hd, landscape_4_3"}})
+        return httpx.Response(200, json={"data": [{"b64_json": base64.b64encode(_PNG).decode()}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch("utils.http.shared_client", return_value=client):
+        assert await p.generate_image("a cat") == [_PNG]
+    await client.aclose()
+    assert sizes == ["1024x1024", "square_hd"]
+
+
+@pytest.mark.asyncio
+async def test_generate_image_tool_accepts_presets_and_ratios():
+    from agent.tools import execute_tool
+    fake = AsyncMock()
+    fake.generate_image = AsyncMock(return_value=[_PNG])
+    fake.model = "m"
+    with patch("models.provider.get_provider_for", return_value=fake):
+        for size in ("square_hd", "16:9", "1024x1024"):
+            res = await execute_tool("generate_image", {"prompt": "x", "size": size}, None)
+            assert "invalid size" not in res, (size, res)
+        res = await execute_tool("generate_image", {"prompt": "x", "size": "big; rm -rf"}, None)
+        assert "invalid size" in res

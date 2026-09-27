@@ -1007,7 +1007,7 @@ TOOL_SCHEMAS = [
                 "type": "object",
                 "properties": {
                     "prompt": {"type": "string", "description": "Detailed description of the image"},
-                    "size": {"type": "string", "description": "WxH, e.g. 1024x1024 (default), 1536x1024, 1024x1536", "default": "1024x1024"},
+                    "size": {"type": "string", "description": "WxH (1024x1024 default, 1536x1024, 1024x1536), an aspect ratio (16:9), or a named preset (square_hd, landscape_16_9, portrait_4_3, …). Any form works with any backend — it is converted automatically.", "default": "1024x1024"},
                     "n": {"type": "integer", "description": "Number of images (1-4)", "default": 1},
                     "quality": {"type": "string", "description": "Optional provider quality hint (e.g. low/medium/high, standard/hd)"},
                     "path": {"type": "string", "description": "Optional artifact folder (default images/generated/<date>/)"},
@@ -4171,7 +4171,9 @@ async def execute_tool(
 
 
 
-_IMAGE_SIZE_RE = _re_mod.compile(r"^\d{2,4}x\d{2,4}$")
+# WxH, W:H, or a named preset (square_hd, landscape_16_9, …); the provider
+# converts to whatever the backend accepts.
+_IMAGE_SIZE_RE = _re_mod.compile(r"^(\d{2,4}x\d{2,4}|\d{1,2}:\d{1,2}|[a-z][a-z0-9_]{2,30})$")
 
 
 def _image_mime(data: bytes) -> tuple[str, str]:
@@ -4201,9 +4203,10 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
         return ("Image generation isn't configured. Ask the user to add an image "
                 "model under Settings → Model Routing → Image generation "
                 "(an OpenAI-compatible /images/generations endpoint).")
-    size = str(tool_args.get("size") or "1024x1024").strip()
+    size = str(tool_args.get("size") or "1024x1024").strip().lower()
     if not _IMAGE_SIZE_RE.match(size):
-        return f"generate_image: invalid size {size!r} (use WxH, e.g. 1024x1024)."
+        return (f"generate_image: invalid size {size!r} — use WxH (1024x1024), "
+                "a ratio (16:9) or a preset (square_hd).")
     try:
         n = max(1, min(4, int(tool_args.get("n") or 1)))
     except (TypeError, ValueError):
@@ -4213,7 +4216,11 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
     try:
         images = await provider.generate_image(prompt, size=size, n=n, quality=quality)
     except Exception as e:
-        return f"Image generation failed: {e}"
+        return (f"Image generation failed: {e}\n"
+                "Size format is converted automatically (WxH / ratio / preset), so "
+                "don't retry just to change its spelling. If the error names the "
+                "model or endpoint, tell the user and point them to Settings → "
+                "Model Routing → Image generation and Settings → Model usage.")
 
     slug = project_slug(project_id)
     folder = (tool_args.get("path") or "").strip().strip("/")
