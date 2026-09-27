@@ -169,13 +169,13 @@ async def test_context_loaded_is_not_a_tool_call(vault, monkeypatch, tmp_path):
 
 
 def test_tool_error_patterns():
-    from api.chat import _TOOL_ERROR_RE as rx
+    from agent.tool_results import is_error
     for bad in ("Error executing x", "Download refused: private", "Access denied: path outside",
                 "Unknown tool: foo", "Artifact not found: id=1", "Image generation failed: 500",
                 "Refusing to delete the default project"):
-        assert rx.match(bad), bad
+        assert is_error(bad), bad
     for ok in ("3 results for nvidia", "Saved artifact demo/x.md", "Stored in semantic memory"):
-        assert not rx.match(ok), ok
+        assert not is_error(ok), ok
 
 
 # ── BUG-2/3: one read path for chat settings ───────────────────────────────

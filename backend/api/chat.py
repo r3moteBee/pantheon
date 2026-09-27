@@ -15,6 +15,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 
+from agent import tool_results
 from agent.core import AgentCore
 from config import get_settings
 from memory.manager import create_memory_manager
@@ -136,19 +137,6 @@ async def _route_turn(agent, message: str, session_id: str, skill_name: str | No
     return decision
 
 
-import re as _re
-
-# A tool result that reports failure. Tools don't share an error envelope
-# yet, so match the prefixes they actually return ("Error executing …",
-# "Download refused: …", "Access denied: …", "Unknown tool: …",
-# "Artifact not found: …", "Image generation failed: …"), near the start.
-_TOOL_ERROR_RE = _re.compile(
-    r"\s*(error\b|refus|access denied|unknown tool|invalid\b"
-    r"|.{0,60}?\b(failed|refused|denied|not found|not allowed|escapes)\b)",
-    _re.I,
-)
-
-
 def _finish_route(decision, served: list, session_id: str, message: str,
                   outcome: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """Log the decision with the model that actually answered (after any
@@ -204,7 +192,10 @@ async def _stream_turn(agent, message: str, session_id: str, send, *,
             if etype == "tool_call" and event.get("name") != "context_loaded":
                 outcome["tool_calls"] += 1
             elif etype == "tool_result" and event.get("name") != "context_loaded":
-                if _TOOL_ERROR_RE.match(str(event.get("result") or "")[:200]):
+                # AgentCore flags it; fall back to the same check for
+                # events from anything else.
+                failed = event["is_error"] if "is_error" in event else tool_results.is_error(event.get("result"))
+                if failed:
                     outcome["tool_errors"] += 1
             elif etype == "error":
                 outcome["stream_error"] = True
