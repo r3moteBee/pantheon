@@ -54,8 +54,20 @@ async def get_job(job_id: str) -> dict[str, Any]:
     return j
 
 
+# Job types a client may create directly. Internal types (extraction,
+# indexing, image_extraction, scheduled_job) are enqueued by the backend
+# itself with payloads it builds — accepting them here would let a request
+# choose payload fields those handlers trust.
+CREATABLE_JOB_TYPES = ("autonomous_task", "iteration_loop", "coding_task")
+
+
 @router.post("/jobs")
 async def create_job(req: CreateJobRequest) -> dict[str, Any]:
+    if req.job_type not in CREATABLE_JOB_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"job_type must be one of {', '.join(CREATABLE_JOB_TYPES)}",
+        )
     return get_store().create(
         job_type=req.job_type, project_id=req.project_id,
         title=req.title, description=req.description,

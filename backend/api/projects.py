@@ -13,6 +13,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from config import get_settings
+from utils.paths import check_project_id
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -172,6 +173,7 @@ async def export_project_endpoint(
 
     Components: "metadata", "memory", "files", "tasks". Omit for all.
     """
+    check_project_id(project_id)
     from api.project_export import export_project
 
     components = req.components if req else None
@@ -196,6 +198,7 @@ async def export_preview(
     req: ExportRequest | None = None,
 ) -> dict[str, Any]:
     """Preview what would be exported without creating the archive."""
+    check_project_id(project_id)
     from api.project_export import (
         _collect_metadata,
         _collect_episodic,
@@ -286,6 +289,7 @@ async def import_project_endpoint(
 
 @router.get("/projects/{project_id}/export/debug")
 async def export_debug(project_id: str) -> dict[str, Any]:
+    check_project_id(project_id)
     """Diagnostic endpoint — shows what the exporter sees for each data source."""
     from api.project_export import (
         _collect_metadata,

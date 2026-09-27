@@ -164,12 +164,12 @@ class MCPClient:
         # Debug logging — mask API key in URL and headers
         safe_url = url
         if self.api_key and self.api_key in safe_url:
-            safe_url = safe_url.replace(self.api_key, self.api_key[:6] + "***")
+            safe_url = safe_url.replace(self.api_key, "***")
         safe_headers = {
-            k: (v[:10] + "***" if k.lower() == "authorization" else v)
+            k: ("***" if k.lower() in ("authorization", "x-api-key", "api-key") else v)
             for k, v in headers.items()
         }
-        logger.info(
+        logger.debug(
             "MCP '%s' → %s %s | headers=%s | payload.method=%s",
             self.name, "POST", safe_url, safe_headers, method,
         )

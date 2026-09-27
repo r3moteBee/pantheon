@@ -6,6 +6,7 @@ routes (like /skills/{skill_name}) to avoid the literal segments being
 captured as a skill_name parameter.
 """
 from __future__ import annotations
+import hmac
 
 import logging
 import shutil
@@ -708,7 +709,8 @@ async def toggle_skill(skill_name: str, req: SkillToggleRequest) -> dict[str, An
                     status_code=403,
                     detail="No security override password has been configured. Set one in Settings before using force enable.",
                 )
-            if not req.override_password or req.override_password != stored_pw:
+            if not req.override_password or not hmac.compare_digest(
+                    req.override_password.encode(), stored_pw.encode()):
                 sec_log.skill_override_failed(skill=skill_name, reason="bad_password")
                 raise HTTPException(
                     status_code=403,

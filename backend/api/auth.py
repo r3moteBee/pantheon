@@ -27,6 +27,53 @@ def _session_ttl_seconds() -> int:
     return int(days) * 86400
 
 
+# Public values — from config.py defaults and .env.example — that anyone who
+# has read this repo knows. With any of them in use the vault is decryptable
+# offline / the login guessable, so only local clients are served.
+_PUBLIC_SECRET_VALUES = {
+    "vault_master_key": {"dev-key-change-in-production-32x",
+                         "change-this-to-a-random-64-char-hex-string-before-deploy"},
+    "secret_key": {"dev-secret-key-change-in-production",
+                   "change-this-to-another-random-secret-key-for-jwt"},
+    "auth_password": {"insert-auth-password-here"},
+}
+
+
+def insecure_defaults() -> list[str]:
+    """Env names whose values are public defaults/placeholders."""
+    cfg = get_settings()
+    return [f.upper() for f, values in _PUBLIC_SECRET_VALUES.items()
+            if getattr(cfg, f, None) in values]
+
+
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _is_loopback(host: str | None) -> bool:
+    h = (host or "").strip().strip("[]").lower()
+    return h in _LOOPBACK or h.startswith("127.") or h.startswith("::ffff:127.")
+
+
+def remote_blocked(client_host: str | None, headers) -> str | None:
+    """With insecure defaults, refuse anything but a direct local client
+    (a reverse proxy's forwarded headers count as remote). Returns the
+    reason to show, or None when the request may proceed."""
+    bad = insecure_defaults()
+    if not bad or get_settings().allow_insecure_defaults:
+        return None
+    forwarded = [headers.get(h) for h in ("x-forwarded-for", "x-real-ip", "forwarded") if headers.get(h)]
+    remote = not _is_loopback(client_host) or any(
+        not _is_loopback(v.split(",")[0].split(";")[0].replace("for=", "").strip('" '))
+        for v in forwarded
+    )
+    if not remote:
+        return None
+    return (f"Pantheon is refusing remote access because {', '.join(bad)} "
+            "still use public default values. Set random values in .env "
+            "(scripts/rotate_vault_key.py changes VAULT_MASTER_KEY without losing "
+            "stored secrets) and restart, or set ALLOW_INSECURE_DEFAULTS=true.")
+
+
 def password_matches(password: str) -> bool:
     """Constant-time check of ``password`` against AUTH_PASSWORD."""
     settings = get_settings()
@@ -238,6 +285,9 @@ async def authorize_websocket(websocket) -> bool:
     so every WebSocket endpoint must call this itself. Closes the socket and
     returns False when the check fails.
     """
+    if remote_blocked(websocket.client.host if websocket.client else None, websocket.headers):
+        await websocket.close(code=1008)
+        return False
     origin = websocket.headers.get("origin")
     if not origin_is_allowed(origin, websocket.headers.get("host")):
         sec_log.auth_login_failure(reason=f"ws_bad_origin:{origin}")

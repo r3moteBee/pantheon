@@ -16,6 +16,10 @@ def is_within(target: Path, base: Path) -> bool:
         return False
 
 
+class InvalidProjectId(ValueError):
+    """A project id that would escape projects_dir. main.py maps it to 400."""
+
+
 def check_project_id(project_id: str) -> str:
     """Reject project ids that would escape ``projects_dir`` when joined."""
     if (
@@ -25,7 +29,7 @@ def check_project_id(project_id: str) -> str:
         or "\\" in project_id
         or "\x00" in project_id
     ):
-        raise ValueError(f"Invalid project id: {project_id!r}")
+        raise InvalidProjectId(f"Invalid project id: {project_id!r}")
     return project_id
 
 
