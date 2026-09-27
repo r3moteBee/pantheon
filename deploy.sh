@@ -1049,7 +1049,13 @@ else
   header "Building frontend..."
 
   cd frontend
-  npm install --silent
+  # npm ci installs exactly what package-lock.json pins and never rewrites
+  # it, so the lockfile stays clean and later `git pull`s don't conflict.
+  if [[ -f package-lock.json ]]; then
+    npm ci --silent
+  else
+    npm install --silent
+  fi
   VITE_API_URL="" npm run build
   cd "$INSTALL_DIR"
   success "Frontend built"

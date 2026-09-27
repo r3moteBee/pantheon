@@ -10,8 +10,11 @@ echo "=== Auto-Update started at $(date) ===" > "$LOG_FILE"
 
 cd "$DIR"
 
-# 1. Stash any local modifications to prevent git pull conflict
+# 1. Stash any local modifications to prevent git pull conflict.
+# package-lock.json is only ever changed locally by an older `npm install`;
+# drop that instead of stashing it (re-applying it conflicts on every update).
 echo "[1/4] Stashing local changes..." >> "$LOG_FILE"
+git checkout -- frontend/package-lock.json >> "$LOG_FILE" 2>&1 || true
 git stash >> "$LOG_FILE" 2>&1 || true
 
 # 2. Pull changes
@@ -34,7 +37,12 @@ fi
 echo "[4/4] Rebuilding frontend assets..." >> "$LOG_FILE"
 if [[ -d "$DIR/frontend" ]]; then
   cd "$DIR/frontend"
-  npm install >> "$LOG_FILE" 2>&1
+  # npm ci: install exactly the lockfile, never rewrite it.
+  if [[ -f package-lock.json ]]; then
+    npm ci >> "$LOG_FILE" 2>&1
+  else
+    npm install >> "$LOG_FILE" 2>&1
+  fi
   VITE_API_URL="" npm run build >> "$LOG_FILE" 2>&1
 fi
 

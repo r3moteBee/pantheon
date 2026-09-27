@@ -42,7 +42,7 @@ dev-backend: ## Run backend in development mode (hot reload)
 	uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 dev-frontend: ## Run frontend in development mode
-	cd frontend && npm install && npm run dev
+	cd frontend && npm ci && npm run dev
 
 shell-backend: ## Open a shell in the backend container
 	docker compose exec backend bash
