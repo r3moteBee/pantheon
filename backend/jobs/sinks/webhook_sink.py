@@ -21,6 +21,10 @@ async def to_webhook(ctx, content: str, opts: dict) -> dict[str, Any]:
 
     headers = {"Content-Type": "application/json"}
     token_key = opts.get("webhook_token_key")
+    # Only webhook tokens may be sent — never an arbitrary vault secret.
+    if token_key and not str(token_key).startswith("webhook_token__"):
+        return {"sink": "webhook", "status": "failed",
+                "reason": "webhook_token_key must name a webhook_token__* vault key"}
     if token_key:
         try:
             from secrets.vault import SecretsVault

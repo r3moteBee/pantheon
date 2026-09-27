@@ -5,14 +5,14 @@ Run: pytest backend/tests/integration/test_sec_edgar.py -v
 from __future__ import annotations
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from sources.base import IngestRequest
 from sources.adapters.sec_edgar import SecEdgarAdapter
 
 
 @pytest.mark.asyncio
-@patch("httpx.AsyncClient.get")
+@patch("utils.net.safe_http_get", new_callable=AsyncMock)
 async def test_sec_edgar_fetch_direct_url(mock_get):
     """Verify direct SEC URL downloads HTML and returns FetchedContent."""
     mock_resp = MagicMock()
@@ -30,6 +30,7 @@ async def test_sec_edgar_fetch_direct_url(mock_get):
     fetched = await adapter.fetch(req)
     assert "Financial summary text" in fetched.text
     assert "Apple Inc. 10-K" in fetched.title
+    # Fetched through the SSRF-guarded client.
     mock_get.assert_called_once_with(
         "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm",
         headers={"User-Agent": "PantheonResearch/1.0 (contact@pantheon.local)"},
@@ -38,7 +39,7 @@ async def test_sec_edgar_fetch_direct_url(mock_get):
 
 
 @pytest.mark.asyncio
-@patch("httpx.AsyncClient.get")
+@patch("utils.net.safe_http_get", new_callable=AsyncMock)
 async def test_sec_edgar_fetch_ticker_lookup(mock_get):
     """Verify ticker lookup resolves CIK, lists filings, and downloads the latest matching form."""
     # We mock 3 sequential GET requests:
@@ -90,6 +91,19 @@ async def test_sec_edgar_fetch_ticker_lookup(mock_get):
     # Check that it constructed the correct direct archives URL
     expected_doc_url = "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm"
     assert fetched.url == expected_doc_url
+
+
+@pytest.mark.asyncio
+@patch("utils.net.safe_http_get", new_callable=AsyncMock)
+async def test_sec_edgar_unknown_ticker(mock_get):
+    """An unknown ticker is an error, not a request for CIK 'unknown'."""
+    resp = MagicMock()
+    resp.json.return_value = {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}}
+    mock_get.return_value = resp
+    with pytest.raises(ValueError, match="not found"):
+        await SecEdgarAdapter().fetch(IngestRequest(
+            source_type="sec/edgar", identifier="ZZZZ/10-K", project_id="p"))
+    assert mock_get.call_count == 1
 
 
 def test_sec_edgar_render_path():

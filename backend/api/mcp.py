@@ -272,7 +272,7 @@ async def test_tavily_direct() -> dict[str, Any]:
         return {"status": "error", "message": "No Tavily connection found with an API key"}
 
     results: dict[str, Any] = {
-        "api_key_prefix": api_key[:8] + "...",
+        "api_key_suffix": "…" + api_key[-4:] if len(api_key) > 12 else "set",
     }
 
     # Test 1: Usage endpoint (lightweight, should always work)
@@ -340,7 +340,7 @@ async def debug_connection(name: str) -> dict[str, Any]:
 
     # Mask secrets
     api_key = cfg.get("api_key", "")
-    mask = api_key[:6] + "***" + api_key[-4:] if len(api_key) > 10 else "***"
+    mask = "***" + api_key[-4:] if len(api_key) > 12 else "***"
     safe_url = built_url.replace(api_key, mask) if api_key else built_url
     safe_headers = {
         k: (v.replace(api_key, mask) if api_key and api_key in v else v)
@@ -355,7 +355,7 @@ async def debug_connection(name: str) -> dict[str, Any]:
         "built_url": safe_url,
         "built_headers": safe_headers,
         "has_api_key": bool(api_key),
-        "api_key_prefix": api_key[:8] + "..." if api_key else "(none)",
+        "api_key_suffix": ("…" + api_key[-4:] if len(api_key) > 12 else "set") if api_key else "(none)",
         "session_id": active_client.session_id if active_client else None,
         "is_initialized": active_client._initialized if active_client else False,
         "tools_count": len(active_client.tools) if active_client else 0,

@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
+from utils.paths import InvalidProjectId
 from api.auth import router as auth_router, host_is_allowed, origin_is_allowed, request_token, token_is_valid
 from api.chat import router as chat_router, websocket_chat
 from api.files import router as files_router
@@ -98,6 +99,10 @@ def _resolve_app_version() -> str:
 
 _APP_VERSION = _resolve_app_version()
 
+# httpx logs every request URL at INFO — including query-string credentials
+# some services require (e.g. Tavily's ?tavilyApiKey=). Keep it to warnings.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -105,19 +110,21 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Pantheon backend...")
     settings.ensure_dirs()
 
-    # Public default keys: the vault can be decrypted and auth tokens
-    # brute-forced offline by anyone who has read this repo.
-    for _field, _default in (
-        ("vault_master_key", "dev-key-change-in-production-32x"),
-        ("secret_key", "dev-secret-key-change-in-production"),
-    ):
-        if getattr(settings, _field) == _default:
-            logger.warning(
-                "SECURITY: %s is the public default. Set %s in .env to a random "
-                "value (e.g. `openssl rand -hex 32`). Changing VAULT_MASTER_KEY "
-                "requires re-entering stored secrets.",
-                _field, _field.upper(),
-            )
+    # Public default keys/password: the vault can be decrypted and the
+    # login guessed by anyone who has read this repo. api.auth.remote_blocked
+    # then serves local clients only.
+    from api.auth import insecure_defaults
+    _bad = insecure_defaults()
+    if _bad:
+        logger.warning(
+            "SECURITY: %s use public default values — serving local (127.0.0.1) "
+            "clients only%s. Set random values in .env (`openssl rand -hex 32`); "
+            "change VAULT_MASTER_KEY with scripts/rotate_vault_key.py so stored "
+            "secrets are re-encrypted, not lost.",
+            ", ".join(_bad),
+            " (ALLOW_INSECURE_DEFAULTS=true overrides this — not recommended)"
+            if settings.allow_insecure_defaults else "",
+        )
 
     # Initialize default personality files if missing or empty
     import shutil
@@ -230,6 +237,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.exception_handler(InvalidProjectId)
+async def _invalid_project_id(request: Request, exc: InvalidProjectId):
+    return JSONResponse({"detail": str(exc)}, status_code=400)
+
 # ── CORS (must be added before auth middleware) ───────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -245,6 +257,11 @@ app.add_middleware(
 async def auth_middleware(request: Request, call_next):
     """Gate all non-public routes behind AUTH_PASSWORD when it is set."""
     cfg = get_settings()
+
+    from api.auth import remote_blocked
+    reason = remote_blocked(request.client.host if request.client else None, request.headers)
+    if reason:
+        return JSONResponse({"error": reason}, status_code=503)
 
     # CSRF guard: browsers attach Origin to cross-site POST/PUT/DELETE. With
     # no password (or a query-string token) a form on any site could

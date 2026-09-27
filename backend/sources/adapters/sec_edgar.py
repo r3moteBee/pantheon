@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import re
 import logging
-import httpx
 from typing import Any
+from urllib.parse import urlsplit
 
 from sources.base import (
     FetchedContent,
@@ -23,6 +23,20 @@ logger = logging.getLogger(__name__)
 SEC_HEADERS = {
     "User-Agent": "PantheonResearch/1.0 (contact@pantheon.local)"
 }
+
+# The identifier can come from a model (ingest_source), so only SEC hosts
+# are fetched, and always through the SSRF-guarded client.
+SEC_HOSTS = {"www.sec.gov", "sec.gov", "data.sec.gov", "efts.sec.gov"}
+
+
+async def _sec_get(url: str, timeout: float = 60):
+    from utils.net import safe_http_get
+    parts = urlsplit(url)
+    if parts.scheme != "https" or (parts.hostname or "").lower() not in SEC_HOSTS:
+        raise ValueError(f"Not an SEC URL: {url!r} (allowed hosts: {', '.join(sorted(SEC_HOSTS))})")
+    r = await safe_http_get(url, headers=SEC_HEADERS, timeout=timeout)
+    r.raise_for_status()
+    return r
 
 
 class SecEdgarAdapter(SourceAdapter):
@@ -46,11 +60,8 @@ class SecEdgarAdapter(SourceAdapter):
             if match:
                 cik = match.group(1)
             
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, headers=SEC_HEADERS, timeout=60)
-                r.raise_for_status()
-                html_content = r.text
-            
+            html_content = (await _sec_get(url)).text
+
             title_match = re.search(r"<title>(.*?)</title>", html_content, re.IGNORECASE)
             title = title_match.group(1).strip() if title_match else f"SEC Filing CIK {cik}"
         else:
@@ -63,11 +74,9 @@ class SecEdgarAdapter(SourceAdapter):
             form_type = form_type.strip().upper()
 
             # Step A: Get CIK mapping from SEC
-            async with httpx.AsyncClient() as client:
-                r = await client.get("https://data.sec.gov/files/company_tickers.json", headers=SEC_HEADERS, timeout=30)
-                r.raise_for_status()
-                tickers_data = r.json()
+            tickers_data = (await _sec_get("https://data.sec.gov/files/company_tickers.json", 30)).json()
 
+            cik = None
             for item in tickers_data.values():
                 if str(item.get("ticker")).upper() == ticker:
                     cik = str(item.get("cik_str"))
@@ -86,10 +95,7 @@ class SecEdgarAdapter(SourceAdapter):
             submissions_url = f"https://data.sec.gov/submissions/CIK{cik_10}.json"
 
             # Step B: Get filings list for the CIK
-            async with httpx.AsyncClient() as client:
-                r = await client.get(submissions_url, headers=SEC_HEADERS, timeout=30)
-                r.raise_for_status()
-                sub_data = r.json()
+            sub_data = (await _sec_get(submissions_url, 30)).json()
 
             recent_filings = sub_data.get("filings", {}).get("recent", {})
             forms = recent_filings.get("form", [])
@@ -114,10 +120,7 @@ class SecEdgarAdapter(SourceAdapter):
 
             # Step C: Construct direct Archives URL and fetch primary document
             url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession_no_no_hyphen}/{prim_doc}"
-            async with httpx.AsyncClient() as client:
-                r = await client.get(url, headers=SEC_HEADERS, timeout=60)
-                r.raise_for_status()
-                html_content = r.text
+            html_content = (await _sec_get(url)).text
 
             title = f"{company_name} {form_type} Filing ({published_at})"
 

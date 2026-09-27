@@ -70,9 +70,15 @@ def load_agent_config() -> str:
     return "Use your tools and memory to assist the user effectively."
 
 
+def _project_personality_dir(project_id: str) -> Path:
+    """projects/<id>/personality, refusing ids that would escape projects_dir."""
+    from utils.paths import check_project_id
+    return settings.projects_dir / check_project_id(project_id) / "personality"
+
+
 def load_project_personality(project_id: str) -> dict[str, str]:
     """Load per-project personality overrides if they exist."""
-    project_dir = settings.projects_dir / project_id / "personality"
+    project_dir = _project_personality_dir(project_id)
     result: dict[str, str] = {}
     for fname in ["soul.md", "agent.md"]:
         fpath = project_dir / fname
@@ -95,7 +101,7 @@ def get_full_personality(project_id: str | None = None) -> dict[str, str]:
 def save_soul(content: str, project_id: str | None = None) -> None:
     """Save soul.md globally or for a specific project."""
     if project_id:
-        path = settings.projects_dir / project_id / "personality" / "soul.md"
+        path = _project_personality_dir(project_id) / "soul.md"
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
         path = settings.personality_dir / "soul.md"
@@ -105,7 +111,7 @@ def save_soul(content: str, project_id: str | None = None) -> None:
 def save_agent_config(content: str, project_id: str | None = None) -> None:
     """Save agent.md globally or for a specific project."""
     if project_id:
-        path = settings.projects_dir / project_id / "personality" / "agent.md"
+        path = _project_personality_dir(project_id) / "agent.md"
         path.parent.mkdir(parents=True, exist_ok=True)
     else:
         path = settings.personality_dir / "agent.md"

@@ -25,6 +25,22 @@ import httpx
 from config import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+# A provider's key is sent as a credential to that provider's (user-set)
+# URL, so it may only name a search key — never another subsystem's secret.
+_SEARCH_KEY_RE = re.compile(r"^(search_key__[a-z0-9_.-]{1,60}|[a-z0-9][a-z0-9_-]{0,40}_api_key(_\d+)?)$")
+_NOT_SEARCH_KEYS = {"llm_api_key", "embedding_api_key", "prefill_api_key",
+                    "vision_api_key", "reranker_api_key"}
+
+
+def is_search_key_name(name: str) -> bool:
+    return bool(_SEARCH_KEY_RE.match(name or "")) and name not in _NOT_SEARCH_KEYS
+
+
+def default_search_key_name(provider_name: str) -> str:
+    slug = re.sub(r"[^a-z0-9_.-]+", "-", (provider_name or "provider").lower()).strip("-")[:60]
+    return f"search_key__{slug or 'provider'}"
 _settings = get_settings()
 
 # ── Provider definitions ─────────────────────────────────────────────────────
@@ -252,6 +268,10 @@ class SearchProviderManager:
     def _get_api_key(self, prov: dict[str, Any]) -> str:
         key_name = prov.get("api_key_vault_key", "")
         if not key_name:
+            return ""
+        if not is_search_key_name(key_name):
+            logger.warning("search provider %s: vault key %r is not a search key — not sent",
+                           prov.get("name"), key_name)
             return ""
         try:
             from secrets.vault import get_vault

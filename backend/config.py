@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = Field(default=False, env="ALLOW_PRIVATE_FETCH")
+    # Serve non-local clients even while VAULT_MASTER_KEY / SECRET_KEY /
+    # AUTH_PASSWORD are public defaults or .env.example placeholders.
+    allow_insecure_defaults: bool = Field(default=False, env="ALLOW_INSECURE_DEFAULTS")
 
     # Search
     # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).

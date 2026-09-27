@@ -444,10 +444,18 @@ async def get_search_providers() -> dict[str, Any]:
 
 @router.put("/settings/search/providers")
 async def set_search_providers(req: SearchProvidersUpdate) -> dict[str, Any]:
-    from agent.search_providers import get_search_manager
+    from agent.search_providers import default_search_key_name, get_search_manager, is_search_key_name
     vault = get_vault()
     cleaned: list[dict[str, Any]] = []
     for p in req.providers:
+        if p.api_key and not p.api_key_vault_key:
+            p.api_key_vault_key = default_search_key_name(p.name)
+        if p.api_key_vault_key and not is_search_key_name(p.api_key_vault_key):
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Provider {p.name!r}: vault key {p.api_key_vault_key!r} isn't a search key. "
+                        "Use a name ending in _api_key (e.g. brave_api_key) or leave it empty."),
+            )
         if p.api_key and p.api_key_vault_key:
             vault.set_secret(p.api_key_vault_key, p.api_key)
         d = p.model_dump()

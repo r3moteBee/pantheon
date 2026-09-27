@@ -120,6 +120,46 @@ class SecretsVault:
         _cache.clear()
         return new
 
+    def rotate_master_key(self, new_master_key: str) -> int:
+        """Re-encrypt every secret under ``new_master_key`` (fresh salt) in one
+        transaction. Refuses if any secret can't be decrypted with the current
+        key, so a wrong key never destroys data. Returns the count rotated."""
+        if not new_master_key or new_master_key == self._master_key:
+            raise ValueError("new master key must be non-empty and different")
+        salt = os.urandom(16)
+        iters = self._V2_ITERATIONS
+        new = self._v2_fernet(new_master_key, salt, iters)
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, encrypted_value FROM secrets").fetchall()
+            plain: list[tuple[str, bytes]] = []
+            bad: list[str] = []
+            for key, blob in rows:
+                try:
+                    plain.append((key, self._fernet.decrypt(blob)))
+                except InvalidToken:
+                    bad.append(key)
+            if bad:
+                raise ValueError(
+                    f"{len(bad)} secret(s) can't be decrypted with the current key "
+                    f"({', '.join(bad[:5])}{'…' if len(bad) > 5 else ''}) — nothing changed"
+                )
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for key, value in plain:
+                    conn.execute("UPDATE secrets SET encrypted_value = ? WHERE key = ?",
+                                 (new.encrypt(value), key))
+                for mk, mv in (("kdf_salt", salt.hex()), ("kdf_iterations", str(iters)),
+                               ("kdf_version", self._KDF_VERSION)):
+                    conn.execute("INSERT OR REPLACE INTO vault_meta (key, value) VALUES (?, ?)", (mk, mv))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        self._master_key = new_master_key
+        self._fernet = new
+        _cache.clear()
+        return len(plain)
+
     def _connect(self) -> sqlite3.Connection:
         from db_utils import apply_sqlite_pragmas, ClosingConnection
         conn = sqlite3.connect(self.db_path)
