@@ -84,10 +84,10 @@ while [[ $# -gt 0 ]]; do
       echo "When run interactively (without --yes), the installer will:"
       echo "  1. Ask for your LLM endpoint URL and API key"
       echo "  2. Fetch the available model list from the endpoint"
-      echo "  3. Let you choose your primary, prefill, and embedding models"
+      echo "  3. Let you choose your primary and embedding models"
       echo ""
       echo "Environment variables (alternative to flags):"
-      echo "  LLM_BASE_URL, LLM_API_KEY, LLM_MODEL, LLM_PREFILL_MODEL,"
+      echo "  LLM_BASE_URL, LLM_API_KEY, LLM_MODEL,"
       echo "  EMBEDDING_MODEL, PANTHEON_DIR, PANTHEON_PORT"
       exit 0
       ;;
@@ -712,7 +712,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
     update_env "LLM_API_KEY" ""
     update_env "LLM_MODEL" ""
     update_env "EMBEDDING_MODEL" ""
-    update_env "LLM_PREFILL_MODEL" ""
   else
     # User agreed to configure LLM
     echo ""
@@ -738,7 +737,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
         update_env "LLM_API_KEY" "$LLM_API_KEY"
         update_env "LLM_MODEL" "$LLM_MODEL"
         update_env "EMBEDDING_MODEL" "$EMBEDDING_MODEL"
-        update_env "LLM_PREFILL_MODEL" ""
         success "Configured local Ollama with default qwen2.5:3b model"
         ;;
         
@@ -767,7 +765,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
         update_env "LLM_API_KEY" "$LLM_API_KEY"
         update_env "LLM_MODEL" "$LLM_MODEL"
         update_env "EMBEDDING_MODEL" "$EMBEDDING_MODEL"
-        update_env "LLM_PREFILL_MODEL" ""
         success "Configured local Ollama with custom model: ${LLM_MODEL}"
         ;;
         
@@ -821,17 +818,7 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
           update_env "LLM_MODEL" "$CHOSEN_MODEL"
           success "Primary model: ${CHOSEN_MODEL}"
           
-          echo ""
-          echo -e "  ${CYAN}A prefill model is a faster/cheaper model used for background tasks.${RESET}"
-          echo -e "  ${CYAN}Leave blank to use the primary model for everything.${RESET}"
-          CHOSEN_PREFILL=$(pick_model "Select prefill / fast model (optional):" "$MODEL_LIST" "${CURRENT_MODEL:-}")
-          if [[ -n "$CHOSEN_PREFILL" && "$CHOSEN_PREFILL" != "$CHOSEN_MODEL" ]]; then
-            update_env "LLM_PREFILL_MODEL" "$CHOSEN_PREFILL"
-            success "Prefill model: ${CHOSEN_PREFILL}"
-          else
-            info "Prefill model: same as primary (${CHOSEN_MODEL})"
-            update_env "LLM_PREFILL_MODEL" ""
-          fi
+          info "Faster/cheaper models for background work can be added later in Settings → LLMs."
           
           EMBED_MODELS=$(echo "$MODEL_LIST" | grep -iE 'embed|e5|bge|gte|mxbai|nomic' 2>/dev/null) || EMBED_MODELS=""
           if [[ -z "$EMBED_MODELS" ]]; then
@@ -846,13 +833,6 @@ elif [[ "$SKIP_CONFIRM" == false ]]; then
           read -rp "  Primary chat model [${CURRENT_MODEL:-gpt-4o}]: " input_model </dev/tty
           LLM_MODEL="${input_model:-${CURRENT_MODEL:-gpt-4o}}"
           update_env "LLM_MODEL" "$LLM_MODEL"
-          
-          read -rp "  Prefill / fast model (optional, Enter to skip): " input_prefill </dev/tty
-          if [[ -n "$input_prefill" ]]; then
-            update_env "LLM_PREFILL_MODEL" "$input_prefill"
-          else
-            update_env "LLM_PREFILL_MODEL" ""
-          fi
           
           read -rp "  Embedding model [${CURRENT_EMBEDDING:-text-embedding-3-small}]: " input_embed </dev/tty
           EMBEDDING_MODEL="${input_embed:-${CURRENT_EMBEDDING:-text-embedding-3-small}}"
@@ -962,7 +942,6 @@ EOF
   fi
 
   header "Building Docker images (this may take a few minutes on first run)..."
-  cp frontend/package.json backend/package.json 2>/dev/null || true
   docker compose pull chromadb 2>/dev/null || true
   docker compose build --parallel
   success "Images built"

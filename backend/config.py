@@ -3,80 +3,63 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from functools import lru_cache
-from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # LLM Provider
-    llm_base_url: str = Field(default="https://api.openai.com/v1", env="LLM_BASE_URL")
-    llm_api_key: str = Field(default="", env="LLM_API_KEY")
-    llm_model: str = Field(default="gpt-4o", env="LLM_MODEL")
-    # Optional cheaper/faster model for summarisation, memory consolidation, etc.
-    # Falls back to llm_model when not set.
-    llm_prefill_model: str = Field(default="", env="LLM_PREFILL_MODEL")
-    # Separate endpoint/key for the prefill provider (falls back to primary LLM when blank)
-    prefill_base_url: str = Field(default="", env="PREFILL_BASE_URL")
-    prefill_api_key: str = Field(default="", env="PREFILL_API_KEY")
-
-    # Optional vision-capable model for image analysis.
-    # Falls back to: vision → primary → prefill (whichever succeeds first).
-    llm_vision_model: str = Field(default="", env="LLM_VISION_MODEL")
-    vision_base_url: str = Field(default="", env="VISION_BASE_URL")
-    vision_api_key: str = Field(default="", env="VISION_API_KEY")
-
-    embedding_model: str = Field(default="text-embedding-3-small", env="EMBEDDING_MODEL")
-    # Separate endpoint/key for embeddings (falls back to primary LLM when blank)
-    embedding_base_url: str = Field(default="", env="EMBEDDING_BASE_URL")
-    embedding_api_key: str = Field(default="", env="EMBEDDING_API_KEY")
-
-    # Reranker — cross-encoder model for memory recall reranking
-    reranker_model: str = Field(default="", env="RERANKER_MODEL")
-    reranker_base_url: str = Field(default="", env="RERANKER_BASE_URL")
-    reranker_api_key: str = Field(default="", env="RERANKER_API_KEY")
+    # LLM provider — bootstrap fallback for the agent class (see embedding_model)
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o"
+    # Bootstrap fallbacks: used only when no route is configured for the
+    # class in Settings → LLMs (/api/llm/*). Routes are the real config.
+    embedding_model: str = "text-embedding-3-small"
+    # Separate embedding endpoint for that fallback (the installer asks for it)
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
 
     # Security
-    vault_master_key: str = Field(default="dev-key-change-in-production-32x", env="VAULT_MASTER_KEY")
-    secret_key: str = Field(default="dev-secret-key-change-in-production", env="SECRET_KEY")
+    vault_master_key: str = "dev-key-change-in-production-32x"
+    secret_key: str = "dev-secret-key-change-in-production"
     # Set AUTH_PASSWORD to require a password on the web interface.
     # Leave empty to disable authentication (not recommended on public servers).
-    auth_password: str = Field(default="", env="AUTH_PASSWORD")
+    auth_password: str = ""
     # Login sessions expire after this many days.
-    auth_session_days: int = Field(default=30, env="AUTH_SESSION_DAYS")
+    auth_session_days: int = 30
     # Extra public hostnames (comma-separated) this server may be reached by
     # when AUTH_PASSWORD is empty, e.g. a Caddy domain. Guards DNS rebinding.
-    allowed_hosts: str = Field(default="", env="ALLOWED_HOSTS")
+    allowed_hosts: str = ""
 
     # Telegram
-    telegram_bot_token: str = Field(default="", env="TELEGRAM_BOT_TOKEN")
-    telegram_allowed_chat_ids: str = Field(default="", env="TELEGRAM_ALLOWED_CHAT_IDS")
+    telegram_bot_token: str = ""
+    telegram_allowed_chat_ids: str = ""
 
     # Discord
-    discord_bot_token: str = Field(default="", env="DISCORD_BOT_TOKEN")
-    discord_allowed_guild_ids: str = Field(default="", env="DISCORD_ALLOWED_GUILD_IDS")
+    discord_bot_token: str = ""
+    discord_allowed_guild_ids: str = ""
 
     # Slack
-    slack_bot_token: str = Field(default="", env="SLACK_BOT_TOKEN")
-    slack_app_token: str = Field(default="", env="SLACK_APP_TOKEN")
-    slack_allowed_channel_ids: str = Field(default="", env="SLACK_ALLOWED_CHANNEL_IDS")
+    slack_bot_token: str = ""
+    slack_app_token: str = ""
+    slack_allowed_channel_ids: str = ""
 
     # Matrix
-    matrix_homeserver_url: str = Field(default="", env="MATRIX_HOMESERVER_URL")
-    matrix_user_id: str = Field(default="", env="MATRIX_USER_ID")
-    matrix_access_token: str = Field(default="", env="MATRIX_ACCESS_TOKEN")
-    matrix_allowed_room_ids: str = Field(default="", env="MATRIX_ALLOWED_ROOM_IDS")
+    matrix_homeserver_url: str = ""
+    matrix_user_id: str = ""
+    matrix_access_token: str = ""
+    matrix_allowed_room_ids: str = ""
 
     # Mattermost
-    mattermost_url: str = Field(default="", env="MATTERMOST_URL")
-    mattermost_bot_token: str = Field(default="", env="MATTERMOST_BOT_TOKEN")
-    mattermost_scheme: str = Field(default="https", env="MATTERMOST_SCHEME")
-    mattermost_port: int = Field(default=443, env="MATTERMOST_PORT")
-    mattermost_allowed_channel_ids: str = Field(default="", env="MATTERMOST_ALLOWED_CHANNEL_IDS")
+    mattermost_url: str = ""
+    mattermost_bot_token: str = ""
+    mattermost_scheme: str = "https"
+    mattermost_port: int = 443
+    mattermost_allowed_channel_ids: str = ""
 
     # Application
-    app_env: str = Field(default="development", env="APP_ENV")
-    log_level: str = Field(default="INFO", env="LOG_LEVEL")
-    cors_origins: str = Field(default="http://localhost:8000,http://localhost:5173,http://localhost:80", env="CORS_ORIGINS")
+    app_env: str = "development"
+    log_level: str = "INFO"
+    cors_origins: str = "http://localhost:8000,http://localhost:5173,http://localhost:80"
 
     # Host-execution tools (run_command, code_execute, git_*) run shell on the
     # host. Content the agent reads (web pages, transcripts, recalled memory)
@@ -85,13 +68,13 @@ class Settings(BaseSettings):
     #   interactive — web UI chat + coding_task jobs (default)
     #   always      — also autonomous/scheduled jobs and messaging bots
     #   never       — disabled everywhere
-    agent_host_exec: str = Field(default="interactive", env="AGENT_HOST_EXEC")
+    agent_host_exec: str = "interactive"
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
-    allow_private_fetch: bool = Field(default=False, env="ALLOW_PRIVATE_FETCH")
+    allow_private_fetch: bool = False
     # Serve non-local clients even while VAULT_MASTER_KEY / SECRET_KEY /
     # AUTH_PASSWORD are public defaults or .env.example placeholders.
-    allow_insecure_defaults: bool = Field(default=False, env="ALLOW_INSECURE_DEFAULTS")
+    allow_insecure_defaults: bool = False
 
     # Search
     # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).
@@ -99,44 +82,43 @@ class Settings(BaseSettings):
     # Examples:
     #   SearXNG:  http://localhost:8080
     #   Brave:    https://api.search.brave.com/res/v1/web
-    search_url: str = Field(default="", env="SEARCH_URL")
+    search_url: str = ""
     # Optional API key — sent as  X-Subscription-Token  (Brave)
     # or  Authorization: Bearer  header depending on backend.
-    search_api_key: str = Field(default="", env="SEARCH_API_KEY")
+    search_api_key: str = ""
 
     # ChromaDB
-    chroma_host: str = Field(default="localhost", env="CHROMA_HOST")
-    chroma_port: int = Field(default=8001, env="CHROMA_PORT")
+    # Empty = embedded ChromaDB under data/chroma; set a host for a Chroma server
+    chroma_host: str = ""
+    chroma_port: int = 8001
 
     # Active Memory settings
     # Auto-extraction: run LLM extraction after this many messages (0 = disabled, only on consolidation)
-    extraction_interval: int = Field(default=0, env="EXTRACTION_INTERVAL")
-    # Context budget: max tokens for recalled memories injected into system prompt
-    recall_token_budget: int = Field(default=4000, env="RECALL_TOKEN_BUDGET")
+    extraction_interval: int = 0
 
     # Conversation behaviour tuning
     # Personality presence: how prominently soul.md identity is injected.
     #   "minimal"  = tone only, never reference identity in analytical content
     #   "balanced" = light personality, focus on the task (default)
     #   "strong"   = freely express identity and values in responses
-    personality_weight: str = Field(default="balanced", env="PERSONALITY_WEIGHT")
+    personality_weight: str = "balanced"
     # Context focus: how aggressively recent messages are favoured over older context.
     #   "broad"    = full history weighted equally (good for brainstorming)
     #   "balanced" = moderate recency boost (default)
     #   "focused"  = strong recency boost, older turns compressed (good for debugging)
-    context_focus: str = Field(default="balanced", env="CONTEXT_FOCUS")
+    context_focus: str = "balanced"
     # File indexing: auto-index uploaded files (true/false)
-    auto_index_uploads: bool = Field(default=True, env="AUTO_INDEX_UPLOADS")
+    auto_index_uploads: bool = True
     # File indexing: chunk size in tokens
-    file_chunk_size: int = Field(default=500, env="FILE_CHUNK_SIZE")
+    file_chunk_size: int = 500
     # File indexing: chunk overlap in tokens
-    file_chunk_overlap: int = Field(default=50, env="FILE_CHUNK_OVERLAP")
+    file_chunk_overlap: int = 50
     # File indexing: chunking strategy (headings, paragraphs, fixed)
-    file_chunk_strategy: str = Field(default="headings", env="FILE_CHUNK_STRATEGY")
+    file_chunk_strategy: str = "headings"
 
 
     # Paths
-    data_dir: Path = Field(default=Path("/app/data"), env="DATA_DIR")
+    data_dir: Path = Path("/app/data")
 
     @property
     def db_dir(self) -> Path:
@@ -185,9 +167,8 @@ class Settings(BaseSettings):
         for d in [self.db_dir, self.personality_dir, self.projects_dir, self.workspace_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    # Env var = field name upper-cased (case-insensitive), e.g. LLM_BASE_URL.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
 @lru_cache()

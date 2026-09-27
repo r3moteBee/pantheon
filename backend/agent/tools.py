@@ -1597,12 +1597,21 @@ async def execute_tool(
     session_id: str | None = None,
     last_assistant_text: str = "",
     interactive: bool = False,
+    host_exec: bool = False,
 ) -> str:
     """Execute a tool call and return the result as a string.
 
     ``interactive`` is True only for turns driven by a person in the web UI;
     it gates actions that assume the user just approved something.
+    ``host_exec`` must be the caller's AgentCore.host_exec: host-execution
+    tools are refused here too, not only hidden from the schema.
     """
+    if tool_name in HOST_EXEC_TOOLS and not host_exec:
+        return (
+            f"Tool '{tool_name}' is disabled in this context "
+            "(host command execution is only available in "
+            "interactive chat; see AGENT_HOST_EXEC)."
+        )
     try:
         effective_project = project_id or "default"
 
@@ -2645,14 +2654,32 @@ async def execute_tool(
             except Exception as e:
                 return f"create_skill: scaffold created but failed to fill manifest/instructions: {e}"
 
-            # Refresh the registry so it picks up the new skill.
+            # Refresh the registry so it picks up the new skill (which runs
+            # the static scan), then the full scan: text the model wrote may
+            # carry injected instructions, and it becomes system prompt.
+            scan_note = ""
             try:
-                from skills.registry import reload_skill_registry; reload_skill_registry()
-            except Exception:
-                pass
+                from skills.registry import reload_skill_registry
+                reg = reload_skill_registry()
+                skill = reg.get(name)
+                if skill is not None:
+                    from skills.scanner import scan_skill
+                    result = await scan_skill(Path(skill.skill_dir), skill.manifest, skill.instructions)
+                    skill.manifest.security_scan = result
+                    reg.save_scan_result(name, result)
+                    if not result.passed:
+                        issues = "; ".join(f.message for f in result.findings
+                                           if f.severity.value in ("critical", "warning"))[:400]
+                        return (f"Skill {name!r} was created but FAILED its security scan and is "
+                                f"blocked: {issues}. Rewrite the instructions as plain workflow "
+                                f"steps, or the user can review it in the Skills tab.")
+                    scan_note = f"  security scan: passed (risk {result.risk_score})\n"
+            except Exception as e:
+                logger.warning("create_skill scan failed for %s: %s", name, e)
 
             return (
                 f"Skill {name!r} created and registered.\n"
+                f"{scan_note}"
                 f"  triggers: {triggers or '(none — auto-suggest disabled)'}\n"
                 f"  tags: {tags or '(none)'}\n\n"
                 f"Invoke it later with `/{name}` in any chat. Edit it "

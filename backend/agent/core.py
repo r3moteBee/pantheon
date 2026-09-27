@@ -558,11 +558,10 @@ class AgentCore:
                         if _m.get("role") == "assistant" and _m.get("content"):
                             last_assistant_text = _m["content"]
                             break
-                    if tool_name in HOST_EXEC_TOOLS and not self.host_exec:
+                    if tc.get("args_error"):
                         result = (
-                            f"Tool '{tool_name}' is disabled in this context "
-                            "(host command execution is only available in "
-                            "interactive chat; see AGENT_HOST_EXEC)."
+                            f"Error: {tool_name} was not run — its {tc['args_error']}. "
+                            "Call it again with the arguments as a single JSON object."
                         )
                     else:
                         result = await execute_tool(
@@ -573,6 +572,7 @@ class AgentCore:
                             session_id=self.session_id,
                             last_assistant_text=last_assistant_text,
                             interactive=self.interactive,
+                            host_exec=self.host_exec,
                         )
                     self._progress()
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,

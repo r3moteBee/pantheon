@@ -99,3 +99,4 @@ backend/data/*
 !backend/data/migrations/
 !backend/data/personality/
 !backend/data/personas/
+.claude/worktrees/

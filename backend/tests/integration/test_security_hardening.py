@@ -112,13 +112,20 @@ async def test_background_agent_hides_and_blocks_host_exec_tools():
     provider = _FakeProvider()
     agent = AgentCore(provider=provider, host_exec=False)
     events = []
-    with patch("agent.core.execute_tool") as mock_exec:
-        async for ev in agent.chat("hi", stream=False):
-            events.append(ev)
-        mock_exec.assert_not_called()
+    # The real execute_tool refuses (the gate lives in the dispatcher).
+    async for ev in agent.chat("hi", stream=False):
+        events.append(ev)
     assert not (set(provider.tools_seen or []) & HOST_EXEC_TOOLS)
     results = [e for e in events if e.get("type") == "tool_result"]
     assert results and "disabled in this context" in results[0]["result"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_refuses_host_exec_by_default():
+    from agent.tools import execute_tool
+    for name in ("run_command", "code_execute", "git_status"):
+        res = await execute_tool(name, {"command": "id", "language": "python", "code": "1"}, None)
+        assert "disabled in this context" in res, name
 
 
 # ── Path helpers ─────────────────────────────────────────────────────────────

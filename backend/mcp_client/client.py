@@ -32,6 +32,18 @@ MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
 
 
+def tool_function_name(connection: str, tool: str) -> str:
+    """The name the LLM sees for an MCP tool: ``mcp_<connection>_<tool>``.
+    OpenAI caps function names at 64 chars; a longer name is cut to 55 and
+    suffixed with a short hash of the full name, so it stays unique and
+    MCPManager.resolve_tool_call can map it back."""
+    full = f"mcp_{connection}_{tool}"
+    if len(full) <= 64:
+        return full
+    import hashlib
+    return f"{full[:55]}_{hashlib.sha1(full.encode()).hexdigest()[:8]}"
+
+
 class MCPClient:
     """Client for a single remote MCP server connection."""
 
@@ -497,11 +509,7 @@ class MCPClient:
             if tool.get("name", "") in excluded:
                 continue
             mcp_name = tool.get("name", "")
-            # Prefix with connection name to namespace
-            prefixed_name = f"mcp_{self.name}_{mcp_name}"
-            # Keep it under 64 chars (OpenAI limit)
-            if len(prefixed_name) > 64:
-                prefixed_name = prefixed_name[:64]
+            prefixed_name = tool_function_name(self.name, mcp_name)
 
             schema = {
                 "type": "function",

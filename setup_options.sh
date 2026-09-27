@@ -283,7 +283,6 @@ if [[ "$WITH_OLLAMA" == "true" ]]; then
   _env_set "LLM_BASE_URL"       "http://localhost:11434/v1"
   _env_set "LLM_API_KEY"        "ollama"
   _env_set "LLM_MODEL"          "${OLLAMA_MODEL}"
-  _env_set "LLM_PREFILL_MODEL"  "${OLLAMA_MODEL}"
   _env_set "EMBEDDING_BASE_URL" "http://localhost:11434/v1"
   _env_set "EMBEDDING_API_KEY"  "ollama"
   _env_set "EMBEDDING_MODEL"    "${EMBEDDING_MODEL}"
