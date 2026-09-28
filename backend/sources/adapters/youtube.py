@@ -1,6 +1,6 @@
 """YouTube source adapters.
 
-Three concrete source_types share one fetcher (mcp_SubDownload_*)
+Three concrete source_types share one fetcher (the YouTube MCP's fetch_transcript tool)
 and one frontmatter builder, but report different display names and
 different bucket aliases so the heuristic+bucket type resolver can
 route per-video correctly.
@@ -55,7 +55,8 @@ def _resolve_published_at(extras: dict) -> str | None:
 class _YouTubeAdapterBase(SourceAdapter):
     """Shared fetch logic for every youtube/* source_type."""
 
-    requires_mcp = ("mcp_SubDownload_fetch_transcript",)
+    # Any connection exposing a fetch_transcript tool (see MCPManager.find_tool).
+    requires_mcp = ("mcp_*_fetch_transcript",)
     artifact_path_template = (
         "youtube-transcripts/{published_at}/{author_or_publisher}/"
         "{identifier}-{slug}.md"
@@ -70,10 +71,13 @@ class _YouTubeAdapterBase(SourceAdapter):
         # for the LLM (appends a <structured-output> block / error marker
         # and turns exceptions into "MCP tool error: ..." strings), which
         # made json.loads fail on every such response.
-        raw = await mgr.call_tool_raw(
-            "mcp_SubDownload_fetch_transcript",
-            {"video_id": req.identifier, "save": False},
-        )
+        tool = mgr.find_tool("mcp_*_fetch_transcript")
+        if not tool:
+            raise RuntimeError(
+                "No connected MCP server offers a fetch_transcript tool. "
+                "Connect a YouTube transcript MCP under Connections → MCP servers."
+            )
+        raw = await mgr.call_tool_raw(tool, {"video_id": req.identifier, "save": False})
         payload = raw.get("structured")
         if payload is None:
             text_payload = raw.get("text") or ""

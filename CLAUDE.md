@@ -196,7 +196,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 - **Artifacts** — durable, indexed, searchable. SQLite + blob. Tools: `save_to_artifact`, `read_artifact`, `list_artifacts`, `update_artifact`, `save_transcript_artifact`. Bare paths get auto-prefixed with the project slug.
 - **Workspace files** — ephemeral scratch on disk. Tools: `read_file`, `write_file`, `list_workspace_files`. Don't use these for anything you want to keep.
 
-**MCP `save_*` tools are NOT artifact tools.** `mcp_SubDownload_save_to_library` writes to that MCP server's external storage, which Pantheon cannot see. Always use `save_to_artifact` (or `save_transcript_artifact` for video transcripts) for Pantheon persistence.
+**MCP `save_*` tools are NOT artifact tools.** A tool like `mcp_<conn>_save_to_library` writes to that MCP server's external storage, which Pantheon cannot see. Always use `save_to_artifact` (or `save_transcript_artifact` for video transcripts) for Pantheon persistence.
 
 **Ingest dedup vs save_to_artifact.** `ingest_source` / `registry.ingest`: re-ingesting the same canonical path UPDATES the existing artifact (new version in `artifact_versions`); pass `extras={"force_new": true}` for a separate artifact. `save_to_artifact` is different: an existing path gets a `-1`, `-2`… suffix. Use `update_artifact` to revise in place.
 
@@ -212,7 +212,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Skill name slugify tolerance.** Both `/content_ingest_graph` and `/content-ingest-graph` resolve to `content-ingest-graph`. Don't worry about which separator the user types.
 
-**Date parsing.** YouTube's MCP returns relative strings like `"4 months ago"`. The YouTube adapter accepts either `extras["published"]` (relative) or `extras["published_at"]` (ISO). When orchestrating an ingest after `mcp_SubDownload_search_youtube`, ALWAYS forward each video's `published` string so paths get real dates instead of `unknown-date/`.
+**Date parsing.** YouTube's MCP returns relative strings like `"4 months ago"`. The YouTube adapter accepts either `extras["published"]` (relative) or `extras["published_at"]` (ISO). When orchestrating an ingest after the YouTube MCP's `search_youtube`, ALWAYS forward each video's `published` string so paths get real dates instead of `unknown-date/`.
 
 **Job task timeout.** Default is 1800s (30 min) for autonomous_task. Pass `timeout_seconds` on `create_task` for batch ingests that need longer.
 
@@ -296,6 +296,12 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 **Tool calls with bad arguments aren't run.** `models.provider.parse_tool_args` marks non-JSON or non-object arguments with `args_error`. AgentCore then returns an error result to the model instead of calling the tool with `{}`.
 
 **Host-exec is refused in the dispatcher too.** `execute_tool(..., host_exec=False)` refuses `HOST_EXEC_TOOLS`, and AgentCore passes its own `host_exec`. Tests that call git/run_command directly pass `host_exec=True`.
+
+**Find MCP tools by what they do, not by connection name.** `MCPManager.find_tool` accepts a pattern (`mcp_*_fetch_transcript`), a bare tool name, or a prefixed name whose connection has since been renamed. `missing_tools` checks a skill's `requires_mcp` the same way. The YouTube adapter and `save_transcript_artifact` use it, so any connection name works.
+
+**Jobs run concurrently.** `JOB_WORKER_CONCURRENCY` (default 2). `REPO_JOB_TYPES` (`coding_task`, `iteration_loop`) never run two at a time per project, via `claim_next(exclusive_types=…, busy_projects=…)`.
+
+**Firecracker mounts the workspace.** `SandboxConfig.workspace_dir` becomes an ext4 disk at `/workspace` in the VM and is mirrored back after the run. Exit codes come from a console marker (`_parse_console`), not Firecracker's own exit code.
 
 **MCP tool names go through `mcp_client.client.tool_function_name`.** It produces `mcp_<conn>_<tool>`, or for names over 64 characters a 55-character prefix plus a hash. `resolve_tool_call` maps names back through the same function, so never build `f"mcp_{…}"` by hand.
 

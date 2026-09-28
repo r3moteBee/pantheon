@@ -303,3 +303,68 @@ async def test_rerun_endpoint_replaces_retry(store, monkeypatch):
         await jobs_api.rerun_job("missing")
     assert e.value.status_code == 404
     assert not hasattr(store, "retry")
+
+
+# ── Concurrency ──────────────────────────────────────────────────────────────
+
+async def _run_worker_until(w, cond, limit=300):
+    w.start()
+    try:
+        for _ in range(limit):
+            if cond():
+                return True
+            await asyncio.sleep(0.02)
+        return False
+    finally:
+        await w.stop()
+
+
+@pytest.mark.asyncio
+async def test_worker_runs_jobs_concurrently_but_one_repo_job_per_project(store, monkeypatch):
+    monkeypatch.setattr(worker_mod, "POLL_INTERVAL_SECONDS", 0.02)
+    active: dict[str, int] = {}
+    peak: dict[str, int] = {}
+    done: list[str] = []
+    release = asyncio.Event()
+
+    def make(kind):
+        async def fn(ctx):
+            active[kind] = active.get(kind, 0) + 1
+            peak[kind] = max(peak.get(kind, 0), active[kind])
+            await release.wait()
+            active[kind] -= 1
+            done.append(ctx.job_id)
+            return {"ok": True}
+        return fn
+
+    real_coding = HANDLERS.get("coding_task")
+    _register("t_ingest", make("ingest"))
+    _register("coding_task", make("repo"))
+    try:
+        a = store.create(job_type="t_ingest", project_id="p1", title="a", payload={})
+        b = store.create(job_type="t_ingest", project_id="p1", title="b", payload={})
+        c1 = store.create(job_type="coding_task", project_id="p1", title="c1", payload={})
+        c2 = store.create(job_type="coding_task", project_id="p1", title="c2", payload={})
+        w = JobWorker(store, concurrency=4)
+
+        async def release_soon():
+            await asyncio.sleep(0.4)
+            release.set()
+        asyncio.get_running_loop().create_task(release_soon())
+        assert await _run_worker_until(w, lambda: len(done) == 4)
+        assert peak["ingest"] == 2          # ran side by side
+        assert peak["repo"] == 1            # same project's checkout: serialized
+        assert all(store.get(j["id"])["status"] == JobStatus.COMPLETED for j in (a, b, c1, c2))
+    finally:
+        HANDLERS.pop("t_ingest", None)
+        if real_coding:
+            HANDLERS["coding_task"] = real_coding
+
+
+def test_claim_next_skips_busy_repo_projects(store):
+    c1 = store.create(job_type="coding_task", project_id="p1", title="c1", payload={})
+    other = store.create(job_type="coding_task", project_id="p2", title="c2", payload={})
+    got = store.claim_next(exclusive_types=("coding_task",), busy_projects={"p1"})
+    assert got["id"] == other["id"]
+    assert store.claim_next(exclusive_types=("coding_task",), busy_projects={"p1"}) is None
+    assert store.claim_next()["id"] == c1["id"]

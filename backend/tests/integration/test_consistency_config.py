@@ -146,3 +146,20 @@ def test_settings_read_env_names(monkeypatch):
     s = Settings(_env_file=None)
     assert s.matrix_allowed_room_ids == "!a:b" and s.chroma_host == ""
     assert not hasattr(s, "llm_prefill_model") and not hasattr(s, "recall_token_budget")
+
+
+def test_find_tool_doesnt_depend_on_the_connection_name():
+    from mcp_client.manager import MCPManager
+    mgr = MCPManager.__new__(MCPManager)
+    mgr._clients = {"yt": SimpleNamespace(name="yt-transcripts", tools=[{"name": "fetch_transcript"},
+                                                                         {"name": "search_youtube"}])}
+    mgr._configs = [{"name": "yt-transcripts", "excluded_tools": []}]
+    want = "mcp_yt-transcripts_fetch_transcript"
+    assert mgr.find_tool("mcp_*_fetch_transcript") == want
+    assert mgr.find_tool("fetch_transcript") == want
+    assert mgr.find_tool(want) == want
+    # A skill written against the old connection name still resolves.
+    assert mgr.find_tool("mcp_SubDownload_fetch_transcript") == want
+    assert mgr.missing_tools(["mcp_SubDownload_search_youtube", "mcp_*_nope"]) == ["mcp_*_nope"]
+    mgr._configs = [{"name": "yt-transcripts", "excluded_tools": ["fetch_transcript"]}]
+    assert mgr.find_tool("fetch_transcript") is None

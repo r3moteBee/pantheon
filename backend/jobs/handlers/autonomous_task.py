@@ -204,14 +204,9 @@ async def handle_autonomous_task(ctx: JobContext) -> dict[str, Any]:
             if requires_mcp:
                 try:
                     from mcp_client.manager import get_mcp_manager
-                    available_mcp = {
-                        ((sp or {}).get("function") or {}).get("name")
-                        for sp in (get_mcp_manager().get_all_tool_schemas() or [])
-                        if (sp or {}).get("function")
-                    }
+                    missing = get_mcp_manager().missing_tools(requires_mcp)
                 except Exception:
-                    available_mcp = set()
-                missing = [t for t in requires_mcp if t not in available_mcp]
+                    missing = list(requires_mcp)
                 if missing:
                     err = (
                         f"skill {sk.name} requires MCP tools that are "

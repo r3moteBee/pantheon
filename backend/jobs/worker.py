@@ -15,8 +15,10 @@ Started as an asyncio task during FastAPI lifespan startup. Loops:
 All terminal writes are guarded on status='running', so a row the
 watchdog already stalled is never flipped back to completed.
 
-Concurrency: one in-flight job. Bump WORKER_CONCURRENCY env var if it
-becomes painful; for now sequential is fine for single-user pantheon.
+Concurrency: up to JOB_WORKER_CONCURRENCY jobs at once (default 2), so a
+long batch ingest doesn't hold up a scheduled digest. Jobs that work in the
+project's repo checkout (REPO_JOB_TYPES) never run two at a time in the
+same project. Set JOB_WORKER_CONCURRENCY=1 for strictly sequential.
 """
 from __future__ import annotations
 
@@ -34,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = float(os.getenv("JOB_WORKER_POLL_SECONDS", "1.0"))
 SUPERVISE_INTERVAL_SECONDS = float(os.getenv("JOB_WORKER_SUPERVISE_SECONDS", "2.0"))
+CONCURRENCY = max(1, int(os.getenv("JOB_WORKER_CONCURRENCY", "2")))
+# Share the project's git checkout, so at most one per project at a time.
+REPO_JOB_TYPES = ("coding_task", "iteration_loop")
 # How long to wait for a cancelled handler to unwind before moving on.
 CANCEL_GRACE_SECONDS = 30.0
 
@@ -43,10 +48,13 @@ _FAILED_STATUSES = {"failed", "error"}
 class JobWorker:
     """Polling worker. Lifecycle: start() → run forever → stop() to cancel."""
 
-    def __init__(self, store: JobStore | None = None):
+    def __init__(self, store: JobStore | None = None, concurrency: int | None = None):
         self.store = store or get_store()
+        self.concurrency = max(1, concurrency or CONCURRENCY)
         self._task: asyncio.Task | None = None
         self._stopping = False
+        # in-flight dispatch task -> (project_id, job_type)
+        self._running: dict[asyncio.Task, tuple[str, str]] = {}
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -55,8 +63,8 @@ class JobWorker:
         self._stopping = False
         self._task = asyncio.create_task(self._loop(), name="job-worker")
         logger.info(
-            "Job worker started; %d handler(s) registered: %s",
-            len(HANDLERS), sorted(HANDLERS.keys()),
+            "Job worker started (concurrency %d); %d handler(s) registered: %s",
+            self.concurrency, len(HANDLERS), sorted(HANDLERS.keys()),
         )
 
     async def stop(self) -> None:
@@ -71,26 +79,41 @@ class JobWorker:
     async def _loop(self) -> None:
         try:
             while not self._stopping:
+                if len(self._running) >= self.concurrency:
+                    done, _ = await asyncio.wait(set(self._running), return_when=asyncio.FIRST_COMPLETED)
+                    for t in done:
+                        self._running.pop(t, None)
+                    continue
+                busy = {p for p, t in self._running.values() if t in REPO_JOB_TYPES}
                 try:
-                    job = self.store.claim_next()
+                    job = self.store.claim_next(exclusive_types=REPO_JOB_TYPES, busy_projects=busy)
                 except Exception as e:
                     logger.exception("claim_next failed: %s", e)
                     job = None
                 if not job:
                     await asyncio.sleep(POLL_INTERVAL_SECONDS)
                     continue
-                try:
-                    await self._dispatch(job)
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    # A store error (e.g. "database is locked") must not
-                    # kill the worker loop — nothing would run until restart.
-                    logger.exception("dispatch of job %s crashed; continuing", job.get("id"))
-                    await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                task = asyncio.create_task(self._dispatch_safely(job), name=f"dispatch-{job['id'][:8]}")
+                self._running[task] = (job.get("project_id") or "", job.get("job_type") or "")
+                task.add_done_callback(lambda t: self._running.pop(t, None))
         except asyncio.CancelledError:
             logger.info("Job worker stopping")
+            # Leave rows 'running': startup orphan recovery re-queues them.
+            for t in list(self._running):
+                t.cancel()
+            if self._running:
+                await asyncio.wait(set(self._running), timeout=CANCEL_GRACE_SECONDS)
             raise
+
+    async def _dispatch_safely(self, job: dict[str, Any]) -> None:
+        try:
+            await self._dispatch(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # A store error (e.g. "database is locked") must not kill the
+            # worker — nothing would run until restart.
+            logger.exception("dispatch of job %s crashed; continuing", job.get("id"))
 
     async def _dispatch(self, job: dict[str, Any]) -> None:
         handler = get_handler(job["job_type"])
