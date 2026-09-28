@@ -197,6 +197,8 @@ If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/
 
 ## 10. Operational tips
 
+- **MCP budgets.** Every MCP call is counted per connection (Connections → MCP servers → expand a card → *Usage & budget*). Set a daily or monthly limit on any connection. Over the limit, calls are refused, and search tools fall back to the built-in web search. Past 80% of a limit, tool results carry a note so the agent can pace itself. Tavily is metered in credits using its pricing (advanced search = 2, …) and also shows your account's own usage. Other connections count calls.
+
 - **Run `consolidate_memory` at the end of a productive session.** It distills the conversation into semantic and graph memory so future sessions pick up where you left off.
 - **Keep `soul.md` short and specific.** Long, generic personalities bleed into analytical answers. Use the `minimal` personality weight for research projects.
 - **Watch the cost of long context.** Recall returns ~10-13 items by default; if you see it crowding out current work, ask the agent to narrow its recall with specific tier filters.
