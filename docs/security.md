@@ -78,16 +78,16 @@ Refreshes are serialized per connection (`_REFRESH_LOCKS`). If the authorization
 
 Imported skill bundles can contain arbitrary files, so `skills/scanner.py` scans them in three layers:
 
-1. **Static checks.** Extension allow- and blocklists, size caps (10 MB total, 500 KB per file, 50 files), and regex checks for `os.system`, `shell=True`, `eval`/`exec`, hardcoded credentials and `rm -rf /` (all critical), plus warnings for network, env, obfuscation and deletion patterns.
+1. **Static checks.** Extension allow- and blocklists, size caps (10 MB total, 500 KB per file, 50 files), and regex checks for `os.system`, `shell=True`, `eval`/`exec`, hardcoded credentials and `rm -rf /` (all critical), plus warnings for network, env, obfuscation and deletion patterns. Markdown (`instructions.md`) is checked for prompt-injection phrasing: "ignore previous instructions", bypassing guards and sending credentials are critical; hiding actions from the user is a warning (`INSTRUCTION_PATTERNS`).
 2. **Capability analysis.** Compares declared capabilities with what the code appears to do.
-3. **AI review** (optional). An LLM looks for malicious intent.
+3. **AI review** (optional). An LLM (the `extract` class) looks for malicious intent in scripts and for prompt injection in the instructions, including markdown-only skills.
 
 Findings are weighted 0.02 (info), 0.10 (warning) and 0.35 (critical). A scan fails on any critical finding or a score of 0.5 or more.
 
 - **Import** always scans. A failed import, or a failed `POST /skills/{name}/scan`, moves the skill to `data/skills/.quarantine/`. Bundled skills are flagged, never moved.
 - **Enable gate:** enabling a non-bundled skill that has no scan or a failed scan returns 403. A failed skill is `scan_blocked`: it is never offered to the agent, `/slug` ignores it, and scheduled runs fail.
 - **Scan cache:** results are cached with a content hash, so any file edit invalidates the scan.
-- **Gap:** a user skill created with the editor or the `create_skill` tool has no scan and is active until someone disables it.
+- **Scan at load:** any non-bundled skill without a valid scan — new, edited in the editor, or written by hand — gets layers 1–2 when the registry loads (`SkillRegistry._static_scan`, no LLM call), so nothing reaches the prompt unscanned. The `create_skill` agent tool also runs the full scan (with AI review), because the model wrote that text.
 - **Override:** `PUT /skills/{name}/toggle` with `force_enable: true` and an `override_password` that matches vault `skill_security_override_password`. The comparison is constant-time and every attempt is logged.
 - **Anti-spoofing:** `is_bundled` is set by the loader, never read from `skill.json`. A user skill can't shadow a bundled name, and unquarantine returns 409 on a collision.
 

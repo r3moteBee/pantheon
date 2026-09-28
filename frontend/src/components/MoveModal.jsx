@@ -74,7 +74,7 @@ export default function MoveModal({
       onComplete(response)
       onClose()
     } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || 'Failed')
+      setError(e.message || 'Failed')
       setBusy(false)
     }
   }

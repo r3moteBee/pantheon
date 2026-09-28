@@ -11,7 +11,6 @@ const MemoryPage = lazy(() => import('./pages/MemoryPage'))
 const ArtifactsPage = lazy(() => import('./pages/ArtifactsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 const SkillsPage = lazy(() => import('./pages/SkillsPage'))
-const MCPPage = lazy(() => import('./pages/MCPPage'))
 const ConnectionsPage = lazy(() => import('./pages/ConnectionsPage'))
 const PersonasPage = lazy(() => import('./pages/PersonasPage'))
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage'))
@@ -77,7 +76,7 @@ export default function App() {
           <Route path="files" element={<Navigate to="/artifacts" replace />} />
           <Route path="artifacts" element={<ArtifactsPage />} />
           <Route path="skills" element={<SkillsPage />} />
-          <Route path="mcp" element={<MCPPage />} />
+          <Route path="mcp" element={<Navigate to="/connections" replace />} />
           <Route path="sources" element={<Navigate to="/connections" replace />} />
           <Route path="connections" element={<ConnectionsPage />} />
           <Route path="personas" element={<PersonasPage />} />

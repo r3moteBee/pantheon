@@ -31,24 +31,40 @@ export default function SystemUpdate() {
     check()
   }, [])
 
-  const pollServer = (startTime) => {
+  // /api/health is public (no session needed, so a 401 can't log you out
+  // mid-restart). Done once the server reports a new version, or has been
+  // unreachable and is back — not merely because the old process still answers.
+  const MAX_ATTEMPTS = 60
+  const pollServer = async () => {
+    const health = async () => {
+      const r = await fetch('/api/health', { cache: 'no-store' })
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return r.json()
+    }
+    let startVersion = null
+    try { startVersion = (await health()).version } catch (_) { /* already down */ }
+    let sawDown = startVersion === null
     let attempts = 0
     const interval = setInterval(async () => {
       attempts++
       setReconnectAttempts(attempts)
       try {
-        await systemApi.sandboxHealth()
-        clearInterval(interval)
-        setReconnecting(false)
-        setStatus('success')
-        addNotification({ type: 'success', message: 'Pantheon updated and server restarted successfully!' })
-      } catch (e) {
-        if (attempts > 60) {
+        const { version } = await health()
+        if (sawDown || (version && version !== startVersion)) {
           clearInterval(interval)
           setReconnecting(false)
-          setError('Update initiated, but backend failed to reconnect. Please refresh the page manually or check server logs.')
-          setStatus('error')
+          setStatus('success')
+          addNotification({ type: 'success', message: `Pantheon updated and restarted (${version}).` })
+          return
         }
+      } catch (_) {
+        sawDown = true
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(interval)
+        setReconnecting(false)
+        setError('Update initiated, but the backend did not come back with a new version. Refresh the page or check the server logs.')
+        setStatus('error')
       }
     }, 3000)
   }
@@ -78,7 +94,7 @@ export default function SystemUpdate() {
           setReconnecting(true)
           setReconnectAttempts(0)
           setTimeout(() => {
-            pollServer(Date.now())
+            pollServer()
           }, 5000)
         }
       } else {
@@ -122,7 +138,7 @@ export default function SystemUpdate() {
           <div className="mt-3 w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
             <div 
               className="bg-brand-500 h-1.5 rounded-full transition-all duration-500" 
-              style={{ width: `${Math.min(100, (reconnectAttempts / 15) * 100)}%` }}
+              style={{ width: `${Math.min(100, (reconnectAttempts / MAX_ATTEMPTS) * 100)}%` }}
             />
           </div>
         </div>
@@ -282,7 +298,7 @@ export default function SystemUpdate() {
                       onChange={(e) => setConfirmChecked(e.target.checked)}
                       className="mt-1 rounded bg-gray-950 border-gray-700 text-brand-500 focus:ring-brand-500 cursor-pointer"
                     />
-                    <label htmlFor="confirm-update" className="text-xs text-gray-355 select-none cursor-pointer leading-normal">
+                    <label htmlFor="confirm-update" className="text-xs text-gray-350 select-none cursor-pointer leading-normal">
                       I understand that executing the update pulls changes from upstream and restarts the server process.
                     </label>
                   </div>

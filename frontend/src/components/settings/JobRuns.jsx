@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { RefreshCw, Clock } from 'lucide-react'
 import { jobsApi } from '../../api/client'
 import useProjectNames from './useProjectNames'
+import { useStore } from '../../store'
 
 // ── Cross-project job dashboard (uses /api/jobs) ─────────────────────────────
 const RUN_STATUS_BADGE = {
@@ -33,6 +34,8 @@ export default function JobRuns() {
       if (filter) params.status = filter
       const res = await jobsApi.list(params)
       setRuns(res.data?.jobs || [])
+    } catch (e) {
+      useStore.getState().addNotification({ type: 'error', message: `Couldn't load job runs: ${e.message}` })
     } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [filter])

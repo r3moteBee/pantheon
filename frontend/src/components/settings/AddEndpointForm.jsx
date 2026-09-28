@@ -56,7 +56,7 @@ export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed })
       })
       setTestResult(r)
     } catch (e) {
-      setError(String(e?.response?.data?.detail || e?.message || e))
+      setError(String(e.message || e))
     } finally {
       setBusy(false)
     }
@@ -76,7 +76,7 @@ export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed })
       setTestResult(null)
       onSaved?.()
     } catch (e) {
-      setError(String(e?.response?.data?.detail || e?.message || e))
+      setError(String(e.message || e))
     } finally {
       setBusy(false)
     }

@@ -77,7 +77,7 @@ export default function ProjectSettingsPanel({ projectId }) {
       // payload — it has .personas at the top level, not .data.personas.
       setPersonas(personasRes?.personas || personasRes?.data?.personas || [])
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setLoading(false) }
   }
 
@@ -114,7 +114,7 @@ export default function ProjectSettingsPanel({ projectId }) {
       }
       addNotification?.({ type: 'success', message: 'Project settings saved' })
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setSaving(false) }
   }
 
@@ -126,13 +126,13 @@ export default function ProjectSettingsPanel({ projectId }) {
       a.href = url; a.download = `${name || projectId}.zip`; a.click()
       URL.revokeObjectURL(url)
     } catch (e) {
-      addNotification?.({ type: 'error', message: 'Export failed: ' + (e?.response?.data?.detail || e.message) })
+      addNotification?.({ type: 'error', message: 'Export failed: ' + (e.message) })
     }
   }
 
   const deleteProject = async () => {
     if (projectId === 'default') {
-      alert('The default project cannot be deleted.'); return
+      addNotification?.({ type: 'info', message: 'The default project cannot be deleted.' }); return
     }
     if (!confirm(`Permanently delete project "${name}" and all its data? This cannot be undone.`)) return
     if (!confirm('Are you sure? This includes artifacts, memory, conversations, and bound repos.')) return
@@ -145,7 +145,7 @@ export default function ProjectSettingsPanel({ projectId }) {
       if (fallback) setActiveProject(fallback)
       addNotification?.({ type: 'success', message: `Deleted project ${name}` })
     } catch (e) {
-      addNotification?.({ type: 'error', message: 'Delete failed: ' + (e?.response?.data?.detail || e.message) })
+      addNotification?.({ type: 'error', message: 'Delete failed: ' + (e.message) })
     }
   }
 

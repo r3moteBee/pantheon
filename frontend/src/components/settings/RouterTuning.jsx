@@ -38,7 +38,7 @@ export default function RouterTuning({ onApplied }) {
       const r = await llmApi.routerSimulate(rec.action.patch, Math.min(30, Math.max(1, hours / 24)))
       setPreviews((p) => ({ ...p, [rec.id]: r }))
     } catch (e) {
-      setPreviews((p) => ({ ...p, [rec.id]: { error: e?.response?.data?.detail || e.message } }))
+      setPreviews((p) => ({ ...p, [rec.id]: { error: e.message } }))
     }
   }
 
@@ -50,7 +50,7 @@ export default function RouterTuning({ onApplied }) {
       onApplied?.()
       await load()
     } catch (e) {
-      setStatus(`Error: ${e?.response?.data?.detail || e.message}`)
+      setStatus(`Error: ${e.message}`)
     }
   }
 

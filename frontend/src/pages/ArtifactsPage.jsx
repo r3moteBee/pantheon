@@ -381,7 +381,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             </button>
             <button
               onClick={() => setShowUpload(true)}
-              className="flex-1 py-1.5 px-2 bg-gray-850 hover:bg-gray-805 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 py-1.5 px-2 bg-gray-850 hover:bg-gray-800 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
             >
               <Upload className="w-3.5 h-3.5" /> Upload
             </button>

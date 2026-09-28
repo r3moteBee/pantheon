@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState, useEffect } from 'react'
+import React, { Suspense, lazy, useLayoutEffect, useRef, useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import {
@@ -7,8 +7,9 @@ import {
 } from 'lucide-react'
 import Chat from './Chat'
 import ChatActions from './ChatActions'
-import MemoryPage from '../pages/MemoryPage'
-import ArtifactsPage from '../pages/ArtifactsPage'
+// Lazy so d3 / CodeMirror stay out of the /chat landing chunk.
+const MemoryPage = lazy(() => import('../pages/MemoryPage'))
+const ArtifactsPage = lazy(() => import('../pages/ArtifactsPage'))
 import RepoBindingPanel from './chat-tabs/RepoBindingPanel'
 import ProjectTasksPanel from './chat-tabs/ProjectTasksPanel'
 import ProjectSettingsPanel from './chat-tabs/ProjectSettingsPanel'
@@ -78,8 +79,10 @@ export default function ChatTabs() {
       {/* Tab body */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'chat'       && <Chat />}
-        {tab === 'memory'     && <div className="h-full overflow-hidden"><MemoryPage embedded /></div>}
-        {tab === 'artifacts'  && <ArtifactsPage lockedProjectId={projectId} />}
+        <Suspense fallback={<div className="p-4 text-sm text-gray-500">Loading…</div>}>
+          {tab === 'memory'     && <div className="h-full overflow-hidden"><MemoryPage embedded /></div>}
+          {tab === 'artifacts'  && <ArtifactsPage lockedProjectId={projectId} />}
+        </Suspense>
         {tab === 'repository' && <RepoBindingPanel projectId={projectId} />}
         {tab === 'tasks'      && <ProjectTasksPanel projectId={projectId} />}
         {tab === 'settings'   && <ProjectSettingsPanel projectId={projectId} />}

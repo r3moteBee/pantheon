@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Download } from 'lucide-react'
 import { downloadSvgFile, downloadPngFile, downloadPdfFile } from '../utils/svgExport'
+import { useStore } from '../store'
 
 export default function ExportMenu({ getSvgEl, basename = 'diagram', title = 'Export' }) {
   const [open, setOpen] = useState(false)
@@ -29,7 +30,7 @@ export default function ExportMenu({ getSvgEl, basename = 'diagram', title = 'Ex
       else if (fmt === 'pdf') await downloadPdfFile(svgEl, basename)
     } catch (err) {
       console.error(`Export to ${fmt} failed`, err)
-      alert(`Export to ${fmt.toUpperCase()} failed: ${err?.message || err}`)
+      useStore.getState().addNotification({ type: 'error', message: `Export to ${fmt.toUpperCase()} failed: ${err?.message || err}` })
     } finally {
       setBusy(false)
       setOpen(false)
