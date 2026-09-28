@@ -39,7 +39,7 @@ def repo(tmp_path):
 
 @pytest.mark.asyncio
 async def test_repo_snapshot_and_delta(repo):
-    with patch("agent.tools._resolve_repo_checkout", return_value=repo):
+    with patch("agent.tools.workspace._resolve_repo_checkout", return_value=repo):
         before = await _repo_snapshot("t")
         # Simulate agent work: two commits + a dirty file
         (repo / "b.txt").write_text("two\n")
@@ -62,7 +62,7 @@ async def test_repo_snapshot_and_delta(repo):
 
 @pytest.mark.asyncio
 async def test_repo_delta_no_changes(repo):
-    with patch("agent.tools._resolve_repo_checkout", return_value=repo):
+    with patch("agent.tools.workspace._resolve_repo_checkout", return_value=repo):
         before = await _repo_snapshot("t")
         after = await _repo_snapshot("t")
     line = _repo_delta_line(before, after)
@@ -72,7 +72,7 @@ async def test_repo_delta_no_changes(repo):
 
 @pytest.mark.asyncio
 async def test_repo_snapshot_none_without_checkout():
-    with patch("agent.tools._resolve_repo_checkout", return_value=None):
+    with patch("agent.tools.workspace._resolve_repo_checkout", return_value=None):
         assert await _repo_snapshot("t") is None
     assert _repo_delta_line(None, None) is None
 

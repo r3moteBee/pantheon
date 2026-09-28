@@ -229,7 +229,7 @@ async def browser_type(selector: str, text: str, project_id: str, submit: bool =
 
 
 async def browser_screenshot(project_id: str, rel_path: str = "screenshot.png") -> str:
-    from agent.tools import _safe_workspace_path  # avoid circular import at module load
+    from agent.tools.workspace import _safe_workspace_path  # avoid circular import at module load
     page = await _get_page(project_id)
     if not await _page_is_safe(page):
         return _UNSAFE_MSG

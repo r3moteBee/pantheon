@@ -27,7 +27,7 @@ Directories only — read the code for files. `docs/tools.md` lists every agent 
 │   ├── config.py          Settings (Pydantic); settings.db_dir is canonical
 │   ├── db_utils.py        apply_sqlite_pragmas — every SQLite store uses it
 │   ├── security_log.py    Security audit log
-│   ├── agent/             AgentCore loop (core.py), all built-in tools (tools.py), system prompt
+│   ├── agent/             AgentCore loop (core.py), built-in tools (tools/: registry + domain modules), system prompt
 │   │                      (prompts.py), tool-result cap/error flag, text tool-call recovery, browser tools
 │   ├── api/               FastAPI routers (auth, chat, files, memory, personality, projects +
 │   │                      export/import, settings, mcp, mcp_oauth, skills, tasks, personas, system,
@@ -298,6 +298,8 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 - **Colors:** `brand` and the in-between grays (250/350/750/850) are defined in `tailwind.config.js`. An undefined color step silently generates no CSS, so add it there before using it.
 - **Links:** use router `<Link>` for internal links. A raw `<a href>` reloads the page and drops the chat WebSocket.
 
+**Tool dispatch is a registry.** `agent/tools/__init__.py::execute_tool` applies the host-exec gate, routes `mcp_*` to the MCP manager, then calls `registry.resolve(name)` (exact names first, then the `browser_`/`github_`/`git_` prefixes) with a `ToolContext`. An unknown name returns `Unknown tool: …`, and any exception returns `Error executing …`. Workspace and git helpers live in `agent/tools/workspace.py`, and handlers call them as `_ws.<name>`, so tests patch `agent.tools.workspace.<name>` (not `agent.tools.<name>`). A test asserts every schema has a handler and vice versa.
+
 **Tool calls with bad arguments aren't run.** `models.provider.parse_tool_args` marks non-JSON or non-object arguments with `args_error`. AgentCore then returns an error result to the model instead of calling the tool with `{}`.
 
 **Host-exec is refused in the dispatcher too.** `execute_tool(..., host_exec=False)` refuses `HOST_EXEC_TOOLS`, and AgentCore passes its own `host_exec`. Tests that call git/run_command directly pass `host_exec=True`.
@@ -379,11 +381,12 @@ Merges are NEVER auto-applied. The user reviews via `list_merge_proposals` agent
 ## Common dev tasks
 
 **Add a new agent tool:**
-1. Add schema entry to `TOOL_SCHEMAS` in `backend/agent/tools.py` (or insert before `create_skill` if it's a content-related tool)
-2. Add dispatch branch in the giant `if/elif` block in `execute_tool`
-3. Regenerate `docs/tools.md`: `.venv/bin/python scripts/gen_tools_doc.py` (a test fails if it's stale)
-4. Bump version in `frontend/package.json` (+ lockfile)
-5. Restart backend
+1. Pick the domain module in `backend/agent/tools/` (memory, files, artifacts, web, sources, tasks, skills, images, code, github, git, finance) or add one (import it in `agent/tools/__init__.py`)
+2. Add the schema to that module's `SCHEMAS` and the name to `_ORDER` in `agent/tools/__init__.py` (the order the model sees)
+3. Write the handler: `@tool("name") async def _tool_name(ctx: ToolContext, tool_name, tool_args)` — `ctx` carries `memory_manager`, `project_id`/`effective_project`, `session_id`, `interactive`, `host_exec`. Host-exec tools also go in `HOST_EXEC_TOOLS`
+4. Regenerate `docs/tools.md`: `.venv/bin/python scripts/gen_tools_doc.py` (a test fails if it's stale)
+5. Bump version in `frontend/package.json` (+ lockfile)
+6. Restart backend
 
 **Add a new source adapter:**
 1. Create `backend/sources/adapters/<name>.py`

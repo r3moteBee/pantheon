@@ -82,7 +82,7 @@ async def _repo_snapshot(project_id: str) -> dict | None:
     the model's own arithmetic (observed: '40 deleted' for 44, '29
     branches' for 31)."""
     try:
-        from agent.tools import _resolve_repo_checkout, _run_git_cmd
+        from agent.tools.workspace import _resolve_repo_checkout, _run_git_cmd
         cwd = _resolve_repo_checkout(project_id)
         if not cwd:
             return None

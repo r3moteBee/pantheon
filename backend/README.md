@@ -18,7 +18,7 @@ backend/
 ├── config.py           Pydantic v2 Settings; settings.db_dir is canonical
 ├── db_utils.py         apply_sqlite_pragmas() — WAL/NORMAL/foreign_keys for every store
 ├── security_log.py     Security audit log
-├── agent/              AgentCore loop, tools.py (schemas + dispatch), prompts, browser tools, textual tool-call recovery
+├── agent/              AgentCore loop, tools/ (registry + one module per tool domain), prompts, browser tools, textual tool-call recovery
 ├── api/                FastAPI routers (see below)
 ├── artifacts/          Artifact store (SQLite + blobs), embedder, previews, conversions
 ├── integrations/       GitHub API client

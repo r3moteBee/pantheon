@@ -18,8 +18,8 @@ from agent.tools import execute_tool, _repo_checkout_dir
 # ── run_command ─────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-@patch("agent.tools._resolve_repo_checkout", return_value=None)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._resolve_repo_checkout", return_value=None)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_run_command_executes_in_workspace(mock_base, _mock_checkout, tmp_path):
     mock_base.return_value = tmp_path
     res = await execute_tool(
@@ -30,8 +30,8 @@ async def test_run_command_executes_in_workspace(mock_base, _mock_checkout, tmp_
 
 
 @pytest.mark.asyncio
-@patch("agent.tools._resolve_repo_checkout")
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._resolve_repo_checkout")
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_run_command_prefers_repo_checkout(mock_base, mock_checkout, tmp_path):
     checkout = tmp_path / "repos" / "o__r"
     checkout.mkdir(parents=True)
@@ -43,8 +43,8 @@ async def test_run_command_prefers_repo_checkout(mock_base, mock_checkout, tmp_p
 
 
 @pytest.mark.asyncio
-@patch("agent.tools._resolve_repo_checkout", return_value=None)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._resolve_repo_checkout", return_value=None)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_run_command_workdir_traversal_blocked(mock_base, _mock_checkout, tmp_path):
     base = tmp_path / "ws"
     base.mkdir()
@@ -55,8 +55,8 @@ async def test_run_command_workdir_traversal_blocked(mock_base, _mock_checkout, 
 
 
 @pytest.mark.asyncio
-@patch("agent.tools._resolve_repo_checkout", return_value=None)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._resolve_repo_checkout", return_value=None)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_run_command_missing_workdir(mock_base, _mock_checkout, tmp_path):
     mock_base.return_value = tmp_path
     res = await execute_tool(
@@ -71,8 +71,8 @@ async def test_run_command_empty():
 
 
 @pytest.mark.asyncio
-@patch("agent.tools._resolve_repo_checkout", return_value=None)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._resolve_repo_checkout", return_value=None)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_run_command_timeout(mock_base, _mock_checkout, tmp_path):
     mock_base.return_value = tmp_path
     res = await execute_tool(
@@ -98,8 +98,8 @@ async def test_git_sync_repo_no_binding(_mock_spec):
 @pytest.mark.asyncio
 @patch("api.connections.get_token", return_value="tok-secret")
 @patch("api.connections.get_project_repo_for_tools", return_value=_SPEC)
-@patch("agent.tools._run_git_cmd", new_callable=AsyncMock)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd", new_callable=AsyncMock)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_git_sync_repo_clone_flow(mock_base, mock_run, _mock_spec, _mock_token, tmp_path):
     mock_base.return_value = tmp_path
     mock_run.return_value = (0, "abc123 init", "")
@@ -123,8 +123,8 @@ async def test_git_sync_repo_clone_flow(mock_base, mock_run, _mock_spec, _mock_t
 @pytest.mark.asyncio
 @patch("api.connections.get_token", return_value="tok-secret")
 @patch("api.connections.get_project_repo_for_tools", return_value=_SPEC)
-@patch("agent.tools._run_git_cmd", new_callable=AsyncMock)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd", new_callable=AsyncMock)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_git_sync_repo_update_flow(mock_base, mock_run, _mock_spec, _mock_token, tmp_path):
     mock_base.return_value = tmp_path
     dest = tmp_path / "repos" / "octo__demo"
@@ -143,8 +143,8 @@ async def test_git_sync_repo_update_flow(mock_base, mock_run, _mock_spec, _mock_
 @pytest.mark.asyncio
 @patch("api.connections.get_token", return_value="tok-secret")
 @patch("api.connections.get_project_repo_for_tools", return_value=_SPEC)
-@patch("agent.tools._run_git_cmd", new_callable=AsyncMock)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd", new_callable=AsyncMock)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_git_sync_repo_clone_failure_redacts_token(mock_base, mock_run, _mock_spec, _mock_token, tmp_path):
     mock_base.return_value = tmp_path
     mock_run.return_value = (128, "", "fatal: could not read from https://tok-secret@github.com/octo/demo.git")
@@ -158,15 +158,15 @@ async def test_git_sync_repo_clone_failure_redacts_token(mock_base, mock_run, _m
 # ── checkout resolution shared by git_* tools ───────────────────────────────
 
 def test_repo_checkout_dir_layout(tmp_path):
-    with patch("agent.tools._get_workspace_base", return_value=tmp_path):
+    with patch("agent.tools.workspace._get_workspace_base", return_value=tmp_path):
         d = _repo_checkout_dir("p1", "octo", "demo")
     assert d == tmp_path / "repos" / "octo__demo"
 
 
 @pytest.mark.asyncio
 @patch("api.connections.get_project_repo_for_tools", return_value=_SPEC)
-@patch("agent.tools._run_git_cmd", new_callable=AsyncMock)
-@patch("agent.tools._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd", new_callable=AsyncMock)
+@patch("agent.tools.workspace._get_workspace_base")
 async def test_git_status_uses_checkout_when_present(mock_base, mock_run, _mock_spec, tmp_path):
     mock_base.return_value = tmp_path
     dest = tmp_path / "repos" / "octo__demo"

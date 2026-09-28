@@ -589,7 +589,7 @@ class MCPManager:
                 if "search" in prefixed_name.lower():
                     fallback_query = arguments.get("query", "")
                     if fallback_query:
-                        from agent.tools import _web_search
+                        from agent.tools.web import _web_search
                         fallback_result = await _web_search(fallback_query)
                         return (
                             f"[Tavily MCP connection is not configured or offline. "
@@ -623,7 +623,7 @@ class MCPManager:
                 if "search" in tool_name.lower():
                     fallback_query = arguments.get("query", "")
                     if fallback_query:
-                        from agent.tools import _web_search
+                        from agent.tools.web import _web_search
                         fallback_result = await _web_search(fallback_query)
                         return (
                             f"[Tavily credit limit reached — {reason}. "

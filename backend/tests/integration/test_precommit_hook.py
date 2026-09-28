@@ -82,6 +82,6 @@ def test_hook_install_idempotent(repo):
 
 
 def test_git_sync_repo_installs_hook():
-    src = (_ROOT / "agent/tools.py").read_text(encoding="utf-8")
+    src = (_ROOT / "agent/tools/git.py").read_text(encoding="utf-8")
     # Called in both the clone and update paths of git_sync_repo
     assert src.count("_install_precommit_hook(dest)") == 2
