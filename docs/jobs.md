@@ -7,7 +7,7 @@ All background work runs as rows in `data/db/jobs.db`. A single in-process worke
 | Module | Role |
 |---|---|
 | `store.py` | `JobStore`: `create`, `get`, `list`, `claim_next` (atomic queued→running, respects `scheduled_for`), `heartbeat`, `complete`, `fail`, `mark_cancelled`, `mark_stalled`, `cancel`, `rerun`, `stall_running`, `delete`. Failures and stalls also write an episodic task-log note. |
-| `worker.py` | `JobWorker`: polls every `JOB_WORKER_POLL_SECONDS` (1s) and runs **one job at a time**. It supervises the handler task every `JOB_WORKER_SUPERVISE_SECONDS` (2s). |
+| `worker.py` | `JobWorker`: polls every `JOB_WORKER_POLL_SECONDS` (1s) and runs up to `JOB_WORKER_CONCURRENCY` jobs at once (default 2). `coding_task` and `iteration_loop` share the project's repo checkout, so only one of those runs per project at a time (`REPO_JOB_TYPES`). It supervises the handler task every `JOB_WORKER_SUPERVISE_SECONDS` (2s). |
 | `watchdog.py` | `StallWatchdog`: every `JOB_STALL_CHECK_SECONDS` (60s) it marks `running` rows with no heartbeat for `JOB_STALL_TIMEOUT_SECONDS` (300s) as `stalled`. |
 | `recovery.py` | `recover_orphaned_jobs()`: runs at startup, before the worker starts (see below). |
 | `context.py` | `JobContext` (`heartbeat`, `touch`, `update_result`, `cancel_requested`), `pinger_for`, `AGENT_MAX_QUIET_SECONDS = 900`. |

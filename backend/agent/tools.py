@@ -2177,9 +2177,13 @@ async def execute_tool(
 
             # 1. Fetch transcript from the MCP server.
             mgr = get_mcp_manager()
+            tool = mgr.find_tool("mcp_*_fetch_transcript")
+            if not tool:
+                return ("save_transcript_artifact: no connected MCP server offers a "
+                        "fetch_transcript tool. Connect a YouTube transcript MCP first.")
             try:
                 fetch_result = await mgr.execute_tool(
-                    "mcp_SubDownload_fetch_transcript",
+                    tool,
                     {"video_id": video_id, "save": False},
                 )
             except Exception as e:

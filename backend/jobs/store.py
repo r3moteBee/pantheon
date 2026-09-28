@@ -253,19 +253,30 @@ class JobStore:
 
     # ── Atomic transitions ─────────────────────────────────────────────────
 
-    def claim_next(self) -> dict[str, Any] | None:
-        """Atomically pick the oldest queued+due row and flip it to running."""
+    def claim_next(
+        self,
+        *,
+        exclusive_types: tuple[str, ...] = (),
+        busy_projects: set[str] | frozenset[str] = frozenset(),
+    ) -> dict[str, Any] | None:
+        """Atomically pick the oldest queued+due row and flip it to running.
+
+        Rows of ``exclusive_types`` whose project is in ``busy_projects``
+        are skipped (they'd share a repo checkout with a running job);
+        later rows can still be claimed."""
         now = _now()
+        sql = """SELECT * FROM jobs
+                 WHERE status = ?
+                   AND (scheduled_for IS NULL OR scheduled_for <= ?)"""
+        args: list[Any] = [JobStatus.QUEUED, now]
+        if exclusive_types and busy_projects:
+            sql += (f" AND NOT (job_type IN ({','.join('?' * len(exclusive_types))})"
+                    f" AND project_id IN ({','.join('?' * len(busy_projects))}))")
+            args += list(exclusive_types) + sorted(busy_projects)
+        sql += " ORDER BY created_at ASC LIMIT 1"
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                """SELECT * FROM jobs
-                   WHERE status = ?
-                     AND (scheduled_for IS NULL OR scheduled_for <= ?)
-                   ORDER BY created_at ASC
-                   LIMIT 1""",
-                (JobStatus.QUEUED, now),
-            ).fetchone()
+            row = conn.execute(sql, args).fetchone()
             if not row:
                 conn.execute("COMMIT")
                 return None

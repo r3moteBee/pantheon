@@ -55,7 +55,7 @@ Limits:
 
 - `code_execute`: 30s default (max 300), 256 MB.
 - `run_command`: 120s default (max 1800), 4 GB. It runs in the project's repo checkout or workspace, and `workdir` may not escape it.
-- The Firecracker backend does not mount `workspace_dir`, so `run_command` there does not see the checkout.
+- With Firecracker, `run_command`'s working directory (the repo checkout) is packed into a second ext4 disk (`mkfs.ext4 -d`), mounted at `/workspace` in the VM, and mirrored back afterwards (`debugfs rdump`). The mirror deletes only files that existed before the run. The VM has no network, so package installs fail there. `FC_MEM_MIB` (default 1024), `FC_VCPUS` and `FC_WORKSPACE_HEADROOM_MB` tune it.
 
 `GET /api/system/sandbox` reports the backend's health.
 

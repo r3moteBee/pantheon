@@ -685,6 +685,32 @@ class MCPManager:
             raise RuntimeError(f"MCP tool {prefixed_name} reported an error: {(result.get('text') or '')[:500]}")
         return result
 
+    def find_tool(self, wanted: str) -> str | None:
+        """Prefixed name of a connected, enabled tool matching ``wanted``,
+        so callers don't depend on what the user named the connection:
+          - an exact prefixed name (``mcp_SubDownload_fetch_transcript``);
+          - a pattern (``mcp_*_fetch_transcript``);
+          - a bare tool name (``fetch_transcript``);
+          - a prefixed name whose connection no longer exists — matched on
+            the tool-name suffix, so renaming the connection doesn't break
+            skills and adapters that were written against the old name.
+        """
+        import fnmatch
+        tools = [t for t in self.get_discovered_tools() if not t["excluded"]]
+        names = [t["prefixed_name"] for t in tools]
+        if wanted in names:
+            return wanted
+        if "*" in wanted or "?" in wanted:
+            return next((n for n in names if fnmatch.fnmatchcase(n, wanted)), None)
+        if not wanted.startswith("mcp_"):
+            return next((t["prefixed_name"] for t in tools if t["name"] == wanted), None)
+        hits = [t["prefixed_name"] for t in tools if wanted.endswith("_" + t["name"])]
+        return max(hits, key=len) if hits else None
+
+    def missing_tools(self, wanted: list[str] | tuple[str, ...]) -> list[str]:
+        """The entries of ``wanted`` that find_tool can't satisfy."""
+        return [w for w in wanted if not self.find_tool(w)]
+
     def get_discovered_tools(self) -> list[dict[str, Any]]:
         """List all discovered tools with their connection source."""
         result = []
