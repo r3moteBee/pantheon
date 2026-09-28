@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { Trash2, Plus, Check, RefreshCw, Calendar, User } from 'lucide-react'
 import { useStore } from '../store'
-import { projectsApi, personasApi } from '../api/client'
+import { projectsApi, personasApi, personalityApi } from '../api/client'
 import { ExportButton, ImportButton } from './ProjectPortability'
 
 function CreateProjectForm({ onProjectCreated, personas }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [id, setId] = useState('')
-  const [personaId, setPersonaId] = useState('pan')
+  const [personaId, setPersonaId] = useState('')
   const [loading, setLoading] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
@@ -18,18 +18,18 @@ function CreateProjectForm({ onProjectCreated, personas }) {
     try {
       const res = await projectsApi.create(name, description, id || undefined)
       const projectId = res.data?.id || id
-      // Apply persona if one was selected
+      // Apply a personality preset if one was chosen (default: follow global)
       if (personaId && projectId) {
         try {
           await personasApi.apply(personaId, projectId)
         } catch (e) {
-          console.warn('Failed to apply persona:', e)
+          addNotification({ type: 'error', message: `Project created, but the preset wasn't applied: ${e.message}` })
         }
       }
       setName('')
       setDescription('')
       setId('')
-      setPersonaId('pan')
+      setPersonaId('')
       addNotification({ type: 'success', message: 'Project created' })
       onProjectCreated()
     } catch (err) {
@@ -63,18 +63,18 @@ function CreateProjectForm({ onProjectCreated, personas }) {
         className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
       />
 
-      {/* Persona selector */}
+      {/* Personality preset */}
       <div>
-        <label className="block text-xs text-gray-400 mb-1">Agent Persona</label>
+        <label className="block text-xs text-gray-400 mb-1">Personality preset</label>
         <select
           value={personaId}
           onChange={(e) => setPersonaId(e.target.value)}
           className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
         >
-          <option value="">None (use global personality)</option>
+          <option value="">Global personality (recommended)</option>
           {personas.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.icon} {p.name} — {p.tagline}
+              {p.name} — {p.tagline}
             </option>
           ))}
         </select>
@@ -115,11 +115,15 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
   }
 
   const changePersona = async (newPersonaId) => {
-    if (!newPersonaId) return
     setChangingPersona(true)
     try {
-      await personasApi.apply(newPersonaId, project.id)
-      addNotification({ type: 'success', message: `Persona applied to ${project.name}` })
+      if (newPersonaId) {
+        await personasApi.apply(newPersonaId, project.id)
+        addNotification({ type: 'success', message: `Preset applied to ${project.name}` })
+      } else {
+        await personalityApi.reset(project.id)
+        addNotification({ type: 'success', message: `${project.name} now follows the global personality` })
+      }
       if (onRefresh) onRefresh()
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
@@ -134,8 +138,6 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
       return dateStr
     }
   }
-
-  const currentPersona = personas.find((p) => p.id === project.persona_id)
 
   return (
     <div
@@ -176,10 +178,10 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
         )}
       </div>
 
-      {/* Persona selector */}
+      {/* Personality preset */}
       <div className="mb-3">
         <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
-          <User className="w-3 h-3" /> Persona
+          <User className="w-3 h-3" /> Personality
         </label>
         <select
           value={project.persona_id || ''}
@@ -187,10 +189,10 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
           disabled={changingPersona}
           className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-brand-500 disabled:opacity-50"
         >
-          <option value="">None (global personality)</option>
+          <option value="">Global personality</option>
           {personas.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.icon} {p.name}
+              {p.name}
             </option>
           ))}
         </select>

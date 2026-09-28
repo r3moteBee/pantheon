@@ -373,21 +373,7 @@ async def scan_import_archive(
     return result.model_dump()
 
 
-# ── Phase G: per-project MCP enablement + settings ──────────────────────────
-
-import sqlite3
-from pathlib import Path as _Path
-
-def _phase_g_db() -> str:
-    from config import get_settings
-    s = get_settings()
-    s.db_dir.mkdir(parents=True, exist_ok=True)
-    return str(s.db_dir / "phase_g.db")
-
-def _phase_g_connect() -> sqlite3.Connection:
-    from utils.chat_settings import _connect
-    return _connect()
-
+# ── Per-project chat settings (utils/chat_settings.py owns the store) ──────
 
 @router.get("/projects/{project_id}/settings")
 async def get_project_settings(project_id: str) -> dict[str, Any]:
@@ -395,12 +381,8 @@ async def get_project_settings(project_id: str) -> dict[str, Any]:
     global values, and the effective values chat uses."""
     from utils import chat_settings
     check_project_id(project_id)
-    with _phase_g_connect() as conn:
-        row = conn.execute("SELECT persona FROM project_settings WHERE project_id = ?",
-                           (project_id,)).fetchone()
     return {
         "project_id": project_id,
-        "persona": row["persona"] if row else None,
         "overrides": chat_settings.overrides(project_id),
         "global": chat_settings.global_values(),
         "effective": chat_settings.effective(project_id),
@@ -410,7 +392,6 @@ async def get_project_settings(project_id: str) -> dict[str, Any]:
 @router.put("/projects/{project_id}/settings")
 async def update_project_settings(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
     """Set chat overrides for a project; null/"" clears one (inherit global)."""
-    from datetime import datetime, timezone
     from utils import chat_settings
     check_project_id(project_id)
     knobs = {k: v for k, v in body.items() if k in chat_settings.KNOBS or k == "skill_discovery"}
@@ -418,11 +399,4 @@ async def update_project_settings(project_id: str, body: dict[str, Any]) -> dict
         chat_settings.set_overrides(project_id, knobs)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if "persona" in body:
-        now = datetime.now(timezone.utc).isoformat()
-        with _phase_g_connect() as conn:
-            conn.execute("INSERT OR IGNORE INTO project_settings (project_id, tone_weight, "
-                         "context_focus, updated_at) VALUES (?, NULL, NULL, ?)", (project_id, now))
-            conn.execute("UPDATE project_settings SET persona = ?, updated_at = ? WHERE project_id = ?",
-                         (body.get("persona") or None, now, project_id))
     return await get_project_settings(project_id)

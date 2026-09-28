@@ -1,4 +1,6 @@
-"""Personas API — list, get, create, update, delete persona templates."""
+"""Soul presets (stored as "personas") — list, get, create, update, delete,
+apply to a project. A preset is only a soul.md voice; the UI shows them in
+Settings → Personality. Applying one keeps the global Key Commitments."""
 from __future__ import annotations
 import json
 import logging
@@ -200,9 +202,9 @@ async def apply_persona(persona_id: str, project_id: str) -> dict[str, str]:
     if not soul_content:
         raise HTTPException(status_code=400, detail="Persona has no soul content")
 
-    # Write to project personality
-    from agent.personality import save_soul
-    save_soul(soul_content, project_id)
+    # Write to project personality, keeping the global Key Commitments.
+    from agent.personality import save_soul, with_commitments
+    save_soul(with_commitments(soul_content), project_id)
 
     # Also store the persona_id in the project metadata
     _update_project_persona(project_id, persona_id)
@@ -211,16 +213,46 @@ async def apply_persona(persona_id: str, project_id: str) -> dict[str, str]:
     return {"status": "applied", "persona_id": persona_id, "project_id": project_id}
 
 
-def _update_project_persona(project_id: str, persona_id: str) -> None:
-    """Store the persona_id in the project's metadata."""
+def _update_project_persona(project_id: str, persona_id: str | None) -> None:
+    """Store (or clear, with None) the applied preset id in projects.json."""
     meta_file = settings.db_dir / "projects.json"
     if not meta_file.exists():
         return
     try:
         projects = json.loads(meta_file.read_text())
         if project_id in projects:
-            projects[project_id]["persona_id"] = persona_id
+            if persona_id:
+                projects[project_id]["persona_id"] = persona_id
+            else:
+                projects[project_id].pop("persona_id", None)
             projects[project_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
             meta_file.write_text(json.dumps(projects, indent=2))
     except Exception as e:
         logger.warning("Failed to update project persona metadata: %s", e)
+
+
+def bundled_preset_souls() -> dict[str, str]:
+    return {p["id"]: p.get("soul", "") for p in _load_bundled()}
+
+
+def migrate_project_personas() -> dict[str, list[str]] | None:
+    """Run agent.personality.migrate_persona_overrides once (vault flag)."""
+    from secrets.vault import get_vault
+    vault = get_vault()
+    if vault.get_secret("persona_presets_migrated_v1"):
+        return None
+    meta_file = settings.db_dir / "projects.json"
+    projects = {}
+    if meta_file.exists():
+        try:
+            projects = json.loads(meta_file.read_text())
+        except Exception:
+            projects = {}
+    # Pan was removed as a preset; its soul is recognised from the global one.
+    from agent.personality import migrate_persona_overrides
+    report = migrate_persona_overrides(projects, bundled_preset_souls())
+    if report["reverted"] and meta_file.exists():
+        meta_file.write_text(json.dumps(projects, indent=2))
+    vault.set_secret("persona_presets_migrated_v1", "1")
+    logger.info("Persona presets migration: %s", report)
+    return report

@@ -37,20 +37,15 @@ def build_system_prompt(
     recalled_memories: list[dict] | None = None,
     extra_context: str | None = None,
     personality_weight: str | None = None,
-    custom_soul: str | None = None,
     host_exec: bool = True,
 ) -> str:
     """Assemble the full system prompt from all sources.
 
     ``host_exec`` must match AgentCore.host_exec: without it the git_* and
     run_command tools are hidden, so the local repo protocol isn't shown."""
-    if custom_soul:
-        soul = custom_soul
-        agent_config = ""
-    else:
-        personality = get_full_personality(project_id)
-        soul = personality["soul"]
-        agent_config = personality["agent"]
+    personality = get_full_personality(project_id)
+    soul = personality["soul"]
+    agent_config = personality["agent"]
 
     # Scope soul.md based on personality weight setting
     weight = (personality_weight or "balanced").lower().strip()

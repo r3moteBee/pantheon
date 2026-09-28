@@ -23,9 +23,6 @@ export const useStore = create((set, get) => ({
   sessionId: null,
   setSessionId: (id) => set({ sessionId: id }),
 
-  // Active personas in group channels
-  activePersonas: [],
-  setActivePersonas: (personas) => set({ activePersonas: personas }),
 
 
   historyOpen: false,

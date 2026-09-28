@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Brain } from 'lucide-react'
 import { useStore } from '../store'
-import { conversationsApi } from '../api/client'
 import Message, { StreamingMessage } from './chat/Message'
 import SkillSuggestionCard from './chat/SkillSuggestionCard'
 import ChatComposer from './chat/ChatComposer'
@@ -29,7 +28,6 @@ export default function Chat() {
   const sessionId = useStore((s) => s.sessionId)
   const activeProject = useStore((s) => s.activeProject)
   const addNotification = useStore((s) => s.addNotification)
-  const setActivePersonas = useStore((s) => s.setActivePersonas)
   const projectId = activeProject?.id || 'default'
 
   const socket = useChatSocket()
@@ -44,21 +42,6 @@ export default function Chat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
-
-  useEffect(() => {
-    if (!sessionId) {
-      setActivePersonas([])
-      return
-    }
-    conversationsApi.get(sessionId, activeProject?.id || 'default')
-      .then((res) => {
-        const meta = res.data?.metadata || {}
-        setActivePersonas(meta.active_personas || [])
-      })
-      .catch(() => {
-        setActivePersonas([])
-      })
-  }, [sessionId, activeProject?.id, setActivePersonas])
 
   // ── Send message ───────────────────────────────────────────────────
 
@@ -103,7 +86,6 @@ export default function Chat() {
       message: fullMessage,
       session_id: sessionId,
       project_id: projectId,
-      active_personas: useStore.getState().activePersonas,
       model_class: socket.modelClass,
     }))
   }

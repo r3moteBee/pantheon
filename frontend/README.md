@@ -42,9 +42,9 @@ Pages are in `src/pages/`, routed in `src/App.jsx`:
 | `/memory` | Browse/search episodic, semantic, graph and archival memory; force-graph view |
 | `/artifacts` | Artifact tree with previews, version history, export (`/files` redirects here) |
 | `/skills` | Skill library, security scan, editor, importer |
-| `/mcp` | MCP servers (API key or OAuth 2.1) |
+| `/mcp` | Redirects to Connections → MCP servers |
 | `/connections` | MCP servers, GitHub, web-search providers (`/sources` redirects here) |
-| `/personas` | Persona library |
+| `/personas` | Redirects to Settings → Personality (presets) |
 | `/projects` | Project CRUD, import/export |
 | `/settings` | LLMs, RAG, Channels, Personality, Skills, Tasks, Security, Secrets, System Update (`/personality` and `/tasks` redirect here) |
 

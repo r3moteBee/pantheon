@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Save, RefreshCw, Globe, AlertCircle, CheckCircle, RotateCcw, Info, ChevronDown, BookOpen, Search, Pencil, Eye } from 'lucide-react'
+import { Save, RefreshCw, Globe, AlertCircle, CheckCircle, RotateCcw, Info, BookOpen, Pencil, Eye, Trash2 } from 'lucide-react'
 import Markdown from './Markdown'
 import { useStore } from '../store'
 import { personalityApi, personasApi, projectsApi } from '../api/client'
@@ -41,7 +41,7 @@ export default function PersonalityEditor() {
   const [projects, setProjects] = useState([])
   const [projectSearch, setProjectSearch] = useState('')
 
-  // Persona selection
+  // Presets (stored as "personas"): a soul.md voice applied to a project.
   const [personas, setPersonas] = useState([])
   const [selectedPersonaId, setSelectedPersonaId] = useState('')
   const [applyingPersona, setApplyingPersona] = useState(false)
@@ -141,11 +141,12 @@ export default function PersonalityEditor() {
     setSaving(false)
   }
 
-  // Apply a persona — copies its soul content into the current project
+  // Apply a preset: its soul (plus the global Key Commitments) becomes
+  // this project's soul.md.
   const applyPersona = async (personaId) => {
     if (!personaId) return
     if (!projectId) {
-      addNotification({ type: 'error', message: 'Select a project first — personas are applied to projects, not global.' })
+      addNotification({ type: 'error', message: 'Pick a project scope first — presets apply to one project.' })
       return
     }
     setApplyingPersona(true)
@@ -158,31 +159,49 @@ export default function PersonalityEditor() {
       // Reload the editor content
       await loadPersonality()
       const persona = personas.find((p) => p.id === personaId)
-      addNotification({ type: 'success', message: `Applied "${persona?.name || personaId}" — soul content copied to project` })
+      addNotification({ type: 'success', message: `Applied "${persona?.name || personaId}" to this project (Key Commitments kept)` })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
     setApplyingPersona(false)
   }
 
-  // Reset to global defaults
+  // Project: drop the override so it follows the global personality again.
+  // Global: restore the bundled soul.md / agent.md.
   const resetToDefaults = async () => {
-    if (!window.confirm('Reset to the built-in defaults? This will overwrite your current content.')) return
+    const msg = projectId
+      ? 'Remove this project\'s personality override? It will follow the global personality (including your future edits to it).'
+      : 'Restore the bundled soul.md and agent.md? Your global edits will be overwritten.'
+    if (!window.confirm(msg)) return
     setResetting(true)
     try {
-      const freshSoul  = (await personalityApi.getSoul(null)).data.content
-      const freshAgent = (await personalityApi.getAgent(null)).data.content
-      await personalityApi.updateSoul(freshSoul, projectId)
-      await personalityApi.updateAgent(freshAgent, projectId)
-      setSoulContent(freshSoul)
-      setAgentContent(freshAgent)
-      if (projectId) setIsOverride(true)
+      await personalityApi.reset(projectId)
+      if (projectId) {
+        setSelectedPersonaId('')
+        const res = await projectsApi.list()
+        setProjects(res.data.projects || [])
+      }
+      await loadPersonality()
       setSavedAt(new Date())
-      addNotification({ type: 'success', message: 'Reset to defaults complete' })
+      addNotification({ type: 'success', message: projectId ? 'Project now follows the global personality' : 'Restored the bundled personality' })
     } catch (err) {
       addNotification({ type: 'error', message: `Reset failed: ${err.message}` })
     }
     setResetting(false)
+  }
+
+  const deletePreset = async (personaId) => {
+    const p = personas.find((x) => x.id === personaId)
+    if (!p || p.is_bundled) return
+    if (!window.confirm(`Delete the preset "${p.name}"? Projects that already use it keep their copy.`)) return
+    try {
+      await personasApi.delete(personaId)
+      setPersonas(personas.filter((x) => x.id !== personaId))
+      setSelectedPersonaId('')
+      addNotification({ type: 'success', message: `Deleted preset "${p.name}"` })
+    } catch (err) {
+      addNotification({ type: 'error', message: err.message })
+    }
   }
 
   // Save current soul content as a new persona in the library
@@ -193,8 +212,8 @@ export default function PersonalityEditor() {
       const agentName = extractAgentName(soulContent)
       await personasApi.create({
         name: savePersonaName.trim(),
-        tagline: savePersonaTagline.trim() || `Custom persona${agentName ? ` based on ${agentName}` : ''}`,
-        description: `User-created persona${agentName ? ` derived from ${agentName}` : ''}.`,
+        tagline: savePersonaTagline.trim() || `Custom preset${agentName ? ` based on ${agentName}` : ''}`,
+        description: `User-created preset${agentName ? ` derived from ${agentName}` : ''}.`,
         icon: '🎭',
         traits: [],
         best_for: '',
@@ -206,7 +225,7 @@ export default function PersonalityEditor() {
       setShowSaveAsPersona(false)
       setSavePersonaName('')
       setSavePersonaTagline('')
-      addNotification({ type: 'success', message: 'Persona saved to library' })
+      addNotification({ type: 'success', message: 'Preset saved' })
     } catch (err) {
       addNotification({ type: 'error', message: err.message })
     }
@@ -278,18 +297,18 @@ export default function PersonalityEditor() {
               <option value="__global__">Global (all projects)</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.persona_id ? `${personas.find((pe) => pe.id === p.persona_id)?.icon || '🎭'} ` : ''}{p.name}
+                  {p.name}{p.persona_id ? ` — ${personas.find((pe) => pe.id === p.persona_id)?.name || p.persona_id}` : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Persona selector — only when a project is selected */}
+          {/* Preset selector — only when a project is selected */}
           {projectId && (
-            <div className="flex-1 min-w-[200px] max-w-[300px]">
+            <div className="flex-1 min-w-[200px] max-w-[360px]">
               <label className="block text-xs text-gray-400 mb-1">
                 <BookOpen className="w-3 h-3 inline mr-1" />
-                Apply Persona
+                Apply a preset
               </label>
               <div className="flex gap-1.5">
                 <select
@@ -298,7 +317,7 @@ export default function PersonalityEditor() {
                   disabled={applyingPersona}
                   className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 disabled:opacity-50"
                 >
-                  <option value="">Choose a persona...</option>
+                  <option value="">Choose a preset…</option>
                   {personas.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.icon} {p.name} — {p.tagline}
@@ -308,12 +327,29 @@ export default function PersonalityEditor() {
                 <button
                   onClick={() => applyPersona(selectedPersonaId)}
                   disabled={!selectedPersonaId || applyingPersona}
-                  title="Apply persona — copies its soul content to this project"
+                  title="Use this preset's voice for this project (the global Key Commitments are kept)"
                   className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50 flex-shrink-0"
                 >
                   {applyingPersona ? '...' : 'Apply'}
                 </button>
+                {selectedPersonaId && personas.find((p) => p.id === selectedPersonaId && !p.is_bundled) && (
+                  <button
+                    onClick={() => deletePreset(selectedPersonaId)}
+                    title="Delete this preset"
+                    className="px-2 py-2 bg-gray-800 hover:bg-red-900/60 text-gray-400 hover:text-red-300 text-sm rounded border border-gray-700 flex-shrink-0"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
+              {(() => {
+                const p = personas.find((x) => x.id === selectedPersonaId)
+                return p ? (
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    {p.best_for || p.description || p.tagline}
+                  </p>
+                ) : null
+              })()}
             </div>
           )}
 
@@ -321,11 +357,11 @@ export default function PersonalityEditor() {
           <button
             onClick={resetToDefaults}
             disabled={resetting}
-            title="Reset to built-in global defaults"
+            title={projectId ? 'Remove the project override and follow the global personality' : 'Restore the bundled soul.md and agent.md'}
             className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 text-sm rounded border border-gray-700 disabled:opacity-50"
           >
             <RotateCcw className={`w-3.5 h-3.5 ${resetting ? 'animate-spin' : ''}`} />
-            Reset
+            {projectId ? 'Use global' : 'Restore defaults'}
           </button>
         </div>
 
@@ -339,13 +375,13 @@ export default function PersonalityEditor() {
         {projectId && !isOverride && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-yellow-950/40 border border-yellow-800/40 rounded-lg text-xs text-yellow-400">
             <AlertCircle className="w-3 h-3 flex-shrink-0" />
-            No project override exists yet — showing the global personality. Saving or applying a persona will create a project-specific copy.
+            This project follows the global personality. Saving here or applying a preset creates a project-specific copy.
           </div>
         )}
         {projectId && isOverride && (
           <div className="mt-3 flex items-center gap-2 px-3 py-2 bg-brand-950/40 border border-brand-800/40 rounded-lg text-xs text-brand-400">
             <CheckCircle className="w-3 h-3 flex-shrink-0" />
-            Editing <span className="font-medium">{scopeLabel}</span>'s personality. Edits stay local to this project.
+            Editing <span className="font-medium">{scopeLabel}</span>'s own personality — global edits won't reach it until you click Use global.
           </div>
         )}
 
@@ -354,7 +390,7 @@ export default function PersonalityEditor() {
           <div className="mt-3 flex items-center justify-between gap-3 px-3 py-2 bg-orange-950/40 border border-orange-800/40 rounded-lg text-xs text-orange-400">
             <span className="flex items-center gap-2">
               <Info className="w-3 h-3 flex-shrink-0" />
-              The <span className="font-mono">{activeTabDef?.file}</span> file is empty. Use Reset or apply a persona to populate it.
+              The <span className="font-mono">{activeTabDef?.file}</span> file is empty. Use Restore defaults or apply a preset to populate it.
             </span>
           </div>
         )}
@@ -424,7 +460,7 @@ export default function PersonalityEditor() {
                   <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
                 </div>
               ) : isEmpty ? (
-                <p className="text-sm text-gray-600 italic">No content — apply a persona or use Reset to populate, then click Edit to author it.</p>
+                <p className="text-sm text-gray-600 italic">No content — apply a preset or restore the defaults, then click Edit to author it.</p>
               ) : (
                 <Markdown
                   className="prose prose-invert prose-sm max-w-3xl mx-auto"
@@ -458,7 +494,7 @@ export default function PersonalityEditor() {
               className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg"
             >
               <BookOpen className="w-4 h-4" />
-              Save as Persona
+              Save as preset
             </button>
           )}
 
@@ -483,12 +519,12 @@ export default function PersonalityEditor() {
       {showSaveAsPersona && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowSaveAsPersona(false)}>
           <div className="bg-gray-800 rounded-lg border border-gray-700 p-5 w-full max-w-md mx-4 space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold text-gray-200">Save as Persona</h3>
+            <h3 className="text-sm font-semibold text-gray-200">Save as preset</h3>
             <p className="text-xs text-gray-500">
-              Save the current soul content as a new persona template in your library. This creates a snapshot — future edits here won't change the saved persona.
+              Save the current soul content as a preset you can apply to other projects. It's a snapshot — later edits here don't change it.
             </p>
             <div>
-              <label className="block text-xs text-gray-400 mb-1">Persona Name</label>
+              <label className="block text-xs text-gray-400 mb-1">Preset name</label>
               <input
                 type="text"
                 value={savePersonaName}
@@ -521,7 +557,7 @@ export default function PersonalityEditor() {
                 className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50"
               >
                 <BookOpen className="w-4 h-4" />
-                {savingAsPersona ? 'Saving...' : 'Save to Library'}
+                {savingAsPersona ? 'Saving...' : 'Save preset'}
               </button>
             </div>
           </div>

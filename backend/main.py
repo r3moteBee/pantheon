@@ -138,6 +138,12 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("archival stray-note migration failed", exc_info=True)
 
+    try:
+        from api.personas import migrate_project_personas
+        migrate_project_personas()
+    except Exception:
+        logger.warning("persona presets migration failed", exc_info=True)
+
     # Initialize default personality files if missing or empty
     import shutil
     soul_path = settings.personality_dir / "soul.md"

@@ -213,8 +213,9 @@ def test_old_rows_with_wrong_scale_are_ignored(vault, data_dir):
 async def test_project_settings_api(vault, data_dir):
     from fastapi import HTTPException
     from api.projects import get_project_settings, update_project_settings
+    # "persona" is no longer a chat setting (presets write soul.md); ignored.
     out = await update_project_settings("p9", {"context_focus": "focused", "persona": "hermes"})
-    assert out["overrides"] == {"context_focus": "focused"} and out["persona"] == "hermes"
+    assert out["overrides"] == {"context_focus": "focused"} and "persona" not in out
     assert out["effective"]["context_focus"] == "focused"
     with pytest.raises(HTTPException):
         await update_project_settings("p9", {"tone_weight": "loud"})
