@@ -98,7 +98,7 @@ async def update_conversation_metadata(
     session_id: str,
     req: UpdateConversationMetadataRequest,
 ) -> dict[str, Any]:
-    """Update conversation metadata (like active_personas)."""
+    """Merge keys into a conversation's metadata."""
     ep = EpisodicMemory()
     await ep.merge_conversation_metadata(session_id, req.metadata)
     return {"status": "updated", "session_id": session_id, "metadata": req.metadata}

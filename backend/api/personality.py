@@ -13,7 +13,9 @@ from agent.personality import (
     save_soul,
     save_agent_config,
     load_project_personality,
+    clear_project_override,
     _TEMPLATE_DIR,
+    _load_template,
 )
 from config import get_settings
 
@@ -47,6 +49,22 @@ async def update_soul(
         raise HTTPException(status_code=400, detail="Content cannot be empty")
     save_soul(req.content, project_id=project_id)
     return {"status": "updated", "scope": project_id or "global"}
+
+
+@router.post("/personality/reset")
+async def reset_personality(project_id: str | None = Query(default=None)) -> dict[str, Any]:
+    """Project: drop its overrides so it follows the global personality.
+    Global: restore the bundled soul.md and agent.md."""
+    if project_id:
+        removed = clear_project_override(project_id)
+        from api.personas import _update_project_persona
+        _update_project_persona(project_id, None)
+        return {"status": "reset", "scope": project_id, "removed": removed}
+    for fname, save in (("soul.md", save_soul), ("agent.md", save_agent_config)):
+        content = _load_template(fname)
+        if content:
+            save(content)
+    return {"status": "reset", "scope": "global"}
 
 
 @router.get("/personality/agent")

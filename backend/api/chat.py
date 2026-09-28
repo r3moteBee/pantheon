@@ -682,178 +682,42 @@ async def websocket_chat(websocket: WebSocket) -> None:
                             # Don't run agent yet — wait for skill_accept or skill_decline
                             continue
 
-            # Get conversation metadata to check for active personas
-            client_personas = data.get("active_personas")
-            if client_personas is not None:
-                try:
-                    from api.conversations import _connect as _conv_connect
-                    from datetime import datetime, timezone
-                    now = datetime.now(timezone.utc).isoformat()
-                    with _conv_connect() as conn:
-                        conn.execute("""
-                            INSERT INTO conversations (id, project_id, session_id, created_at, updated_at, metadata)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            ON CONFLICT(id) DO UPDATE SET metadata = ?
-                        """, (session_id, project_id, session_id, now, now, json.dumps({"active_personas": client_personas}), json.dumps({"active_personas": client_personas})))
-                except Exception as e:
-                    logger.debug("Failed to pre-save conversation metadata: %s", e)
+            agent = await _build_agent(
+                provider=provider,
+                memory_manager=memory,
+                project_id=project_id,
+                session_id=session_id,
+                skill_context=skill_context,
+                active_skill_name=active_skill_name,
+            )
 
-            active_personas = []
+            # Save user message to episodic memory
             try:
-                conv = await memory.episodic.get_conversation(session_id)
-                if conv and conv.get("metadata"):
-                    conv_meta = json.loads(conv["metadata"])
-                    active_personas = conv_meta.get("active_personas", [])
-            except Exception as e:
-                logger.debug("Failed to load active_personas: %s", e)
-
-
-            if len(active_personas) > 1:
-                # Determine first responder based on mentions
-                next_responder = None
-                from api.personas import _find_persona
-                for p_id in active_personas:
-                    if f"@{p_id}" in message.lower():
-                        next_responder = p_id
-                        break
-                if not next_responder:
-                    next_responder = active_personas[0]
-
-                current_message = message
-                max_turns = 3
-                current_turn = 0
-                
-                while next_responder and current_turn < max_turns:
-                    current_turn += 1
-                    p_id = next_responder
-                    next_responder = None
-                    
-                    persona_data, _ = _find_persona(p_id)
-                    if not persona_data:
-                        break
-                    
-                    p_soul = persona_data.get("soul", "")
-                    p_name = persona_data.get("name", p_id)
-                    p_icon = persona_data.get("icon", "🎭")
-                    
-                    # Notify client which persona is active
-                    await websocket.send_json({
-                        "type": "persona_active",
-                        "persona_id": p_id,
-                        "name": p_name,
-                        "icon": p_icon,
-                        "turn": current_turn,
-                    })
-                    
-                    # Prepend persona prefix delta so the text flows after it
-                    prefix = f"\n\n**{p_icon} {p_name}**: "
-                    if current_turn == 1:
-                        prefix = f"**{p_icon} {p_name}**: "
-                    await websocket.send_json({
-                        "type": "text_delta",
-                        "content": prefix,
-                    })
-                    
-                    # Build agent with custom soul
-                    agent = await _build_agent(
-                        provider=provider,
-                        memory_manager=memory,
-                        project_id=project_id,
-                        session_id=session_id,
-                        skill_context=skill_context,
-                        active_skill_name=active_skill_name,
-                    )
-                    agent.custom_soul = p_soul
-                    _decision = await _route_turn(agent, current_message, session_id, active_skill_name)
-                    if _decision is not None:
-                        await _send({"type": "model_route", **_decision.public()})
-                        _finish_route(_decision, [], session_id, current_message)
-
-                    # Save the user message only after the first agent has
-                    # rehydrated from history — saving first made
-                    # from_session replay it and agent.chat append it again,
-                    # so the model saw the message twice.
-                    if current_turn == 1:
-                        try:
-                            await memory.episodic.save_message(
-                                session_id=session_id,
-                                project_id=project_id,
-                                role="user",
-                                content=message,
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to save user message: %s", e)
-                    
-                    full_response = ""
-                    async for event in agent.chat(current_message, stream=True):
-                        # Forward delta events to client (keeps draining if the
-                        # client disconnected so the reply is still saved).
-                        if event.get("type") == "text_delta":
-                            full_response += event.get("content", "")
-                            await _send(event)
-                        elif event.get("type") in ("tool_call", "tool_result"):
-                            await _send(event)
-                    
-                    # Save persona's response to episodic memory
-                    complete_content = prefix + full_response
-                    try:
-                        await memory.episodic.save_message(
-                            session_id=session_id,
-                            project_id=project_id,
-                            role="assistant",
-                            content=complete_content,
-                            metadata={"persona_id": p_id, "persona_name": p_name},
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to save assistant message: %s", e)
-                    
-                    # Look for mentions of other active personas in the generated response
-                    for other_p in active_personas:
-                        if other_p != p_id and f"@{other_p}" in full_response.lower():
-                            next_responder = other_p
-                            current_message = f"[Collaboration loop: turn for @{other_p}. Please respond to the feedback/post above.]"
-                            break
-                
-                # Send done event to client
-                await websocket.send_json({"type": "done", "full_response": "Collaboration finished.", "iterations": current_turn})
-
-            else:
-                agent = await _build_agent(
-                    provider=provider,
-                    memory_manager=memory,
-                    project_id=project_id,
+                await memory.episodic.save_message(
                     session_id=session_id,
-                    skill_context=skill_context,
-                    active_skill_name=active_skill_name,
+                    project_id=project_id,
+                    role="user",
+                    content=message,
                 )
+            except Exception as e:
+                logger.warning("Failed to save user message to episodic: %s", e)
 
-                # Save user message to episodic memory
+            full_response, route = await _stream_turn(
+                agent, message, session_id, _send, skill_name=active_skill_name,
+            )
+
+            # Save assistant response to episodic memory
+            if full_response:
                 try:
                     await memory.episodic.save_message(
                         session_id=session_id,
                         project_id=project_id,
-                        role="user",
-                        content=message,
+                        role="assistant",
+                        content=full_response,
+                        metadata={"route": route} if route else None,
                     )
                 except Exception as e:
-                    logger.warning("Failed to save user message to episodic: %s", e)
-
-                full_response, route = await _stream_turn(
-                    agent, message, session_id, _send, skill_name=active_skill_name,
-                )
-
-                # Save assistant response to episodic memory
-                if full_response:
-                    try:
-                        await memory.episodic.save_message(
-                            session_id=session_id,
-                            project_id=project_id,
-                            role="assistant",
-                            content=full_response,
-                            metadata={"route": route} if route else None,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to save assistant message to episodic: %s", e)
+                    logger.warning("Failed to save assistant message to episodic: %s", e)
 
             # Track messages and trigger extraction if interval is set
             extraction_interval = settings.extraction_interval

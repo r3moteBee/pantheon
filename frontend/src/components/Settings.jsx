@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon } from 'lucide-react'
 import MessagingSettings from './MessagingSettings'
 import LlmSettings from './settings/LlmSettings'
@@ -12,7 +13,9 @@ import SecretsSettings from './settings/SecretsSettings'
 import SystemUpdate from './settings/SystemUpdate'
 
 export default function Settings() {
-  const [tab, setTab] = useState('llms')
+  // ?tab=<id> opens a tab directly (e.g. /personas redirects to Personality).
+  const [params] = useSearchParams()
+  const [tab, setTab] = useState(params.get('tab') || 'llms')
 
   const tabs = [
     { id: 'llms', label: 'LLMs', icon: Cpu },

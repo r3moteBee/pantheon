@@ -4,7 +4,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import {
-  projectsApi, personasApi, projectSettingsApi,
+  projectsApi, personasApi, personalityApi, projectSettingsApi,
 } from '../../api/client'
 import { useStore } from '../../store'
 import InfoTooltip from '../help/InfoTooltip'
@@ -33,13 +33,16 @@ export default function ProjectSettingsPanel({ projectId }) {
   // Chat defaults
   // '' = inherit the global value (Settings); anything else overrides it here.
   const [chatDefaults, setChatDefaults] = useState({
-    persona: '', tone_weight: '', context_focus: '', memory_recall: '', skill_discovery: 'off',
+    tone_weight: '', context_focus: '', memory_recall: '', skill_discovery: 'off',
   })
   const [globals, setGlobals] = useState({})
   const [chatDirty, setChatDirty] = useState(false)
 
-  // Personas list
+  // Personality preset: '' = follows global, '__custom__' = edited copy,
+  // otherwise the applied preset id. Changing it applies on Save.
   const [personas, setPersonas] = useState([])
+  const [preset, setPreset] = useState('')
+  const [presetLoaded, setPresetLoaded] = useState('')
 
 
   // UI state
@@ -50,10 +53,11 @@ export default function ProjectSettingsPanel({ projectId }) {
   const refresh = async () => {
     setLoading(true); setError(null)
     try {
-      const [proj, settings, personasRes] = await Promise.all([
+      const [proj, settings, personasRes, soulRes] = await Promise.all([
         projectsApi.get(projectId),
         projectSettingsApi.get(projectId),
         personasApi.list(),
+        personalityApi.getSoul(projectId),
       ])
       const p = proj.data
       setProject(p)
@@ -65,7 +69,6 @@ export default function ProjectSettingsPanel({ projectId }) {
       const ov = cd.overrides || {}
       setGlobals(cd.global || {})
       setChatDefaults({
-        persona:         cd.persona || '',
         tone_weight:     ov.tone_weight || '',
         context_focus:   ov.context_focus || '',
         memory_recall:   ov.memory_recall === undefined ? '' : (ov.memory_recall ? 'on' : 'off'),
@@ -76,6 +79,9 @@ export default function ProjectSettingsPanel({ projectId }) {
       // personasApi.list() already unwraps r.data, so the response IS the
       // payload — it has .personas at the top level, not .data.personas.
       setPersonas(personasRes?.personas || personasRes?.data?.personas || [])
+      const current = soulRes.data?.is_override ? (p.persona_id || '__custom__') : ''
+      setPreset(current)
+      setPresetLoaded(current)
     } catch (e) {
       setError(e.message)
     } finally { setLoading(false) }
@@ -104,6 +110,11 @@ export default function ProjectSettingsPanel({ projectId }) {
         const updated = (list.data?.projects || []).find((p) => p.id === projectId)
         if (updated) setActiveProject(updated)
         setMetaDirty(false)
+      }
+      if (preset !== presetLoaded && preset !== '__custom__') {
+        if (preset) await personasApi.apply(preset, projectId)
+        else await personalityApi.reset(projectId)
+        setPresetLoaded(preset)
       }
       if (chatDirty) {
         await projectSettingsApi.update(projectId, {
@@ -164,7 +175,7 @@ export default function ProjectSettingsPanel({ projectId }) {
             </button>
             <button
               onClick={saveAll}
-              disabled={saving || (!metaDirty && !chatDirty)}
+              disabled={saving || (!metaDirty && !chatDirty && preset === presetLoaded)}
               className="px-3 py-1.5 text-sm rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-40"
             >
               <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save changes'}
@@ -205,13 +216,17 @@ export default function ProjectSettingsPanel({ projectId }) {
 
         {/* Chat defaults */}
         <Section title="Chat defaults" hint="Used by chat in this project; the chat-header toggles change the same values. “Global” follows Settings.">
-          <Field label="Default persona">
+          <Field
+            label="Personality"
+            tooltip="Global follows Settings → Personality. A preset gives this project its own voice (the global Key Commitments are kept). Edit it in Settings → Personality."
+          >
             <select
-              value={chatDefaults.persona}
-              onChange={(e) => updateChat('persona', e.target.value)}
+              value={preset}
+              onChange={(e) => setPreset(e.target.value)}
               className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-800 text-sm"
             >
-              <option value="">(none — use global identity)</option>
+              <option value="">Global personality</option>
+              {preset === '__custom__' && <option value="__custom__">Custom (edited for this project)</option>}
               {personas.map((p) => (
                 <option key={p.id} value={p.id}>{p.name || p.id}</option>
               ))}

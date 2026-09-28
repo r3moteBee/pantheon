@@ -34,7 +34,7 @@ backend/
 ├── sources/            Source-adapter registry, extractors, similarity + adapters/
 ├── tasks/              APScheduler integration
 ├── utils/              Shared helpers (safe_http_get, paths, progress, background.spawn, self-doc, …)
-├── data/               BUNDLED defaults (personas, personality, migrations) — tracked in git
+├── data/               BUNDLED defaults (soul presets in personas/, personality, migrations) — tracked in git
 ├── tests/integration/  Pytest integration tests
 └── requirements.txt
 ```

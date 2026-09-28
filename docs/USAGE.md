@@ -20,11 +20,16 @@ Switch projects from the sidebar in the web UI, or via `/project <name>` in a me
 * **Project 2: `fitness-coach`**: Dedicated to personal health and training.
 If you ask the agent in `fitness-coach` for a workout plan, it will not recall any information about chip manufacturing from `semiconductor-research`, keeping context perfectly clean.
 
-## 2. Personalities and personas
+## 2. Personality and presets
 
-Every project has a `soul.md` file that defines the agent's identity in that project. Personas (in the Persona Library) are reusable templates — applying one is a **one-time copy** into the project. Edits you make after applying stay in the project; they do not flow back to the library.
+The agent's identity is `soul.md` and its working rules are `agent.md`, both edited in **Settings → Personality**. Every project follows the **global** personality, including your later edits to it, until you give the project its own.
 
-To save a customised project personality as a new persona, use **"Save as Persona"** in the Personality Editor. This prevents personality proliferation: changes are explicit, not automatic.
+- **Presets** (Hermes, Athena, Mnemosyne, …) are ready-made `soul.md` voices. Applying one to a project is a one-time copy. The global **Key Commitments** (never fabricate, flag uncertainty, …) are always appended.
+- **Where to apply:** in Settings → Personality with the project as the scope, in the project's **Settings** tab (Personality), or on its card in Projects.
+- **Use global:** removes the project's copy, so it follows the global personality again.
+- **Save as preset:** snapshots the current `soul.md` so you can reuse it. Delete your own presets from the same picker.
+
+New projects follow the global personality unless you pick a preset when creating them.
 
 ## 3. Talking to the agent effectively
 

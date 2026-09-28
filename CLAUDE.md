@@ -33,7 +33,7 @@ Directories only — read the code for files. `docs/tools.md` lists every agent 
 │   │                      export/import, settings, mcp, mcp_oauth, skills, tasks, personas, system,
 │   │                      connections, artifacts, conversations, jobs, llm_endpoints, messaging)
 │   ├── artifacts/         Artifact store (SQLite + blobs), previews, conversions
-│   ├── data/              BUNDLED defaults (personas, personality, migrations). Tracked.
+│   ├── data/              BUNDLED defaults (soul presets in personas/, personality, migrations). Tracked.
 │   ├── integrations/      GitHub API client
 │   ├── jobs/              JobStore, JobWorker, watchdog, handlers/ (one per job type)
 │   ├── llm_config/        Endpoints, task-class routes, model profiles, chat router, tuning, usage
@@ -285,6 +285,11 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 **Batch embeddings.** `ModelProvider.embed_many` + `SemanticMemory.store_many`; the indexer and artifact embedder store chunks in one call. `embed()` memoizes short texts (queries, topic labels) in a 512-entry LRU.
 
 **Frontend routes and heavy libs are lazy-loaded** (`React.lazy` pages, dynamic `import('mermaid')`, `import('jspdf')`). Keep new heavy deps behind dynamic imports.
+
+**Personality presets (was "personas").** A preset is only a `soul.md` voice (JSON in `backend/data/personas/` or `data/personas/`; API `/api/personas`). `POST /personas/{id}/apply/{project}` writes `personality.with_commitments(soul)`, which appends the global soul's Key Commitments. `POST /personality/reset?project_id=` drops a project's override so it follows global again (without `project_id` it restores the bundled files).
+- Projects follow global by default. Pan (identical to the global soul) is no longer a preset.
+- `personality.migrate_persona_overrides` ran once at startup (vault `persona_presets_migrated_v1`). It removed untouched auto-applied Pan copies and added Key Commitments to untouched preset copies.
+- Group-chat mode (`active_personas`) and `custom_soul` are gone. The UI lives in Settings → Personality, Project Settings and the project cards; there is no Personas page (`/personas` redirects).
 
 **Frontend conventions.**
 - **Markdown:** always render it with `components/Markdown.jsx` (remark-gfm + mermaid). Pass a `components` override for per-site tweaks — never configure ReactMarkdown directly.

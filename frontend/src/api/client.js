@@ -496,6 +496,8 @@ export const personalityApi = {
   updateAgent: (content, projectId) =>
     api.put('/api/personality/agent', { content }, { params: { project_id: projectId } }),
   status: () => api.get('/api/personality/status'),
+  // Project: drop its override (follow global). Global: restore bundled files.
+  reset: (projectId) => api.post('/api/personality/reset', null, { params: { project_id: projectId } }),
 }
 
 // Projects API
