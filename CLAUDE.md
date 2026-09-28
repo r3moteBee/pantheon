@@ -193,10 +193,10 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 ## Conventions and gotchas
 
 **Storage layers.** Two distinct things, NOT interchangeable:
-- **Artifacts** — durable, indexed, searchable. SQLite + blob. Tools: `save_to_artifact`, `read_artifact`, `list_artifacts`, `update_artifact`, `save_transcript_artifact`. Bare paths get auto-prefixed with the project slug.
+- **Artifacts** — durable, indexed, searchable. SQLite + blob. Tools: `save_to_artifact`, `read_artifact`, `list_artifacts`, `update_artifact` (transcripts: `ingest_source`). Bare paths get auto-prefixed with the project slug.
 - **Workspace files** — ephemeral scratch on disk. Tools: `read_file`, `write_file`, `list_workspace_files`. Don't use these for anything you want to keep.
 
-**MCP `save_*` tools are NOT artifact tools.** A tool like `mcp_<conn>_save_to_library` writes to that MCP server's external storage, which Pantheon cannot see. Always use `save_to_artifact` (or `save_transcript_artifact` for video transcripts) for Pantheon persistence.
+**MCP `save_*` tools are NOT artifact tools.** A tool like `mcp_<conn>_save_to_library` writes to that MCP server's external storage, which Pantheon cannot see. Always use `save_to_artifact` (or `ingest_source` for video transcripts) for Pantheon persistence.
 
 **Ingest dedup vs save_to_artifact.** `ingest_source` / `registry.ingest`: re-ingesting the same canonical path UPDATES the existing artifact (new version in `artifact_versions`); pass `extras={"force_new": true}` for a separate artifact. `save_to_artifact` is different: an existing path gets a `-1`, `-2`… suffix. Use `update_artifact` to revise in place.
 
@@ -208,7 +208,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Topic-extraction failures are visible.** Every artifact saved through `registry.ingest()` gets an `extraction_status` block in its frontmatter showing `{strategy, ok, error?, raw_excerpt?, topic_count}`. If topics is empty, look there to see why.
 
-**Path normalization for artifacts.** `save_to_artifact`, `list_artifacts`, `read_artifact`, and `index_artifact` all share the same path normalization: bare folder names get the project slug prepended automatically. Pass `path_prefix='NBJ/'` not `'default-project/NBJ/'`.
+**Path normalization for artifacts.** `save_to_artifact`, `list_artifacts`, `read_artifact`, and `index(target="artifact")` all share the same path normalization: bare folder names get the project slug prepended automatically. Pass `path_prefix='NBJ/'` not `'default-project/NBJ/'`.
 
 **Skill name slugify tolerance.** Both `/content_ingest_graph` and `/content-ingest-graph` resolve to `content-ingest-graph`. Don't worry about which separator the user types.
 
@@ -230,7 +230,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Chat settings: one read path.** `utils/chat_settings.py` — `tone_weight` (minimal|balanced|strong), `context_focus` (broad|balanced|focused), `memory_recall` — per-project override in phase_g.db `project_settings` (NULL = inherit) over the global vault values Settings writes; `skill_discovery` stays in vault `skill_discovery_<project>` (what chat and the bots read). `AgentCore.chat` reads `effective(project_id)`; the chat-header toggles and Project Settings write `PUT /api/projects/{id}/settings` (`null` clears an override). The frontend never keeps its own copy — it loads `effective` on project switch.
 
-**Repo protocol follows host exec.** `build_system_prompt(host_exec=…)` (AgentCore passes its own) shows the local git/run_command protocol only where those tools exist; background contexts get a short note pointing at github_* / start_coding_task.
+**Repo protocol follows host exec.** `build_system_prompt(host_exec=…)` (AgentCore passes its own) shows the local git/run_command protocol only where those tools exist; background contexts get a short note pointing at the `github` tool / `create_task(job_type="coding_task")`.
 
 **Legacy LLM vault keys** (`llm_*`, `embedding_*`, `prefill_*`, …) are read only by the one-shot migration in `llm_config/migration.py`; `/api/settings` no longer accepts or returns them. Use `/api/llm/*`.
 
@@ -300,6 +300,15 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Tool dispatch is a registry.** `agent/tools/__init__.py::execute_tool` applies the host-exec gate, routes `mcp_*` to the MCP manager, then calls `registry.resolve(name)` (exact names first, then the `browser_`/`github_`/`git_` prefixes) with a `ToolContext`. An unknown name returns `Unknown tool: …`, and any exception returns `Error executing …`. Workspace and git helpers live in `agent/tools/workspace.py`, and handlers call them as `_ws.<name>`, so tests patch `agent.tools.workspace.<name>` (not `agent.tools.<name>`). A test asserts every schema has a handler and vice versa.
 
+**Consolidated tools; old names are hidden aliases.** The model sees 45 tools. These replace old ones:
+- `github(action=…)` replaces the ten `github_*` tools.
+- `merge_topics(action=list|approve|reject|force)` replaces the four merge tools.
+- `index(target=artifact|workspace)` replaces `index_artifact` and `index_workspace`.
+- `create_task(job_type="coding_task")` replaces `start_coding_task`.
+- `batch_convert_documents` replaces `convert_document`, and `ingest_source` replaces `save_transcript_artifact`.
+
+Each retired name is in `agent.tools.LEGACY_TOOLS`. Its handler is still registered, so user skills, task plans and the coding/iteration job prompts that name it keep working, but its schema isn't sent to the model. The new tools delegate to the old handlers. A test keeps retired names out of the prompt, and `docs/tools.md` lists them under "Retired names".
+
 **Tool calls with bad arguments aren't run.** `models.provider.parse_tool_args` marks non-JSON or non-object arguments with `args_error`. AgentCore then returns an error result to the model instead of calling the tool with `{}`.
 
 **Host-exec is refused in the dispatcher too.** `execute_tool(..., host_exec=False)` refuses `HOST_EXEC_TOOLS`, and AgentCore passes its own `host_exec`. Tests that call git/run_command directly pass `host_exec=True`.
@@ -311,7 +320,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 - **API:** `GET/PUT /api/mcp/connections/{name}/budget` (for Tavily, GET also returns the service's own `/usage` figures) and `POST …/budget/reset {period}`.
 - **Migration:** `budget.migrate_tavily` ran once at startup (vault `mcp_budget_migrated_v1`). It moved the vault `tavily_*_limit` keys and this month's `tavily_usage.json` onto the Tavily connection.
 
-**Find MCP tools by what they do, not by connection name.** `MCPManager.find_tool` accepts a pattern (`mcp_*_fetch_transcript`), a bare tool name, or a prefixed name whose connection has since been renamed. `missing_tools` checks a skill's `requires_mcp` the same way. The YouTube adapter and `save_transcript_artifact` use it, so any connection name works.
+**Find MCP tools by what they do, not by connection name.** `MCPManager.find_tool` accepts a pattern (`mcp_*_fetch_transcript`), a bare tool name, or a prefixed name whose connection has since been renamed. `missing_tools` checks a skill's `requires_mcp` the same way. The YouTube adapter and the legacy `save_transcript_artifact` use it, so any connection name works.
 
 **Jobs run concurrently.** `JOB_WORKER_CONCURRENCY` (default 2). `REPO_JOB_TYPES` (`coding_task`, `iteration_loop`) never run two at a time per project, via `claim_next(exclusive_types=…, busy_projects=…)`.
 
@@ -364,7 +373,7 @@ When `auto_link_similarity=True` on an adapter, after `index_artifact` runs, the
 3. Adds `SEMANTICALLY_SIMILAR_TO` edges in both directions (graph traversal direction-agnostic)
 4. For matches above 0.92, queues a merge proposal in `topic_merge_proposals` table
 
-Merges are NEVER auto-applied. The user reviews via `list_merge_proposals` agent tool and explicitly approves with `approve_merge(proposal_id, canonical_label)`. The merge then rewrites every edge touching the deprecated node to point at the canonical, deletes the deprecated node, and marks the proposal as `merged`. Idempotent — re-approving returns "already merged".
+Merges are NEVER auto-applied. The user reviews via `merge_topics(action="list")` and explicitly approves with `merge_topics(action="approve", proposal_id, canonical_label)`. The merge then rewrites every edge touching the deprecated node to point at the canonical, deletes the deprecated node, and marks the proposal as `merged`. Idempotent — re-approving returns "already merged".
 
 ## Things explicitly NOT done yet
 

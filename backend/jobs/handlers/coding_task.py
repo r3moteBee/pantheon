@@ -11,8 +11,8 @@ Payload shape:
 Resolves the project's bound repo via api/connections.get_project_repo_for_tools.
 Builds an agent loop with:
   * code_execute (sandbox)
-  * github_read_file / github_list_directory
-  * github_create_branch / github_write_files / github_create_pr
+  * the github tool (read_file / list_directory,
+    create_branch / write_files / create_pr)
 A coding-specific system prompt that includes the supplied
 coding_context and the repo's owner/repo/branch.
 
@@ -95,9 +95,9 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
         "Available tools: git_sync_repo (clone/update the repo locally), "
         "run_command (shell in the checkout — deps, tests, linters), "
         "git_create_branch, git_merge, git_status, git_commit, git_push_pr, "
-        "read_file/write_file (workspace files), plus GitHub API tools "
-        "(github_read_file, github_list_directory, github_write_files, "
-        "github_create_pr) as a fallback for trivial single-file edits.\n\n"
+        "read_file/write_file (workspace files), plus the `github` API tool "
+        "(actions read_file, list_directory, write_files, create_pr) as a "
+        "fallback for trivial single-file edits.\n\n"
         "PROCESS (local-first — work in a real checkout so you can run the tests):\n"
         f"  1. git_sync_repo — clones {owner}/{repo} into the workspace at "
         f"     '{checkout_rel}/'.\n"

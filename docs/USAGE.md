@@ -177,7 +177,7 @@ All notes are also indexed into semantic memory so you can recall them later via
 
 ## 9. Indexing a corpus into memory
 
-Drop files into the project workspace and tell the agent: *"index the workspace"* (or call `index_workspace` directly). This ingests Markdown (with frontmatter), text, CSV, PDF, and code files into semantic + graph memory. After indexing, recall and chat become much richer.
+Drop files into the project workspace and tell the agent: *"index the workspace"* (or call `index(target="workspace")` directly). This ingests Markdown (with frontmatter), text, CSV, PDF, and code files into semantic + graph memory. After indexing, recall and chat become much richer.
 
 Re-index with `force: true` when you edit files.
 
@@ -190,7 +190,7 @@ For YouTube, connect a YouTube transcript MCP server; the agent searches with th
 If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/pantheon/data/projects/<project-slug>/workspace/`, you can query the agent:
 > **User**: *Index the workspace.*
 > 
-> *The agent will call `index_workspace`, extract the text from the PDF, chunk it, embed it, and insert it into ChromaDB. Once finished, you can query information from that file across sessions:*
+> *The agent will call `index(target="workspace")`, extract the text from the PDF, chunk it, embed it, and insert it into ChromaDB. Once finished, you can query information from that file across sessions:*
 > 
 > **User**: *What are the pin configurations for HBM3 based on the specs in the workspace?*
 > **Agent**: *(Automatically recalls relevant sections of the PDF from semantic memory and answers the question with source provenance.)*

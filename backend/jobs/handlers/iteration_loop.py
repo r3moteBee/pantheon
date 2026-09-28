@@ -65,9 +65,9 @@ def _branch_policy_block(branch_strategy: str, target_branch: str | None, turn: 
         return (
             "\n\nBRANCH POLICY (strategy=main):\n"
             "  - Commit ALL changes directly to `main` via "
-            "`github_write_files` with branch=\"main\".\n"
+            "`github(action=\"write_files\")` with branch=\"main\".\n"
             "  - Do NOT create feature branches. Do NOT call "
-            "`github_create_branch`.\n"
+            "`github(action=\"create_branch\")`.\n"
             "  - The next turn will see your code on main automatically."
         )
     if branch_strategy == "single_feature" and target_branch:
@@ -75,10 +75,10 @@ def _branch_policy_block(branch_strategy: str, target_branch: str | None, turn: 
             f"\n\nBRANCH POLICY (strategy=single_feature):\n"
             f"  - This entire loop runs on ONE branch: `{target_branch}`.\n"
             f"  - When WRITING files, pass branch=\"{target_branch}\" to "
-            f"`github_write_files`. NEVER write to main and NEVER create "
+            f"`github(action=\"write_files\")`. NEVER write to main and NEVER create "
             f"any other branch.\n"
-            f"  - When READING files (`github_read_file`, "
-            f"`github_list_directory`), pass ref=\"{target_branch}\" so "
+            f"  - When READING files (`github` actions "
+            f"read_file / list_directory), pass ref=\"{target_branch}\" so "
             f"you see the cumulative state from prior turns. Reading "
             f"without ref shows main, which is stale relative to your work.\n"
         )
@@ -86,7 +86,7 @@ def _branch_policy_block(branch_strategy: str, target_branch: str | None, turn: 
             block += (
                 f"  - This is turn 1. The branch may not exist yet — your "
                 f"FIRST tool call should be "
-                f"`github_create_branch(new_branch=\"{target_branch}\")` "
+                f"`github(action=\"create_branch\", new_branch=\"{target_branch}\")` "
                 f"to fork it from main. Then proceed with the work.\n"
             )
         return block
@@ -298,7 +298,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
                 "\n\n⚠️  IMPORTANT: your previous attempt produced no tool "
                 "calls and no text. The loop CANNOT make progress without "
                 "concrete tool use. Make at least one tool call now — pick "
-                "the smallest plausible step (e.g. github_list_directory "
+                "the smallest plausible step (e.g. github(action=\"list_directory\") "
             )
             if target_branch and target_branch != "main":
                 nudge_extra += f"with ref=\"{target_branch}\" "

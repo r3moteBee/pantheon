@@ -68,7 +68,7 @@ async def post_save_hook(self, req, result: AdapterResult) -> None: ... # option
 
 ## Migration path
 
-- **Phase 1 — shipped.** Scaffold + YouTube adapters. `save_transcript_artifact` agent tool kept as a deprecation alias; artifacts written via either path are interoperable.
+- **Phase 1 — shipped.** Scaffold + YouTube adapters. `save_transcript_artifact` is now a hidden legacy alias (not shown to the model); artifacts written via either path are interoperable.
 - **Phase 2 — shipped.** `ingest_source`, `batch_ingest_sources`, `list_source_adapters`, `extract_topics` agent tools wrap `sources.ingest()` and `sources.batch_ingest()`. Skills drive them.
 - **Phase 3 — shipped.** Blog, PDF, podcast, web, forum, github, cfr, malegislature and SEC EDGAR adapters all landed. Slide-deck deferred until a real use case emerges. The `content-ingest-graph` skill drives `ingest_source` for any registered source type.
 - **Phase 4 — partially shipped.** `list_source_adapters` makes the registry visible to agent prompts. Per-project source-adapter scoping is still global (deferred — see CLAUDE.md "Things explicitly NOT done yet").
@@ -161,7 +161,7 @@ Adding a new extractor: subclass `TopicExtractor` (or `LLMDefaultExtractor` to i
 
 ### 2. Cross-artifact similarity — shipped
 
-Backend pipeline runs post-`index_artifact` with type-gating from the adapter's topic taxonomy and a cosine threshold of 0.86 (matches above 0.92 queue a merge proposal). Each adapter declares `auto_link_similarity` (default `False`); the pipeline reads it on each ingest. Implementation lives in `backend/sources/similarity.py` with topic-label embeddings stored in `backend/memory/topic_embeddings.py` (keyed by `(project_id, topic_type, label)`) and reviewable merges in `backend/memory/merge_proposals.py`. Agents call `list_merge_proposals` / `approve_merge` to curate the graph; a UI panel for this is still TODO (see CLAUDE.md).
+Backend pipeline runs post-`index_artifact` with type-gating from the adapter's topic taxonomy and a cosine threshold of 0.86 (matches above 0.92 queue a merge proposal). Each adapter declares `auto_link_similarity` (default `False`); the pipeline reads it on each ingest. Implementation lives in `backend/sources/similarity.py` with topic-label embeddings stored in `backend/memory/topic_embeddings.py` (keyed by `(project_id, topic_type, label)`) and reviewable merges in `backend/memory/merge_proposals.py`. Agents call `merge_topics` (list / approve / reject / force) to curate the graph; a UI panel for this is still TODO (see CLAUDE.md).
 
 ### 3. Per-project source registries — deferred to phase 4
 

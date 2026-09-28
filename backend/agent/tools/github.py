@@ -315,3 +315,60 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
     except GitHubError as e:
         return f"GitHub error: {e}"
 
+
+
+# ── Consolidated entry point ─────────────────────────────────────────────────
+# One schema for the GitHub API instead of ten. Each action runs the
+# github_<action> handler above; those names stay callable (hidden) so
+# skills written against them keep working.
+
+GITHUB_ACTIONS = ("list_connections", "read_file", "list_directory", "list_branches", "list_pulls",
+                  "create_branch", "delete_branch", "write_files", "create_pr", "merge_pr")
+
+SCHEMAS.append({
+    "type": "function",
+    "function": {
+        "name": "github",
+        "description": (
+            "GitHub API on the repo bound to this project (no local checkout needed). Actions and their args: "
+            "read_file(path, ref?) · list_directory(path?, ref?) · list_branches(name_prefix?) · "
+            "list_pulls(state?, head?, base?) · create_branch(new_branch, base_branch?) · "
+            "delete_branch(branch) — never the default branch · write_files(branch, message, files=[{path, content}]) "
+            "— one atomic commit, after create_branch · create_pr(title, head, base?, body?, draft?) · "
+            "merge_pr(pr_number, merge_method?) — only when the user approved merging · "
+            "list_connections() — diagnostic only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(GITHUB_ACTIONS)},
+                "path": {"type": "string", "description": "File or directory path in the repo ('' = root)."},
+                "ref": {"type": "string", "description": "Branch or commit sha; default branch if omitted."},
+                "name_prefix": {"type": "string"},
+                "state": {"type": "string", "enum": ["open", "closed", "all"]},
+                "head": {"type": "string", "description": "Branch with the changes (create_pr) or head filter (list_pulls)."},
+                "base": {"type": "string", "description": "Target branch (create_pr) or base filter (list_pulls)."},
+                "new_branch": {"type": "string"},
+                "base_branch": {"type": "string"},
+                "branch": {"type": "string"},
+                "message": {"type": "string", "description": "Commit message."},
+                "files": {"type": "array", "items": {"type": "object"}, "description": "[{path, content}]"},
+                "title": {"type": "string"},
+                "body": {"type": "string"},
+                "draft": {"type": "boolean"},
+                "pr_number": {"type": "integer"},
+                "merge_method": {"type": "string", "enum": ["merge", "squash", "rebase"]},
+            },
+            "required": ["action"],
+        },
+    },
+})
+
+
+@tool("github")
+async def _tool_github(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    action = (tool_args.get("action") or "").strip()
+    if action not in GITHUB_ACTIONS:
+        return f"Error: github action must be one of {', '.join(GITHUB_ACTIONS)}."
+    args = {k: v for k, v in tool_args.items() if k != "action"}
+    return await _tool_github_tools(ctx, f"github_{action}", args)

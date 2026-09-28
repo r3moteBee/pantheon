@@ -16,7 +16,7 @@ SCHEMAS: list[dict[str, Any]] = [
                 "SEMANTICALLY_SIMILAR_TO edges between topic nodes "
                 "whose embeddings cosine-match >= 0.86, and queues "
                 "merge proposals for >= 0.92 (proposals are NOT "
-                "auto-applied — use approve_merge to execute).\n\n"
+                "auto-applied — use merge_topics to review and apply).\n\n"
                 "Use this after enabling similarity on an adapter, "
                 "after a bulk ingest where you want to make sure "
                 "everything is cross-linked, or whenever the user "
@@ -467,8 +467,8 @@ async def _tool_link_topic_similarity(ctx: ToolContext, tool_name: str, tool_arg
         f"  edges added: {r['edges_added']}\n"
         f"  merge proposals queued: {r['proposals_queued']}"
         f"{err_part}\n\n"
-        f"Use list_merge_proposals to review the queued "
-        f"merges; approve_merge / reject_merge to act on them."
+        f"Use merge_topics(action=\"list\") to review the queued "
+        f"merges, then approve or reject them."
     )
 
 
@@ -610,3 +610,48 @@ async def _tool_force_merge(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"({res.get('edges_rewritten', 0)} edges rewritten)."
     )
 
+
+
+# ── Consolidated entry point ─────────────────────────────────────────────────
+# merge_topics(action=…) replaces four schemas; the old names still work.
+
+_MERGE_ACTIONS = {"list": "list_merge_proposals", "approve": "approve_merge",
+                  "reject": "reject_merge", "force": "force_merge"}
+
+SCHEMAS.append({
+    "type": "function",
+    "function": {
+        "name": "merge_topics",
+        "description": (
+            "Review and apply merges of duplicate topic nodes in the graph. "
+            "list(status?, limit?) shows proposals (labels, types, similarity, id). "
+            "approve(proposal_id, canonical_label) EXECUTES a merge — irreversible, only after the user "
+            "confirmed; if they don't say which label survives, keep the longer one and say so. "
+            "reject(proposal_id) keeps both nodes. force(label_a, label_b, canonical_label) merges two "
+            "named nodes with no proposal — only on explicit request."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": list(_MERGE_ACTIONS)},
+                "status": {"type": "string", "enum": ["pending", "approved", "rejected", "merged", "stale", "all"]},
+                "limit": {"type": "integer"},
+                "proposal_id": {"type": "string"},
+                "canonical_label": {"type": "string", "description": "The label that survives; must be one of the two."},
+                "label_a": {"type": "string"},
+                "label_b": {"type": "string"},
+            },
+            "required": ["action"],
+        },
+    },
+})
+
+
+@tool("merge_topics")
+async def _tool_merge_topics(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    from agent.tools.registry import resolve
+    target = _MERGE_ACTIONS.get((tool_args.get("action") or "").strip())
+    if not target:
+        return f"Error: merge_topics action must be one of {', '.join(_MERGE_ACTIONS)}."
+    args = {k: v for k, v in tool_args.items() if k != "action"}
+    return await resolve(target)(ctx, target, args)

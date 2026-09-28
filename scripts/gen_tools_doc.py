@@ -26,7 +26,7 @@ def _first_sentence(text: str) -> str:
 
 def render() -> str:
     sys.path.insert(0, str(ROOT / "backend"))
-    from agent.tools import HOST_EXEC_TOOLS, TOOL_SCHEMAS
+    from agent.tools import HOST_EXEC_TOOLS, LEGACY_TOOLS, TOOL_SCHEMAS
     from agent.tools.registry import resolve
     try:
         from agent.browser_tools import BROWSER_TOOL_SCHEMAS
@@ -62,6 +62,30 @@ def render() -> str:
         "| --- | --- | --- | --- |",
         *rows(TOOL_SCHEMAS),
     ]
+    replaced_by = {
+        "save_transcript_artifact": "`ingest_source` (youtube/*)",
+        "start_coding_task": "`create_task(job_type=\"coding_task\")`",
+        "convert_document": "`batch_convert_documents` (one path works)",
+        "index_workspace": "`index(target=\"workspace\")`",
+        "index_artifact": "`index(target=\"artifact\")`",
+        "list_merge_proposals": "`merge_topics(action=\"list\")`",
+        "approve_merge": "`merge_topics(action=\"approve\")`",
+        "reject_merge": "`merge_topics(action=\"reject\")`",
+        "force_merge": "`merge_topics(action=\"force\")`",
+    }
+    lines += [
+        "",
+        "## Retired names",
+        "",
+        "Not shown to the model any more, but still dispatched with their old behaviour, "
+        "so skills and task plans that name them keep working.",
+        "",
+        "| Old name | Use instead |",
+        "| --- | --- |",
+    ]
+    for n in sorted(LEGACY_TOOLS):
+        new = replaced_by.get(n) or (f"`github(action=\"{n[len('github_'):]}\")`" if n.startswith("github_") else "—")
+        lines.append(f"| `{n}` | {new} |")
     if BROWSER_TOOL_SCHEMAS:
         lines += [
             "",

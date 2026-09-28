@@ -19,14 +19,14 @@ All background work runs as rows in `data/db/jobs.db`. A single in-process worke
 | Type | Default timeout | Created by | `POST /api/jobs`? |
 |---|---|---|---|
 | `autonomous_task` | 1800s | scheduler (`create_task` tool, `POST /api/tasks`, bot `/task`) | yes |
-| `coding_task` | 1800s | `start_coding_task` tool | yes |
+| `coding_task` | 1800s | `create_task(job_type="coding_task")` (legacy: `start_coding_task`) | yes |
 | `iteration_loop` | 7200s | scheduler with `job_type="iteration_loop"` | yes |
 | `image_extraction` | 300s | chat image upload (`api/chat.py`) | **no** |
 
 `CREATABLE_JOB_TYPES` in `api/jobs.py` is `("autonomous_task", "iteration_loop", "coding_task")`. Any other type returns 400, because internal handlers trust payloads the backend builds itself.
 
 - **autonomous_task:** an agent loop with a free-form prompt, plus an optional skill and plan (below).
-- **coding_task:** a GitHub sub-agent working on the project's bound repo. It uses `code_execute` and the `github_*` tools, opens a PR, and returns `{branch, files_changed, pr_url, artifact_id, summary}`. It runs with `host_exec_allowed("interactive")`.
+- **coding_task:** a GitHub sub-agent working on the project's bound repo. It uses `code_execute` and the `github` tool, opens a PR, and returns `{branch, files_changed, pr_url, artifact_id, summary}`. It runs with `host_exec_allowed("interactive")`.
 - **iteration_loop:** execute/review turns, each saved to `iteration/<job_id>/turn-N.md`. It stops on `max_turns` (default 10, clamped 1–50), reviewer `STATUS: done`, two stalled turns in a row, or a cancel.
 - **image_extraction:** vision, OCR and topic extraction for an uploaded image artifact.
 
