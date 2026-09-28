@@ -139,7 +139,7 @@ def test_repo_protocol_follows_host_exec(vault):
         without = prompts.build_system_prompt(project_id="p", host_exec=False)
     assert "git_sync_repo" in with_exec and "run_command" in with_exec
     assert "git_sync_repo" not in without and "`run_command`" not in without
-    assert "o/r" in without and "start_coding_task" in without
+    assert "o/r" in without and "coding_task" in without and "`github`" in without
 
 
 # ── DUP-7: routing outcomes ignore the synthetic recall event ──────────────

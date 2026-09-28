@@ -14,7 +14,7 @@ SCHEMAS: list[dict[str, Any]] = [
                 "Schedule an autonomous background task. Unless skip_review=true it is created "
                 "PAUSED with a proposed plan; it runs only after the user approves it in the Tasks tab. "
                 "In the plan, name the exact tools each step uses (look at the tools you actually have — "
-                "mcp_*, github_*, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
+                "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
                 "say so in the plan rather than pretending."
             ),
             "parameters": {
@@ -66,13 +66,28 @@ SCHEMAS: list[dict[str, Any]] = [
                     },
                     "job_type": {
                         "type": "string",
-                        "enum": ["autonomous_task", "iteration_loop"],
+                        "enum": ["autonomous_task", "iteration_loop", "coding_task"],
                         "default": "autonomous_task",
                         "description": (
                             "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
                             "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
-                            "each turn is saved as iteration/<job_id>/turn-N.md."
+                            "each turn is saved as iteration/<job_id>/turn-N.md. 'coding_task': a background "
+                            "coding agent edits the bound GitHub repo and opens a PR — ONLY for authoring code "
+                            "(fix, feature, refactor), never for ingest or research; starts now, no plan review. "
+                            "Put the stack and file layout in coding_context (read them with the github tool first)."
                         )
+                    },
+                    "coding_context": {
+                        "type": "string",
+                        "description": "coding_task only: tech stack, file layout, conventions."
+                    },
+                    "branch_name": {
+                        "type": "string",
+                        "description": "coding_task only: branch to work on (auto-named if omitted)."
+                    },
+                    "base_branch": {
+                        "type": "string",
+                        "description": "coding_task only: base branch (repo default if omitted)."
                     },
                     "max_turns": {
                         "type": "integer",
@@ -281,6 +296,19 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
     session_id = ctx.session_id
     interactive = ctx.interactive
     effective_project = ctx.effective_project
+    if tool_args.get("job_type") == "coding_task":
+        # Coding work goes straight to the coding agent (what
+        # start_coding_task always did); the plan joins the brief.
+        brief = (tool_args.get("description") or "").strip()
+        if (tool_args.get("plan") or "").strip():
+            brief += "\n\nPlan:\n" + tool_args["plan"].strip()
+        return await _tool_start_coding_task(ctx, "start_coding_task", {
+            "task_description": brief,
+            "title": tool_args.get("name"),
+            "coding_context": tool_args.get("coding_context"),
+            "branch_name": tool_args.get("branch_name"),
+            "base_branch": tool_args.get("base_branch"),
+        })
     from tasks.scheduler import schedule_agent_task
     plan_text = (tool_args.get("plan") or "").strip()
     skip_review = bool(tool_args.get("skip_review", False))

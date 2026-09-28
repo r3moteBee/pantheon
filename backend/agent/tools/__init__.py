@@ -36,13 +36,20 @@ HOST_EXEC_TOOLS = frozenset({
 })
 
 # The order the model sees the tools in (kept stable across refactors).
-_ORDER = ['remember', 'recall', 'create_graph_node', 'link_concepts', 'read_file', 'write_file', 'list_workspace_files', 'web_search', 'web_fetch', 'create_task', 'send_telegram', 'index_workspace', 'link_topic_similarity', 'list_merge_proposals', 'approve_merge', 'reject_merge', 'force_merge', 'rerun_job', 'get_self_documentation', 'create_skill', 'index_artifact', 'save_transcript_artifact', 'list_source_adapters', 'ingest_source', 'batch_ingest_sources', 'extract_topics', 'save_last_response', 'show_file', 'download_file', 'generate_image', 'get_job_status', 'list_recent_jobs', 'consolidate_memory', 'code_execute', 'run_command', 'github_list_connections', 'github_read_file', 'github_list_directory', 'github_list_branches', 'github_list_pulls', 'github_create_branch', 'github_delete_branch', 'github_write_files', 'github_create_pr', 'github_merge_pr', 'start_coding_task', 'save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'convert_document', 'batch_convert_documents', 'git_sync_repo', 'git_status', 'git_create_branch', 'git_merge', 'git_commit', 'git_push_pr', 'analyze_company_financials', 'compare_company_strategy_and_risks', 'analyze_earnings_call']
+_ORDER = ['remember', 'recall', 'create_graph_node', 'link_concepts', 'read_file', 'write_file', 'list_workspace_files', 'web_search', 'web_fetch', 'create_task', 'send_telegram', 'index', 'link_topic_similarity', 'merge_topics', 'rerun_job', 'get_self_documentation', 'create_skill', 'list_source_adapters', 'ingest_source', 'batch_ingest_sources', 'extract_topics', 'save_last_response', 'show_file', 'download_file', 'generate_image', 'get_job_status', 'list_recent_jobs', 'consolidate_memory', 'code_execute', 'run_command', 'github', 'save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'batch_convert_documents', 'git_sync_repo', 'git_status', 'git_create_branch', 'git_merge', 'git_commit', 'git_push_pr', 'analyze_company_financials', 'compare_company_strategy_and_risks', 'analyze_earnings_call']
+
+# Retired names: still dispatched (their handlers are registered) so skills
+# and task plans written against them keep working, but not shown to the
+# model. github/merge_topics/index/create_task(job_type='coding_task')
+# replace them; batch_convert_documents covers convert_document and
+# ingest_source covers save_transcript_artifact.
+LEGACY_TOOLS = frozenset(['approve_merge', 'convert_document', 'force_merge', 'github_create_branch', 'github_create_pr', 'github_delete_branch', 'github_list_branches', 'github_list_connections', 'github_list_directory', 'github_list_pulls', 'github_merge_pr', 'github_read_file', 'github_write_files', 'index_artifact', 'index_workspace', 'list_merge_proposals', 'reject_merge', 'save_transcript_artifact', 'start_coding_task'])
 
 _BY_NAME = {s["function"]["name"]: s for m in (
     memory, files, artifacts, web, sources, tasks, skills, images, code, github, git, finance,
 ) for s in getattr(m, "SCHEMAS", [])}
 TOOL_SCHEMAS: list[dict[str, Any]] = [_BY_NAME[n] for n in _ORDER] + [
-    s for n, s in _BY_NAME.items() if n not in _ORDER]
+    s for n, s in _BY_NAME.items() if n not in _ORDER and n not in LEGACY_TOOLS]
 
 
 def host_exec_allowed(context: str) -> bool:

@@ -396,3 +396,41 @@ async def _tool_consolidate_memory(ctx: ToolContext, tool_name: str, tool_args: 
     result = await memory_manager.consolidate_session()
     return result
 
+
+
+# ── Consolidated entry point ─────────────────────────────────────────────────
+# index(target=…) replaces index_workspace + index_artifact (still callable).
+
+SCHEMAS.append({
+    "type": "function",
+    "function": {
+        "name": "index",
+        "description": (
+            "Index content into semantic memory and the graph so recall finds it. "
+            "target='artifact': id (one artifact) or path_prefix (a folder like 'NBJ/') — new artifacts are "
+            "indexed on save; use this to backfill or re-index after editing. target='workspace': path "
+            "(file or directory; '' = whole workspace) — Markdown, text, CSV, PDF, code. force re-indexes unchanged content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "enum": ["artifact", "workspace"]},
+                "id": {"type": "string", "description": "artifact: a single artifact id."},
+                "path_prefix": {"type": "string", "description": "artifact: folder prefix, e.g. 'NBJ/'."},
+                "path": {"type": "string", "description": "workspace: relative file or directory path."},
+                "force": {"type": "boolean"},
+            },
+            "required": ["target"],
+        },
+    },
+})
+
+
+@tool("index")
+async def _tool_index(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    from agent.tools.registry import resolve
+    target = {"artifact": "index_artifact", "workspace": "index_workspace"}.get(tool_args.get("target") or "")
+    if not target:
+        return "Error: index target must be 'artifact' or 'workspace'."
+    args = {k: v for k, v in tool_args.items() if k != "target"}
+    return await resolve(target)(ctx, target, args)

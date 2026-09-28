@@ -79,12 +79,12 @@ def build_system_prompt(
             f"`{slug}/...`. When the user says \"NBJ/\" or \"the "
             f"transcripts folder\" with no project qualifier, that "
             f"means `{slug}/NBJ/` in the artifact store. Use "
-            f"`list_artifacts` / `read_artifact` / `index_artifact` and "
+            f"`list_artifacts` / `read_artifact` / `index(target='artifact')` and "
             f"pass the bare folder name (\"NBJ/\") — the tool prepends "
             f"the project slug for you.\n"
             "- The **workspace** is a separate local filesystem for "
             "files the user dropped onto disk (uploaded files, code "
-            "checkouts). Use `list_workspace_files` / `index_workspace` "
+            "checkouts). Use `list_workspace_files` / `index(target='workspace')` "
             "ONLY when the user explicitly references a path on disk, "
             "or when you've already confirmed the file is there.\n"
             "- Default to ARTIFACTS when the user references a folder "
@@ -110,9 +110,9 @@ def build_system_prompt(
                 f"This project is bound to GitHub repo "
                 f"`{_repo_spec['owner']}/{_repo_spec['repo']}` (default branch "
                 f"`{_repo_spec['default_branch']}`). Local git and shell tools "
-                "are not available in this context — use the github_* tools to "
-                "read or open PRs, or start_coding_task for changes that need "
-                "a checkout, builds or tests.\n"
+                "are not available in this context — use the `github` tool to "
+                "read or open PRs, or create_task(job_type=\"coding_task\") for "
+                "changes that need a checkout, builds or tests.\n"
             )
         elif _repo_spec:
             repo_section = (
@@ -201,11 +201,11 @@ exact wording:
     (`mcp_*_search_youtube`, `mcp_*_fetch_transcript`, …)
   - Read a web page now → `web_fetch`; find pages → `web_search`;
     keep a source (indexed + graph) → `ingest_source`
-  - GitHub repos, PRs, issues → `github_*`
+  - GitHub repos, PRs, issues → `github` (action=…)
   - User's connected services (Slack, Gmail, Calendar, Linear, etc.) →
     `mcp_<ServiceName>_*` — read the descriptions
   - Project artifacts (transcripts, notes, reports) → `list_artifacts`,
-    `read_artifact`, `index_artifact`
+    `read_artifact`, `index`
   - Memory recall across artifacts + episodic + graph → `recall`
 
 The user often will not name the tool. "What did Nate B. Jones say
@@ -263,7 +263,7 @@ ABSOLUTE RULE: Every `create_task` invocation requires explicit user approval in
 
 When the user asks to schedule a task, DO NOT call `create_task` immediately. Instead:
 
-1. Survey what tools you have right now — MCP tools (`mcp_*`), skills, github_*, save_to_artifact, etc. Mention the relevant ones in your reply.
+1. Survey what tools you have right now — MCP tools (`mcp_*`), skills, `github`, save_to_artifact, etc. Mention the relevant ones in your reply.
 2. Reply in chat with a numbered markdown plan. Each step names the EXACT tool you intend to use. If a step needs a tool you do not have, say so explicitly (do not pretend) and ask whether the user wants to add it before scheduling.
 3. After presenting the plan, ASK the user to approve, edit, or cancel. Wait for an explicit "yes / approve / go ahead" IN THIS TURN OR THE NEXT.
 4. If they suggest changes, revise the plan and re-present.
