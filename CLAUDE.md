@@ -304,6 +304,13 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Host-exec is refused in the dispatcher too.** `execute_tool(..., host_exec=False)` refuses `HOST_EXEC_TOOLS`, and AgentCore passes its own `host_exec`. Tests that call git/run_command directly pass `host_exec=True`.
 
+**MCP call budgets (was Tavily-only credits).** `mcp_client/budget.py` meters every MCP call into `data/db/mcp_usage.db`, and `MCPManager.execute_tool` / `call_tool_raw` enforce it.
+- **Limits:** `cfg["budget"] = {daily, monthly, costs?}` on the connection config, where 0 means unlimited.
+- **Costs:** 1 per call by default. `PRESETS` (currently `tavily`, detected from the connection's name or URL) provides credit costs keyed on arguments. Per-tool rules in `budget.costs` override the preset.
+- **Over the limit:** the call is refused. Search tools that have a `query` argument fall back to the built-in `web_search`, and so does a search tool whose connection isn't connected. `call_tool_raw` raises instead.
+- **API:** `GET/PUT /api/mcp/connections/{name}/budget` (for Tavily, GET also returns the service's own `/usage` figures) and `POST …/budget/reset {period}`.
+- **Migration:** `budget.migrate_tavily` ran once at startup (vault `mcp_budget_migrated_v1`). It moved the vault `tavily_*_limit` keys and this month's `tavily_usage.json` onto the Tavily connection.
+
 **Find MCP tools by what they do, not by connection name.** `MCPManager.find_tool` accepts a pattern (`mcp_*_fetch_transcript`), a bare tool name, or a prefixed name whose connection has since been renamed. `missing_tools` checks a skill's `requires_mcp` the same way. The YouTube adapter and `save_transcript_artifact` use it, so any connection name works.
 
 **Jobs run concurrently.** `JOB_WORKER_CONCURRENCY` (default 2). `REPO_JOB_TYPES` (`coding_task`, `iteration_loop`) never run two at a time per project, via `claim_next(exclusive_types=…, busy_projects=…)`.

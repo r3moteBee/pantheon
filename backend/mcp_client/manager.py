@@ -160,6 +160,12 @@ class MCPManager:
     async def startup(self) -> None:
         """Load configs and connect to all enabled MCP servers."""
         self._configs = self._load_configs()
+        try:
+            from mcp_client import budget
+            if budget.migrate_tavily(self._configs):
+                self._save_configs()
+        except Exception:
+            logger.warning("MCP budget migration failed", exc_info=True)
         connected = 0
         for cfg in self._configs:
             if not cfg.get("enabled", True):
@@ -206,7 +212,7 @@ class MCPManager:
 
     def list_connections(self) -> list[dict[str, Any]]:
         """List all configured connections (no secrets)."""
-        from mcp_client import oauth as oauth_mod
+        from mcp_client import budget, oauth as oauth_mod
 
         result = []
         for cfg in self._configs:
@@ -244,6 +250,8 @@ class MCPManager:
                 "tools_count": len(self._clients[name].tools) if name in self._clients else 0,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
                 "excluded_tools": cfg.get("excluded_tools", []),
+                "budget": {**budget.limits(cfg), "unit": budget.unit(cfg),
+                           "preset": budget.preset_for(cfg)},
             }
             result.append(entry)
         return result
@@ -353,6 +361,25 @@ class MCPManager:
             self._clients.pop(name, None)
             return {"name": name, "status": "disabled"}
 
+    def set_budget(self, name: str, *, daily: int | None = None, monthly: int | None = None,
+                   costs: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Set a connection's daily/monthly limits (0 = unlimited) and optional
+        per-tool cost rules (see mcp_client.budget)."""
+        from mcp_client import budget
+        cfg = self._get_cfg(name)
+        if not cfg:
+            raise ValueError(f"Connection '{name}' not found")
+        b = dict(cfg.get("budget") or {})
+        if daily is not None:
+            b["daily"] = max(0, int(daily))
+        if monthly is not None:
+            b["monthly"] = max(0, int(monthly))
+        if costs is not None:
+            b["costs"] = costs
+        cfg["budget"] = b
+        self._save_configs()
+        return budget.status(cfg)
+
     async def remove_connection(self, name: str) -> dict[str, str]:
         """Remove an MCP connection and any associated OAuth tokens."""
         from mcp_client import oauth as oauth_mod
@@ -360,6 +387,11 @@ class MCPManager:
         self._clients.pop(name, None)
         self._configs = [c for c in self._configs if c["name"] != name]
         self._save_configs()
+        try:
+            from mcp_client import budget
+            budget.forget(name)
+        except Exception:
+            logger.debug("budget cleanup failed for %s", name, exc_info=True)
         # Best-effort cleanup — safe to call even if there are no tokens.
         try:
             oauth_mod.delete_tokens(name)
@@ -567,120 +599,72 @@ class MCPManager:
                     return None if original_name in excluded else (client, original_name)
         return None
 
-    def _is_tavily_tool(self, prefixed_name: str) -> bool:
-        """Check if a prefixed tool name belongs to a Tavily connection."""
-        for client in self._clients.values():
-            prefix = f"mcp_{client.name}_"
-            if prefixed_name.startswith(prefix):
-                # Check if this client is a Tavily connection
-                return "tavily" in client.url.lower() or "tavily" in client.name.lower()
-        return False
+    async def _search_fallback(self, tool_name: str, arguments: dict[str, Any], why: str) -> str | None:
+        """For a search tool that can't run (over budget, not connected),
+        answer with the built-in web search instead of failing the step."""
+        query = arguments.get("query") if isinstance(arguments, dict) else None
+        if "search" not in tool_name.lower() or not isinstance(query, str) or not query.strip():
+            return None
+        from agent.tools.web import _web_search
+        return f"[{why}. Falling back to built-in web search.]\n\n{await _web_search(query)}"
 
     async def execute_tool(self, prefixed_name: str, arguments: dict[str, Any]) -> str:
-        """Execute an MCP tool by its prefixed name.
+        """Execute an MCP tool by its prefixed name, for the LLM.
 
-        For Tavily tools, checks credit thresholds before execution and
-        falls back to built-in web_search if limits are exceeded.
+        Every call is metered against its connection's budget
+        (mcp_client.budget). Over budget, the call is refused — search
+        tools fall back to the built-in web search — and past 80% of a
+        limit the result carries a note so the agent can pace itself.
         """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
-            # Degrade gracefully if Tavily connection is missing / not defined
-            if "tavily" in prefixed_name.lower():
-                if "search" in prefixed_name.lower():
-                    fallback_query = arguments.get("query", "")
-                    if fallback_query:
-                        from agent.tools.web import _web_search
-                        fallback_result = await _web_search(fallback_query)
-                        return (
-                            f"[Tavily MCP connection is not configured or offline. "
-                            f"Falling back to built-in web search.]\n\n"
-                            f"{fallback_result}"
-                        )
-                return (
-                    f"[Tavily MCP connection is not configured or offline. "
-                    f"Please add a connection named 'tavily' in the Connections tab "
-                    f"with your Tavily API key to enable this capability.]"
-                )
-            return f"Unknown MCP tool: {prefixed_name}"
+            fallback = await self._search_fallback(
+                prefixed_name, arguments, f"MCP tool {prefixed_name} is not connected")
+            return fallback or f"Unknown MCP tool: {prefixed_name}"
 
         client, tool_name = resolved
+        from mcp_client import budget
+        cfg = self._get_cfg(client.name) or {"name": client.name}
+        call_cost = budget.cost(cfg, tool_name, arguments)
+        over = budget.check(cfg, call_cost)
+        if over:
+            logger.warning("MCP budget: refused %s — %s", prefixed_name, over)
+            fallback = await self._search_fallback(tool_name, arguments, over)
+            return fallback or (
+                f"[{over}. This call was blocked to stay within budget. Raise the limit in "
+                f"Connections → MCP servers, or wait for it to reset.]"
+            )
 
-        # ── Tavily credit threshold check ────────────────────────────
-        if self._is_tavily_tool(prefixed_name):
-            from mcp_client.tavily_credits import get_tavily_tracker
-            tracker = get_tavily_tracker()
-            threshold_check = tracker.check_threshold()
-
-            if threshold_check["exceeded"]:
-                reason = threshold_check["reason"]
-                usage = threshold_check["usage"]
-                logger.warning(
-                    "Tavily threshold exceeded for '%s': %s",
-                    tool_name, reason,
-                )
-
-                # Only fallback for search — other tools have no equivalent
-                if "search" in tool_name.lower():
-                    fallback_query = arguments.get("query", "")
-                    if fallback_query:
-                        from agent.tools.web import _web_search
-                        fallback_result = await _web_search(fallback_query)
-                        return (
-                            f"[Tavily credit limit reached — {reason}. "
-                            f"Falling back to built-in web search.]\n\n"
-                            f"{fallback_result}"
-                        )
-
-                # For non-search tools, return a clear error
-                return (
-                    f"[Tavily credit limit reached — {reason}. "
-                    f"Daily: {usage['daily_used']:.0f}/{usage['daily_limit']}, "
-                    f"Monthly: {usage['monthly_used']:.0f}/{usage['monthly_limit']}. "
-                    f"This tool call was blocked to stay within budget. "
-                    f"Adjust limits in Settings → MCP or wait for the limit to reset.]"
-                )
-
-        # ── Execute the tool ─────────────────────────────────────────
         try:
             call_result = await client.call_tool(tool_name, arguments)
-            result = _format_tool_result(call_result)
-
-            # Record Tavily credit usage after successful call
-            if self._is_tavily_tool(prefixed_name):
-                from mcp_client.tavily_credits import get_tavily_tracker
-                tracker = get_tavily_tracker()
-                credits = tracker.record_usage(tool_name, arguments)
-
-                # Check if we're approaching the limit (80% warning)
-                usage = tracker.get_usage()
-                for limit_type in ("daily", "monthly"):
-                    limit = usage[f"{limit_type}_limit"]
-                    used = usage[f"{limit_type}_used"]
-                    if limit > 0 and used >= limit * 0.8 and used < limit:
-                        remaining = limit - used
-                        result += (
-                            f"\n\n[Note: Tavily {limit_type} credits approaching limit — "
-                            f"{used:.0f}/{limit:.0f} used, {remaining:.0f} remaining]"
-                        )
-
-            return result
         except Exception as e:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"
+        budget.record(client.name, tool_name, call_cost)
+        result = _format_tool_result(call_result)
+        note = budget.warning(cfg)
+        return f"{result}\n\n{note}" if note else result
 
     async def call_tool_raw(self, prefixed_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call an MCP tool for programmatic use (adapters, not the LLM).
 
         Returns the client's ``{"text", "structured", "is_error"}`` dict
-        unformatted. Raises on unknown tool, transport error, or when the
-        server reports isError — unlike execute_tool, which folds all of
-        that into prose for the model.
+        unformatted. Raises on unknown tool, transport error, an exhausted
+        budget, or when the server reports isError — unlike execute_tool,
+        which folds all of that into prose for the model.
         """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
             raise RuntimeError(f"MCP tool not available: {prefixed_name}")
         client, tool_name = resolved
+        from mcp_client import budget
+        cfg = self._get_cfg(client.name) or {"name": client.name}
+        call_cost = budget.cost(cfg, tool_name, arguments)
+        over = budget.check(cfg, call_cost)
+        if over:
+            raise RuntimeError(over)
         result = await client.call_tool(tool_name, arguments)
+        budget.record(client.name, tool_name, call_cost)
         if result.get("is_error"):
             raise RuntimeError(f"MCP tool {prefixed_name} reported an error: {(result.get('text') or '')[:500]}")
         return result

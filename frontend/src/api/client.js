@@ -349,12 +349,10 @@ export const mcpApi = {
   listTools: () => api.get('/api/mcp/tools'),
   toggleTool: (connectionName, toolName, excluded) =>
     api.put(`/api/mcp/connections/${connectionName}/tools`, { tool_name: toolName, excluded }),
-  // Tavily credit management
-  getTavilyUsage: () => api.get('/api/mcp/tavily/usage'),
-  setTavilyThresholds: (dailyLimit, monthlyLimit) =>
-    api.put('/api/mcp/tavily/thresholds', { daily_limit: dailyLimit, monthly_limit: monthlyLimit }),
-  resetTavilyDaily: () => api.post('/api/mcp/tavily/reset-daily'),
-  resetTavilyMonthly: () => api.post('/api/mcp/tavily/reset-monthly'),
+  // Per-connection call budget (every connection is metered)
+  getBudget: (name) => api.get(`/api/mcp/connections/${encodeURIComponent(name)}/budget`),
+  setBudget: (name, body) => api.put(`/api/mcp/connections/${encodeURIComponent(name)}/budget`, body),
+  resetBudget: (name, period) => api.post(`/api/mcp/connections/${encodeURIComponent(name)}/budget/reset`, { period }),
   scanPorts: () => api.post('/api/mcp/scan'),
 }
 

@@ -37,9 +37,14 @@ class ToolToggleRequest(BaseModel):
     excluded: bool
 
 
-class TavilyThresholdRequest(BaseModel):
-    daily_limit: int | None = None
-    monthly_limit: int | None = None
+class BudgetRequest(BaseModel):
+    daily: int | None = None      # 0 = unlimited
+    monthly: int | None = None
+    costs: dict[str, Any] | None = None   # per-tool cost rules, see mcp_client.budget
+
+
+class BudgetResetRequest(BaseModel):
+    period: str  # "daily" | "monthly"
 
 
 # ── List connections ─────────────────────────────────────────────────────────
@@ -174,80 +179,62 @@ async def list_mcp_tools() -> dict[str, Any]:
     return {"tools": tools, "count": len(tools)}
 
 
-# ── Tavily credit management ────────────────────────────────────────────────
+# ── Per-connection budgets ──────────────────────────────────────────────────
 
-@router.get("/mcp/tavily/usage")
-async def get_tavily_usage() -> dict[str, Any]:
-    """Get Tavily API credit usage — combines real Tavily API data with local thresholds.
-
-    Queries https://api.tavily.com/usage for actual account/key usage,
-    then merges in local threshold settings for the fallback system.
-    """
-    import httpx
-    from mcp_client.tavily_credits import get_tavily_tracker
-
-    tracker = get_tavily_tracker()
-    local = tracker.get_usage()
-    thresholds = tracker.get_thresholds()
-
-    # Try to fetch real usage from Tavily's API
-    remote: dict[str, Any] = {}
+async def _remote_usage(cfg: dict[str, Any]) -> dict[str, Any]:
+    """What the service itself reports, for presets that expose it
+    (Tavily's /usage: key and account totals). Best effort."""
+    from mcp_client import budget
+    if budget.preset_for(cfg) != "tavily" or not cfg.get("api_key"):
+        return {}
     try:
-        mgr = get_mcp_manager()
-        # Find the Tavily connection's API key
-        api_key = ""
-        for cfg in mgr._configs:
-            if "tavily" in cfg.get("name", "").lower() or "tavily" in cfg.get("url", "").lower():
-                api_key = cfg.get("api_key", "")
-                break
-
-        if api_key:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://api.tavily.com/usage",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                resp.raise_for_status()
-                remote = resp.json()
+        from utils.http import pooled_client
+        async with pooled_client(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.tavily.com/usage",
+                headers={"Authorization": f"Bearer {cfg['api_key']}"},
+            )
+        resp.raise_for_status()
+        return resp.json()
     except Exception as e:
         logger.debug("Could not fetch Tavily remote usage: %s", e)
-
-    return {
-        "local": local,
-        "thresholds": thresholds,
-        "remote": remote,
-    }
+        return {}
 
 
-@router.put("/mcp/tavily/thresholds")
-async def set_tavily_thresholds(req: TavilyThresholdRequest) -> dict[str, Any]:
-    """Set Tavily daily and/or monthly credit thresholds. Set to 0 for unlimited."""
-    from mcp_client.tavily_credits import get_tavily_tracker
-    tracker = get_tavily_tracker()
-    result = tracker.set_thresholds(
-        daily_limit=req.daily_limit,
-        monthly_limit=req.monthly_limit,
-    )
-    logger.info("Tavily thresholds updated: %s", result)
-    return {"status": "updated", **result}
+def _cfg_or_404(name: str) -> dict[str, Any]:
+    cfg = get_mcp_manager()._get_cfg(name)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=f"Connection '{name}' not found")
+    return cfg
 
 
-@router.post("/mcp/tavily/reset-daily")
-async def reset_tavily_daily() -> dict[str, str]:
-    """Reset today's Tavily credit usage counter."""
-    from mcp_client.tavily_credits import get_tavily_tracker
-    tracker = get_tavily_tracker()
-    tracker.reset_daily()
-    return {"status": "daily_usage_reset"}
+@router.get("/mcp/connections/{name}/budget")
+async def get_budget(name: str) -> dict[str, Any]:
+    """Usage this day/month against the connection's limits (+ the
+    service's own numbers where a preset knows how to fetch them)."""
+    from mcp_client import budget
+    cfg = _cfg_or_404(name)
+    return {**budget.status(cfg), "remote": await _remote_usage(cfg)}
 
 
-@router.post("/mcp/tavily/reset-monthly")
-async def reset_tavily_monthly() -> dict[str, str]:
-    """Reset this month's Tavily credit usage counter."""
-    from mcp_client.tavily_credits import get_tavily_tracker
-    tracker = get_tavily_tracker()
-    tracker.reset_monthly()
-    return {"status": "monthly_usage_reset"}
+@router.put("/mcp/connections/{name}/budget")
+async def set_budget(name: str, req: BudgetRequest) -> dict[str, Any]:
+    """Set daily/monthly limits (0 = unlimited) and optional per-tool costs."""
+    _cfg_or_404(name)
+    status = get_mcp_manager().set_budget(name, daily=req.daily, monthly=req.monthly, costs=req.costs)
+    logger.info("MCP budget for %s: daily=%s monthly=%s", name, status["daily"]["limit"], status["monthly"]["limit"])
+    return status
+
+
+@router.post("/mcp/connections/{name}/budget/reset")
+async def reset_budget(name: str, req: BudgetResetRequest) -> dict[str, Any]:
+    """Zero this day's or month's usage counter for the connection."""
+    from mcp_client import budget
+    if req.period not in ("daily", "monthly"):
+        raise HTTPException(status_code=400, detail="period must be daily or monthly")
+    cfg = _cfg_or_404(name)
+    budget.reset(name, req.period)
+    return budget.status(cfg)
 
 
 # ── Direct Tavily API test (bypasses MCP entirely) ────────────────────────────
