@@ -150,7 +150,7 @@ async def test_analyze_earnings_call(mock_get_provider, tmp_path):
     
     mock_get_provider.return_value = mock_prov
 
-    with patch("agent.tools._get_workspace_base", return_value=tmp_path):
+    with patch("agent.tools.workspace._get_workspace_base", return_value=tmp_path):
         res = await execute_tool(
             tool_name="analyze_earnings_call",
             tool_args={"file_path": "transcript.txt", "extract_guidance": True},

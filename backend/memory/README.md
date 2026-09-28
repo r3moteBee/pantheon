@@ -50,7 +50,7 @@ wires the `embed` route's `embed` / `embed_many`.
 `recall` returns dicts (`content`, `tier`, `source`, `score`, `metadata`).
 Graph hits have content `[graph:<node_type>] <label>` plus `→` / `←` edge
 lines; augmentation blocks read `[graph context for '<label>']`. The
-`recall` agent tool (`agent/tools.py`) renders them as:
+`recall` agent tool (`agent/tools/memory.py`) renders them as:
 
 ```
 [semantic/artifact] <chunk>

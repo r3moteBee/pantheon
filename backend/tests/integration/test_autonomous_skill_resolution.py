@@ -42,7 +42,7 @@ def test_create_task_schema_has_skill_name():
     """The agent-facing create_task schema exposes skill_name as an
     optional string property with a description that points at
     /skill-name resolution."""
-    src = _read("agent/tools.py")
+    src = _read("agent/tools/tasks.py")
     # Find the create_task schema's properties block.
     m = re.search(
         r'"name": "create_task",.*?"properties": \{(.*?)\},\s*"required":',

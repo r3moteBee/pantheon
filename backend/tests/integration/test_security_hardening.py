@@ -183,7 +183,7 @@ async def test_download_file_content_disposition_traversal_contained(tmp_path):
     ws = tmp_path / "workspace"
     ws.mkdir()
     headers = {"content-disposition": 'attachment; filename="../../../evil.sh"'}
-    with patch("agent.tools._get_workspace_base", return_value=ws.resolve()), \
+    with patch("agent.tools.workspace._get_workspace_base", return_value=ws.resolve()), \
          patch("utils.net.httpx.AsyncClient", _mock_client_factory(headers)), \
          patch("utils.net._private_fetch_allowed", return_value=True):
         res = await execute_tool(
@@ -199,7 +199,7 @@ async def test_download_file_honors_filename_arg(tmp_path):
     from agent.tools import execute_tool
     ws = tmp_path / "workspace"
     ws.mkdir()
-    with patch("agent.tools._get_workspace_base", return_value=ws.resolve()), \
+    with patch("agent.tools.workspace._get_workspace_base", return_value=ws.resolve()), \
          patch("utils.net.httpx.AsyncClient", _mock_client_factory({})), \
          patch("utils.net._private_fetch_allowed", return_value=True):
         await execute_tool(
@@ -212,7 +212,7 @@ async def test_download_file_honors_filename_arg(tmp_path):
 @pytest.mark.asyncio
 async def test_download_file_rejects_non_http_scheme(tmp_path):
     from agent.tools import execute_tool
-    with patch("agent.tools._get_workspace_base", return_value=tmp_path.resolve()):
+    with patch("agent.tools.workspace._get_workspace_base", return_value=tmp_path.resolve()):
         res = await execute_tool(
             "download_file", {"url": "file:///etc/passwd", "path": "x.txt"}, None,
         )

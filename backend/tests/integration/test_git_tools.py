@@ -4,8 +4,8 @@ from pathlib import Path
 from agent.tools import execute_tool
 
 @pytest.mark.asyncio
-@patch("agent.tools._get_workspace_base")
-@patch("agent.tools._run_git_cmd")
+@patch("agent.tools.workspace._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd")
 async def test_git_status_tool(mock_run, mock_get_workspace):
     mock_get_workspace.return_value = Path("/app/data/projects/test/workspace")
     mock_run.return_value = (0, "M  file.txt", "")
@@ -15,8 +15,8 @@ async def test_git_status_tool(mock_run, mock_get_workspace):
     mock_run.assert_called_once_with(["status", "--porcelain"], Path("/app/data/projects/test/workspace"))
 
 @pytest.mark.asyncio
-@patch("agent.tools._get_workspace_base")
-@patch("agent.tools._run_git_cmd")
+@patch("agent.tools.workspace._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd")
 async def test_git_create_branch_new(mock_run, mock_get_workspace):
     mock_get_workspace.return_value = Path("/app/data/projects/test/workspace")
     mock_run.return_value = (0, "", "")
@@ -26,8 +26,8 @@ async def test_git_create_branch_new(mock_run, mock_get_workspace):
     mock_run.assert_called_once_with(["checkout", "-b", "feature-test"], Path("/app/data/projects/test/workspace"))
 
 @pytest.mark.asyncio
-@patch("agent.tools._get_workspace_base")
-@patch("agent.tools._run_git_cmd")
+@patch("agent.tools.workspace._get_workspace_base")
+@patch("agent.tools.workspace._run_git_cmd")
 async def test_git_commit_all(mock_run, mock_get_workspace):
     mock_get_workspace.return_value = Path("/app/data/projects/test/workspace")
 

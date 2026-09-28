@@ -90,7 +90,7 @@ Logging in sets an HttpOnly `pantheon_session` cookie (expires after `AUTH_SESSI
 Pantheon is built to be easily customizable:
 
 * **Add an LLM Endpoint:** In **Settings → LLMs**, add an endpoint (OpenAI-compatible, Anthropic, Ollama or custom), click **Probe** to pull its models, then add them to task-class routes under **Model routing**.
-* **Add a Custom Tool:** Edit `backend/agent/tools.py` to add a new schema to `TOOL_SCHEMAS` and implement its execution block in the dispatch method.
+* **Add a Custom Tool:** Pick the domain module in `backend/agent/tools/` (or add one), add the schema to its `SCHEMAS`, write an `@tool("name")` handler, and add the name to `_ORDER` in `agent/tools/__init__.py`. See [docs/tools.md](docs/tools.md).
 * **Create a Source Adapter:** Subclass `SourceAdapter` in `backend/sources/adapters/` and import/register it in `backend/sources/adapters/__init__.py`.
 * **Add a Custom Skill:** Ask the agent to create one (it uses the `create_skill` tool), use **New** on the Skills page, or write `skill.json` + `instructions.md` under `data/skills/<slug>/`. Invoke a skill with `/<slug>` in chat.
 
