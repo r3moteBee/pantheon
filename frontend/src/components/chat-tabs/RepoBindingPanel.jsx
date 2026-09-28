@@ -31,7 +31,7 @@ export default function RepoBindingPanel({ projectId }) {
       setBinding(b.data?.binding || null)
       setConnections(c.data?.connections || [])
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setLoading(false) }
   }
 
@@ -49,7 +49,7 @@ export default function RepoBindingPanel({ projectId }) {
       const res = await connectionsApi.listConnectionRepos(conn.id)
       setPicker({ connection: conn, repos: res.data?.repos || [] })
     } catch (e) {
-      setPicker({ connection: conn, error: e?.response?.data?.detail || e.message })
+      setPicker({ connection: conn, error: e.message })
     }
   }
 
@@ -61,7 +61,7 @@ export default function RepoBindingPanel({ projectId }) {
       const res = await connectionsApi.listConnectionBranches(conn.id, owner, repoName)
       setPicker({ ...picker, repo, branches: res.data?.branches || [], selectedBranch: repo.default_branch })
     } catch (e) {
-      setPicker({ ...picker, repo, branchesError: e?.response?.data?.detail || e.message,
+      setPicker({ ...picker, repo, branchesError: e.message,
                   selectedBranch: repo.default_branch })
     }
   }
@@ -78,7 +78,7 @@ export default function RepoBindingPanel({ projectId }) {
       setPicker(null)
       await refresh()
     } catch (e) {
-      setPicker({ ...picker, bindError: e?.response?.data?.detail || e.message })
+      setPicker({ ...picker, bindError: e.message })
     }
   }
 

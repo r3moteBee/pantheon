@@ -206,7 +206,7 @@ function SkillTester({ skillName }) {
       const res = await skillsApi.testSkill(skillName, message.trim())
       setResult(res.data)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setBusy(false)
     }
@@ -289,7 +289,7 @@ function AIAssistPanel({ skillName, manifestContent, instructionsContent, onProp
       const res = await skillsApi.improve(instructionsContent, { goal: goal || null, skillName })
       onProposeInstructions(res.data.instructions)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setImproveBusy(false)
     }
@@ -309,7 +309,7 @@ function AIAssistPanel({ skillName, manifestContent, instructionsContent, onProp
       )
       setProposedTriggers(res.data.triggers || [])
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setOptBusy(false)
     }
@@ -404,7 +404,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       setEditable(res.data.editable)
       setError('')
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setLoading(false)
     }
@@ -424,7 +424,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       setContent(text)
       setActivePath(path)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     }
   }, [skillName, contents])
 
@@ -461,7 +461,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       setBaselines((b) => ({ ...b, [activePath]: contents[activePath] }))
       if (onSaved) onSaved()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setSaving(false)
     }
@@ -486,7 +486,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       })
       if (onSaved) onSaved()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setSaving(false)
     }
@@ -510,7 +510,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       )
       setAiLint(res.data || { findings: [] })
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setAiLintBusy(false)
     }
@@ -526,7 +526,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       setContent(initial)
       setShowNewFile(false)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     }
   }
 
@@ -554,7 +554,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       setRenamingPath(null)
       setRenameValue('')
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     }
   }
 
@@ -568,7 +568,7 @@ export default function SkillEditor({ skillName, onClose, onSaved }) {
       if (activePath === path) setActivePath('skill.json')
       await loadFiles()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     }
   }
 
@@ -922,7 +922,7 @@ function VersionHistoryModal({ skillName, editable, onClose, onRestored }) {
         const res = await skillsApi.listVersions(skillName)
         setVersions(res.data.versions || [])
       } catch (e) {
-        setError(e?.response?.data?.detail || e.message)
+        setError(e.message)
       } finally {
         setLoading(false)
       }
@@ -936,7 +936,7 @@ function VersionHistoryModal({ skillName, editable, onClose, onRestored }) {
       await skillsApi.restoreVersion(skillName, v.version_id)
       onRestored && onRestored()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setBusy('')
     }
@@ -1005,7 +1005,7 @@ function PublishModal({ skillName, onClose }) {
         setRegistries(regs)
         if (regs.length > 0) setRegistryId(regs[0].id)
       } catch (e) {
-        setError(e?.response?.data?.detail || e.message)
+        setError(e.message)
       }
     })()
   }, [])
@@ -1018,7 +1018,7 @@ function PublishModal({ skillName, onClose }) {
       const res = await skillsApi.publishSkill(skillName, registryId, note)
       setResult(res.data)
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setBusy(false)
     }
@@ -1159,7 +1159,7 @@ export function NewSkillModal({ onClose, onCreated }) {
         onCreated(res.data.name)
       }
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally {
       setBusy(false)
     }

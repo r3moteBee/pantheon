@@ -42,7 +42,7 @@ async def _call_vision_extractor(image_bytes: bytes, mime: str) -> dict[str, Any
     Tries providers in order: vision → primary → prefill. Raises on
     total failure so the handler can record an error.
     """
-    from models.provider import get_vision_provider, get_provider, get_prefill_provider
+    from models.provider import get_provider_for
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     messages = [
@@ -54,11 +54,11 @@ async def _call_vision_extractor(image_bytes: bytes, mime: str) -> dict[str, Any
     ]
 
     providers: list[tuple[str, Any]] = []
-    vp = get_vision_provider()
+    vp = get_provider_for("vision")
     if vp:
         providers.append(("vision", lambda: vp))
-    providers.append(("primary", get_provider))
-    providers.append(("prefill", get_prefill_provider))
+    providers.append(("primary", lambda: get_provider_for("agent")))
+    providers.append(("prefill", lambda: get_provider_for("summarize")))
 
     last_err: Exception | None = None
     for label, get_prov in providers:

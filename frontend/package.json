@@ -1,7 +1,7 @@
 {
   "name": "pantheon-frontend",
   "private": true,
-  "version": "2026.09.27.He",
+  "version": "2026.09.28.H1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
@@ -13,6 +13,7 @@
     "@codemirror/lang-json": "^6.0.1",
     "@codemirror/lang-markdown": "^6.2.5",
     "@codemirror/lang-python": "^6.1.6",
+    "@codemirror/view": "^6.43.0",
     "@uiw/react-codemirror": "^4.21.25",
     "axios": "^1.7.2",
     "d3": "^7.9.0",

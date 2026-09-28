@@ -94,6 +94,8 @@ class SkillRegistry:
                             continue
                         self._skills[skill.name] = skill
                         loaded += 1
+                        if skill.manifest.security_scan is None:
+                            self._static_scan(skill)
 
         self._loaded = True
         logger.info("Skill registry loaded: %d skills (%d bundled)", loaded, len(self._bundled_names))
@@ -205,6 +207,21 @@ class SkillRegistry:
         except Exception as e:
             logger.debug("Failed to load scan result for '%s': %s", skill_name, e)
             return None
+
+    def _static_scan(self, skill: LoadedSkill) -> None:
+        """New, edited or hand-written user skills have no valid scan; give
+        them the fast deterministic one so nothing reaches the prompt
+        unscanned. A failure blocks the skill (LoadedSkill.scan_blocked)."""
+        try:
+            from skills.scanner import static_scan
+            result = static_scan(Path(skill.skill_dir), skill.manifest)
+        except Exception as e:
+            logger.warning("Static scan failed for '%s': %s", skill.name, e)
+            return
+        skill.manifest.security_scan = result
+        self.save_scan_result(skill.name, result)
+        if not result.passed:
+            logger.warning("Skill '%s' blocked by its security scan (risk %.2f)", skill.name, result.risk_score)
 
     def save_scan_result(self, skill_name: str, result: ScanResult) -> None:
         """Persist a scan result to disk, tagged with a content hash."""

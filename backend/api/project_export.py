@@ -29,6 +29,15 @@ EXPORT_FORMAT_VERSION = "1.0"
 EXPORT_MAGIC = "pantheon-project-export"
 
 
+def _connect_ro(path: str):
+    """Open a SQLite DB read-only. Export only reads other stores' files
+    (including legacy-path candidates), so it must never create a file,
+    change journal mode or write; ``mode=ro`` guarantees that."""
+    import sqlite3
+    uri = Path(path).resolve().as_uri() + "?mode=ro"
+    return sqlite3.connect(uri, uri=True)
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -55,7 +64,6 @@ def _resolve_episodic_db_path() -> str:
     differ from settings.episodic_db_path. We try the settings path first,
     then fall back to the class default to match runtime behaviour.
     """
-    import sqlite3
     from pathlib import Path as _P
 
     candidates = [
@@ -70,7 +78,7 @@ def _resolve_episodic_db_path() -> str:
         p = _P(path)
         if p.exists():
             try:
-                conn = sqlite3.connect(path)
+                conn = _connect_ro(path)
                 conn.execute("SELECT count(*) FROM messages")
                 conn.close()
                 logger.debug("Episodic DB resolved to: %s", path)
@@ -83,7 +91,6 @@ def _resolve_episodic_db_path() -> str:
 
 def _resolve_graph_db_path() -> str:
     """Resolve the actual graph DB path used at runtime."""
-    import sqlite3
     from pathlib import Path as _P
 
     candidates = [
@@ -98,7 +105,7 @@ def _resolve_graph_db_path() -> str:
         p = _P(path)
         if p.exists():
             try:
-                conn = sqlite3.connect(path)
+                conn = _connect_ro(path)
                 conn.execute("SELECT count(*) FROM graph_nodes")
                 conn.close()
                 logger.debug("Graph DB resolved to: %s", path)
@@ -116,7 +123,7 @@ def _collect_episodic(project_id: str) -> dict[str, Any]:
 
     logger.info("Exporting episodic memory from: %s (project=%s)", db_path, project_id)
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _connect_ro(db_path)
         conn.row_factory = sqlite3.Row
 
         for row in conn.execute(
@@ -159,7 +166,7 @@ def _collect_graph(project_id: str) -> dict[str, Any]:
 
     logger.info("Exporting graph memory from: %s (project=%s)", db_path, project_id)
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _connect_ro(db_path)
         conn.row_factory = sqlite3.Row
 
         for row in conn.execute(

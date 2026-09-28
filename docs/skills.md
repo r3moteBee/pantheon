@@ -62,7 +62,7 @@ Enablement is per project. A skill is enabled unless its project is in `disabled
 
 | Module | Role |
 |---|---|
-| `registry.py` | `SkillRegistry`: loads both directories, keeps per-project enable/disable state, persists scan results by content hash, runs the enable-time scan gate, provides `scan_summary()` |
+| `registry.py` | `SkillRegistry`: loads both directories, keeps per-project enable/disable state, persists scan results by content hash, statically scans unscanned user skills at load, runs the enable-time scan gate, provides `scan_summary()` |
 | `resolver.py` | `resolve_explicit`, `resolve_auto`, `build_skill_context` (instructions + chains) |
 | `editor.py` | File tree CRUD confined to user skills. `create_blank_skill` backs the `create_skill` tool. LLM helpers: scaffold, improve instructions, optimize triggers, lint/AI-lint. `test_skill_against_message` is a dry-run match, not an execution. |
 | `importer.py` | Hub adapters (`skill_md`, `github`, `clawhub`, `local` upload, plus configured generic registries). Safe zip/tar extraction, scan on import, auto-quarantine on failure. |
@@ -86,4 +86,4 @@ External registries implement the [skill registry protocol](skill-registry-proto
 | Security | `POST /skills/scan/all`, `GET /skills/scan/summary`, `POST/GET /skills/{name}/scan`, `GET /skills/quarantine/list`, `POST /skills/{name}/quarantine`, `POST /skills/{name}/unquarantine`, `GET /skills/security/override-status` |
 | Analytics | `GET /skills/analytics`, `POST /skills/analytics/reset` |
 
-Import always runs the scanner. Layer 3 (the AI review) is skipped only with `ai_review: false`. Enabling a non-bundled skill that has no scan, or failed its scan, returns 403. A forced enable (`force_enable` + `override_password`) is covered in [security.md](security.md#skill-scanner-and-gates).
+Import always runs the scanner. Layer 3 (the AI review) is skipped only with `ai_review: false`. Any other user skill without a valid scan (new, edited, hand-written) gets the static layers at registry load, and `create_skill` runs the full scan. Enabling a non-bundled skill that has no scan, or failed its scan, returns 403. A forced enable (`force_enable` + `override_password`) is covered in [security.md](security.md#skill-scanner-and-gates).

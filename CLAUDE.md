@@ -85,7 +85,7 @@ Run integration tests:
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-Currently ~490 tests (5 skipped). `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. Expand them when fixing regressions.
+Currently ~500 tests (5 skipped). `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. Expand them when fixing regressions.
 
 ## Versioning convention
 
@@ -286,6 +286,25 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Frontend routes and heavy libs are lazy-loaded** (`React.lazy` pages, dynamic `import('mermaid')`, `import('jspdf')`). Keep new heavy deps behind dynamic imports.
 
+**Frontend conventions.**
+- **Markdown:** always render it with `components/Markdown.jsx` (remark-gfm + mermaid). Pass a `components` override for per-site tweaks — never configure ReactMarkdown directly.
+- **API errors:** the axios interceptor rejects with an `Error` whose `.message` is the readable API error (it also carries `.status`, `.data` and `.response`). Use `e.message`, not `e.response.data.detail`.
+- **Notifications:** use `addNotification({type, message})` toasts, not `alert()`.
+- **Colors:** `brand` and the in-between grays (250/350/750/850) are defined in `tailwind.config.js`. An undefined color step silently generates no CSS, so add it there before using it.
+- **Links:** use router `<Link>` for internal links. A raw `<a href>` reloads the page and drops the chat WebSocket.
+
+**Tool calls with bad arguments aren't run.** `models.provider.parse_tool_args` marks non-JSON or non-object arguments with `args_error`. AgentCore then returns an error result to the model instead of calling the tool with `{}`.
+
+**Host-exec is refused in the dispatcher too.** `execute_tool(..., host_exec=False)` refuses `HOST_EXEC_TOOLS`, and AgentCore passes its own `host_exec`. Tests that call git/run_command directly pass `host_exec=True`.
+
+**MCP tool names go through `mcp_client.client.tool_function_name`.** It produces `mcp_<conn>_<tool>`, or for names over 64 characters a 55-character prefix plus a hash. `resolve_tool_call` maps names back through the same function, so never build `f"mcp_{…}"` by hand.
+
+**Skills are scanned before they reach the prompt.** A user skill with no valid scan (new, edited or hand-written) gets the static layers when the registry loads. `create_skill` runs the full scan. `scanner.INSTRUCTION_PATTERNS` flags injection phrasing in `instructions.md`.
+
+**Store-owned SQL.** Code that needs another component's data calls that store's method, e.g. `EpisodicMemory.set_conversation_title` / `merge_conversation_metadata` / `delete_conversation` / `project_stats`, or `GraphMemory.edges_along_path` / `count_nodes`. It doesn't open that store's DB file. Export and self-doc open DBs read-only (`project_export._connect_ro`). Runtime-setting readers live in `utils/runtime_settings.py`, not in routers.
+
+**Config.** `config.Settings` uses plain defaults: the env var is the field name upper-cased. `CHROMA_HOST` empty means embedded Chroma. `LLM_*`, `EMBEDDING_MODEL` and `EMBEDDING_BASE_URL`/`EMBEDDING_API_KEY` are only bootstrap fallbacks used when no route exists (`models.provider._fallback_embedder` never sends the LLM key to the embedding host).
+
 **SQLite PRAGMAs.** Every long-lived store routes connections through `apply_sqlite_pragmas(conn)` in `backend/db_utils.py`, which sets `journal_mode=WAL`, `synchronous=NORMAL`, and `foreign_keys=ON`. Don't add a new SQLite store without calling this helper at its `_connect`/`_init_db` site — the WAL setting persists in the DB header but `synchronous=NORMAL` is per-connection and is where most of the write-throughput win comes from.
 
 ## Design rationale (decisions outside reviewers often misread)
@@ -302,7 +321,7 @@ These are deliberate architectural calls. If a code review recommends reversing 
 
 **Recent-jobs block is capped low.** `_build_recent_jobs_block` shows the last 5 jobs (24h window) — enough for "you started X earlier" continuity without bloating the system prompt. Don't raise it without a concrete reason; the value is anti-confabulation, not exhaustive history.
 
-**Frontend settings is already componentized.** `frontend/src/components/settings/` contains EndpointCard, AddEndpointForm, EndpointList, ModelRouting, RoutingUsage. Reviewers who recommend "extract settings into separate files" are looking at stale state — verify against the current tree before acting.
+**Frontend is componentized.** `components/Settings.jsx` is only the tab shell; every tab lives in `components/settings/` (LLM endpoints/routing/tuning, RAG, skill hubs, tasks + job runs, security, sandbox, secrets, system update). `components/Chat.jsx` is a composition shell over `components/chat/` (`useChatSocket`, `useChatAttachments`, `Message`, `ToolCallBlock`, `ChatComposer`, history drawer, save modal). Reviewers who recommend "split Settings/Chat" are looking at stale state — verify against the current tree before acting.
 
 **Single-user, single-process.** Pantheon does not have multi-tenant request fan-out, separate workers, or horizontal scaling. APScheduler + JobWorker share the FastAPI process by design. Recommendations that assume Pantheon needs the patterns of a multi-tenant SaaS (request-scoped DB pools, per-tenant isolation, queue/worker split) are misapplying tuatha's architecture here.
 

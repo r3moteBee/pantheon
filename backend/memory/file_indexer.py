@@ -385,7 +385,7 @@ class FileIndexer:
         
         # Load dynamic chunk settings from vault if available
         try:
-            from api.settings import get_active_chunk_settings
+            from utils.runtime_settings import get_active_chunk_settings
             active_size, active_overlap, active_strategy = get_active_chunk_settings()
         except Exception:
             active_size, active_overlap, active_strategy = DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP, "headings"

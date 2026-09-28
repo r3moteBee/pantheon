@@ -17,7 +17,7 @@ export default function ChatRouter({ refreshKey }) {
     try {
       setView(await llmApi.setRouter(p))
     } catch (e) {
-      setStatus(`Error: ${e?.response?.data?.detail || e.message}`)
+      setStatus(`Error: ${e.message}`)
     }
   }
 

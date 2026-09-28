@@ -57,8 +57,11 @@ src/
 ├── pages/                One file per route (lazy-loaded; LoginPage is eager)
 ├── components/
 │   ├── Chat.jsx, ChatTabs.jsx, Layout.jsx, Settings.jsx, MCPConnections.jsx, Skills.jsx, …
-│   ├── settings/         LLM UI: EndpointList, EndpointCard, AddEndpointForm, ModelRouting,
-│   │                     ChatRouter, RoutingUsage, RouterTuning
+│   ├── Markdown.jsx      The one markdown renderer (remark-gfm + mermaid); pass `components` to override
+│   ├── chat/             Chat.jsx's parts: useChatSocket, useChatAttachments, Message, ToolCallBlock,
+│   │                     ChatComposer, ChatHistoryDrawer, SaveToArtifactModal
+│   ├── settings/         One file per Settings tab (LLM endpoints/routing/tuning, RAG, skill hubs,
+│   │                     tasks + job runs, security, sandbox, secrets, system update)
 │   ├── chat-tabs/        ProjectTasksPanel, ProjectSettingsPanel, RepoBindingPanel
 │   ├── connections/      SearchProvidersTab
 │   ├── help/             Help drawer, tooltips, provider presets

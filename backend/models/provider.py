@@ -365,16 +365,16 @@ class ModelProvider:
             # Emit completed tool calls
             for idx in sorted(tool_call_accum.keys()):
                 tc = tool_call_accum[idx]
-                try:
-                    args = json.loads(tc["args_str"]) if tc["args_str"] else {}
-                except json.JSONDecodeError:
-                    args = {}
-                yield {
+                args, args_error = parse_tool_args(tc["args_str"])
+                event = {
                     "type": "tool_call",
                     "id": tc["id"],
                     "name": tc["name"],
                     "args": args,
                 }
+                if args_error:
+                    event["args_error"] = args_error
+                yield event
 
             yield {"type": "done", "content": current_text}
 
@@ -435,15 +435,15 @@ class ModelProvider:
             tool_calls = []
             for tc in raw_tool_calls:
                 fn = tc.get("function", {})
-                try:
-                    args = json.loads(fn.get("arguments", "{}"))
-                except json.JSONDecodeError:
-                    args = {}
-                tool_calls.append({
+                args, args_error = parse_tool_args(fn.get("arguments"))
+                call = {
                     "id": tc.get("id", str(uuid.uuid4())),
                     "name": fn.get("name", ""),
                     "args": args,
-                })
+                }
+                if args_error:
+                    call["args_error"] = args_error
+                tool_calls.append(call)
 
             return {"content": content, "tool_calls": tool_calls, "usage": usage}
 
@@ -822,6 +822,38 @@ def _build_route(task_class: str) -> RoutedProvider | None:
     ])
 
 
+def parse_tool_args(raw: Any) -> tuple[dict, str | None]:
+    """Tool-call arguments as a dict, plus an error when they weren't a
+    JSON object. The agent loop reports that error back to the model
+    (instead of running the tool with {} and surfacing a KeyError)."""
+    if raw is None or raw == "":
+        return {}, None
+    if isinstance(raw, dict):
+        return raw, None
+    try:
+        val = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        # Some servers append junk after a complete object.
+        try:
+            val, _ = json.JSONDecoder().raw_decode(str(raw).strip())
+        except (json.JSONDecodeError, TypeError):
+            return {}, f"arguments were not valid JSON: {str(raw)[:200]}"
+    if not isinstance(val, dict):
+        return {}, f"arguments must be a JSON object, got {type(val).__name__}"
+    return val, None
+
+
+def _fallback_embedder() -> "ModelProvider":
+    """Settings-based embedder for installs with no embed route yet.
+    EMBEDDING_BASE_URL (+ its own key, never the LLM key) wins over the
+    LLM endpoint, e.g. an Ollama embedder next to a hosted chat model."""
+    s = get_settings()
+    prov = ModelProvider(base_url=s.embedding_base_url or None)
+    if s.embedding_base_url:
+        prov.api_key = s.embedding_api_key
+    return prov
+
+
 def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
     """Provider for a task class.
 
@@ -836,7 +868,7 @@ def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
         return _role_cache[task_class]
     routed = _build_route(task_class)
     if task_class in ("embed", "rerank"):
-        prov: Any = routed._candidates[0][0] if routed else (ModelProvider() if task_class == "embed" else None)
+        prov: Any = routed._candidates[0][0] if routed else (_fallback_embedder() if task_class == "embed" else None)
     elif task_class in ("vision", "image_gen"):
         prov = routed
     else:
@@ -845,7 +877,8 @@ def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
     return prov
 
 
-# ── Legacy role getters (kept for existing call sites) ─────────────────
+# ── Legacy role getters: back-compat aliases for get_provider_for(<class>).
+# New code (and every in-tree call site) should call get_provider_for directly.
 
 def get_provider() -> Any:
     """Agent-class provider (the old "chat" role)."""

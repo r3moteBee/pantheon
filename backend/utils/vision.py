@@ -48,7 +48,7 @@ async def describe_image(
     detail_prompt : str | None
         Optional custom prompt override for the vision model.
     """
-    from models.provider import get_vision_provider, get_provider, get_prefill_provider
+    from models.provider import get_provider_for
 
     if content is None:
         if not file_path.exists():
@@ -82,11 +82,11 @@ async def describe_image(
 
     # Build provider fallback chain: vision (dedicated) → primary → prefill
     providers: list[tuple[str, Any]] = []
-    vision_prov = get_vision_provider()
+    vision_prov = get_provider_for("vision")
     if vision_prov:
         providers.append(("vision", lambda: vision_prov))
-    providers.append(("primary", get_provider))
-    providers.append(("prefill", get_prefill_provider))
+    providers.append(("primary", lambda: get_provider_for("agent")))
+    providers.append(("prefill", lambda: get_provider_for("summarize")))
 
     for label, get_prov in providers:
         try:

@@ -5,6 +5,11 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# ChromaDB phones home (posthog) unless told not to, and logs a noisy
+# error when that fails offline. Must be set before chromadb is imported.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+logging.getLogger("chromadb.telemetry.product.posthog").setLevel(logging.CRITICAL)
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse

@@ -68,7 +68,7 @@ export default function ChatActions() {
       const res = await conversationsApi.saveAsArtifact(sessionId, projectId)
       addNotification({ type: 'success', message: `Saved chat to artifact: ${res.data.path}` })
     } catch (e) {
-      addNotification({ type: 'error', message: 'Save failed: ' + (e?.response?.data?.detail || e.message) })
+      addNotification({ type: 'error', message: 'Save failed: ' + (e.message) })
     }
   }
 

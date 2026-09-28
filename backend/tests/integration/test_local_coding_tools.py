@@ -23,7 +23,7 @@ from agent.tools import execute_tool, _repo_checkout_dir
 async def test_run_command_executes_in_workspace(mock_base, _mock_checkout, tmp_path):
     mock_base.return_value = tmp_path
     res = await execute_tool(
-        "run_command", {"command": "echo hello && pwd"}, None, project_id="test")
+        "run_command", {"command": "echo hello && pwd"}, None, project_id="test", host_exec=True)
     assert "exit_code: 0" in res
     assert "hello" in res
     assert str(tmp_path) in res  # ran with cwd inside the workspace
@@ -37,7 +37,7 @@ async def test_run_command_prefers_repo_checkout(mock_base, mock_checkout, tmp_p
     checkout.mkdir(parents=True)
     mock_base.return_value = tmp_path
     mock_checkout.return_value = checkout
-    res = await execute_tool("run_command", {"command": "pwd"}, None, project_id="test")
+    res = await execute_tool("run_command", {"command": "pwd"}, None, project_id="test", host_exec=True)
     assert "exit_code: 0" in res
     assert str(checkout) in res
 
@@ -50,7 +50,7 @@ async def test_run_command_workdir_traversal_blocked(mock_base, _mock_checkout, 
     base.mkdir()
     mock_base.return_value = base
     res = await execute_tool(
-        "run_command", {"command": "pwd", "workdir": "../"}, None, project_id="test")
+        "run_command", {"command": "pwd", "workdir": "../"}, None, project_id="test", host_exec=True)
     assert "escapes the workspace" in res
 
 
@@ -60,13 +60,13 @@ async def test_run_command_workdir_traversal_blocked(mock_base, _mock_checkout, 
 async def test_run_command_missing_workdir(mock_base, _mock_checkout, tmp_path):
     mock_base.return_value = tmp_path
     res = await execute_tool(
-        "run_command", {"command": "pwd", "workdir": "nope"}, None, project_id="test")
+        "run_command", {"command": "pwd", "workdir": "nope"}, None, project_id="test", host_exec=True)
     assert "workdir not found" in res
 
 
 @pytest.mark.asyncio
 async def test_run_command_empty():
-    res = await execute_tool("run_command", {"command": "  "}, None, project_id="test")
+    res = await execute_tool("run_command", {"command": "  "}, None, project_id="test", host_exec=True)
     assert "empty command" in res
 
 
@@ -78,7 +78,7 @@ async def test_run_command_timeout(mock_base, _mock_checkout, tmp_path):
     res = await execute_tool(
         "run_command",
         {"command": "sleep 5", "timeout_seconds": 1},
-        None, project_id="test")
+        None, project_id="test", host_exec=True)
     assert "timed_out: true" in res
 
 
@@ -91,7 +91,7 @@ _SPEC = {"connection_id": "c1", "owner": "octo", "repo": "demo",
 @pytest.mark.asyncio
 @patch("api.connections.get_project_repo_for_tools", return_value=None)
 async def test_git_sync_repo_no_binding(_mock_spec):
-    res = await execute_tool("git_sync_repo", {}, None, project_id="test")
+    res = await execute_tool("git_sync_repo", {}, None, project_id="test", host_exec=True)
     assert "No repo bound" in res
 
 
@@ -104,7 +104,7 @@ async def test_git_sync_repo_clone_flow(mock_base, mock_run, _mock_spec, _mock_t
     mock_base.return_value = tmp_path
     mock_run.return_value = (0, "abc123 init", "")
 
-    res = await execute_tool("git_sync_repo", {}, None, project_id="test")
+    res = await execute_tool("git_sync_repo", {}, None, project_id="test", host_exec=True)
 
     dest = tmp_path / "repos" / "octo__demo"
     calls = [c.args for c in mock_run.await_args_list]
@@ -131,7 +131,7 @@ async def test_git_sync_repo_update_flow(mock_base, mock_run, _mock_spec, _mock_
     (dest / ".git").mkdir(parents=True)  # simulate existing checkout
     mock_run.return_value = (0, "ok", "")
 
-    res = await execute_tool("git_sync_repo", {"branch": "dev"}, None, project_id="test")
+    res = await execute_tool("git_sync_repo", {"branch": "dev"}, None, project_id="test", host_exec=True)
 
     calls = [c.args[0] for c in mock_run.await_args_list]
     assert calls[0][0] == "fetch"
@@ -149,7 +149,7 @@ async def test_git_sync_repo_clone_failure_redacts_token(mock_base, mock_run, _m
     mock_base.return_value = tmp_path
     mock_run.return_value = (128, "", "fatal: could not read from https://tok-secret@github.com/octo/demo.git")
 
-    res = await execute_tool("git_sync_repo", {}, None, project_id="test")
+    res = await execute_tool("git_sync_repo", {}, None, project_id="test", host_exec=True)
     assert "Clone failed" in res
     assert "tok-secret" not in res
     assert "********" in res
@@ -173,6 +173,6 @@ async def test_git_status_uses_checkout_when_present(mock_base, mock_run, _mock_
     (dest / ".git").mkdir(parents=True)
     mock_run.return_value = (0, "M  app.py", "")
 
-    res = await execute_tool("git_status", {}, None, project_id="test")
+    res = await execute_tool("git_status", {}, None, project_id="test", host_exec=True)
     assert res == "M  app.py"
     mock_run.assert_called_once_with(["status", "--porcelain"], dest)

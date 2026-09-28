@@ -53,7 +53,7 @@ def repo(tmp_path):
 @pytest.mark.asyncio
 async def test_git_merge_clean(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        res = await execute_tool("git_merge", {"branch": "clean"}, None, project_id="t")
+        res = await execute_tool("git_merge", {"branch": "clean"}, None, project_id="t", host_exec=True)
     assert "Merged 'clean' into 'main'" in res
     assert (repo / "other.ts").exists()
 
@@ -61,7 +61,7 @@ async def test_git_merge_clean(repo):
 @pytest.mark.asyncio
 async def test_git_merge_conflict_reports_hunks(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        res = await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t")
+        res = await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t", host_exec=True)
     assert "CONFLICTS in 1 file(s)" in res
     assert "app.ts" in res
     assert "<<<<<<< " in res and ">>>>>>> " in res
@@ -71,9 +71,9 @@ async def test_git_merge_conflict_reports_hunks(repo):
 @pytest.mark.asyncio
 async def test_git_commit_refuses_conflict_markers(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t")
+        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t", host_exec=True)
         # Try to commit with the markers still in the file
-        res = await execute_tool("git_commit", {"message": "resolve"}, None, project_id="t")
+        res = await execute_tool("git_commit", {"message": "resolve"}, None, project_id="t", host_exec=True)
     assert "Refusing to commit" in res
     assert "app.ts" in res
 
@@ -81,9 +81,9 @@ async def test_git_commit_refuses_conflict_markers(repo):
 @pytest.mark.asyncio
 async def test_resolve_then_commit_concludes_merge(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t")
+        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t", host_exec=True)
         (repo / "app.ts").write_text("const port = 4000;\n")  # resolved
-        res = await execute_tool("git_commit", {"message": "resolve conflict"}, None, project_id="t")
+        res = await execute_tool("git_commit", {"message": "resolve conflict"}, None, project_id="t", host_exec=True)
     assert "Committed successfully on branch 'main'" in res
     assert not (repo / ".git" / "MERGE_HEAD").exists()  # merge concluded
     log = _git(repo, "log", "--oneline", "-1").stdout
@@ -93,8 +93,8 @@ async def test_resolve_then_commit_concludes_merge(repo):
 @pytest.mark.asyncio
 async def test_git_merge_abort(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t")
-        res = await execute_tool("git_merge", {"abort": True}, None, project_id="t")
+        await execute_tool("git_merge", {"branch": "conflicting"}, None, project_id="t", host_exec=True)
+        res = await execute_tool("git_merge", {"abort": True}, None, project_id="t", host_exec=True)
     assert "Merge aborted" in res
     assert (repo / "app.ts").read_text() == "const port = 5000;\n"
     assert not (repo / ".git" / "MERGE_HEAD").exists()
@@ -103,7 +103,7 @@ async def test_git_merge_abort(repo):
 @pytest.mark.asyncio
 async def test_git_merge_unknown_ref(repo):
     with patch("agent.tools._resolve_repo_checkout", return_value=repo):
-        res = await execute_tool("git_merge", {"branch": "nope"}, None, project_id="t")
+        res = await execute_tool("git_merge", {"branch": "nope"}, None, project_id="t", host_exec=True)
     assert "not found" in res
     assert "git_sync_repo" in res
 

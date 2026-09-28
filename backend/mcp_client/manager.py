@@ -11,7 +11,7 @@ import json
 import logging
 from typing import Any
 
-from mcp_client.client import MCPClient
+from mcp_client.client import MCPClient, tool_function_name
 
 logger = logging.getLogger(__name__)
 
@@ -548,7 +548,7 @@ class MCPManager:
         names = []
         for client in self._clients.values():
             for tool in client.tools:
-                names.append(f"mcp_{client.name}_{tool['name']}")
+                names.append(tool_function_name(client.name, tool["name"]))
         return names
 
     def resolve_tool_call(self, prefixed_name: str) -> tuple[MCPClient, str] | None:
@@ -558,16 +558,13 @@ class MCPManager:
         or if the tool is excluded.
         """
         for client in self._clients.values():
-            prefix = f"mcp_{client.name}_"
-            if prefixed_name.startswith(prefix):
-                original_name = prefixed_name[len(prefix):]
-                excluded = self._get_excluded_tools(client.name)
-                if original_name in excluded:
-                    return None
-                # Verify the tool exists on this client
-                for tool in client.tools:
-                    if tool.get("name") == original_name:
-                        return client, original_name
+            if not prefixed_name.startswith(f"mcp_{client.name}_"):
+                continue
+            excluded = self._get_excluded_tools(client.name)
+            for tool in client.tools:
+                original_name = tool.get("name", "")
+                if tool_function_name(client.name, original_name) == prefixed_name:
+                    return None if original_name in excluded else (client, original_name)
         return None
 
     def _is_tavily_tool(self, prefixed_name: str) -> bool:
@@ -698,7 +695,7 @@ class MCPManager:
                 result.append({
                     "connection": client.name,
                     "name": tool_name,
-                    "prefixed_name": f"mcp_{client.name}_{tool_name}",
+                    "prefixed_name": tool_function_name(client.name, tool_name),
                     "description": tool.get("description", ""),
                     "input_schema": tool.get("inputSchema", {}),
                     # Preserved from spec 2025-06-18+ for UI inspection and

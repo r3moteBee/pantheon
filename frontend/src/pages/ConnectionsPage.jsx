@@ -60,7 +60,7 @@ function GitHubAccountsTab() {
       const res = await connectionsApi.list()
       setItems(res.data.connections || [])
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
@@ -75,7 +75,7 @@ function GitHubAccountsTab() {
       setShowAdd(false); setToken('')
       await refresh()
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setAdding(false) }
   }
 

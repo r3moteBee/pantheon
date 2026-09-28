@@ -82,7 +82,9 @@ def _get_db_stats(db_path: Path) -> dict[str, Any]:
     
     stats["size_kb"] = round(db_path.stat().st_size / 1024, 2)
     try:
-        conn = sqlite3.connect(str(db_path))
+        # Read-only: this only counts rows, and some of these files (e.g.
+        # the APScheduler DB) aren't ours to switch into WAL mode.
+        conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         tables = [row[0] for row in cursor.fetchall() if not row[0].startswith("sqlite_")]

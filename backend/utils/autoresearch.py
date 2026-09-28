@@ -25,7 +25,7 @@ if str(backend_dir) not in sys.path:
 
 
 from config import get_settings
-from models.provider import get_provider
+from models.provider import get_provider_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("autoresearch")
@@ -129,7 +129,9 @@ class AutoresearchRunner:
 
     async def get_mutation(self, current_code: str, lang: str) -> str:
         """Query the LLM to get the next code mutation."""
-        provider = get_provider()
+        # Code mutation is coding work → the code class (inherits agent
+        # when it has no route of its own).
+        provider = get_provider_for("code")
         
         system_prompt = (
             f"You are a principal software engineer and expert researcher.\n"

@@ -463,7 +463,7 @@ async def graph_path(
             return {"from": from_, "to": to, "found": False, "path": [],
                     "edges": [], "hops": 0}
         # k=1, unweighted: use the original single-path response shape.
-        edges = _path_edges(g, project_id, path_nodes)
+        edges = await g.edges_along_path(path_nodes)
         return {
             "from": from_, "to": to, "found": True,
             "path": path_nodes, "edges": edges, "hops": len(path_nodes) - 1,
@@ -477,31 +477,7 @@ async def graph_path(
     for p in multi:
         out.append({
             "path": p,
-            "edges": _path_edges(g, project_id, p),
+            "edges": await g.edges_along_path(p),
             "hops": len(p) - 1,
         })
     return {"from": from_, "to": to, "found": True, "paths": out, "weighted": weighted}
-
-
-def _path_edges(g, project_id: str, path_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Helper: look up edges between consecutive nodes on a path."""
-    import sqlite3
-    edges: list[dict[str, Any]] = []
-    conn = sqlite3.connect(g.db_path); conn.row_factory = sqlite3.Row
-    try:
-        for a, b in zip(path_nodes, path_nodes[1:]):
-            row = conn.execute(
-                """SELECT id, node_a_id as source, node_b_id as target,
-                          relationship, weight
-                   FROM graph_edges
-                   WHERE project_id = ?
-                     AND ((node_a_id = ? AND node_b_id = ?)
-                       OR (node_a_id = ? AND node_b_id = ?))
-                   LIMIT 1""",
-                (project_id, a["id"], b["id"], b["id"], a["id"]),
-            ).fetchone()
-            if row:
-                edges.append(dict(row))
-    finally:
-        conn.close()
-    return edges

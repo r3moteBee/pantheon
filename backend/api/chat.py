@@ -19,7 +19,7 @@ from agent import tool_results
 from agent.core import AgentCore
 from config import get_settings
 from memory.manager import create_memory_manager
-from models.provider import get_provider
+from models.provider import get_provider_for
 from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
 from skills.registry import get_skill_registry
 from skills.models import SkillDiscoveryMode
@@ -254,7 +254,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
         'suggest' is treated as 'auto' here)
     """
     session_id = req.session_id or str(uuid.uuid4())
-    provider = get_provider()
+    provider = get_provider_for("agent")
     memory = create_memory_manager(
         project_id=req.project_id,
         session_id=session_id,
@@ -462,7 +462,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         "description": skill.manifest.description,
                     })
 
-                provider = get_provider()
+                provider = get_provider_for("agent")
                 memory = create_memory_manager(
                     project_id=project_id, session_id=session_id, provider=provider,
                 )
@@ -526,7 +526,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     pass
                 await websocket.send_json({"type": "session_start", "session_id": session_id})
 
-                provider = get_provider()
+                provider = get_provider_for("agent")
                 memory = create_memory_manager(
                     project_id=project_id, session_id=session_id, provider=provider,
                 )
@@ -594,7 +594,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # Send session_id back to client
             await websocket.send_json({"type": "session_start", "session_id": session_id})
 
-            provider = get_provider()
+            provider = get_provider_for("agent")
             memory = create_memory_manager(
                 project_id=project_id,
                 session_id=session_id,

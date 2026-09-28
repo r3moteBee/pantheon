@@ -213,10 +213,10 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
     from agent.tools import host_exec_allowed
     from memory.manager import create_memory_manager
     from memory.episodic import EpisodicMemory
-    from models.provider import get_provider
+    from models.provider import get_provider_for
     from artifacts.store import get_store as get_artifact_store
 
-    provider = get_provider()
+    provider = get_provider_for("agent")
     artifact_store = get_artifact_store()
 
     project_name: str | None = None

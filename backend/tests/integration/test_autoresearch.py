@@ -38,7 +38,7 @@ def test_extract_code_block():
 
 
 @pytest.mark.asyncio
-@patch("utils.autoresearch.get_provider")
+@patch("utils.autoresearch.get_provider_for")
 async def test_autoresearch_runner_flow(mock_get_provider):
     # Mock LLM provider response
     mock_provider = MagicMock()

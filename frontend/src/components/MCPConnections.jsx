@@ -392,7 +392,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
     try {
       await onSave(conn.name, update)
     } catch (err) {
-      setError(err?.response?.data?.detail || err.message)
+      setError(err.message)
     } finally {
       setSaving(false)
     }
@@ -967,7 +967,7 @@ export default function MCPConnections() {
       setShowAdd(false)
       await loadConnections()
     } catch (err) {
-      addNotification({ type: 'error', message: err.response?.data?.detail || err.message })
+      addNotification({ type: 'error', message: err.message })
     }
   }
 
@@ -1002,7 +1002,7 @@ export default function MCPConnections() {
     } catch (err) {
       addNotification({
         type: 'error',
-        message: `OAuth start failed: ${err.response?.data?.detail || err.message}`,
+        message: `OAuth start failed: ${err.message}`,
       })
     }
   }

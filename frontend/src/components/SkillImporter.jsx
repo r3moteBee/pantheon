@@ -164,7 +164,7 @@ export default function SkillImporter({ onClose, onImportComplete }) {
     } catch (e) {
       setImportResult({
         success: false,
-        message: e.response?.data?.detail || e.message || 'Import failed',
+        message: e.message || 'Import failed',
       })
     } finally {
       setImporting(null)
@@ -187,7 +187,7 @@ export default function SkillImporter({ onClose, onImportComplete }) {
     } catch (e) {
       setImportResult({
         success: false,
-        message: e.response?.data?.detail || e.message || 'Import failed',
+        message: e.message || 'Import failed',
       })
     } finally {
       setImporting(null)
@@ -217,7 +217,7 @@ export default function SkillImporter({ onClose, onImportComplete }) {
     } catch (e) {
       setImportResult({
         success: false,
-        message: e.response?.data?.detail || e.message || 'Upload failed',
+        message: e.message || 'Upload failed',
       })
     } finally {
       setImporting(null)

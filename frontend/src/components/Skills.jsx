@@ -453,7 +453,7 @@ export default function Skills() {
       await loadSkills()
     } catch (err) {
       const status = err.response?.status
-      const detail = err.response?.data?.detail || err.message
+      const detail = err.message
       if (status === 403 && enabled && detail.includes('security scan')) {
         // Check if override password is configured, then offer force-enable
         try {
@@ -481,7 +481,7 @@ export default function Skills() {
       await loadSkills()
       return {}
     } catch (err) {
-      const detail = err.response?.data?.detail || err.message
+      const detail = err.message
       return { error: detail }
     }
   }

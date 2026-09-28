@@ -43,7 +43,7 @@ export default function GraphView() {
       setNodes(res.data?.nodes || [])
       setEdges(res.data?.edges || [])
     } catch (e) {
-      setError(e?.response?.data?.detail || e.message)
+      setError(e.message)
     } finally { setLoading(false) }
   }
 
@@ -117,7 +117,7 @@ export default function GraphView() {
       setEdgeRel('')
       await refresh()
     } catch (e) {
-      setEdgeStatus('Edge create failed: ' + (e?.response?.data?.detail || e.message))
+      setEdgeStatus('Edge create failed: ' + (e.message))
     }
   }
 
@@ -138,7 +138,7 @@ export default function GraphView() {
         setPathResult({ found: true, paths: [{ path: data.path, edges: data.edges, hops: data.hops }] })
       }
     } catch (e) {
-      setPathError(e?.response?.data?.detail || e.message)
+      setPathError(e.message)
     } finally { setPathing(false) }
   }
 
