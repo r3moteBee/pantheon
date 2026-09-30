@@ -45,6 +45,15 @@ def rerank_timeout() -> float:
     return max(0.1, min(s.rerank_timeout_seconds, cap))
 
 
+def _as_probabilities(scores: list[float]) -> list[float]:
+    """Rerank scores on a 0-1 scale. Cohere/Jina/TEI return probabilities;
+    llama.cpp (and TEI with raw_scores) return cross-encoder logits, which are
+    unbounded and can't be thresholded or blended with recency as they are."""
+    if all(0.0 <= s <= 1.0 for s in scores):
+        return scores
+    return [1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, s)))) for s in scores]
+
+
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
 
@@ -247,6 +256,7 @@ class MemoryManager:
         limit_per_tier: int = 3,
         context_focus: str | None = None,
         in_context: set[str] | None = None,
+        min_relevance: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
 
@@ -254,6 +264,11 @@ class MemoryManager:
         conversation so far and the new message). Episodic hits with the same
         text are dropped BEFORE the per-tier cut, so they neither repeat what
         the model can already see nor push older sessions' messages out.
+
+        ``min_relevance``: when the results were reranked, drop those the
+        reranker scores below it (0-1). Pre-recall passes
+        settings.recall_min_relevance so unrelated memories are not injected;
+        a failed or timed-out rerank drops nothing.
 
         Returns list of dicts with keys: content, source, score, metadata, tier
         """
@@ -339,6 +354,12 @@ class MemoryManager:
                     all_results = await self._rerank(query, all_results, reranker)
             except Exception as e:
                 logger.warning("Reranking failed, using original order: %s", e)
+            if min_relevance > 0 and all_results and all_results[0].get("reranked"):
+                kept = [r for r in all_results if r.get("score", 0) >= min_relevance]
+                if len(kept) < len(all_results):
+                    logger.info("Recall: dropped %d of %d results below relevance %.2f",
+                                len(all_results) - len(kept), len(all_results), min_relevance)
+                all_results = kept
 
         # Graph-augmented enrichment: expand entities found in top results
         all_results = await self._graph_augment(all_results)
@@ -484,12 +505,15 @@ class MemoryManager:
 
             ranked = data.get("results", [])
             if ranked:
+                ranked = sorted(ranked, key=lambda x: x.get("relevance_score", 0), reverse=True)
+                probs = _as_probabilities([item.get("relevance_score", 0) for item in ranked])
                 reranked = []
-                for item in sorted(ranked, key=lambda x: x.get("relevance_score", 0), reverse=True):
+                for item, p in zip(ranked, probs):
                     idx = item.get("index", 0)
                     if idx < len(results):
                         entry = results[idx].copy()
-                        entry["score"] = round(item.get("relevance_score", 0), 4)
+                        entry["score"] = round(p, 4)
+                        entry["rerank_raw"] = item.get("relevance_score", 0)
                         entry["reranked"] = True
                         reranked.append(entry)
                 logger.info("Reranking complete — top score: %.4f", reranked[0]["score"] if reranked else 0)

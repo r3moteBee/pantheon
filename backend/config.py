@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     # and the turn would lose ALL recalled memories, not just the ordering.
     # memory.manager caps it at pre_recall_timeout_seconds - 1.5.
     rerank_timeout_seconds: float = 2.5
+    # Pre-recall: drop recalled items the reranker scores below this
+    # relevance (0-1; raw reranker logits are mapped through a sigmoid).
+    # Measured with bge-reranker-v2-m3: relevant memories 0.14-0.997, unrelated
+    # ones < 0.05, small talk matches nothing. 0 disables. Only applies when the
+    # rerank succeeded, and not to the agent's own recall tool.
+    recall_min_relevance: float = 0.05
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = True
     # File indexing: chunk size in tokens

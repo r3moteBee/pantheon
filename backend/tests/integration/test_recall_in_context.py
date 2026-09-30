@@ -59,3 +59,46 @@ def test_agent_reports_what_it_already_sends():
                         {"role": "assistant", "content": "reply"},
                         {"role": "user", "content": [{"type": "text", "text": "img"}]}]
     assert a._in_context_texts(" new question ") == {"new question", "earlier", "reply"}
+
+
+# ── Relevance floor ──────────────────────────────────────────────────────────
+
+def test_logits_become_probabilities_and_probabilities_are_kept():
+    from memory.manager import _as_probabilities
+    assert _as_probabilities([0.9, 0.1]) == [0.9, 0.1]
+    p = _as_probabilities([3.01, -1.78, -6.27])          # bge-reranker-v2-m3 via llama.cpp
+    assert [round(x, 3) for x in p] == [0.953, 0.144, 0.002]
+
+
+def _semantic_manager(monkeypatch, rerank_scores):
+    import models.provider
+    m = _manager([])
+    docs = [{"id": str(i), "content": f"doc{i}", "score": 0.5, "tier": "semantic"} for i in range(len(rerank_scores))]
+    m.semantic = SimpleNamespace(search=AsyncMock(return_value=docs))
+    reranker = SimpleNamespace(base_url="http://r.invalid/v1", model="rerank-1", api_key="")
+    monkeypatch.setattr(models.provider, "get_provider_for", lambda cls: reranker if cls == "rerank" else None)
+    return m
+
+
+async def test_pre_recall_drops_what_the_reranker_calls_unrelated(monkeypatch):
+    m = _semantic_manager(monkeypatch, [3.0, -1.8, -6.3])
+    async def rerank(query, results, reranker):
+        from memory.manager import _as_probabilities
+        out = []
+        for r, p in zip(results, _as_probabilities([3.0, -1.8, -6.3])):
+            out.append({**r, "score": p, "reranked": True})
+        return out
+    m._rerank = rerank
+    out = await m.recall("dog?", tiers=["semantic"], limit_per_tier=5, context_focus="broad", min_relevance=0.05)
+    assert [r["id"] for r in out] == ["0", "1"]              # the weak-but-relevant note survives
+    out = await m.recall("dog?", tiers=["semantic"], limit_per_tier=5, context_focus="broad")
+    assert len(out) == 3                                      # recall tool: no floor
+
+
+async def test_no_floor_when_the_rerank_failed(monkeypatch):
+    m = _semantic_manager(monkeypatch, [])
+    m.semantic = SimpleNamespace(search=AsyncMock(return_value=[
+        {"id": "a", "content": "a", "score": 0.01, "tier": "semantic"}]))
+    m._rerank = AsyncMock(side_effect=lambda q, results, r: results)   # timed out: original order, no flag
+    out = await m.recall("q", tiers=["semantic"], limit_per_tier=5, min_relevance=0.05)
+    assert [r["id"] for r in out] == ["a"]

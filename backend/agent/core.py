@@ -369,6 +369,7 @@ class AgentCore:
                                 limit_per_tier=5,
                                 context_focus=_context_focus,
                                 in_context=self._in_context_texts(user_message),
+                                min_relevance=get_settings().recall_min_relevance,
                             ),
                             timeout=recall_budget,
                         )
