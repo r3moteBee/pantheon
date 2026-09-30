@@ -31,6 +31,59 @@ _PERSONALITY_SCOPES: dict[str, str] = {
 }
 
 
+# ── Recalled memory ──────────────────────────────────────────────────────────
+# Recall is automatic and relevance-ranked, so what comes back is a mix: the
+# user's knowledge base (things they asked us to remember, ingested sources,
+# file chunks, summaries), things the user said in earlier chats, and our own
+# earlier replies. They deserve different trust. Framing everything as "your
+# primary source, only search to fill gaps" made the agent repeat its own stale
+# answers instead of searching (measured: 7/14 "latest version of X" questions
+# answered from memory with outdated versions).
+MEMORY_LABELS = {
+    "semantic": "note",
+    "graph": "graph",
+    "archival": "archive",
+}
+MEMORY_GUIDANCE = (
+    "Retrieved automatically from this project's memory because it may be relevant to the current message.\n"
+    "- [note], [graph] and [archive] entries come from the user's knowledge base (things they asked you to "
+    "remember, ingested sources, files, summaries). For questions about that material, treat them as "
+    "authoritative and cite them.\n"
+    "- [user said] entries are what the user told you before: trust them for their own preferences, plans "
+    "and circumstances.\n"
+    "- [your earlier reply] entries are your own past answers. They may be wrong or out of date: never "
+    "repeat one as fact without checking it.\n"
+    "- Memory does not replace tools: for anything time-sensitive (latest versions, prices, news, current "
+    "status) or anything the user asks you to search or look up, use your tools even when a memory "
+    "seems to answer it.\n"
+    "- Ignore entries that are not relevant to the current message."
+)
+
+
+def _memory_label(m: dict) -> tuple[str, str]:
+    """(label, content) for one recalled item; episodic items carry their role as a "[role] " prefix."""
+    tier = m.get("tier", m.get("source", "memory"))
+    content = m.get("content", "") or ""
+    if tier == "episodic":
+        if content.startswith("[user] "):
+            return "user said", content[len("[user] "):]
+        if content.startswith("[assistant] "):
+            return "your earlier reply", content[len("[assistant] "):]
+    return MEMORY_LABELS.get(tier, tier), content
+
+
+def render_memory_section(recalled_memories: list[dict] | None) -> str:
+    """The '## Recalled memory' block for the system prompt ('' when nothing was recalled)."""
+    lines = []
+    for m in recalled_memories or []:
+        label, content = _memory_label(m)
+        if content.strip():
+            lines.append(f"[{label}] {content}")
+    if not lines:
+        return ""
+    return "\n\n## Recalled memory\n" + MEMORY_GUIDANCE + "\n\n" + "\n\n".join(lines)
+
+
 def build_system_prompt(
     project_id: str | None = None,
     project_name: str | None = None,
@@ -142,22 +195,7 @@ def build_system_prompt(
                 "narrating success.\n"
             )
 
-    memory_section = ""
-    if recalled_memories:
-        memory_lines = []
-        for m in recalled_memories:
-            tier = m.get("tier", m.get("source", "memory"))
-            content = m.get("content", "")
-            if content:
-                memory_lines.append(f"[{tier}] {content}")
-        if memory_lines:
-            memory_section = (
-                "\n\n## Corpus Context (Retrieved from your knowledge base)"
-                "\nThe following was retrieved from your indexed corpus and graph. "
-                "**Treat this as your primary source. Cite it in your response and only use web search "
-                "to fill gaps or verify time-sensitive details not covered here.**\n\n"
-                + "\n\n".join(memory_lines)
-            )
+    memory_section = render_memory_section(recalled_memories)
 
     extra_section = f"\n\n## Additional Context\n{extra_context}" if extra_context else ""
 
