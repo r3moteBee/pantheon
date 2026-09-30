@@ -73,7 +73,8 @@ def _memory_label(m: dict) -> tuple[str, str]:
     return MEMORY_LABELS.get(tier, tier), content
 
 
-def render_turn_context(recalled_memories: list[dict] | None, now: str | None = None) -> str:
+def render_turn_context(recalled_memories: list[dict] | None, now: str | None = None,
+                        omitted_messages: int = 0) -> str:
     """The <context> block AgentCore puts in front of the new user message:
     current time + this turn's recalled memory, labelled by provenance.
 
@@ -90,6 +91,11 @@ def render_turn_context(recalled_memories: list[dict] | None, now: str | None = 
         if content.strip():
             lines.append(f"[{label}] {content}")
     body = f"Current time: {now}"
+    if omitted_messages > 0:
+        # Without this a model asked "did I mention X earlier?" denies it
+        # when X was in a turn the history budget dropped.
+        body += (f"\nEarlier in this conversation: {omitted_messages} older messages are not shown here; "
+                 "relevant parts appear under Recalled memory when found.")
     if lines:
         body += "\nRecalled memory:\n" + "\n\n".join(lines)
     return f"<context>\n{body}\n</context>\n\n"

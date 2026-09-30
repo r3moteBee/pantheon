@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     # ones < 0.05, small talk matches nothing. 0 disables. Only applies when the
     # rerank succeeded, and not to the agent's own recall tool.
     recall_min_relevance: float = 0.05
+    # Conversation history sent per turn, in tokens: >0 fixed, 0 auto (a
+    # quarter of the agent model's context window, 2K-24K), <0 no limit.
+    # Older turns are dropped in blocks (agent/history.py) and stay
+    # reachable through recall.
+    history_token_budget: int = 0
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = True
     # File indexing: chunk size in tokens

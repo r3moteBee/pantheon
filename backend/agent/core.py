@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
+from agent.history import budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
@@ -167,6 +168,10 @@ class AgentCore:
         self.skill_context = skill_context
         self.active_skill_name = active_skill_name
         self.working_memory: list[dict[str, str]] = []
+        # Absolute position of working_memory[0] in the session (non-zero when
+        # from_session loaded only the newest messages); keeps agent.history's
+        # drop blocks aligned as the loaded window slides.
+        self.working_offset = 0
 
     @classmethod
     async def from_session(
@@ -205,6 +210,10 @@ class AgentCore:
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
+        try:
+            self.working_offset = max(0, await ep.count_messages(session_id) - len(history))
+        except Exception:
+            self.working_offset = 0
         for m in history:
             role = m.get("role")
             content = (m.get("content") or "").strip()
@@ -308,12 +317,14 @@ class AgentCore:
 
         return [{"type": "text", "text": message}, *image_blocks]
 
-    def _in_context_texts(self, user_message: str) -> set[str]:
-        """Texts the model will already see this turn (the session so far and
-        the new message; chat saves the message to episodic before the agent
-        runs, so recall would otherwise return the question itself)."""
+    def _in_context_texts(self, user_message: str, history: list[dict] | None = None) -> set[str]:
+        """Texts the model will already see this turn (the history actually
+        sent and the new message; chat saves the message to episodic before
+        the agent runs, so recall would otherwise return the question itself).
+        Turns dropped by the history budget are NOT in this set, so recall
+        can bring them back."""
         texts = {user_message.strip()}
-        for m in self.working_memory:
+        for m in (self.working_memory if history is None else history):
             if isinstance(m.get("content"), str):
                 texts.add(m["content"].strip())
         return texts
@@ -351,6 +362,16 @@ class AgentCore:
             _personality_weight = _cs["tone_weight"]
             _context_focus = _cs["context_focus"]
 
+            # History actually sent this turn: newest messages within the
+            # token budget, oldest dropped in whole blocks (agent/history.py).
+            history, history_dropped = budget_history(
+                self._get_working_messages(), self.working_offset,
+                resolve_budget(self.provider, get_settings().history_token_budget),
+            )
+            if history_dropped:
+                logger.info("History: sending %d of %d messages (%d older ones left to recall)",
+                            len(history), len(history) + history_dropped, history_dropped)
+
             # Pre-recall relevant memories to inject into system prompt context
             recalled_memories = None
             try:
@@ -368,7 +389,7 @@ class AgentCore:
                                 project_id=self.project_id or "default",
                                 limit_per_tier=5,
                                 context_focus=_context_focus,
-                                in_context=self._in_context_texts(user_message),
+                                in_context=self._in_context_texts(user_message, history),
                                 min_relevance=get_settings().recall_min_relevance,
                             ),
                             timeout=recall_budget,
@@ -431,14 +452,13 @@ class AgentCore:
             if jobs_block:
                 system_prompt = system_prompt + "\n\n" + jobs_block
 
-            # Get conversation history from working memory
-            history = self._get_working_messages()
 
             # Add current user message — inline images for vision models
             user_content = self._build_user_content(user_message)
             # Per-turn context (time + recalled memory) rides in front of the
             # new message, after the history — see prompts.render_turn_context.
-            turn_context = render_turn_context(recalled_memories)
+            turn_context = render_turn_context(
+                recalled_memories, omitted_messages=history_dropped + self.working_offset)
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:

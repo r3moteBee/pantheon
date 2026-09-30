@@ -266,6 +266,13 @@ class EpisodicMemory:
             for r in rows
         ]
 
+    async def count_messages(self, session_id: str) -> int:
+        """Messages in a session (for absolute positions when only the newest
+        N were loaded — see agent.history)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)).fetchone()
+        return int(row[0]) if row else 0
+
     async def get_session_project_id(self, session_id: str) -> str | None:
         """Return the owning project_id for a session, or None when the
         conversation row is missing. Canonical lookup — messages also
