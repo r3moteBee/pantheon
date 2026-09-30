@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.prompts import build_system_prompt
+from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import tool_results
@@ -401,7 +401,6 @@ class AgentCore:
             system_prompt = build_system_prompt(
                 project_id=self.project_id,
                 project_name=self.project_name,
-                recalled_memories=recalled_memories,
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
                 host_exec=self.host_exec,
@@ -409,11 +408,12 @@ class AgentCore:
 
             # Phase H.5 — append a "recent background jobs" block so the
             # agent doesn't confabulate progress against dead tasks.
+            # (appended after the skills block below: it changes with job
+            # state, the skills list almost never — keep the stable part first)
             try:
                 jobs_block = _build_recent_jobs_block(self.project_id)
-                if jobs_block:
-                    system_prompt = system_prompt + "\n\n" + jobs_block
             except Exception as e:
+                jobs_block = ""
                 logger.debug("recent-jobs block injection failed: %s", e)
 
             # H7p — append an "Available skills" block so the agent
@@ -427,12 +427,21 @@ class AgentCore:
                     system_prompt = system_prompt + "\n\n" + skills_block
             except Exception as e:
                 logger.debug("available-skills block injection failed: %s", e)
+            if jobs_block:
+                system_prompt = system_prompt + "\n\n" + jobs_block
 
             # Get conversation history from working memory
             history = self._get_working_messages()
 
             # Add current user message — inline images for vision models
             user_content = self._build_user_content(user_message)
+            # Per-turn context (time + recalled memory) rides in front of the
+            # new message, after the history — see prompts.render_turn_context.
+            turn_context = render_turn_context(recalled_memories)
+            if isinstance(user_content, list):
+                user_content = [{"type": "text", "text": turn_context}] + user_content
+            else:
+                user_content = turn_context + user_content
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
             messages.append({"role": "user", "content": user_content})

@@ -45,7 +45,8 @@ MEMORY_LABELS = {
     "archival": "archive",
 }
 MEMORY_GUIDANCE = (
-    "Retrieved automatically from this project's memory because it may be relevant to the current message.\n"
+    "A user message may start with a <context> block that Pantheon adds, not the user: the current time and "
+    "entries retrieved automatically from this project's memory because they may be relevant to that message.\n"
     "- [note], [graph] and [archive] entries come from the user's knowledge base (things they asked you to "
     "remember, ingested sources, files, summaries). For questions about that material, treat them as "
     "authoritative and cite them.\n"
@@ -72,22 +73,31 @@ def _memory_label(m: dict) -> tuple[str, str]:
     return MEMORY_LABELS.get(tier, tier), content
 
 
-def render_memory_section(recalled_memories: list[dict] | None) -> str:
-    """The '## Recalled memory' block for the system prompt ('' when nothing was recalled)."""
+def render_turn_context(recalled_memories: list[dict] | None, now: str | None = None) -> str:
+    """The <context> block AgentCore puts in front of the new user message:
+    current time + this turn's recalled memory, labelled by provenance.
+
+    Everything that changes per turn lives here, after the conversation
+    history, so the tools + system prompt + history stay a stable prefix and
+    the model server reuses its KV cache for them (measured: the first call
+    of a turn recomputed ~3.3K tokens when memories sat mid-system-prompt).
+    How to treat the block is explained once, in the system prompt
+    (MEMORY_GUIDANCE)."""
+    now = now or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = []
     for m in recalled_memories or []:
         label, content = _memory_label(m)
         if content.strip():
             lines.append(f"[{label}] {content}")
-    if not lines:
-        return ""
-    return "\n\n## Recalled memory\n" + MEMORY_GUIDANCE + "\n\n" + "\n\n".join(lines)
+    body = f"Current time: {now}"
+    if lines:
+        body += "\nRecalled memory:\n" + "\n\n".join(lines)
+    return f"<context>\n{body}\n</context>\n\n"
 
 
 def build_system_prompt(
     project_id: str | None = None,
     project_name: str | None = None,
-    recalled_memories: list[dict] | None = None,
     extra_context: str | None = None,
     personality_weight: str | None = None,
     host_exec: bool = True,
@@ -105,7 +115,6 @@ def build_system_prompt(
     scope_prefix = _PERSONALITY_SCOPES.get(weight, _PERSONALITY_SCOPES["balanced"])
     soul = scope_prefix + soul
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project_section = ""
     if project_id:
         try:
@@ -195,7 +204,9 @@ def build_system_prompt(
                 "narrating success.\n"
             )
 
-    memory_section = render_memory_section(recalled_memories)
+    # Static: the per-turn memories and time go in the user message
+    # (render_turn_context), so this prompt is identical from turn to turn.
+    memory_section = "\n\n## Recalled memory\n" + MEMORY_GUIDANCE
 
     extra_section = f"\n\n## Additional Context\n{extra_context}" if extra_context else ""
 
@@ -319,6 +330,4 @@ Only valid skip-the-propose-step exceptions:
   • The user explicitly says "just schedule it" / "no need to review" / "skip the review"
   • A trivial single-step ask with no tool ambiguity (e.g. "remind me at 9am" → `send_telegram` step is obvious)
 
-When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high.
-
-Current time: {now}"""
+When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high."""
