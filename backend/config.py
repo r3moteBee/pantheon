@@ -107,6 +107,15 @@ class Settings(BaseSettings):
     #   "balanced" = moderate recency boost (default)
     #   "focused"  = strong recency boost, older turns compressed (good for debugging)
     context_focus: str = "balanced"
+    # Pre-recall: total seconds a chat turn waits for memory recall (search +
+    # rerank) before answering without memory context.
+    pre_recall_timeout_seconds: float = 4.0
+    # Rerank: seconds to wait for the reranker before keeping the original
+    # order. Must stay well under pre_recall_timeout_seconds — a reranker that
+    # is still loading (15-20 s cold) would otherwise blow the pre-recall budget
+    # and the turn would lose ALL recalled memories, not just the ordering.
+    # memory.manager caps it at pre_recall_timeout_seconds - 1.5.
+    rerank_timeout_seconds: float = 2.5
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = True
     # File indexing: chunk size in tokens

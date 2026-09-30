@@ -25,6 +25,25 @@ logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN = 4
 
+# Seconds pre-recall needs besides reranking (semantic/episodic/graph search,
+# graph augmentation, budgeting). The rerank budget is capped so it always
+# leaves this much of settings.pre_recall_timeout_seconds.
+RERANK_RECALL_HEADROOM_S = 1.5
+
+
+def rerank_timeout() -> float:
+    """Seconds ``_rerank`` may take before keeping the original order.
+
+    agent.core cancels the whole recall at pre_recall_timeout_seconds, so a
+    reranker slower than that (e.g. still loading, 15-20 s cold) used to cost
+    the turn every recalled memory. Capping rerank below that budget makes a
+    slow reranker degrade to "unranked" instead.
+    """
+    from config import get_settings
+    s = get_settings()
+    cap = max(0.5, s.pre_recall_timeout_seconds - RERANK_RECALL_HEADROOM_S)
+    return max(0.1, min(s.rerank_timeout_seconds, cap))
+
 
 def _estimate_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
@@ -441,11 +460,16 @@ class MemoryManager:
         if reranker.api_key and reranker.api_key.lower() not in ("", "none", "ollama"):
             headers["Authorization"] = f"Bearer {reranker.api_key}"
 
+        timeout = rerank_timeout()
         logger.info("Reranking %d results with model %s", len(documents), reranker.model)
         try:
             from utils.http import pooled_client
-            async with pooled_client(timeout=15.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
+            async with pooled_client(timeout=timeout) as client:
+                # Hard total cap: httpx timeouts are per phase, and a model that
+                # is still loading holds the connection open without sending.
+                resp = await asyncio.wait_for(
+                    client.post(url, headers=headers, json=payload), timeout=timeout,
+                )
                 resp.raise_for_status()
                 data = resp.json()
 
@@ -461,6 +485,11 @@ class MemoryManager:
                         reranked.append(entry)
                 logger.info("Reranking complete — top score: %.4f", reranked[0]["score"] if reranked else 0)
                 return reranked
+        except (asyncio.TimeoutError, httpx.TimeoutException):
+            logger.warning(
+                "Rerank timed out after %.1fs (is %s still loading?) — keeping the original order",
+                timeout, reranker.model,
+            )
         except httpx.HTTPStatusError as e:
             logger.warning("Rerank endpoint returned %s, skipping rerank", e.response.status_code)
         except Exception as e:

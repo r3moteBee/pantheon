@@ -346,6 +346,10 @@ class AgentCore:
             try:
                 if _cs["memory_recall"] and self.memory_manager:
                     mgr = self.memory_manager
+                    # Rerank has its own shorter budget inside recall
+                    # (memory.manager.rerank_timeout) so a slow reranker
+                    # cannot run this out and cost the turn every memory.
+                    recall_budget = get_settings().pre_recall_timeout_seconds
                     try:
                         results = await asyncio.wait_for(
                             mgr.recall(
@@ -355,11 +359,14 @@ class AgentCore:
                                 limit_per_tier=5,
                                 context_focus=_context_focus,
                             ),
-                            timeout=4.0,
+                            timeout=recall_budget,
                         )
                     except asyncio.TimeoutError:
                         results = None
-                        logger.warning("Pre-recall timed out, proceeding without context")
+                        logger.warning(
+                            "Pre-recall exceeded %.1fs, answering without memory context "
+                            "(PRE_RECALL_TIMEOUT_SECONDS)", recall_budget,
+                        )
                     if results:
                         recalled_memories = results
                         logger.debug("Pre-recalled %d memories for context", len(results))
