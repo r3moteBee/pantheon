@@ -16,13 +16,19 @@ from utils.http import pooled_client
 from config import get_settings
 
 
+# Fields that define the request itself; extra_body can never replace them.
+_PROTECTED_FIELDS = frozenset({"model", "messages", "stream", "tools"})
+
+
 def _apply_request_extras(payload: dict, extra_body: dict | None) -> dict:
     """Merge caller-supplied request-body fields (e.g. {"chat_template_kwargs":
-    {"enable_thinking": True}}) without overriding what the provider set. Only the
-    agent loop passes any, and only when configured to: OpenAI-compatible
-    providers may reject unknown fields."""
+    {"enable_thinking": True}}, {"tool_choice": "none"}). They may override
+    request options such as tool_choice, never model/messages/stream/tools.
+    Only the agent loop passes any, and only when configured to:
+    OpenAI-compatible providers may reject unknown fields."""
     for k, v in (extra_body or {}).items():
-        payload.setdefault(k, v)
+        if k not in _PROTECTED_FIELDS:
+            payload[k] = v
     return payload
 
 logger = logging.getLogger(__name__)

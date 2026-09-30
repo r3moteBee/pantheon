@@ -75,7 +75,7 @@ async def test_answer_left_in_reasoning_is_finalized():
     prov = _Prov([("", "The memory says the dog is Rufus. Answer: Rufus.")], final="Your dog is Rufus.")
     assert await _run(prov, thinking=True) == "Your dog is Rufus."
     (call,) = prov.complete_calls
-    assert call["tools"] is None
+    assert call["tools"] is None                                      # this turn had none
     assert call["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
     assert "Answer: Rufus." in call["messages"][-2]["content"]       # its own notes handed back
     assert call["messages"][-1]["role"] == "user"
@@ -119,3 +119,27 @@ async def test_provider_sends_extra_body_and_returns_reasoning():
     assert seen[0]["chat_template_kwargs"] == {"enable_thinking": True}
     assert seen[1]["chat_template_kwargs"] == {"enable_thinking": True}
     assert "chat_template_kwargs" not in seen[2]
+
+
+@pytest.mark.asyncio
+async def test_finalize_keeps_the_tools_but_forbids_calls():
+    """Tools render at the top of the prompt: resending them keeps the KV cache."""
+    from agent.core import AgentCore
+    from config import get_settings
+    tools = [{"type": "function", "function": {"name": "web_search", "parameters": {}}}]
+    prov = _Prov([("", "search says 3.14. Answer: 3.14")], final="3.14")
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    with patch.object(get_settings(), "agent_thinking", True), \
+         patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools):
+        [e async for e in agent.chat("latest python?", stream=True)]
+    (call,) = prov.complete_calls
+    assert call["tools"] == tools
+    assert call["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}, "tool_choice": "none"}
+
+
+def test_extras_override_options_but_not_the_request():
+    from models.provider import _apply_request_extras
+    p = {"model": "m", "messages": [1], "stream": True, "tools": [2], "tool_choice": "auto"}
+    _apply_request_extras(p, {"tool_choice": "none", "model": "x", "messages": [], "tools": None, "stream": False})
+    assert p == {"model": "m", "messages": [1], "stream": True, "tools": [2], "tool_choice": "none"}

@@ -559,7 +559,8 @@ class AgentCore:
                         and round_reasoning.strip()):
                     # A thinking model ended its turn with the answer inside its
                     # reasoning and no reply text (seen ~1 in 10 with a 9B model).
-                    final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra)
+                    final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra,
+                                                                 tools=all_tools)
                     if final:
                         current_text = final
                         yield {"type": "text_delta", "content": final}
@@ -691,20 +692,27 @@ class AgentCore:
         report_progress()
 
     async def _finalize_from_reasoning(self, messages: list[dict], reasoning: str,
-                                       agent_extra: dict | None) -> str:
-        """Ask once more for the reply itself: thinking off, no tools, with the
-        model's own reasoning handed back as working notes. Returns '' on failure
-        so the caller falls back to the old behaviour."""
+                                       agent_extra: dict | None, tools: list[dict] | None = None) -> str:
+        """Ask once more for the reply itself: thinking off, tool calls off, with
+        the model's own reasoning handed back as working notes. Returns '' on
+        failure so the caller falls back to the old behaviour.
+
+        The round's tools are sent again with tool_choice "none" rather than
+        dropped: templates render tools at the top of the prompt, so dropping
+        them made this call recompute the whole prompt (~5K tokens, 3 s on a
+        9B model) instead of reusing the round's KV cache."""
         notes = reasoning.strip()[-8000:]
         msgs = messages + [
             {"role": "assistant", "content": "(my working notes)\n" + notes},
             {"role": "user", "content": "Write your reply to my request above now, based on your "
                                         "working notes. Reply directly; do not call tools."},
         ]
-        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else None
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
+        if tools:
+            extra["tool_choice"] = "none"
         try:
             kw = {"extra_body": extra} if extra else {}
-            r = await self.provider.chat_complete(messages=msgs, tools=None, **kw)
+            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **kw)
             text = (r.get("content") or "").strip()
             logger.info("Finalized an empty thinking-mode reply (%d chars)", len(text))
             return text
