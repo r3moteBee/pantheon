@@ -366,6 +366,8 @@ These are deliberate architectural calls. If a code review recommends reversing 
 
 `mgr.recall(query, tiers=[...])` searches across them and returns provenance-tagged hits: `[semantic/artifact] ... ↳ source: NBJ/... id=... tags=[...]` for artifact chunks, `[semantic/file:foo.md]` for workspace file chunks, `[episodic session=abc12345 ts=...]` for chat history, `[graph:concept] ...` for graph nodes.
 
+**Pre-recall skips what the prompt already carries.** `AgentCore.chat` passes `in_context=` (the new message plus the session's working memory) to `recall`; episodic hits with the same text are dropped before the per-tier cut. Chat saves the user message to episodic before the agent runs, so without this the top episodic hit was the question itself, and the current session's turns crowded out older sessions — the only ones recall adds anything for. The pre-recalled items reach the model as `## Recalled memory`, labelled by provenance (`[note]`, `[user said]`, `[your earlier reply]`, `[graph]`, `[archive]`; `prompts.render_memory_section`).
+
 ## Cross-artifact similarity + merge proposals
 
 When `auto_link_similarity=True` on an adapter, after `index_artifact` runs, the similarity pipeline:

@@ -246,8 +246,14 @@ class MemoryManager:
         project_id: str | None = None,
         limit_per_tier: int = 3,
         context_focus: str | None = None,
+        in_context: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
+
+        ``in_context``: message texts the caller already sends the model (the
+        conversation so far and the new message). Episodic hits with the same
+        text are dropped BEFORE the per-tier cut, so they neither repeat what
+        the model can already see nor push older sessions' messages out.
 
         Returns list of dicts with keys: content, source, score, metadata, tier
         """
@@ -274,6 +280,9 @@ class MemoryManager:
                     project_id=active_project,
                     limit=limit_per_tier * 2,
                 )
+                if in_context:
+                    ep_results = [r for r in ep_results
+                                  if (r.get("content") or "").strip() not in in_context]
                 for r in ep_results[:limit_per_tier]:
                     all_results.append({
                         "id": r.get("id", ""),

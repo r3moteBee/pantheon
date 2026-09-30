@@ -308,6 +308,16 @@ class AgentCore:
 
         return [{"type": "text", "text": message}, *image_blocks]
 
+    def _in_context_texts(self, user_message: str) -> set[str]:
+        """Texts the model will already see this turn (the session so far and
+        the new message; chat saves the message to episodic before the agent
+        runs, so recall would otherwise return the question itself)."""
+        texts = {user_message.strip()}
+        for m in self.working_memory:
+            if isinstance(m.get("content"), str):
+                texts.add(m["content"].strip())
+        return texts
+
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
         return self.working_memory.copy()
@@ -358,6 +368,7 @@ class AgentCore:
                                 project_id=self.project_id or "default",
                                 limit_per_tier=5,
                                 context_focus=_context_focus,
+                                in_context=self._in_context_texts(user_message),
                             ),
                             timeout=recall_budget,
                         )
