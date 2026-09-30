@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     #   always      — also autonomous/scheduled jobs and messaging bots
     #   never       — disabled everywhere
     agent_host_exec: str = "interactive"
+    # Ask the AGENT-class model to reason before acting (sends chat_template_kwargs
+    # {"enable_thinking": true}; only for backends that accept it, e.g. llama.cpp /
+    # vLLM serving Qwen-family models). Measured on a 9B model: tool use for
+    # current-fact questions 8/14 -> 10/10. Off by default: other OpenAI-compatible
+    # providers may reject the extra field.
+    agent_thinking: bool = False
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = False

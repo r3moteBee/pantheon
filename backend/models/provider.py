@@ -15,6 +15,16 @@ from utils.http import pooled_client
 
 from config import get_settings
 
+
+def _apply_request_extras(payload: dict, extra_body: dict | None) -> dict:
+    """Merge caller-supplied request-body fields (e.g. {"chat_template_kwargs":
+    {"enable_thinking": True}}) without overriding what the provider set. Only the
+    agent loop passes any, and only when configured to: OpenAI-compatible
+    providers may reject unknown fields."""
+    for k, v in (extra_body or {}).items():
+        payload.setdefault(k, v)
+    return payload
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -253,31 +263,34 @@ class ModelProvider:
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
         stream: bool = True,
+        extra_body: dict | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream chat completions. Yields event dicts."""
         if stream:
-            async for event in self._stream_chat(messages, tools):
+            async for event in self._stream_chat(messages, tools, extra_body):
                 yield event
         else:
-            async for event in self._stream_non_streaming(messages, tools):
+            async for event in self._stream_non_streaming(messages, tools, extra_body):
                 yield event
 
     async def _stream_non_streaming(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
+        extra_body: dict | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        result = await self.chat_complete(messages, tools)
+        result = await self.chat_complete(messages, tools, extra_body)
         if result.get("content"):
             yield {"type": "text_delta", "content": result["content"]}
         for tc in result.get("tool_calls", []):
             yield {"type": "tool_call", **tc}
-        yield {"type": "done"}
+        yield {"type": "done", "reasoning": result.get("reasoning") or ""}
 
     async def _stream_chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
+        extra_body: dict | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream via SSE."""
         url = f"{self.base_url}/chat/completions"
@@ -290,10 +303,12 @@ class ModelProvider:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        _apply_request_extras(payload, extra_body)
 
         # Accumulate tool call chunks
         tool_call_accum: dict[int, dict[str, Any]] = {}
         current_text = ""
+        current_reasoning = ""   # reasoning_content deltas (thinking models); not shown to the user
         finish_reason: str | None = None
 
         try:
@@ -346,6 +361,7 @@ class ModelProvider:
                         if content:
                             current_text += content
                             yield {"type": "text_delta", "content": content}
+                        current_reasoning += delta.get("reasoning_content") or ""
 
                         # Tool calls
                         for tc_delta in delta.get("tool_calls", []):
@@ -376,7 +392,7 @@ class ModelProvider:
                     event["args_error"] = args_error
                 yield event
 
-            yield {"type": "done", "content": current_text}
+            yield {"type": "done", "content": current_text, "reasoning": current_reasoning}
 
         except httpx.HTTPStatusError as e:
             # Defensive fallback — the inline status check above handles the
@@ -402,6 +418,7 @@ class ModelProvider:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict] | None = None,
+        extra_body: dict | None = None,
     ) -> dict[str, Any]:
         """Non-streaming chat completion. Returns dict with content and tool_calls."""
         url = f"{self.base_url}/chat/completions"
@@ -413,6 +430,7 @@ class ModelProvider:
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        _apply_request_extras(payload, extra_body)
 
         try:
             async with pooled_client(timeout=300.0) as client:
@@ -445,7 +463,8 @@ class ModelProvider:
                     call["args_error"] = args_error
                 tool_calls.append(call)
 
-            return {"content": content, "tool_calls": tool_calls, "usage": usage}
+            return {"content": content, "tool_calls": tool_calls, "usage": usage,
+                    "reasoning": message.get("reasoning_content") or ""}
 
         except Exception as e:
             logger.error(f"Chat complete error: {e}", exc_info=True)
@@ -720,13 +739,14 @@ class RoutedProvider:
         )
 
     async def chat_complete(self, messages: list[dict[str, Any]],
-                            tools: list[dict] | None = None) -> dict[str, Any]:
+                            tools: list[dict] | None = None,
+                            extra_body: dict | None = None) -> dict[str, Any]:
         import time as _t
         last_exc: BaseException | None = None
         for i, (prov, ep) in enumerate(self._candidates):
             started = _t.monotonic()
             try:
-                result = await prov.chat_complete(messages, tools)
+                result = await prov.chat_complete(messages, tools, extra_body=extra_body)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -746,10 +766,11 @@ class RoutedProvider:
         raise last_exc or RuntimeError("no candidates")
 
     async def chat(self, messages: list[dict[str, Any]], tools: list[dict] | None = None,
-                   stream: bool = True) -> AsyncGenerator[dict[str, Any], None]:
+                   stream: bool = True,
+                   extra_body: dict | None = None) -> AsyncGenerator[dict[str, Any], None]:
         import time as _t
         if not stream:
-            result = await self.chat_complete(messages, tools)
+            result = await self.chat_complete(messages, tools, extra_body=extra_body)
             if result.get("content"):
                 yield {"type": "text_delta", "content": result["content"]}
             for tc in result.get("tool_calls", []):
@@ -760,7 +781,7 @@ class RoutedProvider:
             started = _t.monotonic()
             first = True
             failed_early = False
-            async for event in prov.chat(messages, tools, stream=True):
+            async for event in prov.chat(messages, tools, stream=True, extra_body=extra_body):
                 if event.get("type") == "error":
                     status = event.get("status")
                     self._log(endpoint=ep, model=prov.model, op="stream", attempt=i,

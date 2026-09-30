@@ -443,11 +443,21 @@ class AgentCore:
 
             tool_names = {t.get("function", {}).get("name") for t in all_tools}
 
+            # Opt-in reasoning for the agent-class model (settings.agent_thinking).
+            # Only the agent class: a code/quick route may be a model where
+            # thinking is slow or meaningless.
+            agent_extra = None
+            if get_settings().agent_thinking and getattr(self.provider, "task_class", "agent") == "agent":
+                agent_extra = {"chat_template_kwargs": {"enable_thinking": True}}
+            # Only sent when set, so the call is unchanged for every other provider.
+            extra_kw = {"extra_body": agent_extra} if agent_extra else {}
+
             while iterations < iteration_limit:
                 iterations += 1
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
+                round_reasoning = ""
 
                 if stream:
                     # Streaming mode. A reply that starts like a textual tool
@@ -461,6 +471,7 @@ class AgentCore:
                         messages=messages,
                         tools=all_tools,
                         stream=True,
+                        **extra_kw,
                     ):
                         self._progress()
                         if chunk["type"] == "text_delta":
@@ -480,7 +491,7 @@ class AgentCore:
                             yield chunk
                             stream_error = True
                         elif chunk["type"] == "done":
-                            pass
+                            round_reasoning = chunk.get("reasoning") or ""
                     if held and not stream_error and not tool_calls_this_round:
                         recovered = recover_tool_calls(held, tool_names)
                         if recovered:
@@ -500,8 +511,10 @@ class AgentCore:
                     response = await self.provider.chat_complete(
                         messages=messages,
                         tools=all_tools,
+                        **extra_kw,
                     )
                     current_text = response.get("content", "")
+                    round_reasoning = response.get("reasoning") or ""
                     tool_calls_this_round = response.get("tool_calls", [])
                     if current_text and not tool_calls_this_round:
                         recovered = recover_tool_calls(current_text, tool_names)
@@ -521,6 +534,15 @@ class AgentCore:
                     for tc in tool_calls_this_round:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
+
+                if (not tool_calls_this_round and not (current_text or "").strip()
+                        and round_reasoning.strip()):
+                    # A thinking model ended its turn with the answer inside its
+                    # reasoning and no reply text (seen ~1 in 10 with a 9B model).
+                    final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra)
+                    if final:
+                        current_text = final
+                        yield {"type": "text_delta", "content": final}
 
                 if current_text:
                     full_response = current_text
@@ -647,6 +669,28 @@ class AgentCore:
         """Tell the job stall watchdog (if running under one) we're alive."""
         from utils.progress import report_progress
         report_progress()
+
+    async def _finalize_from_reasoning(self, messages: list[dict], reasoning: str,
+                                       agent_extra: dict | None) -> str:
+        """Ask once more for the reply itself: thinking off, no tools, with the
+        model's own reasoning handed back as working notes. Returns '' on failure
+        so the caller falls back to the old behaviour."""
+        notes = reasoning.strip()[-8000:]
+        msgs = messages + [
+            {"role": "assistant", "content": "(my working notes)\n" + notes},
+            {"role": "user", "content": "Write your reply to my request above now, based on your "
+                                        "working notes. Reply directly; do not call tools."},
+        ]
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else None
+        try:
+            kw = {"extra_body": extra} if extra else {}
+            r = await self.provider.chat_complete(messages=msgs, tools=None, **kw)
+            text = (r.get("content") or "").strip()
+            logger.info("Finalized an empty thinking-mode reply (%d chars)", len(text))
+            return text
+        except Exception as e:
+            logger.warning("Finalize round failed: %s", e)
+            return ""
 
     async def run_autonomous(self, task_description: str) -> str:
         """Run a task autonomously (no streaming, returns final response).
