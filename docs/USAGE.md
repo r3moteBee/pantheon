@@ -65,6 +65,14 @@ When you want the agent to remember something across sessions, ask it to `rememb
 
 To recall, say *"what do you know about X"* — the agent will search across tiers. You can also use `/memory <query>` in a messaging bot. Recall runs on every chat turn anyway, so you don't need magic phrases to reach earlier work.
 
+How automatic recall behaves:
+
+- It looks for memories related to your message, reranks them, and leaves out ones the reranker scores as unrelated (`RECALL_MIN_RELEVANCE`, default 0.05). Small talk gets no memories at all. It also skips messages from the current conversation, because the agent can already see those.
+- The agent sees each memory labelled by where it came from: `[note]` (things you asked it to remember, indexed sources), `[user said]` (something you said in an earlier chat), `[your earlier reply]` (its own past answer, which may be out of date) and `[graph]` / `[archive]`. For anything time-sensitive, like latest versions, prices or news, it is told to use its tools even when a memory seems to answer.
+- Memories and the current time are added to your newest message, not to the system prompt. The long, unchanging part of the prompt therefore stays identical from turn to turn, and local model servers (llama.cpp, vLLM) can reuse their cache for it, which makes replies noticeably faster.
+
+**Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
+
 ## 5. Saving the agent's own output
 
 A common pattern: the agent produces a long analysis, and you want to file it. Use any of these:
