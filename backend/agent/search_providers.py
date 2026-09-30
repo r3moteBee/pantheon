@@ -47,18 +47,18 @@ _settings = get_settings()
 # Default chain. Users override via vault key `search_providers` (JSON list).
 # Each entry: {name, type, url, api_key_vault_key, daily_limit, monthly_limit, rps}
 # type ∈ {"brave", "searxng", "ddg", "generic"}
+#
+# SearXNG first: self-hosted, keyless, no per-query quota. Keyed providers
+# stay in the chain but are only used once their API key is configured (see
+# KEY_REQUIRED_TYPES) - until then they are skipped, not "failed".
+
+# Provider types whose API refuses to work without a key. A provider of one of
+# these types with no key set is treated as NOT CONFIGURED: skipped silently
+# (no warning, no failed-call stat, nothing in the fallthrough note the agent
+# sees). Types where a key is optional (generic) are always tried.
+KEY_REQUIRED_TYPES = frozenset({"brave", "tavily", "google", "bing"})
 
 DEFAULT_PROVIDERS: list[dict[str, Any]] = [
-    {
-        "name": "brave",
-        "type": "brave",
-        "url": "https://api.search.brave.com/res/v1/web/search",
-        "api_key_vault_key": "brave_api_key",
-        "daily_limit": 0,         # 0 = unlimited
-        "monthly_limit": 2000,    # free tier
-        "rps": 1,                 # free tier: 1 req/sec
-        "enabled": True,
-    },
     {
         "name": "searxng",
         "type": "searxng",
@@ -67,6 +67,16 @@ DEFAULT_PROVIDERS: list[dict[str, Any]] = [
         "daily_limit": 0,
         "monthly_limit": 0,
         "rps": 0,                 # 0 = no limit
+        "enabled": True,
+    },
+    {
+        "name": "brave",
+        "type": "brave",
+        "url": "https://api.search.brave.com/res/v1/web/search",
+        "api_key_vault_key": "brave_api_key",
+        "daily_limit": 0,         # 0 = unlimited
+        "monthly_limit": 2000,    # free tier
+        "rps": 1,                 # free tier: 1 req/sec
         "enabled": True,
     },
     {
@@ -296,6 +306,9 @@ class SearchProviderManager:
             if not prov.get("enabled", True):
                 continue
             name = prov["name"]
+            if prov.get("type") in KEY_REQUIRED_TYPES and not self._get_api_key(prov):
+                logger.debug("search provider %s: no API key configured, skipping", name)
+                continue
             quota_msg = self._quota_exhausted(prov)
             if quota_msg:
                 self._record_skip(name, quota_msg)
