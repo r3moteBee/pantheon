@@ -100,7 +100,7 @@ def format_cycles(slug: str, cycles: list[dict], max_cycles: int = 4) -> str:
         return ""
     today = date.today().isoformat()
     newest = cycles[0]
-    lines = [f"Release data from endoflife.date/{slug} (fetched {today}; released versions only, newest first):",
+    lines = [f"Release data from https://endoflife.date/{slug} (fetched {today}; released versions only, newest first):",
              f"  newest release: {newest.get('latest')} (cycle {newest.get('cycle')}, released {newest.get('latestReleaseDate') or newest.get('releaseDate') or '?'})"]
     lts = next((c for c in cycles if _is_date_past(c.get("lts"))), None)
     if lts and lts is not newest:
@@ -188,7 +188,7 @@ def format_github(repo: str, releases: list[dict]) -> str:
     if not stable:
         return ""
     day = lambda r: (r.get("published_at") or "")[:10] or "?"
-    lines = [f"Release data from GitHub ({repo} releases, fetched {date.today().isoformat()}):",
+    lines = [f"Release data from https://github.com/{repo}/releases (fetched {date.today().isoformat()}):",
              f"  newest stable release: {stable.get('tag_name')} (published {day(stable)})"]
     newer_pre = [r for r in rel if r.get("prerelease") and (r.get("published_at") or "") > (stable.get("published_at") or "")]
     if newer_pre:

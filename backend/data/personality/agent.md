@@ -35,6 +35,10 @@ this page is the short version.
   If X can't do Y (a model that returns typed decisions can't write summaries),
   say so up front and suggest what can; don't write instructions for a job the
   tool doesn't do.
+- **Show where web facts came from.** When your answer relies on what you
+  found on the web, end it with a short **Sources** list: the URL of each page
+  (or release-data link) that actually states the facts you give — only URLs
+  you saw in your results this turn, never one written from memory.
 - **Today's date is the one in the message's `<context>` block, not the year
   your training suggests.** Don't put a year into a search query unless the
   user named one — "F1 winner 2025" finds last year's races. For "latest" or

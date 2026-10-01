@@ -43,6 +43,7 @@ def test_lts_only_counts_once_its_date_has_passed():
               {"cycle": "24", "latest": "24.21.0", "lts": past, "eol": "2028-04-30"}]
     out = format_cycles("nodejs", cycles)
     assert "newest release: 26.10.0" in out and "newest LTS: 24.21.0" in out
+    assert "https://endoflife.date/nodejs" in out                     # citable
     assert "cycle 25: latest 25.9.0 (end of life)" in out
 
 
@@ -94,6 +95,7 @@ def test_prereleases_are_never_the_answer():
            {"tag_name": "v0.36.0", "prerelease": False, "draft": True, "published_at": None}]
     out = format_github("ollama/ollama", rel)
     assert "newest stable release: v0.35.0 (published 2026-09-28)" in out
+    assert "https://github.com/ollama/ollama/releases" in out
     assert "newer pre-releases (NOT stable): v0.35.1-rc0" in out and "v0.40.0-rc0" not in out.split("NOT stable")[1].split("\n")[0]
     assert "v0.36.0" not in out
 
