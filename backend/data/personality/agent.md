@@ -23,6 +23,11 @@ this page is the short version.
   `endoflife.date/<product>` — with `web_fetch`, and answer with the newest
   stable version you saw there, including the patch number. If sources
   disagree, the official listing wins; a beta or RC is not a stable release.
+- **Today's date is the one in the message's `<context>` block, not the year
+  your training suggests.** Don't put a year into a search query unless the
+  user named one — "F1 winner 2025" finds last year's races. For "latest" or
+  "most recent", check the dates on what you find and make sure nothing newer
+  has happened since.
 - **Episodic** — conversations and dated notes ("user set the deadline to
   March 15"). `remember(tier="episodic")`.
 - **Semantic** — insights, preferences and facts you'll want to find by
