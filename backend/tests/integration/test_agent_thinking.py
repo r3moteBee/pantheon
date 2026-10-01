@@ -144,3 +144,30 @@ def test_extras_override_options_but_not_the_request():
     p = {"model": "m", "messages": [1], "stream": True, "tools": [2], "tool_choice": "auto"}
     _apply_request_extras(p, {"tool_choice": "none", "model": "x", "messages": [], "tools": None, "stream": False})
     assert p == {"model": "m", "messages": [1], "stream": True, "tools": [2], "tool_choice": "none"}
+
+
+@pytest.mark.asyncio
+async def test_thinking_stops_once_tool_results_are_in():
+    from agent.core import AgentCore
+    from config import get_settings
+    seen = []
+
+    class P:
+        model, task_class = "m", "agent"
+        async def chat(self, messages, tools=None, stream=True, **kw):
+            seen.append(kw)
+            if len(seen) == 1:
+                yield {"type": "tool_call", "id": "1", "name": "web_search", "args": {"query": "q"}}
+            else:
+                yield {"type": "text_delta", "content": "answer"}
+            yield {"type": "done"}
+    tools = [{"type": "function", "function": {"name": "web_search", "parameters": {}}}]
+    for after, want in ((False, False), (True, True)):
+        seen.clear()
+        agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+        with patch.object(get_settings(), "agent_thinking", True), patch.object(get_settings(), "agent_thinking_after_tools", after), \
+             patch.object(get_settings(), "agent_force_search", False), patch("agent.core.get_all_tool_schemas", return_value=tools), \
+             patch("agent.core.build_system_prompt", return_value="sys"), patch("agent.core.execute_tool", return_value="r"):
+            [e async for e in agent.chat("q")]
+        assert seen[0]["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
+        assert seen[1]["extra_body"]["chat_template_kwargs"]["enable_thinking"] is want

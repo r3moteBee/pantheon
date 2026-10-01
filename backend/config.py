@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # current-fact questions 8/14 -> 10/10. Off by default: other OpenAI-compatible
     # providers may reject the extra field.
     agent_thinking: bool = False
+    # With AGENT_THINKING: keep thinking on for rounds after tool results too.
+    # Off by default - answer rounds think little of value and were where the
+    # answer got stuck in the reasoning (extra non-streamed finalize call).
+    agent_thinking_after_tools: bool = False
     # Time-sensitive questions (agent/freshness.py) must be looked up: if the
     # first round made no web search, its answer is dropped and the user's
     # question is searched (so "who is the president" isn't answered from

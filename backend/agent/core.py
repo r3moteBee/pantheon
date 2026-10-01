@@ -570,9 +570,16 @@ class AgentCore:
                 fresh_question = bool(entities)
             auto_query = f"What is {entities[0]}?" if entities else user_message
 
+            results_seen = False
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
+                # Thinking pays off for deciding what to look up; once tool results
+                # are in, the answer round runs with thinking off - it was the round
+                # that most often ended with the answer stuck in the reasoning (a
+                # whole extra non-streamed finalize call) and the bulk of the tokens.
+                if agent_extra and results_seen and not get_settings().agent_thinking_after_tools:
+                    round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
                 self._progress()
                 tool_calls_this_round: list[dict] = []
@@ -703,6 +710,7 @@ class AgentCore:
                 }
                 messages.append(assistant_msg)
 
+                results_seen = True
                 # Execute each tool call
                 for tc in tool_calls_this_round:
                     tool_name = tc["name"]
