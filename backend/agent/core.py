@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
+from agent.freshness import needs_fresh_facts
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
@@ -496,9 +497,16 @@ class AgentCore:
                 agent_extra = {"chat_template_kwargs": {"enable_thinking": True}}
             # Only sent when set, so the call is unchanged for every other provider.
             extra_kw = {"extra_body": agent_extra} if agent_extra else {}
+            # Time-sensitive question (agent/freshness.py): the first round must
+            # call a tool, so the answer can't come from stale training data.
+            force_first_tool = (get_settings().agent_force_search and "web_search" in tool_names
+                                and needs_fresh_facts(user_message))
 
             while iterations < iteration_limit:
                 iterations += 1
+                round_kw = extra_kw
+                if force_first_tool and iterations == 1:
+                    round_kw = {"extra_body": {**(agent_extra or {}), "tool_choice": "required"}}
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
@@ -516,7 +524,7 @@ class AgentCore:
                         messages=messages,
                         tools=all_tools,
                         stream=True,
-                        **extra_kw,
+                        **round_kw,
                     ):
                         self._progress()
                         if chunk["type"] == "text_delta":
@@ -556,7 +564,7 @@ class AgentCore:
                     response = await self.provider.chat_complete(
                         messages=messages,
                         tools=all_tools,
-                        **extra_kw,
+                        **round_kw,
                     )
                     current_text = response.get("content", "")
                     round_reasoning = response.get("reasoning") or ""
