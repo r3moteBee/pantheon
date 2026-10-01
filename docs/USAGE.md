@@ -77,6 +77,8 @@ How automatic recall behaves:
 
 **New or unfamiliar names:** if you ask what something is, or ask the agent to use, set up or switch to something with a capitalised or camel-case name, such as "What is Jev?" or "use Jev to…", and its first draft didn't search the web, Pantheon searches "What is <name>?" before it answers. The same check applies to time-sensitive questions (`AGENT_FORCE_SEARCH`). The agent guide also tells it to check that a product can actually do what you're asking before giving setup steps.
 
+**Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output
