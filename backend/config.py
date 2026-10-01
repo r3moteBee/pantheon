@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # web_search appends endoflife.date's release table when a query asks for
     # a product's version (agent/release_facts.py); sends the product name there.
     search_release_facts: bool = True
+    # An answer built on web results that cites nothing gets a "Sources:" list
+    # of the result URLs whose text contains the answer's key facts (agent/sources.py).
+    answer_sources: bool = True
     # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).
     # Leave empty to fall back to DuckDuckGo HTML scraping.
     # Examples:

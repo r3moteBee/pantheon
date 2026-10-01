@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
 from agent.freshness import needs_fresh_facts, unknown_entities
+from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
@@ -495,6 +496,7 @@ class AgentCore:
             self._add_working_message("user", user_message)
 
             full_response = ""
+            web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -695,6 +697,8 @@ class AgentCore:
                             host_exec=self.host_exec,
                         )
                     self._progress()
+                    if tool_name in ("web_search", "web_fetch"):
+                        web_evidence.update(evidence_from(tool_name, tool_args, result))
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -738,6 +742,15 @@ class AgentCore:
                             "resumable; one without is not."
                         ),
                     })
+
+            # An answer built on web results but citing nothing gets the URLs
+            # whose text holds its key facts (agent/sources.py).
+            if full_response and web_evidence and get_settings().answer_sources and not has_url(full_response):
+                picked = pick_sources(full_response, web_evidence)
+                if picked:
+                    tail = "\n\nSources:\n" + "\n".join(f"- {u}" for u in picked)
+                    full_response += tail
+                    yield {"type": "text_delta", "content": tail}
 
             # Save assistant response
             if full_response:
