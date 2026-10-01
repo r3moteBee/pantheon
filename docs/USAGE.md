@@ -75,6 +75,8 @@ How automatic recall behaves:
 
 **"What's the latest version of X?"** When a search asks about a product's version, `web_search` also returns that product's release table from endoflife.date, or, for projects released on GitHub, its newest stable release (newer pre-releases are flagged as not stable). These sit above the search snippets, which are often months old. The lookup sends only the product name. Turn it off with `SEARCH_RELEASE_FACTS=false`.
 
+**New or unfamiliar names:** if you ask what something is, or ask the agent to use, set up or switch to something with a capitalised or camel-case name, such as "What is Jev?" or "use Jev to…", and its first draft didn't search the web, Pantheon searches "What is <name>?" before it answers. The same check applies to time-sensitive questions (`AGENT_FORCE_SEARCH`). The agent guide also tells it to check that a product can actually do what you're asking before giving setup steps.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output
