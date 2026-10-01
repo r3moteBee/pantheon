@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
 from agent.freshness import needs_fresh_facts, unknown_entities
+from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
@@ -355,6 +356,41 @@ class AgentCore:
         return self.working_memory.copy()
 
     async def chat(
+        self,
+        user_message: str,
+        stream: bool = True,
+        max_iterations: int | None = None,
+        reanchor_text: str | None = None,
+        reanchor_every: int = 15,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """``_chat_events`` with remote images in the reply shown as text, not loaded
+        (agent/output_filter.py): filtered while streaming and in full_response."""
+        filt = ImageFilter(allowed_from(user_message))
+        async for ev in self._chat_events(user_message, stream=stream, max_iterations=max_iterations,
+                                          reanchor_text=reanchor_text, reanchor_every=reanchor_every):
+            t = ev.get("type")
+            if t == "text_delta":
+                safe = filt.feed(ev.get("content") or "")
+                if safe:
+                    yield {**ev, "content": safe}
+                continue
+            if t in ("done", "error"):
+                rest = filt.flush()
+                if rest:
+                    yield {"type": "text_delta", "content": rest}
+                if t == "done":
+                    raw = ev.get("full_response") or ""
+                    clean = sanitize(raw, filt.allowed)
+                    if clean != raw:
+                        logger.info("Reply contained external image(s) - shown as text")
+                        for m in reversed(self.working_memory):
+                            if m.get("role") == "assistant" and m.get("content") == raw:
+                                m["content"] = clean
+                                break
+                    ev = {**ev, "full_response": clean}
+            yield ev
+
+    async def _chat_events(
         self,
         user_message: str,
         stream: bool = True,
