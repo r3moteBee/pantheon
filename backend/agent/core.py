@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.history import budget_history, resolve_budget
+from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
@@ -391,8 +391,10 @@ class AgentCore:
                                 context_focus=_context_focus,
                                 in_context=self._in_context_texts(user_message, history),
                                 min_relevance=get_settings().recall_min_relevance,
-                                session_fallback=(self.session_id if history_dropped + self.working_offset else None),
+                                session_fallback=(self.session_id if len(history) > SESSION_RECENT_MESSAGES
+                                                  or history_dropped + self.working_offset else None),
                                 session_min_similarity=get_settings().recall_session_min_similarity,
+                                session_exclude=self._in_context_texts(user_message, history[-SESSION_RECENT_MESSAGES:]),
                             ),
                             timeout=recall_budget,
                         )

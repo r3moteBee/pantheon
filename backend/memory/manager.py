@@ -260,6 +260,7 @@ class MemoryManager:
         min_relevance: float = 0.0,
         session_fallback: str | None = None,
         session_min_similarity: float = 0.0,
+        session_exclude: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
 
@@ -273,13 +274,15 @@ class MemoryManager:
         settings.recall_min_relevance so unrelated memories are not injected;
         a failed or timed-out rerank drops nothing.
 
-        ``session_fallback``: the current conversation's id when some of its
-        turns are no longer in the prompt (history budget). Up to
-        SESSION_FALLBACK_MAX of its messages not in ``in_context`` are added
-        when their embedding similarity is >= ``session_min_similarity``,
-        whatever the reranker thought: cross-encoders score questions ABOUT
-        the conversation ("did I mention a speech?") near zero even when the
-        right turn is ranked first.
+        ``session_fallback``: the current conversation's id. Up to
+        SESSION_FALLBACK_MAX of its messages not in ``session_exclude``
+        (default: ``in_context``) are added when their embedding similarity
+        is >= ``session_min_similarity``, whatever the reranker thought:
+        cross-encoders score questions ABOUT the conversation ("did I mention
+        a speech?") near zero even when the right turn is ranked first.
+        AgentCore excludes only the newest messages, so a relevant turn deep
+        in a long prompt is ALSO repeated next to the question — small models
+        miss facts in the middle of a long history.
 
         Returns list of dicts with keys: content, source, score, metadata, tier
         """
@@ -374,7 +377,8 @@ class MemoryManager:
 
         if session_fallback and session_min_similarity > 0:
             all_results = await self._add_session_fallback(
-                query, active_project, session_fallback, in_context or set(),
+                query, active_project, session_fallback,
+                in_context or set() if session_exclude is None else session_exclude,
                 session_min_similarity, all_results,
             )
 

@@ -24,6 +24,10 @@ DEFAULT_BUDGET = 24_000    # tokens, when the model's context window is unknown
 MAX_AUTO_BUDGET = 24_000   # a 262K window still gets 24K: attention, not capacity, is the limit
 MIN_AUTO_BUDGET = 2_000
 CHARS_PER_TOKEN = 4
+# Pre-recall may repeat an older turn of this conversation next to the new
+# message (memory.manager session fallback) — except the newest few, which a
+# model attends to well anyway.
+SESSION_RECENT_MESSAGES = 6
 
 
 def message_tokens(msg: dict[str, Any]) -> int:

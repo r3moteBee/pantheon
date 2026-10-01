@@ -100,3 +100,24 @@ async def test_agent_sends_the_budgeted_history_and_lets_recall_reach_the_rest()
     assert (agent.working_memory[0]["content"].strip() not in recall_kw["in_context"])   # dropped -> recallable
     assert agent.working_memory[59]["content"].strip() in recall_kw["in_context"]        # sent -> not repeated
     assert "older messages are not shown" in sent[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_agent_lets_recall_repeat_older_turns_but_not_the_newest():
+    from agent.core import AgentCore
+    from agent.history import SESSION_RECENT_MESSAGES
+    from config import get_settings
+    kw = {}
+
+    async def recall(**k):
+        kw.update(k)
+        return []
+    agent = AgentCore(provider=_Prov(), memory_manager=SimpleNamespace(recall=recall), project_id="p", session_id="s")
+    agent.working_memory = _conv(20)
+    with patch.object(get_settings(), "history_token_budget", -1), \
+         patch("agent.core.get_all_tool_schemas", return_value=[]), \
+         patch("agent.core.build_system_prompt", return_value="sys"):
+        [e async for e in agent.chat("q?")]
+    assert kw["session_fallback"] == "s"
+    newest = {m["content"].strip() for m in agent.working_memory[-SESSION_RECENT_MESSAGES - 1:-1]}
+    assert newest <= kw["session_exclude"] and agent.working_memory[0]["content"].strip() not in kw["session_exclude"]

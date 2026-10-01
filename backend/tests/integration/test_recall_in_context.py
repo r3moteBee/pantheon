@@ -143,3 +143,19 @@ def test_earlier_turns_are_labelled_as_this_conversation():
     out = render_turn_context([{"tier": "episodic", "content": "[user] keynote in Denver",
                                 "metadata": {"earlier_in_session": True}}])
     assert "[earlier in this chat, user said] keynote in Denver" in out
+
+
+async def test_session_fallback_can_repeat_older_turns_still_in_the_prompt(monkeypatch):
+    """Only the explicit exclude set is skipped: a relevant turn deep in a long
+    history is repeated next to the question."""
+    import models.provider
+    monkeypatch.setattr(models.provider, "get_provider_for", lambda cls: None)
+    m = _manager([])
+    hits = [{"id": "w", "content": "the wifi password is maple-otter-17", "role": "user", "similarity": 0.6},
+            {"id": "q", "content": "what's the wifi password?", "role": "user", "similarity": 0.9}]
+    m.episodic = SimpleNamespace(search_messages=AsyncMock(side_effect=lambda **kw: hits if kw.get("session_id") else []))
+    out = await m.recall("what's the wifi password?", tiers=["episodic"], limit_per_tier=5, context_focus="broad",
+                         in_context={"the wifi password is maple-otter-17", "what's the wifi password?"},
+                         session_fallback="now", session_min_similarity=0.45,
+                         session_exclude={"what's the wifi password?"})
+    assert [r["id"] for r in out] == ["w"]
