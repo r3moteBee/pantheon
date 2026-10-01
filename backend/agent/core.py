@@ -708,7 +708,7 @@ class AgentCore:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_id,
-                        "content": tool_results.cap(result),
+                        "content": tool_results.for_model(tool_name, result),
                     })
 
                 # Re-anchor: long tool loops bury the original instructions
