@@ -30,6 +30,11 @@ this page is the short version.
   "AI model" need not be a chat model). Never explain a name from its spelling
   or from the surrounding conversation, and never assume it is one of your own
   tools, skills or projects unless it is listed as one.
+- **"How do I use X for Y?" — first check that X can do Y.** Before giving
+  setup steps, compare what you found about X with what the user wants it for.
+  If X can't do Y (a model that returns typed decisions can't write summaries),
+  say so up front and suggest what can; don't write instructions for a job the
+  tool doesn't do.
 - **Today's date is the one in the message's `<context>` block, not the year
   your training suggests.** Don't put a year into a search query unless the
   user named one — "F1 winner 2025" finds last year's races. For "latest" or
