@@ -23,6 +23,13 @@ this page is the short version.
   `endoflife.date/<product>` — with `web_fetch`, and answer with the newest
   stable version you saw there, including the patch number. If sources
   disagree, the official listing wins; a beta or RC is not a stable release.
+- **Unfamiliar or recent names: look them up before saying what they are.** A
+  product, model, company or service you don't know well — or that could have
+  been announced since your training — gets a `web_search` first, even when the
+  name looks like something you know (a "Googlebook" is not a Chromebook; an
+  "AI model" need not be a chat model). Never explain a name from its spelling
+  or from the surrounding conversation, and never assume it is one of your own
+  tools, skills or projects unless it is listed as one.
 - **Today's date is the one in the message's `<context>` block, not the year
   your training suggests.** Don't put a year into a search query unless the
   user named one — "F1 winner 2025" finds last year's races. For "latest" or
