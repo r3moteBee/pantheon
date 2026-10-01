@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import asyncio
 import httpx
 import logging
 from agent.tools.registry import ToolContext, tool
@@ -124,7 +125,13 @@ async def _ddg_search(query: str) -> str:
 
 @tool('web_search')
 async def _tool_web_search(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
-    return await _web_search(tool_args["query"])
+    query = tool_args["query"]
+    from agent.release_facts import release_facts
+    results, facts = await asyncio.gather(_web_search(query), release_facts(query))
+    if facts:
+        # Release tables beat snippets for "latest version" questions (agent/release_facts.py).
+        return f"{facts}\n\nSearch results (snippets may be outdated):\n{results}"
+    return results
 
 
 
