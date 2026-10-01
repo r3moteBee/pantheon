@@ -114,3 +114,96 @@ async def release_facts(query: str) -> str:
     except Exception as e:
         logger.info("release facts skipped for %r: %s", query, e)
         return ""
+
+
+# ── GitHub releases (products endoflife.date doesn't track) ─────────────────
+#
+# Measured on homelab software tracked only on GitHub: without release data the
+# agent reported a pre-release (Ollama "0.35.1" = v0.35.1-rc0), a blog post's
+# version a week stale (Jellyfin 12.0, 12.1 was out) and a version that does
+# not exist (Uptime Kuma "2.14.5"). GitHub's release list says which tags are
+# stable. Unauthenticated API: 60 requests/hour, 10 searches/minute per IP -
+# cached, and skipped on any error.
+
+GITHUB_API = "https://api.github.com"
+_GH_URL_RE = re.compile(r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)")
+_STOP = re.compile(r"\b(what|whats|what's|is|the|of|a|an|for|latest|newest|current|stable|lts|release[sd]?|version|versions|"
+                   r"out|yet|update[sd]?|eol|end|life|supported|now|today|new|\d{4})\b", re.I)
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _product_phrase(query: str) -> str:
+    return re.sub(r"\s+", " ", _STOP.sub(" ", re.sub(r"[^\w\s.-]", " ", query))).strip()
+
+
+def repo_candidates(query: str, search_results: str) -> list[str]:
+    """owner/repo links in the search results whose repo (or owner) name is named in the query."""
+    q = _norm(query)
+    out = []
+    for owner, repo in _GH_URL_RE.findall(search_results or ""):
+        repo = repo.removesuffix(".git")
+        if owner.lower() in ("orgs", "topics", "search", "sponsors", "features", "marketplace"):
+            continue
+        names = [n for n in (_norm(repo), _norm(owner)) if len(n) >= 4]
+        if any(n in q for n in names) and f"{owner}/{repo}" not in out:
+            out.append(f"{owner}/{repo}")
+    return out
+
+
+async def _gh_json(path: str, ttl: float):
+    hit = _cache.get("gh:" + path)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    from utils.http import pooled_client
+    async with pooled_client(timeout=6.0) as client:
+        resp = await asyncio.wait_for(client.get(f"{GITHUB_API}/{path}", headers={"Accept": "application/vnd.github+json"}), timeout=6.0)
+        resp.raise_for_status()
+        data = resp.json()
+    _cache["gh:" + path] = (time.time(), data)
+    return data
+
+
+def format_github(repo: str, releases: list[dict]) -> str:
+    rel = [r for r in releases if not r.get("draft")]
+    stable = next((r for r in rel if not r.get("prerelease")), None)
+    if not stable:
+        return ""
+    day = lambda r: (r.get("published_at") or "")[:10] or "?"
+    lines = [f"Release data from GitHub ({repo} releases, fetched {date.today().isoformat()}):",
+             f"  newest stable release: {stable.get('tag_name')} (published {day(stable)})"]
+    newer_pre = [r for r in rel if r.get("prerelease") and (r.get("published_at") or "") > (stable.get("published_at") or "")]
+    if newer_pre:
+        lines.append("  newer pre-releases (NOT stable): " + ", ".join(f"{r.get('tag_name')} ({day(r)})" for r in newer_pre[:3]))
+    older = [r.get("tag_name") for r in rel if not r.get("prerelease") and r is not stable][:3]
+    if older:
+        lines.append("  previous stable releases: " + ", ".join(older))
+    return "\n".join(lines)
+
+
+async def github_release_facts(query: str, search_results: str) -> str:
+    """'' unless the query asks for a version and names a GitHub project."""
+    from config import get_settings
+    if not get_settings().search_release_facts or not _VERSION_INTENT_RE.search(query or ""):
+        return ""
+    try:
+        repos = repo_candidates(query, search_results)
+        if not repos:
+            phrase = _product_phrase(query)
+            if not phrase:
+                return ""
+            from urllib.parse import quote
+            found = await _gh_json(f"search/repositories?q={quote(phrase + ' in:name')}&sort=stars&per_page=3", _PRODUCTS_TTL)
+            q = _norm(query)
+            repos = [f"{r['owner']['login']}/{r['name']}" for r in (found.get("items") or [])
+                     if r.get("stargazers_count", 0) >= 500 and (_norm(r["name"]) in q or _norm(r["owner"]["login"]) in q)
+                     and len(_norm(r["name"])) >= 4][:1]
+        for repo in repos[:1]:
+            block = format_github(repo, await _gh_json(f"repos/{repo}/releases?per_page=15", _CYCLES_TTL))
+            if block:
+                return block
+    except Exception as e:
+        logger.info("GitHub release facts skipped for %r: %s", query, e)
+    return ""

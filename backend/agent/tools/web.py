@@ -126,8 +126,10 @@ async def _ddg_search(query: str) -> str:
 @tool('web_search')
 async def _tool_web_search(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     query = tool_args["query"]
-    from agent.release_facts import release_facts
+    from agent.release_facts import github_release_facts, release_facts
     results, facts = await asyncio.gather(_web_search(query), release_facts(query))
+    if not facts:
+        facts = await github_release_facts(query, results)
     if facts:
         # Release tables beat snippets for "latest version" questions (agent/release_facts.py).
         return f"{facts}\n\nSearch results (snippets may be outdated):\n{results}"
