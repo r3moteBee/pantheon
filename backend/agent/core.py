@@ -391,6 +391,8 @@ class AgentCore:
                                 context_focus=_context_focus,
                                 in_context=self._in_context_texts(user_message, history),
                                 min_relevance=get_settings().recall_min_relevance,
+                                session_fallback=(self.session_id if history_dropped + self.working_offset else None),
+                                session_min_similarity=get_settings().recall_session_min_similarity,
                             ),
                             timeout=recall_budget,
                         )

@@ -102,3 +102,44 @@ async def test_no_floor_when_the_rerank_failed(monkeypatch):
     m._rerank = AsyncMock(side_effect=lambda q, results, r: results)   # timed out: original order, no flag
     out = await m.recall("q", tiers=["semantic"], limit_per_tier=5, min_relevance=0.05)
     assert [r["id"] for r in out] == ["a"]
+
+
+# ── Current-session fallback (turns dropped by the history budget) ──────────
+
+async def test_dropped_turns_of_this_chat_come_back_by_similarity(monkeypatch):
+    import models.provider
+    monkeypatch.setattr(models.provider, "get_provider_for", lambda cls: None)
+    m = _manager([])
+    session_hits = [
+        {"id": "a", "content": "I'm giving a keynote speech in Denver on Friday", "role": "user", "similarity": 0.61},
+        {"id": "b", "content": "Good luck with your keynote in Denver on Friday", "role": "assistant", "similarity": 0.49},
+        {"id": "c", "content": "still in the prompt", "role": "user", "similarity": 0.90},
+        {"id": "d", "content": "an essay on tides", "role": "assistant", "similarity": 0.25},
+    ]
+    calls = []
+
+    async def search(query, project_id="default", limit=20, session_id=None):
+        calls.append(session_id)
+        return session_hits if session_id else []
+    m.episodic = SimpleNamespace(search_messages=search)
+    out = await m.recall("did I mention a speech?", tiers=["episodic"], limit_per_tier=5, context_focus="broad",
+                         in_context={"still in the prompt"}, session_fallback="now", session_min_similarity=0.45)
+    assert [r["id"] for r in out] == ["a", "b"]
+    assert all(r["metadata"]["earlier_in_session"] for r in out)
+    assert "now" in calls
+
+
+async def test_no_session_fallback_unless_asked(monkeypatch):
+    import models.provider
+    monkeypatch.setattr(models.provider, "get_provider_for", lambda cls: None)
+    m = _manager([])
+    m.episodic = SimpleNamespace(search_messages=AsyncMock(return_value=[]))
+    await m.recall("q", tiers=["episodic"], limit_per_tier=5)
+    assert all(c.kwargs.get("session_id") is None for c in m.episodic.search_messages.await_args_list)
+
+
+def test_earlier_turns_are_labelled_as_this_conversation():
+    from agent.prompts import render_turn_context
+    out = render_turn_context([{"tier": "episodic", "content": "[user] keynote in Denver",
+                                "metadata": {"earlier_in_session": True}}])
+    assert "[earlier in this chat, user said] keynote in Denver" in out

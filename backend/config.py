@@ -133,6 +133,12 @@ class Settings(BaseSettings):
     # Older turns are dropped in blocks (agent/history.py) and stay
     # reachable through recall.
     history_token_budget: int = 0
+    # Turns of the CURRENT conversation dropped by that budget come back
+    # through recall when their embedding similarity to the message is at
+    # least this (the reranker scores "did I mention X earlier?" far too low
+    # to pass RECALL_MIN_RELEVANCE). Measured: relevant 0.49-0.75, unrelated
+    # <= 0.40. 0 disables.
+    recall_session_min_similarity: float = 0.45
     # File indexing: auto-index uploaded files (true/false)
     auto_index_uploads: bool = True
     # File indexing: chunk size in tokens

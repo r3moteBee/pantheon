@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # ── Token estimation ─────────────────────────────────────────────────────────
 
 CHARS_PER_TOKEN = 4
+SESSION_FALLBACK_MAX = 2
 
 # Seconds pre-recall needs besides reranking (semantic/episodic/graph search,
 # graph augmentation, budgeting). The rerank budget is capped so it always
@@ -257,6 +258,8 @@ class MemoryManager:
         context_focus: str | None = None,
         in_context: set[str] | None = None,
         min_relevance: float = 0.0,
+        session_fallback: str | None = None,
+        session_min_similarity: float = 0.0,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
 
@@ -269,6 +272,14 @@ class MemoryManager:
         reranker scores below it (0-1). Pre-recall passes
         settings.recall_min_relevance so unrelated memories are not injected;
         a failed or timed-out rerank drops nothing.
+
+        ``session_fallback``: the current conversation's id when some of its
+        turns are no longer in the prompt (history budget). Up to
+        SESSION_FALLBACK_MAX of its messages not in ``in_context`` are added
+        when their embedding similarity is >= ``session_min_similarity``,
+        whatever the reranker thought: cross-encoders score questions ABOUT
+        the conversation ("did I mention a speech?") near zero even when the
+        right turn is ranked first.
 
         Returns list of dicts with keys: content, source, score, metadata, tier
         """
@@ -361,6 +372,12 @@ class MemoryManager:
                                 len(all_results) - len(kept), len(all_results), min_relevance)
                 all_results = kept
 
+        if session_fallback and session_min_similarity > 0:
+            all_results = await self._add_session_fallback(
+                query, active_project, session_fallback, in_context or set(),
+                session_min_similarity, all_results,
+            )
+
         # Graph-augmented enrichment: expand entities found in top results
         all_results = await self._graph_augment(all_results)
 
@@ -430,6 +447,31 @@ class MemoryManager:
             results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         return results
+
+    async def _add_session_fallback(self, query, project_id, session_id, in_context, min_sim, results):
+        try:
+            hits = await self.episodic.search_messages(query=query, project_id=project_id,
+                                                       limit=10, session_id=session_id)
+        except Exception as e:
+            logger.warning("Session fallback search failed: %s", e)
+            return results
+        have = {r.get("content") for r in results}
+        added = []
+        for r in hits:
+            if len(added) >= SESSION_FALLBACK_MAX:
+                break
+            text = (r.get("content") or "").strip()
+            content = f"[{r.get('role', 'unknown')}] {r.get('content', '')}"
+            if r.get("similarity", 0) < min_sim or text in in_context or content in have:
+                continue
+            added.append({
+                "id": r.get("id", ""), "content": content, "source": "episodic", "tier": "episodic",
+                "score": round(r["similarity"], 4),
+                "metadata": {"session_id": session_id, "timestamp": r.get("timestamp"), "earlier_in_session": True},
+            })
+        if added:
+            logger.info("Recall: %d earlier turn(s) of this conversation added by similarity", len(added))
+        return results + added
 
     def _apply_budget(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Trim recalled results to fit within the recall token budget.

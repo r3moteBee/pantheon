@@ -52,6 +52,8 @@ MEMORY_GUIDANCE = (
     "authoritative and cite them.\n"
     "- [user said] entries are what the user told you before: trust them for their own preferences, plans "
     "and circumstances.\n"
+    "- [earlier in this chat, ...] entries are turns of THIS conversation that are no longer shown in full; "
+    "treat them as part of the conversation.\n"
     "- [your earlier reply] entries are your own past answers. They may be wrong or out of date: never "
     "repeat one as fact without checking it.\n"
     "- Memory does not replace tools: for anything time-sensitive (latest versions, prices, news, current "
@@ -65,6 +67,11 @@ def _memory_label(m: dict) -> tuple[str, str]:
     """(label, content) for one recalled item; episodic items carry their role as a "[role] " prefix."""
     tier = m.get("tier", m.get("source", "memory"))
     content = m.get("content", "") or ""
+    if tier == "episodic" and (m.get("metadata") or {}).get("earlier_in_session"):
+        if content.startswith("[user] "):
+            return "earlier in this chat, user said", content[len("[user] "):]
+        if content.startswith("[assistant] "):
+            return "earlier in this chat, you said", content[len("[assistant] "):]
     if tier == "episodic":
         if content.startswith("[user] "):
             return "user said", content[len("[user] "):]
