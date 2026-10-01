@@ -130,6 +130,7 @@ async def test_finalize_keeps_the_tools_but_forbids_calls():
     prov = _Prov([("", "search says 3.14. Answer: 3.14")], final="3.14")
     agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
     with patch.object(get_settings(), "agent_thinking", True), \
+         patch.object(get_settings(), "agent_force_search", False), \
          patch("agent.core.build_system_prompt", return_value="sys"), \
          patch("agent.core.get_all_tool_schemas", return_value=tools):
         [e async for e in agent.chat("latest python?", stream=True)]

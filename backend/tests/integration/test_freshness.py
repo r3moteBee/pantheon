@@ -30,41 +30,66 @@ def test_not_time_sensitive(msg):
 
 
 class _Prov:
+    """round 1 answers from memory (no tool), or calls `first_tool`; round 2 answers."""
     model, task_class = "m", "agent"
 
-    def __init__(self):
-        self.kws = []
+    def __init__(self, first_tool=None):
+        self.first_tool, self.seen = first_tool, []
 
     async def chat(self, messages, tools=None, stream=True, **kw):
-        self.kws.append(kw)
-        if len(self.kws) == 1:
-            yield {"type": "tool_call", "id": "1", "name": "web_search", "args": {"query": "q"}}
+        self.seen.append(messages)
+        if len(self.seen) == 1:
+            if self.first_tool:
+                yield {"type": "tool_call", "id": "m1", "name": self.first_tool, "args": {"query": "Pope Francis"}}
+            else:
+                yield {"type": "text_delta", "content": "The current Pope is Pope Francis."}
         else:
-            yield {"type": "text_delta", "content": "Leo XIV"}
+            yield {"type": "text_delta", "content": "The current Pope is Leo XIV."}
         yield {"type": "done"}
 
 
-async def _run(msg, force=True):
+async def _run(msg, first_tool=None, force=True):
     from agent.core import AgentCore
     from config import get_settings
-    prov = _Prov()
+    prov = _Prov(first_tool)
     agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
-    tools = [{"type": "function", "function": {"name": "web_search", "parameters": {}}}]
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "recall")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"]))
+        return "results: Leo XIV elected 2025"
     with patch.object(get_settings(), "agent_force_search", force), patch.object(get_settings(), "agent_thinking", False), \
          patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
-         patch("agent.core.execute_tool", return_value="results"):
-        [e async for e in agent.chat(msg)]
-    return prov.kws
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat(msg)]
+    text = "".join(e["content"] for e in events if e["type"] == "text_delta")
+    return text, calls, prov
 
 
 @pytest.mark.asyncio
-async def test_first_round_is_forced_to_use_a_tool_and_later_rounds_are_not():
-    kws = await _run("Who is the current Pope?")
-    assert kws[0] == {"extra_body": {"tool_choice": "required"}}
-    assert kws[1] == {}
+async def test_unsearched_answer_is_dropped_and_the_question_is_searched():
+    text, calls, prov = await _run("Who is the current Pope?")
+    assert "Francis" not in text and text == "The current Pope is Leo XIV."      # stale round never shown
+    assert calls == [("web_search", {"query": "Who is the current Pope?"})]      # the user's words, not a guess
+    assert prov.seen[1][-1]["role"] == "tool"
 
 
 @pytest.mark.asyncio
-async def test_other_questions_and_the_setting_leave_tool_choice_alone():
-    assert (await _run("Write a haiku about autumn"))[0] == {}
-    assert (await _run("Who is the current Pope?", force=False))[0] == {}
+async def test_a_memory_lookup_alone_is_not_enough():
+    text, calls, _ = await _run("Who is the current Pope?", first_tool="recall")
+    assert [c[0] for c in calls] == ["recall", "web_search"]
+
+
+@pytest.mark.asyncio
+async def test_a_round_that_searched_is_left_alone():
+    _, calls, _ = await _run("Who is the current Pope?", first_tool="web_search")
+    assert calls == [("web_search", {"query": "Pope Francis"})]
+
+
+@pytest.mark.asyncio
+async def test_other_questions_and_the_setting_are_untouched():
+    text, calls, _ = await _run("Write a haiku about autumn")
+    assert calls == [] and "Francis" in text
+    text, calls, _ = await _run("Who is the current Pope?", force=False)
+    assert calls == [] and "Francis" in text

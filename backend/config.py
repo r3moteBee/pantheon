@@ -75,10 +75,10 @@ class Settings(BaseSettings):
     # current-fact questions 8/14 -> 10/10. Off by default: other OpenAI-compatible
     # providers may reject the extra field.
     agent_thinking: bool = False
-    # For time-sensitive questions (agent/freshness.py) the agent's first round
-    # must call a tool (tool_choice "required"), so it can't answer "who is the
-    # president" from its training data. Needs a server that honours
-    # tool_choice=required (OpenAI, llama.cpp, vLLM).
+    # Time-sensitive questions (agent/freshness.py) must be looked up: if the
+    # first round made no web search, its answer is dropped and the user's
+    # question is searched (so "who is the president" isn't answered from
+    # training data).
     agent_force_search: bool = True
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.

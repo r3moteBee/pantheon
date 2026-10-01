@@ -141,6 +141,17 @@ def _build_available_skills_block(project_id: str) -> str:
         lines.append(f"\n_... and {len(skills) - 30} more skills_")
     return "\n".join(lines)
 
+def _has_web_call(calls: list[dict]) -> bool:
+    return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
+
+
+def _auto_search_call(user_message: str) -> dict:
+    """A web_search for the user's own words (not the model's guess - it searched
+    for "Joe Biden president 2026" when it believed that was the answer)."""
+    return {"type": "tool_call", "id": f"auto-search-{uuid.uuid4().hex[:8]}", "name": "web_search",
+            "args": {"query": user_message.strip()[:300]}}
+
+
 class AgentCore:
     """The main agent loop."""
 
@@ -498,15 +509,19 @@ class AgentCore:
             # Only sent when set, so the call is unchanged for every other provider.
             extra_kw = {"extra_body": agent_extra} if agent_extra else {}
             # Time-sensitive question (agent/freshness.py): the first round must
-            # call a tool, so the answer can't come from stale training data.
-            force_first_tool = (get_settings().agent_force_search and "web_search" in tool_names
-                                and needs_fresh_facts(user_message))
+            # look something up on the web, or the answer comes from stale
+            # training data. tool_choice="required" is NOT enforced by llama.cpp
+            # with Qwen templates (measured: the model wrote prose until
+            # max_tokens), so the guard is ours: round 1 is held back, and if it
+            # made no web_search/web_fetch call its text is dropped and a
+            # web_search for the user's own words is added.
+            fresh_question = (get_settings().agent_force_search and "web_search" in tool_names
+                              and needs_fresh_facts(user_message))
 
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
-                if force_first_tool and iterations == 1:
-                    round_kw = {"extra_body": {**(agent_extra or {}), "tool_choice": "required"}}
+                guard_round = fresh_question and iterations == 1
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
@@ -529,6 +544,9 @@ class AgentCore:
                         self._progress()
                         if chunk["type"] == "text_delta":
                             current_text += chunk["content"]
+                            if guard_round:
+                                held += chunk["content"]
+                                continue
                             if hold is False:
                                 yield chunk
                                 continue
@@ -555,6 +573,12 @@ class AgentCore:
                             for tc in recovered:
                                 yield tc
                             held = ""
+                    if guard_round and not stream_error and not _has_web_call(tool_calls_this_round):
+                        auto = _auto_search_call(user_message)
+                        logger.info("Time-sensitive question answered without a web search - searching for it")
+                        tool_calls_this_round.append(auto)
+                        current_text = held = ""
+                        yield auto
                     if held:
                         yield {"type": "text_delta", "content": held}
                     if stream_error:
@@ -576,6 +600,10 @@ class AgentCore:
                                         len(recovered), [c["name"] for c in recovered])
                             tool_calls_this_round = recovered
                             current_text = ""
+                    if guard_round and not _has_web_call(tool_calls_this_round):
+                        logger.info("Time-sensitive question answered without a web search - searching for it")
+                        tool_calls_this_round = list(tool_calls_this_round) + [_auto_search_call(user_message)]
+                        current_text = ""
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}
                     # Streaming mode yields tool_call chunks as they arrive.
