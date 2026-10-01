@@ -46,16 +46,21 @@ def key_facts(answer: str) -> list[str]:
 
 
 def pick_sources(answer: str, evidence: dict[str, str], limit: int = 2) -> list[str]:
-    """URLs whose text contains the most of the answer's key facts (release-data links win ties)."""
+    """URLs whose text contains the answer's HEADLINE fact (its first key fact), ranked by how many of the
+    other key facts they also contain (release-data links win ties). Without the headline rule a page about
+    a predecessor the answer merely mentions ("Morawiecki" in a "Tusk" answer) or about the release line
+    ("Blender 5.2 LTS" for "5.2.2") was picked."""
     facts = key_facts(answer)
     if not facts or not evidence:
         return []
+    head = facts[0].lower()
     scored = []
     for url, text in evidence.items():
         low = text.lower()
+        if head not in low:
+            continue
         n = sum(1 for f in facts if f.lower() in low)
-        if n:
-            scored.append((n, "endoflife.date" in url or "/releases" in url, url))
+        scored.append((n, "endoflife.date" in url or "/releases" in url, url))
     scored.sort(key=lambda t: (-t[0], not t[1]))
     return [u for _, _, u in scored[:limit]]
 

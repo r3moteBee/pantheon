@@ -40,6 +40,15 @@ def test_sources_are_the_pages_that_state_the_facts():
     assert pick_sources("Blender is a 3D tool.", ev) == []          # nothing checkable -> nothing appended
 
 
+def test_a_source_must_contain_the_headline_fact():
+    ev = {"https://wiki/Morawiecki": "Mateusz Morawiecki was prime minister 2017-2023.",
+          "https://gov.pl/pm": "Donald Tusk is the Prime Minister of Poland."}
+    answer = "The current Prime Minister of Poland is **Donald Tusk**. He succeeded **Mateusz Morawiecki**."
+    assert pick_sources(answer, ev) == ["https://gov.pl/pm"]          # the predecessor's page is not a source
+    ev2 = {"https://notes/5.2": "Blender 5.2 LTS was released on July 14, 2026.", "https://eol/blender": "newest release: 5.2.2"}
+    assert pick_sources("Latest is **5.2.2** (the **5.2 LTS** line).", ev2) == ["https://eol/blender"]   # ...but this one doesn't
+
+
 class _Prov:
     model, task_class = "m", "agent"
 
