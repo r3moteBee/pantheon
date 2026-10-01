@@ -71,6 +71,8 @@ How automatic recall behaves:
 - The agent sees each memory labelled by where it came from: `[note]` (things you asked it to remember, indexed sources), `[user said]` (something you said in an earlier chat), `[your earlier reply]` (its own past answer, which may be out of date) and `[graph]` / `[archive]`. For anything time-sensitive, like latest versions, prices or news, it is told to use its tools even when a memory seems to answer.
 - Memories and the current time are added to your newest message, not to the system prompt. The long, unchanging part of the prompt therefore stays identical from turn to turn, and local model servers (llama.cpp, vLLM) can reuse their cache for it, which makes replies noticeably faster.
 
+**Long conversations:** each turn sends only the newest part of the chat that fits `HISTORY_TOKEN_BUDGET` (by default a quarter of the model's context window, at most 24K tokens). Older turns drop out in blocks of about 10 turns, so the model server can keep reusing its cache between drops. They aren't forgotten: when your message relates to an earlier turn, recall repeats that turn next to your message, labelled `[earlier in this chat, ...]`. It does the same for relevant turns still in the history but far back, because small models tend to miss facts in the middle of a long prompt. Asking "did I mention X earlier?" works the same way.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output
