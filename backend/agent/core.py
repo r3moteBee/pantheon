@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.freshness import needs_fresh_facts
+from agent.freshness import needs_fresh_facts, unknown_entities
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
@@ -140,6 +140,14 @@ def _build_available_skills_block(project_id: str) -> str:
     if len(skills) > 30:
         lines.append(f"\n_... and {len(skills) - 30} more skills_")
     return "\n".join(lines)
+
+def _skill_names() -> set[str]:
+    try:
+        from skills.registry import get_skill_registry
+        return set(get_skill_registry().names())
+    except Exception:
+        return set()
+
 
 def _has_web_call(calls: list[dict]) -> bool:
     return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
@@ -515,8 +523,14 @@ class AgentCore:
             # max_tokens), so the guard is ours: round 1 is held back, and if it
             # made no web_search/web_fetch call its text is dropped and a
             # web_search for the user's own words is added.
-            fresh_question = (get_settings().agent_force_search and "web_search" in tool_names
-                              and needs_fresh_facts(user_message))
+            fresh_question = get_settings().agent_force_search and "web_search" in tool_names and (
+                needs_fresh_facts(user_message))
+            # ...or a name the model may not know (a product announced after training)
+            entities = []
+            if get_settings().agent_force_search and "web_search" in tool_names and not fresh_question:
+                entities = unknown_entities(user_message, tool_names | _skill_names())
+                fresh_question = bool(entities)
+            auto_query = f"What is {entities[0]}?" if entities else user_message
 
             while iterations < iteration_limit:
                 iterations += 1
@@ -574,7 +588,7 @@ class AgentCore:
                                 yield tc
                             held = ""
                     if guard_round and not stream_error and not _has_web_call(tool_calls_this_round):
-                        auto = _auto_search_call(user_message)
+                        auto = _auto_search_call(auto_query)
                         logger.info("Time-sensitive question answered without a web search - searching for it")
                         tool_calls_this_round.append(auto)
                         current_text = held = ""
@@ -602,7 +616,7 @@ class AgentCore:
                             current_text = ""
                     if guard_round and not _has_web_call(tool_calls_this_round):
                         logger.info("Time-sensitive question answered without a web search - searching for it")
-                        tool_calls_this_round = list(tool_calls_this_round) + [_auto_search_call(user_message)]
+                        tool_calls_this_round = list(tool_calls_this_round) + [_auto_search_call(auto_query)]
                         current_text = ""
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}

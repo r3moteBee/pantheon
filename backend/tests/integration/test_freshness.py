@@ -93,3 +93,37 @@ async def test_other_questions_and_the_setting_are_untouched():
     assert calls == [] and "Francis" in text
     text, calls, _ = await _run("Who is the current Pope?", force=False)
     assert calls == [] and "Francis" in text
+
+
+# ── Names the model may not know ─────────────────────────────────────────────
+
+from agent.freshness import unknown_entities  # noqa: E402
+
+
+@pytest.mark.parametrize("msg,name", [
+    ("What is Jev?", "Jev"),
+    ("I want to use Jev to write summaries of my meeting notes.", "Jev"),
+    ("Do I need a gaming PC to use the Steam Frame?", "Steam Frame"),
+    ("What is the iPhone Duo?", "iPhone Duo"),
+    ("Tell me about Fugu Ultra v2.0", "Fugu Ultra v2.0"),
+])
+def test_names_asked_about_or_to_be_used_are_looked_up(msg, name):
+    assert unknown_entities(msg) == [name]
+
+
+@pytest.mark.parametrize("msg", ["hi", "What is the capital of France?", "Email this to Sarah",
+                                 "What is my dog's name?", "Write a haiku about autumn", "What is this?"])
+def test_ordinary_messages_have_no_unknown_names(msg):
+    assert unknown_entities(msg) == []
+
+
+def test_pantheon_s_own_tools_and_skills_are_not_unknown():
+    assert unknown_entities("How do I use Web-Research?", {"web-research"}) == []
+    assert unknown_entities("Tell me about Daily Digest", {"daily_digest"}) == []
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_name_is_searched_by_name_when_the_model_guesses():
+    text, calls, _ = await _run("I want to use Jev to write summaries of my meeting notes.")
+    assert calls == [("web_search", {"query": "What is Jev?"})]
+    assert "Francis" not in text
