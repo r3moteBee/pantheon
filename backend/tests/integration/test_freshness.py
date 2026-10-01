@@ -48,7 +48,7 @@ class _Prov:
         yield {"type": "done"}
 
 
-async def _run(msg, first_tool=None, force=True):
+async def _run(msg, first_tool=None, force=True, pre=False):
     from agent.core import AgentCore
     from config import get_settings
     prov = _Prov(first_tool)
@@ -60,6 +60,7 @@ async def _run(msg, first_tool=None, force=True):
         calls.append((kw["tool_name"], kw["tool_args"]))
         return "results: Leo XIV elected 2025"
     with patch.object(get_settings(), "agent_force_search", force), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_pre_search", pre), \
          patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
          patch("agent.core.execute_tool", fake_exec):
         events = [e async for e in agent.chat(msg)]
@@ -127,3 +128,20 @@ async def test_an_unknown_name_is_searched_by_name_when_the_model_guesses():
     text, calls, _ = await _run("I want to use Jev to write summaries of my meeting notes.")
     assert calls == [("web_search", {"query": "What is Jev?"})]
     assert "Francis" not in text
+
+
+
+@pytest.mark.asyncio
+async def test_pre_search_runs_before_round_one_and_round_one_answers():
+    text, calls, prov = await _run("Who is the current Pope?", pre=True)
+    assert calls == [("web_search", {"query": "Who is the current Pope?"})]   # one search, before any model round
+    first_round = prov.seen[0]
+    assert first_round[-1]["role"] == "tool" and first_round[-2]["tool_calls"][0]["function"]["name"] == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_pre_search_uses_the_name_for_unknown_entities_and_skips_other_turns():
+    _, calls, _ = await _run("I want to use Jev to write summaries of my meeting notes.", pre=True)
+    assert calls[0] == ("web_search", {"query": "What is Jev?"})
+    _, calls, _ = await _run("Write a haiku about autumn", pre=True)
+    assert calls == []

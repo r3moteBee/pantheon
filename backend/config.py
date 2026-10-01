@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # question is searched (so "who is the president" isn't answered from
     # training data).
     agent_force_search: bool = True
+    # For those questions, run the search BEFORE the first model round (with the
+    # user's words / "What is <name>?") instead of letting round 1 decide.
+    agent_pre_search: bool = True
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = False

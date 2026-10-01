@@ -571,6 +571,28 @@ class AgentCore:
             auto_query = f"What is {entities[0]}?" if entities else user_message
 
             results_seen = False
+            # Search first (AGENT_PRE_SEARCH): for a question the guard above would
+            # force a lookup on anyway, run the search before round 1 instead of
+            # letting round 1 decide - saves a whole model round (~1.5 s with
+            # thinking), and round 1 streams its answer instead of being held.
+            if fresh_question and get_settings().agent_pre_search:
+                pre = _auto_search_call(auto_query)
+                yield pre
+                result = await execute_tool(
+                    tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                web_evidence.update(evidence_from("web_search", pre["args"], result))
+                yield {"type": "tool_result", "name": "web_search", "result": result, "tool_id": pre["id"],
+                       "is_error": tool_results.is_error(result)}
+                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": pre["id"], "type": "function",
+                    "function": {"name": "web_search", "arguments": json.dumps(pre["args"])}}]})
+                messages.append({"role": "tool", "tool_call_id": pre["id"],
+                                 "content": tool_results.for_model("web_search", result)})
+                results_seen = True
+                fresh_question = False          # nothing left for the round-1 guard to do
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
