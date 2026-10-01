@@ -73,6 +73,8 @@ How automatic recall behaves:
 
 **Long conversations:** each turn sends only the newest part of the chat that fits `HISTORY_TOKEN_BUDGET` (by default a quarter of the model's context window, at most 24K tokens). Older turns drop out in blocks of about 10 turns, so the model server can keep reusing its cache between drops. They aren't forgotten: when your message relates to an earlier turn, recall repeats that turn next to your message, labelled `[earlier in this chat, ...]`. It does the same for relevant turns still in the history but far back, because small models tend to miss facts in the middle of a long prompt. Asking "did I mention X earlier?" works the same way.
 
+**"What's the latest version of X?"** When a search asks about a product's version, `web_search` also returns that product's release table from endoflife.date, or, for projects released on GitHub, its newest stable release (newer pre-releases are flagged as not stable). These sit above the search snippets, which are often months old. The lookup sends only the product name. Turn it off with `SEARCH_RELEASE_FACTS=false`.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output
