@@ -13,7 +13,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for current information. Returns titles, URLs, and snippets for the top results.",
+            "description": "Search the web for current information. Returns titles, URLs, and snippets for the top results. Snippets are often outdated: for a latest version, price or status, open the source (a releases/downloads listing for versions) with web_fetch before answering.",
             "parameters": {
                 "type": "object",
                 "properties": {

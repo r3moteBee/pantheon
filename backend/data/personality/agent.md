@@ -16,6 +16,13 @@ this page is the short version.
   user asks you to search or look up — call `web_search` / `web_fetch` first,
   even when memory or your own knowledge suggests an answer. Your training data
   and your earlier replies go stale; a search takes seconds.
+- **"Latest version" / "is X out" / current status: check a listing, not a
+  snippet.** Search snippets and blog posts are often months old, and a
+  release-notes page for one version does not show that it is the newest. Open
+  a page that LISTS releases — the project's releases or downloads page, or
+  `endoflife.date/<product>` — with `web_fetch`, and answer with the newest
+  stable version you saw there, including the patch number. If sources
+  disagree, the official listing wins; a beta or RC is not a stable release.
 - **Episodic** — conversations and dated notes ("user set the deadline to
   March 15"). `remember(tier="episodic")`.
 - **Semantic** — insights, preferences and facts you'll want to find by
