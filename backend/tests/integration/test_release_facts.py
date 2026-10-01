@@ -12,7 +12,8 @@ os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="pantheon-tests-"))
 
 from agent.release_facts import format_cycles, match_products, release_facts  # noqa: E402
 
-PRODUCTS = ["python", "nodejs", "postgresql", "go", "linux", "amazon-linux", "home-assistant", "docker-engine", "kubernetes"]
+PRODUCTS = ["python", "nodejs", "postgresql", "go", "linux", "amazon-linux", "home-assistant", "docker-engine", "kubernetes",
+            "kuma", "nextcloud"]
 
 
 def test_products_are_matched_by_their_names_and_common_aliases():
@@ -24,6 +25,14 @@ def test_products_are_matched_by_their_names_and_common_aliases():
     assert match_products("postgres latest version", PRODUCTS) == ["postgresql"]
     assert match_products("amazon linux latest", PRODUCTS) == ["amazon-linux"]
     assert match_products("best pizza in Lisbon", PRODUCTS) == []
+    assert match_products("Nextcloud server latest stable version", PRODUCTS) == ["nextcloud"]
+    assert match_products("What's the latest version of Kuma?", PRODUCTS) == ["kuma"]
+
+
+def test_a_slug_inside_a_longer_name_is_not_that_product():
+    """Kong's "kuma" is not Uptime Kuma - the agent reported Kuma's 2.14.5 for it."""
+    assert match_products("Uptime Kuma latest stable version 2026", PRODUCTS) == []
+    assert match_products("latest stable version of Uptime Kuma", PRODUCTS) == []
 
 
 def test_lts_only_counts_once_its_date_has_passed():

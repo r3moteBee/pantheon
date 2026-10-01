@@ -45,22 +45,38 @@ async def _get_json(path: str, ttl: float):
     return data
 
 
+# Words that may precede a product name in a version question. Any other word
+# right before a slug means the slug is only part of a longer name: "Uptime
+# Kuma" is not Kong's "kuma" (whose 2.14.5 the agent then reported).
+_LEADING_OK = set("""what whats what's is are the of a an for latest newest current stable lts release released releases
+    version versions out yet update updated eol end life supported now today new and or vs versus compare to in on with
+    about check find search which when did does has have get""".split())
+
+
 def match_products(query: str, products: list[str], limit: int = 2) -> list[str]:
     """Products named in the query: every word of the slug appears in order
-    ("home assistant" -> home-assistant; "node.js" -> nodejs). Longest first."""
+    ("home assistant" -> home-assistant; "node.js" -> nodejs), preceded by the
+    start of the query or a non-name word. Longest first."""
     q = query.lower().replace("node.js", "nodejs").replace(".net", "dotnet")
     toks = re.findall(r"[a-z0-9]+", q)
-    joined = " " + " ".join(toks) + " "
+    prods = set(products)
+
+    def named_at(parts: list[str]) -> bool:
+        n = len(parts)
+        for i in range(len(toks) - n + 1):
+            if toks[i:i + n] == parts and (i == 0 or toks[i - 1] in _LEADING_OK or toks[i - 1].isdigit()):
+                return True
+        return False
+
     found = []
     for name, slug in _ALIASES.items():
-        if f" {name} " in joined and slug in products:
+        if slug in prods and named_at(name.split()):
             found.append(slug)
     for slug in products:
         parts = slug.split("-")
-        if " " + " ".join(parts) + " " in joined or (len(parts) > 1 and f" {''.join(parts)} " in joined):
+        if named_at(parts) or (len(parts) > 1 and named_at(["".join(parts)])):
             found.append(slug)
     found = sorted(set(found), key=lambda s: (-len(s.split("-")), -len(s)))
-    # drop a shorter slug contained in a longer one (linux vs amazon-linux style overlaps)
     keep = []
     for s in found:
         if not any(s != k and s in k.split("-") for k in keep):
