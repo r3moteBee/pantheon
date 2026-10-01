@@ -264,3 +264,26 @@ async def test_router_api(vault):
     assert view["config"]["enabled"] is True
     view = await update_router(RouterConfigPayload(classifier=True, quick_max_chars=100))
     assert view["config"]["classifier"] is True and view["config"]["quick_max_chars"] == 100
+
+
+# ── Short messages that still need the agent (router loop, 2026-10-01) ──────
+
+@pytest.mark.parametrize("msg", [
+    "What's the weather in Lisbon right now?", "Is Tailscale 1.102 out yet?", "What's Nvidia's stock price?",
+    "Who won the Champions League final this year?", "Any news about the Artemis III launch?",
+    "Set a reminder to call mum at 6", "Email this to Sarah", "Plan a 3-day itinerary for Porto",
+])
+def test_time_sensitive_actions_and_plans_are_not_quick(msg):
+    from llm_config.router import looks_quick
+    assert not looks_quick(msg, 240)
+
+
+@pytest.mark.parametrize("msg", [
+    # measured fine on quick: small talk, trivia, arithmetic, the user's own memory (recall supplies it)
+    "hi", "thanks!", "What's the capital of France?", "Is 7919 a prime number?",
+    "What's 17% of 2,340 plus VAT at 23%?", "What's my car's license plate?", "Did I mention a speech earlier?",
+    "Remind me what we decided about the offsite", "What was the name of that book I liked?",
+])
+def test_small_talk_trivia_arithmetic_and_memory_stay_quick(msg):
+    from llm_config.router import looks_quick
+    assert looks_quick(msg, 240)
