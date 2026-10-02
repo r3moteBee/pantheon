@@ -119,11 +119,12 @@ async def _route_turn(agent, message: str, session_id: str, skill_name: str | No
     try:
         skill = get_skill_registry().get(skill_name) if skill_name else None
         try:
-            history_chars = sum(len(str(m.get("content") or "")) for m in agent._get_working_messages())
+            working = agent._get_working_messages()
         except Exception:
-            history_chars = 0
+            working = []
+        history_chars = sum(len(str(m.get("content") or "")) for m in working)
         decision = await chat_router.decide(
-            message, session_id=session_id, history_chars=history_chars, skill=skill,
+            message, session_id=session_id, history_chars=history_chars, history=working, skill=skill,
         )
     except Exception:
         logger.exception("chat router failed — using agent class")

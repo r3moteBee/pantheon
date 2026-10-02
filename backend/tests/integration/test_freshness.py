@@ -228,3 +228,81 @@ async def test_self_description_drops_our_own_earlier_replies_from_recall():
         [e async for e in agent.chat("describe the current configuration of this agent harness")]
     sent = prov.seen[0][-1]["content"]
     assert "Microsoft Agent Framework" not in sent and "qwen" in sent
+
+
+# ── Follow-ups in a conversation about current facts (2026-10-02 election regression) ──
+
+def _hist(*pairs):
+    return [{"role": r, "content": c} for r, c in pairs]
+
+
+SENATE = "Which US Senate races are the most competitive in the 2026 midterms?"
+
+
+@pytest.mark.parametrize("msg,history,want", [
+    ("can you do a similar breakdown for the house?", _hist(("user", SENATE), ("assistant", "...")), True),
+    ("and Docker Engine?", _hist(("user", "What's the latest stable version of Kubernetes?"), ("assistant", "v1.37")), True),
+    # an answer built on web sources makes the conversation current even without time words
+    ("list all 38 districts with the candidates",
+     _hist(("user", "Which Texas House seats are competitive?"), ("assistant", "TX-28...\n\nSources:\n- https://x.org/a")), True),
+    # stays current through an acknowledgement
+    ("and solana?", _hist(("user", "What's the current price of Bitcoin?"), ("assistant", "$61k"), ("user", "ok"),
+                         ("assistant", "!")), True),
+    ("and of Spain?", _hist(("user", "What's the capital of France?"), ("assistant", "Paris")), False),
+    ("ok thanks", _hist(("user", "Who is the current Prime Minister of the UK?"), ("assistant", "...")), False),
+    ("cool, thank you!", _hist(("user", "Who is the current Prime Minister of the UK?"), ("assistant", "...")), False),
+    ("summarize that in one line", _hist(("user", "What's the current price of Bitcoin?"), ("assistant", "...")), False),
+    ("what tools do you have?", _hist(("user", "What's the current price of Bitcoin?"), ("assistant", "...")), False),
+    ("and Docker Engine?", [], False),
+])
+def test_followup_needs_fresh(msg, history, want):
+    from agent.freshness import followup_needs_fresh
+    assert followup_needs_fresh(msg, history) is want
+
+
+@pytest.mark.parametrize("msg,want", [
+    (SENATE, True), ("any upcoming SpaceX launches?", True), ("who won the Ohio primary election?", True),
+    ("What is the primary key of this table?", False), ("what's on my upcoming calendar?", False),
+])
+def test_election_words_need_fresh_facts(msg, want):
+    from agent.freshness import needs_fresh_facts
+    assert needs_fresh_facts(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_followup_is_searched_as_a_standalone_query():
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.rewrite_prompt = messages[0]["content"]
+            return {"content": '"latest stable Docker Engine version"'}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    agent.working_memory = _hist(("user", "What's the latest stable version of Kubernetes?"), ("assistant", "v1.37.1"))
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "recall")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"])); return "Docker Engine 29.1 released"
+    with patch.object(get_settings(), "agent_force_search", True), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_pre_search", True), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        [e async for e in agent.chat("and Docker Engine?")]
+    assert "Kubernetes" in prov.rewrite_prompt and "and Docker Engine?" in prov.rewrite_prompt
+    # a version query: no month/year (see test_version_questions_pre_search_without_a_date)
+    assert calls[0] == ("web_search", {"query": "latest stable Docker Engine version"})
+
+
+@pytest.mark.asyncio
+async def test_followup_rewrite_failure_falls_back_to_previous_question():
+    from agent.core import AgentCore
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            raise RuntimeError("down")
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    q = await agent._standalone_query("and AMD?", _hist(("user", "Who is the current CEO of Intel?"), ("assistant", "x")))
+    assert q == "Who is the current CEO of Intel - and AMD?"

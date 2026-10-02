@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.freshness import needs_fresh_facts, unknown_entities, wants_self_description
+from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
@@ -371,6 +371,32 @@ class AgentCore:
                 texts.add(m["content"].strip())
         return texts
 
+    async def _standalone_query(self, message: str, prior: list[dict]) -> str:
+        """A follow-up ("and AMD?") as a standalone web query, written by the
+        model from the last few messages; the previous question + the follow-up
+        if that fails."""
+        last_user = next((str(m.get("content") or "") for m in reversed(prior) if m.get("role") == "user"), "")
+        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else message
+        lines = [f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in prior[-4:]]
+        prompt = ("Conversation so far:\n" + "\n".join(lines) + f"\n\nLatest user message: {message}\n\n"
+                  "Write ONE web search query (at most 12 words) that finds what the latest message asks for. "
+                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. "
+                  "Reply with the query only.")
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
+        try:
+            r = await asyncio.wait_for(self.provider.chat_complete(
+                [{"role": "user", "content": prompt}], extra_body=extra), timeout=10)
+            q = (r.get("content") or "").strip().splitlines()[0].strip(' "\'`*') if (r.get("content") or "").strip() else ""
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.info("standalone query rewrite failed: %s", e)
+            q = ""
+        if not q or len(q) > 200:
+            q = fallback
+        logger.info("Follow-up about current facts - searching %r", q)
+        return q
+
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
         return self.working_memory.copy()
@@ -595,6 +621,12 @@ class AgentCore:
                 entities = unknown_entities(user_message, tool_names | _skill_names())
                 fresh_question = bool(entities)
             auto_query = f"What is {entities[0]}?" if entities else user_message
+            # ...or a follow-up in a conversation about current facts ("and Docker Engine?",
+            # "can you do a similar breakdown for the house?"): searched as a standalone query
+            if get_settings().agent_force_search and "web_search" in tool_names and not fresh_question \
+                    and followup_needs_fresh(user_message, self.working_memory[:-1]):
+                fresh_question = True
+                auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
 
             results_seen = False
             # Search first (AGENT_PRE_SEARCH): for a question the guard above would
@@ -653,7 +685,8 @@ class AgentCore:
                 # 44 -> 28/45); the model's own queries carried the date.
                 # Not for version questions: they get release tables (agent/release_facts.py),
                 # and "... PostgreSQL October 2026" pulled beta announcements (19.0 Beta 4).
-                dated = not entities and not _VERSION_Q.search(user_message)
+                dated = (not entities and not _VERSION_Q.search(user_message) and not _VERSION_Q.search(auto_query)
+                         and not re.search(r"\b20\d\d\b", auto_query))
                 q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
                 pre = _auto_search_call(q)
                 logger.info("Pre-search for a time-sensitive / unfamiliar-name question: %r", q)

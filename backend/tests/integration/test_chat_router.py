@@ -287,3 +287,16 @@ def test_time_sensitive_actions_and_plans_are_not_quick(msg):
 def test_small_talk_trivia_arithmetic_and_memory_stay_quick(msg):
     from llm_config.router import looks_quick
     assert looks_quick(msg, 240)
+
+
+@pytest.mark.asyncio
+async def test_current_facts_and_their_followups_skip_quick(vault):
+    _setup(quick="gpt-5.4-nano")
+    d = await _decide("Who is the prime minister of Japan?")
+    assert (d.task_class, d.rule) == ("agent", "fresh")
+    hist = [{"role": "user", "content": "Which US Senate races are the most competitive in the 2026 midterms?"},
+            {"role": "assistant", "content": "..."}]
+    d = await _decide("can you do a similar breakdown for the house?", history=hist)
+    assert (d.task_class, d.rule) == ("agent", "fresh")
+    assert (await _decide("ok thanks", history=hist)).task_class == "quick"
+    assert (await _decide("can you do a similar breakdown for the house?")).task_class == "quick"

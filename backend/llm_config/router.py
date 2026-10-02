@@ -12,9 +12,11 @@ Rules first (no model call), in priority order:
   4. skill      — the active skill's manifest asks for a class
   5. code       — code fences / tracebacks / diffs in the message
   6. sticky     — the conversation was recently on code; stay there
-  7. quick      — short conversational message with no tool intent
-  8. classifier — optional small-model call, only when rules can't decide
-  9. default    — agent
+  7. fresh      — time-sensitive question, or a follow-up in a conversation about
+                  current facts (agent/freshness.py) - never quick
+  8. quick      — short conversational message with no tool intent
+  9. classifier — optional small-model call, only when rules can't decide
+ 10. default    — agent
 
 A rule only fires when its target class has its OWN route (not inherited)
 and that route's primary model can run the tool loop — otherwise the turn
@@ -286,6 +288,7 @@ async def decide(
     *,
     session_id: str,
     history_chars: int = 0,
+    history: list[dict] | None = None,
     skill: Any = None,
     config: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
@@ -356,14 +359,23 @@ async def decide(
     else:
         st["sticky"] = None
 
-    # 7. Short conversational turn — but never a push-back on the last
+    # 7. Needs current facts - the quick class answered those from memory.
+    # Follow-ups count too: "can you do a similar breakdown for the house?" after
+    # two Senate-race lookups went to quick, unsearched (2026-10-02).
+    from agent.freshness import followup_needs_fresh, needs_fresh_facts
+    if needs_fresh_facts(message):
+        return done("agent", "fresh", "time-sensitive question")
+    if followup_needs_fresh(message, history or []):
+        return done("agent", "fresh", "follow-up in a conversation about current facts")
+
+    # 8. Short conversational turn — but never a push-back on the last
     # answer ("no, that's wrong"): that deserves the stronger model.
     if looks_quick(message, int(cfg.get("quick_max_chars", 240))) and not looks_like_correction(message):
         ok, _ = _usable("quick")
         if ok:
             return done("quick", "quick", "short message, no tool intent")
 
-    # 8. Optional classifier for the ambiguous middle.
+    # 9. Optional classifier for the ambiguous middle.
     if cfg.get("classifier"):
         cls = await _classify(message)
         if cls and cls != "agent":
