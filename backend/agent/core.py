@@ -152,6 +152,14 @@ def _skill_names() -> set[str]:
         return set()
 
 
+def _with_sampling(kw: dict) -> dict:
+    """Add AGENT_PRESENCE_PENALTY (when set) to a model call's extra_body."""
+    p = get_settings().agent_presence_penalty
+    if not p:
+        return kw
+    return {**kw, "extra_body": {**(kw.get("extra_body") or {}), "presence_penalty": p}}
+
+
 CUT_OFF_NOTE = ("\n\n*(This reply reached the length limit and was cut off here. "
                 "Ask for a smaller part - one state, one section - to get the rest.)*")
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
@@ -737,7 +745,7 @@ class AgentCore:
                         messages=messages,
                         tools=all_tools,
                         stream=True,
-                        **round_kw,
+                        **_with_sampling(round_kw),
                     ):
                         self._progress()
                         if chunk["type"] == "text_delta":
@@ -787,7 +795,7 @@ class AgentCore:
                     response = await self.provider.chat_complete(
                         messages=messages,
                         tools=all_tools,
-                        **round_kw,
+                        **_with_sampling(round_kw),
                     )
                     current_text = response.get("content", "")
                     round_reasoning = response.get("reasoning") or ""
@@ -1000,7 +1008,7 @@ class AgentCore:
             extra["tool_choice"] = "none"
         try:
             kw = {"extra_body": extra} if extra else {}
-            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **kw)
+            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **_with_sampling(kw))
             text = (r.get("content") or "").strip()
             logger.info("Finalized an empty thinking-mode reply (%d chars)", len(text))
             return text
@@ -1023,7 +1031,7 @@ class AgentCore:
         kw = {"extra_body": extra} if extra else {}
         n = 0
         try:
-            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **kw):
+            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **_with_sampling(kw)):
                 if chunk.get("type") == "text_delta" and chunk.get("content"):
                     n += len(chunk["content"])
                     yield chunk["content"]

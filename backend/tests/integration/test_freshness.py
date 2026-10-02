@@ -325,3 +325,15 @@ async def test_reply_cut_off_at_max_tokens_says_so():
     text = "".join(e["content"] for e in events if e["type"] == "text_delta")
     assert text.endswith(CUT_OFF_NOTE)
     assert [e for e in events if e["type"] == "done"][0]["full_response"].endswith(CUT_OFF_NOTE)
+
+
+def test_presence_penalty_is_added_only_when_set():
+    from agent.core import _with_sampling
+    from config import get_settings
+    kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    with patch.object(get_settings(), "agent_presence_penalty", 0.0):
+        assert _with_sampling(kw) == kw and _with_sampling({}) == {}
+    with patch.object(get_settings(), "agent_presence_penalty", 1.5):
+        assert _with_sampling(kw)["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}, "presence_penalty": 1.5}
+        assert _with_sampling({}) == {"extra_body": {"presence_penalty": 1.5}}
+    assert "presence_penalty" not in kw["extra_body"]          # caller's dict untouched
