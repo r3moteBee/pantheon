@@ -8,6 +8,7 @@ import {
 } from '../../api/client'
 import { useStore } from '../../store'
 import InfoTooltip from '../help/InfoTooltip'
+import DeleteProjectModal from '../DeleteProjectModal'
 
 const TONES   = ['minimal', 'balanced', 'strong']
 const FOCUSES = ['broad', 'balanced', 'focused']
@@ -141,23 +142,25 @@ export default function ProjectSettingsPanel({ projectId }) {
     }
   }
 
-  const deleteProject = async () => {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  const deleteProject = () => {
     if (projectId === 'default') {
       addNotification?.({ type: 'info', message: 'The default project cannot be deleted.' }); return
     }
-    if (!confirm(`Permanently delete project "${name}" and all its data? This cannot be undone.`)) return
-    if (!confirm('Are you sure? This includes artifacts, memory, conversations, and bound repos.')) return
+    setConfirmingDelete(true)
+  }
+
+  const onDeleted = async () => {
+    setConfirmingDelete(false)
     try {
-      await projectsApi.delete(projectId)
       const list = await projectsApi.list()
       setProjects(list.data?.projects || [])
       const fallback = (list.data?.projects || []).find((p) => p.id === 'default')
         || (list.data?.projects || [])[0]
       if (fallback) setActiveProject(fallback)
-      addNotification?.({ type: 'success', message: `Deleted project ${name}` })
-    } catch (e) {
-      addNotification?.({ type: 'error', message: 'Delete failed: ' + (e.message) })
-    }
+    } catch (e) { /* the list refreshes on the next load */ }
+    addNotification?.({ type: 'success', message: `Deleted project ${name}` })
   }
 
   if (loading) return <div className="p-6 text-xs text-gray-500">Loading project settings…</div>
@@ -296,7 +299,7 @@ export default function ProjectSettingsPanel({ projectId }) {
             <Download className="w-4 h-4" /> Export ZIP
           </button>
           <p className="text-[11px] text-gray-500">
-            Bundle this project's artifacts, memory, conversations, and metadata into a portable archive.
+            Bundle this project's metadata, memory and conversations, files, artifacts and scheduled tasks into a portable archive.
           </p>
         </Section>
 
@@ -309,9 +312,17 @@ export default function ProjectSettingsPanel({ projectId }) {
             <Trash2 className="w-4 h-4" /> Delete project
           </button>
           <p className="text-[11px] text-gray-500">
-            Permanently removes the project, its artifacts, memory, and conversations.
+            Permanently removes the project and everything in it: conversations, memory, artifacts, files,
+            tasks and settings. You'll see the full list before anything is deleted.
             {projectId === 'default' && ' The default project cannot be deleted.'}
           </p>
+          {confirmingDelete && (
+            <DeleteProjectModal
+              project={{ id: projectId, name: name || projectId }}
+              onClose={() => setConfirmingDelete(false)}
+              onDeleted={onDeleted}
+            />
+          )}
         </Section>
       </div>
     </div>

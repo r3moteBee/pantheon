@@ -506,6 +506,7 @@ export const projectsApi = {
   update: (projectId, name, description) =>
     api.put(`/api/projects/${projectId}`, { name, description }),
   delete: (projectId) => api.delete(`/api/projects/${projectId}`),
+  deletePreview: (projectId) => api.get(`/api/projects/${projectId}/delete-preview`),
 
   // Export / Import
   exportProject: (projectId, components = null) =>

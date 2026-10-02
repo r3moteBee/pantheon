@@ -207,7 +207,7 @@ def scan_archive(archive_bytes: bytes) -> ScanResult:
             continue
 
         # Disallowed directory prefixes (only allow known structure)
-        allowed_prefixes = ("metadata/", "memory/", "files/", "tasks/")
+        allowed_prefixes = ("metadata/", "memory/", "files/", "artifacts/", "tasks/")
         if not any(name.startswith(p) for p in allowed_prefixes) and name != "manifest.json":
             findings.append(ScanFinding(
                 severity=ScanSeverity.warning,
@@ -517,6 +517,15 @@ def import_project(
             logger.error("Failed to import files: %s", e, exc_info=True)
             warnings.append(f"files: {e}")
 
+    # ── Step 6b: Import artifacts ────────────────────────────────────
+    if "artifacts" in components and "artifacts/artifacts.json" in zf.namelist():
+        try:
+            _import_artifacts(zf, project_id, import_stats, warnings)
+            imported_components.append("artifacts")
+        except Exception as e:
+            logger.error("Failed to import artifacts: %s", e, exc_info=True)
+            warnings.append(f"artifacts: {e}")
+
     # ── Step 7: Import tasks ─────────────────────────────────────────
     if "tasks" in components and "tasks/tasks.json" in zf.namelist():
         try:
@@ -559,6 +568,18 @@ def _get_graph_db_path() -> str:
     from memory.graph import GraphMemory
     gm = GraphMemory(project_id="__probe__")
     return gm.db_path
+
+
+def _id_for(conn, table: str, rid: str | None, project_id: str, column: str = "id") -> str:
+    """``rid`` if it is free or already this project's; a fresh id if another project
+    owns it. An archive imported next to its source (a copy) reuses every id, and the
+    upserts' "same project only" guard then skipped those rows silently - conversations,
+    notes and graph were reported imported but never written."""
+    import uuid
+    if not rid:
+        return str(uuid.uuid4())
+    row = conn.execute(f"SELECT project_id FROM {table} WHERE {column} = ? LIMIT 1", (rid,)).fetchone()
+    return rid if row is None or row[0] == project_id else str(uuid.uuid4())
 
 
 def _import_episodic(
@@ -623,8 +644,26 @@ def _import_episodic(
         # Import conversations — upsert so reimports into the same project work.
         # The WHERE on the conflict branch stops an archive that reuses row
         # ids from overwriting/re-homing another project's rows.
+        sessions: dict[str, str] = {}
+        conv_ids: dict[str, str] = {}
+        written = {"conversations": 0, "messages": 0, "task_logs": 0, "memory_notes": 0}
+
+        def session_for(sid):
+            if not sid:
+                return sid
+            if sid not in sessions:
+                taken = conn.execute("SELECT 1 FROM conversations WHERE session_id=? AND project_id<>? UNION "
+                                     "SELECT 1 FROM messages WHERE session_id=? AND project_id<>? LIMIT 1",
+                                     (sid, project_id, sid, project_id)).fetchone()
+                sessions[sid] = f"{sid}-{project_id}"[:120] if taken else sid
+            return sessions[sid]
+
         for row in data.get("conversations", []):
             row["project_id"] = project_id
+            new_id = _id_for(conn, "conversations", row.get("id"), project_id)
+            conv_ids[row.get("id")] = new_id
+            row["id"] = new_id
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "title", "created_at", "updated_at", "metadata"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -634,14 +673,17 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, title=excluded.title, created_at=excluded.created_at, updated_at=excluded.updated_at, metadata=excluded.metadata
                 WHERE conversations.project_id = excluded.project_id
             """, vals)
+            written["conversations"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import messages
         for row in data.get("messages", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "messages", row.get("id"), project_id)
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "role", "content", "timestamp", "metadata"]
             vals = {c: row.get(c) for c in cols}
             # conversation_id may be present
-            vals["conversation_id"] = row.get("conversation_id")
+            vals["conversation_id"] = conv_ids.get(row.get("conversation_id"), row.get("conversation_id"))
             conn.execute("""
                 INSERT INTO messages
                 (id, conversation_id, project_id, session_id, role, content, timestamp, metadata)
@@ -649,10 +691,12 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET conversation_id=excluded.conversation_id, project_id=excluded.project_id, session_id=excluded.session_id, role=excluded.role, content=excluded.content, timestamp=excluded.timestamp, metadata=excluded.metadata
                 WHERE messages.project_id = excluded.project_id
             """, vals)
+            written["messages"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import task logs
         for row in data.get("task_logs", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "task_logs", row.get("id"), project_id)
             cols = ["id", "project_id", "task_id", "task_name", "event", "details", "timestamp"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -662,10 +706,13 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, task_id=excluded.task_id, task_name=excluded.task_name, event=excluded.event, details=excluded.details, timestamp=excluded.timestamp
                 WHERE task_logs.project_id = excluded.project_id
             """, vals)
+            written["task_logs"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import memory notes
         for row in data.get("memory_notes", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "memory_notes", row.get("id"), project_id)
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "content", "tags", "created_at", "updated_at"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -675,12 +722,13 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, content=excluded.content, tags=excluded.tags, created_at=excluded.created_at, updated_at=excluded.updated_at
                 WHERE memory_notes.project_id = excluded.project_id
             """, vals)
+            written["memory_notes"] += conn.execute("SELECT changes()").fetchone()[0]
 
         conn.commit()
-        stats["conversations_imported"] = len(data.get("conversations", []))
-        stats["messages_imported"] = len(data.get("messages", []))
-        stats["task_logs_imported"] = len(data.get("task_logs", []))
-        stats["notes_imported"] = len(data.get("memory_notes", []))
+        stats["conversations_imported"] = written["conversations"]
+        stats["messages_imported"] = written["messages"]
+        stats["task_logs_imported"] = written["task_logs"]
+        stats["notes_imported"] = written["memory_notes"]
         logger.info(
             "Episodic import done: %d convos, %d msgs, %d logs, %d notes",
             stats["conversations_imported"], stats["messages_imported"],
@@ -734,8 +782,10 @@ def _import_graph(
 
         # Import nodes first
         node_count = 0
+        node_ids: dict[str, str] = {}
         for row in data.get("nodes", []):
             row["project_id"] = project_id
+            node_ids[row.get("id")] = row["id"] = _id_for(conn, "graph_nodes", row.get("id"), project_id)
             cols = ["id", "project_id", "node_type", "label", "metadata", "created_at", "updated_at"]
             vals = {c: row.get(c) for c in cols}
             try:
@@ -746,7 +796,7 @@ def _import_graph(
                     ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_type=excluded.node_type, label=excluded.label, metadata=excluded.metadata, created_at=excluded.created_at, updated_at=excluded.updated_at
                     WHERE graph_nodes.project_id = excluded.project_id
                 """, vals)
-                node_count += 1
+                node_count += conn.execute("SELECT changes()").fetchone()[0]
             except Exception as e:
                 logger.debug("Skipping graph node %s: %s", row.get("id"), e)
 
@@ -754,6 +804,9 @@ def _import_graph(
         edge_count = 0
         for row in data.get("edges", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "graph_edges", row.get("id"), project_id)
+            row["node_a_id"] = node_ids.get(row.get("node_a_id"), row.get("node_a_id"))
+            row["node_b_id"] = node_ids.get(row.get("node_b_id"), row.get("node_b_id"))
             cols = ["id", "project_id", "node_a_id", "node_b_id", "relationship", "weight", "created_at"]
             vals = {c: row.get(c) for c in cols}
             try:
@@ -764,7 +817,7 @@ def _import_graph(
                     ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_a_id=excluded.node_a_id, node_b_id=excluded.node_b_id, relationship=excluded.relationship, weight=excluded.weight, created_at=excluded.created_at
                     WHERE graph_edges.project_id = excluded.project_id
                 """, vals)
-                edge_count += 1
+                edge_count += conn.execute("SELECT changes()").fetchone()[0]
             except Exception as e:
                 logger.debug("Skipping graph edge %s: %s", row.get("id"), e)
 
@@ -912,11 +965,11 @@ def _import_tasks(
 
 def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
     """Restore workspace, personality, and notes files."""
+    from api.project_export import workspace_dir
     project_dir = settings.projects_dir / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    dest_resolved = project_dir.resolve()
 
     for name in zf.namelist():
         if not name.startswith("files/") or name.endswith("/"):
@@ -926,8 +979,15 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
         if not relative:
             continue
 
-        target = (project_dir / relative).resolve()
-        if not str(target).startswith(str(dest_resolved)):
+        # the default project's workspace lives at data/workspace, not projects/default/workspace
+        if relative.startswith("workspace/"):
+            base, relative = workspace_dir(project_id), relative[len("workspace/"):]
+        else:
+            base = project_dir
+        base.mkdir(parents=True, exist_ok=True)
+        dest_resolved = base.resolve()
+        target = (base / relative).resolve()
+        if not target.is_relative_to(dest_resolved):
             logger.warning("Skipping path traversal attempt: %s", name)
             continue
 
@@ -937,3 +997,89 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
         count += 1
 
     return count
+
+
+def _import_artifacts(zf: zipfile.ZipFile, project_id: str, stats: dict[str, Any], warnings: list[str]) -> None:
+    """Restore artifacts with fresh ids (all their versions). Binary content comes from
+    artifacts/blobs/ and must match its sha256. An artifact whose path already exists in
+    the target project is skipped."""
+    import hashlib
+    import uuid
+    from artifacts.store import get_store
+    data = json.loads(zf.read("artifacts/artifacts.json"))
+    arts, versions = data.get("artifacts") or [], data.get("versions") or []
+    if len(arts) > _MAX_JSON_RECORDS or len(versions) > _MAX_JSON_RECORDS:
+        raise ValueError("too many artifact records")
+    store = get_store()
+    names = set(zf.namelist())
+    blob_map: dict[str, str] = {}
+
+    def blob(rel: str | None) -> str | None:
+        if not rel:
+            return None
+        if rel in blob_map:
+            return blob_map[rel]
+        member = f"artifacts/blobs/{rel}"
+        if member not in names:
+            raise ValueError(f"missing blob {rel}")
+        raw = zf.read(member)
+        sha = hashlib.sha256(raw).hexdigest()
+        if sha != Path(rel).name:
+            raise ValueError(f"blob {rel} does not match its hash")
+        blob_map[rel] = store._store_blob(raw)[1]
+        return blob_map[rel]
+
+    by_artifact: dict[str, list[dict[str, Any]]] = {}
+    for v in versions:
+        by_artifact.setdefault(v.get("artifact_id"), []).append(v)
+    imported = skipped = n_versions = 0
+    new_ids: list[str] = []
+    with store._connect() as conn:
+        for a in arts:
+            try:
+                if conn.execute("SELECT 1 FROM artifacts WHERE project_id=? AND path=? AND deleted_at IS NULL",
+                                (project_id, a["path"])).fetchone():
+                    skipped += 1
+                    continue
+                aid = str(uuid.uuid4())
+                vids: dict[str, str] = {}
+                rows = []
+                for v in sorted(by_artifact.get(a["id"], []), key=lambda v: v.get("version_number") or 0):
+                    vids[v["id"]] = str(uuid.uuid4())
+                    rows.append((vids[v["id"]], aid, int(v["version_number"]), v.get("content"), blob(v.get("blob_path")),
+                                 int(v.get("size_bytes") or 0), v.get("sha256") or "", v.get("edit_summary"),
+                                 v.get("edited_by"), v.get("created_at") or datetime.now(timezone.utc).isoformat()))
+                current = vids.get(a.get("current_version_id"))
+                if not current:
+                    skipped += 1
+                    warnings.append(f"artifact {a.get('path')}: current version missing - skipped")
+                    continue
+                conn.execute(
+                    "INSERT INTO artifacts (id, project_id, path, title, content_type, content, blob_path, size_bytes,"
+                    " sha256, tags, source, pinned, current_version_id, created_at, updated_at, deleted_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+                    (aid, project_id, a["path"], a.get("title"), a["content_type"], a.get("content"),
+                     blob(a.get("blob_path")), int(a.get("size_bytes") or 0), a.get("sha256") or "",
+                     a.get("tags") if isinstance(a.get("tags"), str) else json.dumps(a.get("tags") or []),
+                     a.get("source") if isinstance(a.get("source"), str) else json.dumps(a.get("source") or {}),
+                     int(bool(a.get("pinned"))), current, a.get("created_at"), a.get("updated_at")))
+                conn.executemany(
+                    "INSERT INTO artifact_versions (id, artifact_id, version_number, content, blob_path, size_bytes,"
+                    " sha256, edit_summary, edited_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+                imported += 1
+                n_versions += len(rows)
+                new_ids.append(aid)
+            except (KeyError, ValueError) as e:
+                skipped += 1
+                warnings.append(f"artifact {a.get('path')}: {e}")
+        conn.commit()
+    stats["artifacts_imported"] = imported
+    stats["artifact_versions_imported"] = n_versions
+    if skipped:
+        stats["artifacts_skipped"] = skipped
+    try:   # make them searchable again (semantic chunks are not in the archive)
+        from artifacts.embedder import schedule_embed
+        for aid in new_ids:
+            schedule_embed(aid, project_id)
+    except Exception as e:
+        logger.info("artifact re-embedding not scheduled: %s", e)

@@ -3,6 +3,7 @@ import { Trash2, Plus, Check, RefreshCw, Calendar, User } from 'lucide-react'
 import { useStore } from '../store'
 import { projectsApi, personasApi, personalityApi } from '../api/client'
 import { ExportButton, ImportButton } from './ProjectPortability'
+import DeleteProjectModal from './DeleteProjectModal'
 
 function CreateProjectForm({ onProjectCreated, personas }) {
   const [name, setName] = useState('')
@@ -92,26 +93,23 @@ function CreateProjectForm({ onProjectCreated, personas }) {
 }
 
 function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRefresh }) {
-  const [deleting, setDeleting] = useState(false)
   const [changingPersona, setChangingPersona] = useState(false)
   const addNotification = useStore((s) => s.addNotification)
 
-  const deleteProject = async () => {
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+
+  const deleteProject = () => {
     if (isActive) {
       addNotification({ type: 'error', message: 'Cannot delete active project' })
       return
     }
-    if (!confirm(`Delete project "${project.name}"? This cannot be undone.`)) return
+    setConfirmingDelete(true)
+  }
 
-    setDeleting(true)
-    try {
-      await projectsApi.delete(project.id)
-      addNotification({ type: 'success', message: 'Project deleted' })
-      onDelete()
-    } catch (err) {
-      addNotification({ type: 'error', message: err.message })
-    }
-    setDeleting(false)
+  const onDeleted = () => {
+    setConfirmingDelete(false)
+    addNotification({ type: 'success', message: `Project "${project.name}" deleted` })
+    onDelete()
   }
 
   const changePersona = async (newPersonaId) => {
@@ -211,12 +209,16 @@ function ProjectCard({ project, isActive, onSetActive, onDelete, personas, onRef
         <ExportButton project={project} />
         <button
           onClick={deleteProject}
-          disabled={isActive || deleting}
+          disabled={isActive}
+          title={isActive ? 'Switch to another project to delete this one' : 'Delete project'}
           className="px-3 py-2 bg-gray-700 hover:bg-red-900 disabled:opacity-50 text-gray-300 hover:text-red-200 text-sm rounded transition-colors"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
+      {confirmingDelete && (
+        <DeleteProjectModal project={project} onClose={() => setConfirmingDelete(false)} onDeleted={onDeleted} />
+      )}
     </div>
   )
 }

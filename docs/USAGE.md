@@ -15,6 +15,10 @@ Projects are Pantheon's unit of isolation. Each project has its own:
 
 Switch projects from the sidebar in the web UI, or via `/project <name>` in a messaging bot (`!project` on Matrix).
 
+**Export / import:** a project's export (Projects page, download icon) can include its metadata, memory (conversations, notes, semantic memory, graph), files (workspace, personality, notes), artifacts (with every version and their stored files) and scheduled tasks. Preview shows the counts before you download. Importing an export next to the project it came from makes a full copy with its own ids.
+
+**Deleting a project** removes everything in it: conversations and messages, memory notes, semantic memory and search vectors, graph, artifacts (and their stored files, unless another project uses the same file), workspace files, background jobs and scheduled tasks, project settings, the repo binding and chat-channel mappings to it. The dialog lists what will be deleted with counts, offers to download an export first, and only deletes after you tick "I understand…". A project with a task still running can't be deleted until the task is cancelled. The default project can't be deleted.
+
 ### Example Project Setup
 * **Project 1: `semiconductor-research`**: Dedicated to market research on chip manufacturing. Contains spec sheets, company filings, and news articles.
 * **Project 2: `fitness-coach`**: Dedicated to personal health and training.
