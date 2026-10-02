@@ -24,6 +24,11 @@ class _Prov:
         self.stream_calls, self.complete_calls = [], []
 
     async def chat(self, messages, tools=None, stream=True, **kw):
+        if not self.rounds:   # the (streamed) finalize call
+            self.complete_calls.append(dict(messages=messages, tools=tools, **kw))
+            yield {"type": "text_delta", "content": self.final}
+            yield {"type": "done"}
+            return
         self.stream_calls.append(kw)
         text, reasoning = self.rounds.pop(0)
         if text:

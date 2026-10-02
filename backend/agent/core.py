@@ -715,11 +715,20 @@ class AgentCore:
                         and round_reasoning.strip()):
                     # A thinking model ended its turn with the answer inside its
                     # reasoning and no reply text (seen ~1 in 10 with a 9B model).
-                    final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra,
-                                                                 tools=all_tools)
+                    if stream:
+                        # Streamed: the answer appears as it is written instead of all at
+                        # once at the end (latency harness: first text = total time).
+                        final = ""
+                        async for piece in self._finalize_stream(messages, round_reasoning, agent_extra, all_tools):
+                            final += piece
+                            yield {"type": "text_delta", "content": piece}
+                    else:
+                        final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra,
+                                                                     tools=all_tools)
+                        if final:
+                            yield {"type": "text_delta", "content": final}
                     if final:
                         current_text = final
-                        yield {"type": "text_delta", "content": final}
 
                 if current_text:
                     full_response = current_text
@@ -887,6 +896,29 @@ class AgentCore:
         except Exception as e:
             logger.warning("Finalize round failed: %s", e)
             return ""
+
+    async def _finalize_stream(self, messages: list[dict], reasoning: str, agent_extra: dict | None,
+                               tools: list[dict] | None):
+        """Streaming twin of _finalize_from_reasoning: yields the reply's text as it arrives."""
+        notes = reasoning.strip()[-8000:]
+        msgs = messages + [
+            {"role": "assistant", "content": "(my working notes)\n" + notes},
+            {"role": "user", "content": "Write your reply to my request above now, based on your "
+                                        "working notes. Reply directly; do not call tools."},
+        ]
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
+        if tools:
+            extra["tool_choice"] = "none"
+        kw = {"extra_body": extra} if extra else {}
+        n = 0
+        try:
+            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **kw):
+                if chunk.get("type") == "text_delta" and chunk.get("content"):
+                    n += len(chunk["content"])
+                    yield chunk["content"]
+        except Exception as e:
+            logger.warning("Finalize round failed: %s", e)
+        logger.info("Finalized an empty thinking-mode reply (%d chars, streamed)", n)
 
     async def run_autonomous(self, task_description: str) -> str:
         """Run a task autonomously (no streaming, returns final response).
