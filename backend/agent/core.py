@@ -590,6 +590,7 @@ class AgentCore:
                 dated = not entities and not _VERSION_Q.search(user_message)
                 q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
                 pre = _auto_search_call(q)
+                logger.info("Pre-search for a time-sensitive / unfamiliar-name question: %r", q)
                 yield pre
                 result = await execute_tool(
                     tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,

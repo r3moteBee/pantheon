@@ -153,3 +153,31 @@ async def test_pre_search_uses_the_name_for_unknown_entities_and_skips_other_tur
 async def test_version_questions_pre_search_without_a_date():
     _, calls, _ = await _run("What's the latest stable version of PostgreSQL?", pre=True)
     assert calls[0] == ("web_search", {"query": "What's the latest stable version of PostgreSQL?"})
+
+
+# ── Questions about Pantheon itself / the user's own things (2026-10-02 regression) ──
+
+@pytest.mark.parametrize("msg", [
+    "describe the current configuration", "describe the current configuration of this agent harness",
+    "What is your current configuration?", "What tools do you have?", "What's in my current project?",
+    "Summarize my notes from today's meeting", "Show me the results of my last task", "Rate my essay",
+    "What model are you running on?", "How is Pantheon configured right now?",
+])
+def test_questions_about_pantheon_or_the_user_are_not_web_lookups(msg):
+    from agent.freshness import needs_fresh_facts, unknown_entities
+    assert not needs_fresh_facts(msg) and unknown_entities(msg) == []
+
+
+@pytest.mark.parametrize("msg", [
+    "Can you tell me who the current PM of Japan is?", "What's the current price of bitcoin?",
+    "How did the election results turn out?", "What is the ECB's current deposit facility rate?",
+])
+def test_world_facts_with_current_still_are(msg):
+    from agent.freshness import needs_fresh_facts
+    assert needs_fresh_facts(msg)
+
+
+@pytest.mark.asyncio
+async def test_describe_the_current_configuration_does_not_search():
+    text, calls, _ = await _run("describe the current configuration of this agent harness", pre=True)
+    assert calls == []
