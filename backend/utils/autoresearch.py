@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 # Ensure backend directory is in sys.path for local imports
 backend_dir = Path(__file__).resolve().parent.parent
@@ -78,6 +78,8 @@ class AutoresearchRunner:
         max_iterations: int,
         instructions: str,
         workspace_dir: Path,
+        on_iteration: Callable[[int, dict[str, Any]], Awaitable[None]] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ):
         self.target_path = target_path
         self.eval_cmd = eval_cmd
@@ -86,6 +88,10 @@ class AutoresearchRunner:
         self.max_iterations = max_iterations
         self.instructions = instructions
         self.workspace_dir = workspace_dir
+        # Job hooks (jobs/handlers/autoresearch.py): progress after each round,
+        # cooperative cancel before each round.
+        self.on_iteration = on_iteration
+        self.should_stop = should_stop
         
         self.best_code = ""
         self.best_metric = float("inf") if self.direction == "min" else float("-inf")
@@ -203,6 +209,9 @@ class AutoresearchRunner:
         
         # 2. Loop iterations
         for iteration in range(1, self.max_iterations + 1):
+            if self.should_stop and self.should_stop():
+                logger.info("Stop requested - ending after %d round(s)", iteration - 1)
+                break
             logger.info(f"\n=== ITERATION {iteration}/{self.max_iterations} ===")
             
             # Save backup
@@ -275,6 +284,9 @@ class AutoresearchRunner:
                 "notes": notes
             })
             
+            if self.on_iteration:
+                await self.on_iteration(iteration, self.history[-1])
+
             if not keep:
                 # Revert to backup
                 shutil.copy2(backup_path, self.target_path)

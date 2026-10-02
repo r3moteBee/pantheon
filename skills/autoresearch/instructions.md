@@ -33,14 +33,9 @@ When the user triggers this skill, you must walk them through the onboarding pro
 
 Once the user approves the configuration:
 
-1. **Verify files**: Check that the target file exists. If you need to create or refine the benchmark script, use `write_file` to write it now.
-2. **Launch the runner**: Use the `code_execute` tool to run the background evolutionary script. Build the command exactly as follows:
-   ```bash
-   python utils/autoresearch.py --target <target_path> --eval "<eval_cmd>" --metric "<metric_name>" --direction <min_or_max> --iterations <count> --instructions "<custom_guidance>"
-   ```
-   *Note: If the script is run in the backend, the current working directory is `backend/` and python resolves dependencies correctly.*
-3. **Monitor logs**: Explain to the user that the evolutionary loop is executing. Output the baseline performance and keep them updated on progress.
-4. **Report results**:
-   - Once execution finishes, read `autoresearch_report.md` from the workspace using `read_file`.
-   - Save the report as a project artifact using `save_to_artifact` (path: `autoresearch_report.md`, title: `Evolutionary Optimization Report`).
-   - Output a clean summary of the initial vs. final metric, the successful mutations, and the optimized code block to the user.
+1. **Verify files**: Check that the target file exists in the workspace (`list_workspace_files`). If you need to create or refine the benchmark script, use `write_file` to write it now.
+2. **Start the loop**: Call `start_autoresearch` with the approved settings:
+   `target_file`, `eval_cmd`, `metric`, `direction` (`min` or `max`), `iterations`, and `instructions` (the user's guidance).
+   It runs as a background job against the project workspace: the baseline first, then one mutation per round, keeping a change only when the metric improves. It works only in the web chat, because the benchmark command runs on the host.
+3. **Monitor**: Tell the user the job is running and that each round's result shows in the Tasks tab. `get_job_status(job_id)` reports progress (`Round 3/10: SUCCESS (time=0.41)`).
+4. **Report results**: When the job has finished, its result has `initial_metric`, `best_metric`, `kept_rounds` and `report_artifact_id`. Read the report with `read_artifact(id=report_artifact_id)` and give the user a short summary: initial vs. final metric, which rounds were kept, and the optimised code. The best version is already in the target file (`autoresearch_report.md` in the workspace has the same report).

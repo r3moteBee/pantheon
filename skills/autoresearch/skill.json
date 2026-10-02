@@ -21,7 +21,7 @@
     { "name": "direction", "type": "string", "required": false, "description": "min (to minimize, e.g. loss/time) or max (to maximize, e.g. accuracy/throughput)" },
     { "name": "iterations", "type": "integer", "required": false, "description": "Number of evolutionary iteration loops (default is 10)" }
   ],
-  "capabilities_required": ["file_read", "file_write", "code_execute"],
+  "capabilities_required": ["file_read", "file_write", "start_autoresearch"],
   "dependencies": {},
   "tags": ["optimization", "evolutionary", "agent", "benchmark", "performance"],
   "source_hub": null,

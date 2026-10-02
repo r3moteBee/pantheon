@@ -255,6 +255,28 @@ SCHEMAS: list[dict[str, Any]] = [
             }
         }
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "start_autoresearch",
+            "description": "Start the autoresearch loop as a background job: an LLM mutates one workspace file, runs the "
+                           "benchmark command after each change, keeps a change only if the metric improves, and saves a "
+                           "report artifact. Web chat only (the benchmark runs on the host). Agree the settings with the "
+                           "user first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_file": {"type": "string", "description": "File to optimise, relative to the project workspace"},
+                    "eval_cmd": {"type": "string", "description": "Shell command run in the workspace after each change, e.g. 'python benchmark.py'"},
+                    "metric": {"type": "string", "description": "Metric name the benchmark prints, e.g. 'time' for 'time: 1.23'"},
+                    "direction": {"type": "string", "enum": ["min", "max"], "description": "min (time, loss) or max (accuracy, throughput)"},
+                    "iterations": {"type": "integer", "description": "Mutation rounds (default 10, max 50)"},
+                    "instructions": {"type": "string", "description": "Optimisation guidance and constraints"},
+                },
+                "required": ["target_file", "eval_cmd", "metric", "direction"],
+            },
+        },
+    },
 ]
 
 
@@ -582,3 +604,29 @@ async def _tool_start_coding_task(ctx: ToolContext, tool_name: str, tool_args: d
         f"watch it in the chat Tasks tab."
     )
 
+
+
+
+@tool('start_autoresearch')
+async def _tool_start_autoresearch(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    # The benchmark is a shell command on the host: same rule as coding tasks.
+    from agent.tools import host_exec_allowed
+    if not ctx.interactive:
+        return ("start_autoresearch refused: the loop runs its benchmark command on the host and can only be "
+                "started from the web chat.")
+    if not host_exec_allowed("interactive"):
+        return "start_autoresearch refused: host commands are disabled here (AGENT_HOST_EXEC=never)."
+    from agent.tools.workspace import _get_workspace_base
+    workspace = _get_workspace_base(ctx.effective_project)
+    target = (workspace / (tool_args.get("target_file") or "")).resolve()
+    if not target.is_relative_to(workspace) or not target.is_file():
+        return f"start_autoresearch: {tool_args.get('target_file')!r} is not a file in the project workspace."
+    from jobs.store import get_store
+    payload = {k: tool_args.get(k) for k in ("target_file", "eval_cmd", "metric", "direction", "iterations", "instructions")}
+    j = get_store().create(job_type="autoresearch", project_id=ctx.effective_project,
+                           title=f"Autoresearch: {payload['target_file']}",
+                           description=f"{payload['metric']} ({payload.get('direction') or 'min'}) via {payload['eval_cmd']}"[:200],
+                           payload=payload)
+    return (f"Autoresearch queued.\n  job_id: {j['id']}\n"
+            f"Progress shows per round in the Tasks tab; get_job_status(job_id={j['id'][:8]!r}) reports it. "
+            "When it finishes, the report is saved as an artifact (report_artifact_id in the job result).")

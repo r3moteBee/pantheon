@@ -14,7 +14,7 @@ The user (Brent) runs Pantheon locally at `~/pantheon` against a small set of MC
 
 2. **Source adapters.** The ingestion pipeline that turns "a URL or video_id" into a typed-topics-frontmatter markdown artifact + graph nodes/edges. Adapters live in `backend/sources/adapters/` and self-register at import time. Currently 29 adapters across 10 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`, `sec`). Each adapter declares its `source_type`, `bucket_aliases`, `extractor_strategy`, `auto_extract`, and `auto_link_similarity`. See `backend/sources/SOURCE_ADAPTERS.md` for the full design.
 
-3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop` (clients may create the first, second and fourth via `POST /api/jobs`; memory extraction and file indexing run inline, not as jobs). APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
+3. **Jobs.** Unified async job system in `backend/jobs/`. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop`, `autoresearch` (the last only via the web-chat `start_autoresearch` tool; clients may create the first, second and fourth via `POST /api/jobs`; memory extraction and file indexing run inline, not as jobs). APScheduler fires schedules → `_enqueue_autonomous_job` creates a job row → `JobWorker` (asyncio task in the FastAPI process) polls and dispatches to the registered handler. Stall watchdog kills jobs idle for 5 min; total timeout configurable per-job.
 
 ## Directory layout
 
@@ -89,7 +89,7 @@ Currently ~500 tests (5 skipped). `tests/integration/conftest.py` lowers the vau
 
 ## Versioning convention
 
-There's ONE source of truth: `frontend/package.json`'s `"version"` field. The backend reads it at startup via `_resolve_app_version()` in `main.py`. Bump it on every push:
+There's ONE source of truth: `frontend/package.json`'s `"version"` field. The backend reads it via `utils/version.app_version()` (/api/health, the FastAPI app and get_self_documentation - self-doc had its own copy that looked in the wrong place in Docker and reported "unknown"). Bump it on every push:
 
 - Format: `YYYY.MM.DD.HXX` (e.g. `2026.05.04.H1`)
 - Increment the H suffix on each ship within a day
@@ -242,7 +242,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Memory consolidation reads episodic history.** `MemoryManager.consolidate_session()` (tool `consolidate_memory`, `POST /api/memory/consolidate?session_id=`) summarises + extracts from the session's recent persisted messages; it needs a real session id. `remember(tier="graph")` runs the conversation extractor (`min_messages=1`) on the text so entities/relationships land in the graph.
 
-**Chat settings: one read path.** `utils/chat_settings.py` — `tone_weight` (minimal|balanced|strong), `context_focus` (broad|balanced|focused), `memory_recall` — per-project override in phase_g.db `project_settings` (NULL = inherit) over the global vault values Settings writes; `skill_discovery` stays in vault `skill_discovery_<project>` (what chat and the bots read). `AgentCore.chat` reads `effective(project_id)`; the chat-header toggles and Project Settings write `PUT /api/projects/{id}/settings` (`null` clears an override). The frontend never keeps its own copy — it loads `effective` on project switch.
+**Chat settings: one read path.** `utils/chat_settings.py` — `tone_weight` (minimal|balanced|strong), `context_focus` (broad|balanced|focused), `memory_recall` — per-project override in phase_g.db `project_settings` (NULL = inherit; the db's other old tables were never used and are dropped when empty) over the global vault values Settings writes; `skill_discovery` stays in vault `skill_discovery_<project>` (what chat and the bots read). `AgentCore.chat` reads `effective(project_id)`; the chat-header toggles and Project Settings write `PUT /api/projects/{id}/settings` (`null` clears an override). The frontend never keeps its own copy — it loads `effective` on project switch.
 
 **Repo protocol follows host exec.** `build_system_prompt(host_exec=…)` (AgentCore passes its own) shows the local git/run_command protocol only where those tools exist; background contexts get a short note pointing at the `github` tool / `create_task(job_type="coding_task")`.
 
@@ -314,7 +314,7 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 
 **Tool dispatch is a registry.** `agent/tools/__init__.py::execute_tool` applies the host-exec gate, routes `mcp_*` to the MCP manager, then calls `registry.resolve(name)` (exact names first, then the `browser_`/`github_`/`git_` prefixes) with a `ToolContext`. An unknown name returns `Unknown tool: …`, and any exception returns `Error executing …`. Workspace and git helpers live in `agent/tools/workspace.py`, and handlers call them as `_ws.<name>`, so tests patch `agent.tools.workspace.<name>` (not `agent.tools.<name>`). A test asserts every schema has a handler and vice versa.
 
-**Consolidated tools; old names are hidden aliases.** The model sees 45 tools. These replace old ones:
+**Consolidated tools; old names are hidden aliases.** The model sees 46 tools. These replace old ones:
 - `github(action=…)` replaces the ten `github_*` tools.
 - `merge_topics(action=list|approve|reject|force)` replaces the four merge tools.
 - `index(target=artifact|workspace)` replaces `index_artifact` and `index_workspace`.
