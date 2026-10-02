@@ -146,3 +146,10 @@ async def test_pre_search_uses_the_name_for_unknown_entities_and_skips_other_tur
     assert calls[0] == ("web_search", {"query": "What is Jev?"})
     _, calls, _ = await _run("Write a haiku about autumn", pre=True)
     assert calls == []
+
+
+
+@pytest.mark.asyncio
+async def test_version_questions_pre_search_without_a_date():
+    _, calls, _ = await _run("What's the latest stable version of PostgreSQL?", pre=True)
+    assert calls[0] == ("web_search", {"query": "What's the latest stable version of PostgreSQL?"})

@@ -152,6 +152,9 @@ def _skill_names() -> set[str]:
         return set()
 
 
+_VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
+
+
 def _has_web_call(calls: list[dict]) -> bool:
     return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
 
@@ -582,7 +585,10 @@ class AgentCore:
                 # with the user's bare words ("Who is the current PM of the UK?")
                 # engines ranked 2024 pages first and the answer went stale (politics
                 # 44 -> 28/45); the model's own queries carried the date.
-                q = auto_query if entities else f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}"
+                # Not for version questions: they get release tables (agent/release_facts.py),
+                # and "... PostgreSQL October 2026" pulled beta announcements (19.0 Beta 4).
+                dated = not entities and not _VERSION_Q.search(user_message)
+                q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
                 pre = _auto_search_call(q)
                 yield pre
                 result = await execute_tool(
