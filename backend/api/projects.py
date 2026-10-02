@@ -283,8 +283,10 @@ async def import_project_endpoint(
         components=comp_list,
         overwrite=overwrite,
     )
-    status_code = 200 if result.success else 422
-    return result.model_dump()
+    # A blocked or failed import is a 422 with the same body (scan findings included),
+    # so clients that only check the status no longer see a failure as success.
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=200 if result.success else 422, content=result.model_dump(mode="json"))
 
 
 @router.get("/projects/{project_id}/export/debug")

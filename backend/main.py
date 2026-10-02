@@ -67,34 +67,9 @@ _PUBLIC_PATHS = {
 _FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
-def _resolve_app_version() -> str:
-    """Single source of truth for the app version: frontend/package.json.
+from utils.version import app_version  # noqa: E402
 
-    Bumping frontend/package.json now also bumps the backend version
-    string returned by /api/health so the two stay in sync.
-    """
-    import json as _json
-
-    # 1. Look for frontend sibling (local dev mode)
-    pkg_sibling = Path(__file__).resolve().parent.parent / "frontend" / "package.json"
-    if pkg_sibling.exists():
-        try:
-            return _json.loads(pkg_sibling.read_text(encoding="utf-8"))["version"]
-        except Exception:
-            pass
-
-    # 2. Look for package.json in the same directory (Docker container mode)
-    pkg_local = Path(__file__).resolve().parent / "package.json"
-    if pkg_local.exists():
-        try:
-            return _json.loads(pkg_local.read_text(encoding="utf-8"))["version"]
-        except Exception:
-            pass
-
-    return "0.0.0-dev"
-
-
-_APP_VERSION = _resolve_app_version()
+_APP_VERSION = app_version()
 
 # httpx logs every request URL at INFO — including query-string credentials
 # some services require (e.g. Tavily's ?tavilyApiKey=). Keep it to warnings.

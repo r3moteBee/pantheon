@@ -34,6 +34,9 @@ KNOBS: dict[str, dict[str, Any]] = {
 SKILL_DISCOVERY_CHOICES = ("off", "suggest", "auto")
 
 _ready: set[str] = set()
+# Created by early versions of 002_phase_g.sql and never read or written; dropped
+# when empty (repo bindings are in sources.db - api/connections.py).
+_RETIRED_TABLES = ("task_runs", "project_repo_bindings", "project_mcp_enablement")
 
 
 def _db_path() -> str:
@@ -53,6 +56,10 @@ def _connect() -> sqlite3.Connection:
         sql = Path(__file__).resolve().parent.parent / "data" / "migrations" / "002_phase_g.sql"
         if sql.exists():
             conn.executescript(sql.read_text())
+        for table in _RETIRED_TABLES:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            if exists and conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0:
+                conn.execute(f"DROP TABLE {table}")
         cols = {r[1] for r in conn.execute("PRAGMA table_info(project_settings)")}
         if "memory_recall" not in cols:
             conn.execute("ALTER TABLE project_settings ADD COLUMN memory_recall INTEGER")
