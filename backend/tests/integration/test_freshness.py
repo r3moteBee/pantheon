@@ -306,3 +306,22 @@ async def test_followup_rewrite_failure_falls_back_to_previous_question():
     agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
     q = await agent._standalone_query("and AMD?", _hist(("user", "Who is the current CEO of Intel?"), ("assistant", "x")))
     assert q == "Who is the current CEO of Intel - and AMD?"
+
+
+@pytest.mark.asyncio
+async def test_reply_cut_off_at_max_tokens_says_so():
+    from agent.core import AgentCore, CUT_OFF_NOTE
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, **kw):
+            self.seen.append(messages)
+            yield {"type": "text_delta", "content": "| OH-01 | Greg Landsman |"}
+            yield {"type": "done", "finish_reason": "length"}
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    with patch.object(get_settings(), "agent_thinking", False), patch("agent.core.get_all_tool_schemas", return_value=[]), \
+         patch("agent.core.build_system_prompt", return_value="sys"):
+        events = [e async for e in agent.chat("give me every Ohio district with both candidates")]
+    text = "".join(e["content"] for e in events if e["type"] == "text_delta")
+    assert text.endswith(CUT_OFF_NOTE)
+    assert [e for e in events if e["type"] == "done"][0]["full_response"].endswith(CUT_OFF_NOTE)

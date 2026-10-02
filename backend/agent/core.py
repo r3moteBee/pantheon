@@ -152,6 +152,8 @@ def _skill_names() -> set[str]:
         return set()
 
 
+CUT_OFF_NOTE = ("\n\n*(This reply reached the length limit and was cut off here. "
+                "Ask for a smaller part - one state, one section - to get the rest.)*")
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
 
 
@@ -721,6 +723,7 @@ class AgentCore:
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
                 round_reasoning = ""
+                round_finish = None
 
                 if stream:
                     # Streaming mode. A reply that starts like a textual tool
@@ -758,6 +761,7 @@ class AgentCore:
                             stream_error = True
                         elif chunk["type"] == "done":
                             round_reasoning = chunk.get("reasoning") or ""
+                            round_finish = chunk.get("finish_reason")
                     if held and not stream_error and not tool_calls_this_round:
                         recovered = recover_tool_calls(held, tool_names)
                         if recovered:
@@ -834,7 +838,14 @@ class AgentCore:
                     full_response = current_text
 
                 if not tool_calls_this_round:
-                    # No tool calls, we're done
+                    # No tool calls, we're done. A reply that ran into max_tokens
+                    # says so instead of ending mid-table: the House breakdown hit
+                    # the cap three times in a row, cut off without a word (2026-10-02).
+                    if round_finish == "length" and current_text.strip():
+                        note = CUT_OFF_NOTE
+                        yield {"type": "text_delta", "content": note}
+                        current_text += note
+                        full_response = current_text
                     break
 
                 # Add assistant message with tool calls to conversation
