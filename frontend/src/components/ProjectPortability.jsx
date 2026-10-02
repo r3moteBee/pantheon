@@ -14,6 +14,7 @@ import {
   Brain,
   ListTodo,
   Database,
+  Archive,
   Loader2,
   X,
 } from 'lucide-react'
@@ -27,6 +28,7 @@ function ExportModal({ project, onClose }) {
     metadata: true,
     memory: true,
     files: true,
+    artifacts: true,
     tasks: true,
   })
   const [loading, setLoading] = useState(false)
@@ -79,6 +81,7 @@ function ExportModal({ project, onClose }) {
     metadata: { icon: FileText, label: 'Metadata', desc: 'Project settings and config' },
     memory: { icon: Brain, label: 'Memory', desc: 'Episodic, semantic, and graph memory' },
     files: { icon: Database, label: 'Files', desc: 'Workspace, personality, and notes' },
+    artifacts: { icon: Archive, label: 'Artifacts', desc: 'Saved documents, images and uploads, with version history' },
     tasks: { icon: ListTodo, label: 'Tasks', desc: 'Scheduled task definitions' },
   }
 
@@ -145,6 +148,12 @@ function ExportModal({ project, onClose }) {
               {preview.components?.files && (
                 <div>Files: {preview.components.files.count}</div>
               )}
+              {preview.components?.artifacts && (
+                <div>
+                  Artifacts: {preview.components.artifacts.count} ({preview.components.artifacts.versions} versions,{' '}
+                  {preview.components.artifacts.files} stored files)
+                </div>
+              )}
               {preview.components?.tasks && (
                 <div>Tasks: {preview.components.tasks.count}</div>
               )}
@@ -198,6 +207,7 @@ function ImportModal({ onClose, onImported }) {
     metadata: true,
     memory: true,
     files: true,
+    artifacts: true,
     tasks: true,
   })
   const fileRef = useRef(null)
@@ -333,7 +343,7 @@ function ImportModal({ onClose, onImported }) {
               {/* Component selection */}
               <div className="text-xs text-gray-400 mt-2 mb-1">Components to import:</div>
               <div className="flex flex-wrap gap-2">
-                {['metadata', 'memory', 'files', 'tasks'].map((key) => (
+                {['metadata', 'memory', 'files', 'artifacts', 'tasks'].map((key) => (
                   <label
                     key={key}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs cursor-pointer transition-colors ${
