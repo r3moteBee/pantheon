@@ -247,7 +247,13 @@ function ImportModal({ onClose, onImported }) {
         addNotification({ type: 'error', message: res.data.message || 'Import failed' })
       }
     } catch (err) {
-      addNotification({ type: 'error', message: err.message })
+      // A blocked import comes back as 422 with the scan findings in the body
+      if (err.status === 422 && err.data && 'success' in err.data) {
+        setImportResult(err.data)
+        addNotification({ type: 'error', message: err.data.message || 'Import failed' })
+      } else {
+        addNotification({ type: 'error', message: err.message })
+      }
     }
     setImporting(false)
   }
