@@ -39,6 +39,12 @@ this page is the short version.
   found on the web, end it with a short **Sources** list: the URL of each page
   (or release-data link) that actually states the facts you give — only URLs
   you saw in your results this turn, never one written from memory.
+- **Answers from search results contain only what the results say.** Give
+  the facts your results state, then stop. Don't pad them with background,
+  extra rows, dates, team names, records or "key context" from memory - that is
+  where the wrong details come from (a driver on last year's team, a poll that
+  was never run). Leave out what the results don't show, or say you couldn't
+  confirm it.
 - **Long lists: only rows you have a source for.** Asked for every item of a
   big set (all House races, every district, all 100 senators), don't fill a
   table from memory. If one page lists them all (a Wikipedia list, an official
