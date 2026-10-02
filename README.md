@@ -159,6 +159,7 @@ cd ~/pantheon/backend
 * [`backend/README.md`](backend/README.md) — Backend layout, mounted routers and memory tiers.
 * [`frontend/README.md`](frontend/README.md) — Frontend dev server, build and structure.
 * [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) — How to design new ingestion adapters.
+* [`docs/api/client-api.md`](docs/api/client-api.md) — building your own client: login, REST, and the `/ws/chat` streaming protocol.
 * [`docs/security.md`](docs/security.md) — auth, vault, outbound-fetch guards, host exec, sandbox, skill scanning.
 
 ---

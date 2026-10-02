@@ -186,3 +186,5 @@ For each returned row: if `deleted_at` is non-null, drop it from your index; oth
 - Sort options beyond the locked forward walk
 
 Design spec (archived): [`docs/archive/superpowers/specs/2026-05-17-agent-list-api-design.md`](../archive/superpowers/specs/2026-05-17-agent-list-api-design.md)
+
+See [client-api.md](client-api.md) for authentication, the chat WebSocket and the other endpoints a client uses.
