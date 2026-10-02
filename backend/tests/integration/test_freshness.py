@@ -376,3 +376,12 @@ async def test_web_budget_stops_the_search_loop_in_chat():
     msgs, extra = prov.seen[3]
     assert msgs[-1]["content"] == WEB_BUDGET_NOTE.format(n=3) and extra["tool_choice"] == "none"
     assert [e for e in events if e["type"] == "done"][0]["full_response"].startswith("Here is what I could verify.")
+
+
+def test_long_pages_drop_same_site_link_urls_before_the_cut():
+    from agent.tools.web import compact_links
+    md = ("[Alabama](https://en.wikipedia.org/wiki/Alabama) governor [Kay Ivey](https://en.wikipedia.org/wiki/Kay_Ivey)"
+          "[[6]](#cite_note-Rutgers-6) see [Jev](https://en.wikipedia.org/wiki/Jev_(AI_model)) and "
+          "[NGA](https://www.nga.org/governors/) or [top](#top) [rel](/wiki/X)")
+    assert compact_links(md, "https://en.wikipedia.org/wiki/List_of_current_United_States_governors") == (
+        "Alabama governor Kay Ivey see Jev and [NGA](https://www.nga.org/governors/) or top rel")
