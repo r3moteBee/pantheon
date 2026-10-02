@@ -231,7 +231,7 @@ async def export_preview(
         workspace_dir,
     )
 
-    components = req.components if req else ["metadata", "memory", "files", "artifacts", "tasks"]
+    components = (req.components if req else None) or ["metadata", "memory", "files", "artifacts", "tasks"]
     meta = _collect_metadata(project_id)
     if not meta and project_id != "default":
         raise HTTPException(status_code=404, detail="Project not found")

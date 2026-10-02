@@ -570,6 +570,18 @@ def _get_graph_db_path() -> str:
     return gm.db_path
 
 
+def _id_for(conn, table: str, rid: str | None, project_id: str, column: str = "id") -> str:
+    """``rid`` if it is free or already this project's; a fresh id if another project
+    owns it. An archive imported next to its source (a copy) reuses every id, and the
+    upserts' "same project only" guard then skipped those rows silently - conversations,
+    notes and graph were reported imported but never written."""
+    import uuid
+    if not rid:
+        return str(uuid.uuid4())
+    row = conn.execute(f"SELECT project_id FROM {table} WHERE {column} = ? LIMIT 1", (rid,)).fetchone()
+    return rid if row is None or row[0] == project_id else str(uuid.uuid4())
+
+
 def _import_episodic(
     zf: zipfile.ZipFile,
     project_id: str,
@@ -632,8 +644,26 @@ def _import_episodic(
         # Import conversations — upsert so reimports into the same project work.
         # The WHERE on the conflict branch stops an archive that reuses row
         # ids from overwriting/re-homing another project's rows.
+        sessions: dict[str, str] = {}
+        conv_ids: dict[str, str] = {}
+        written = {"conversations": 0, "messages": 0, "task_logs": 0, "memory_notes": 0}
+
+        def session_for(sid):
+            if not sid:
+                return sid
+            if sid not in sessions:
+                taken = conn.execute("SELECT 1 FROM conversations WHERE session_id=? AND project_id<>? UNION "
+                                     "SELECT 1 FROM messages WHERE session_id=? AND project_id<>? LIMIT 1",
+                                     (sid, project_id, sid, project_id)).fetchone()
+                sessions[sid] = f"{sid}-{project_id}"[:120] if taken else sid
+            return sessions[sid]
+
         for row in data.get("conversations", []):
             row["project_id"] = project_id
+            new_id = _id_for(conn, "conversations", row.get("id"), project_id)
+            conv_ids[row.get("id")] = new_id
+            row["id"] = new_id
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "title", "created_at", "updated_at", "metadata"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -643,14 +673,17 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, title=excluded.title, created_at=excluded.created_at, updated_at=excluded.updated_at, metadata=excluded.metadata
                 WHERE conversations.project_id = excluded.project_id
             """, vals)
+            written["conversations"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import messages
         for row in data.get("messages", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "messages", row.get("id"), project_id)
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "role", "content", "timestamp", "metadata"]
             vals = {c: row.get(c) for c in cols}
             # conversation_id may be present
-            vals["conversation_id"] = row.get("conversation_id")
+            vals["conversation_id"] = conv_ids.get(row.get("conversation_id"), row.get("conversation_id"))
             conn.execute("""
                 INSERT INTO messages
                 (id, conversation_id, project_id, session_id, role, content, timestamp, metadata)
@@ -658,10 +691,12 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET conversation_id=excluded.conversation_id, project_id=excluded.project_id, session_id=excluded.session_id, role=excluded.role, content=excluded.content, timestamp=excluded.timestamp, metadata=excluded.metadata
                 WHERE messages.project_id = excluded.project_id
             """, vals)
+            written["messages"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import task logs
         for row in data.get("task_logs", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "task_logs", row.get("id"), project_id)
             cols = ["id", "project_id", "task_id", "task_name", "event", "details", "timestamp"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -671,10 +706,13 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, task_id=excluded.task_id, task_name=excluded.task_name, event=excluded.event, details=excluded.details, timestamp=excluded.timestamp
                 WHERE task_logs.project_id = excluded.project_id
             """, vals)
+            written["task_logs"] += conn.execute("SELECT changes()").fetchone()[0]
 
         # Import memory notes
         for row in data.get("memory_notes", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "memory_notes", row.get("id"), project_id)
+            row["session_id"] = session_for(row.get("session_id"))
             cols = ["id", "project_id", "session_id", "content", "tags", "created_at", "updated_at"]
             vals = {c: row.get(c) for c in cols}
             conn.execute("""
@@ -684,12 +722,13 @@ def _import_episodic(
                 ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, session_id=excluded.session_id, content=excluded.content, tags=excluded.tags, created_at=excluded.created_at, updated_at=excluded.updated_at
                 WHERE memory_notes.project_id = excluded.project_id
             """, vals)
+            written["memory_notes"] += conn.execute("SELECT changes()").fetchone()[0]
 
         conn.commit()
-        stats["conversations_imported"] = len(data.get("conversations", []))
-        stats["messages_imported"] = len(data.get("messages", []))
-        stats["task_logs_imported"] = len(data.get("task_logs", []))
-        stats["notes_imported"] = len(data.get("memory_notes", []))
+        stats["conversations_imported"] = written["conversations"]
+        stats["messages_imported"] = written["messages"]
+        stats["task_logs_imported"] = written["task_logs"]
+        stats["notes_imported"] = written["memory_notes"]
         logger.info(
             "Episodic import done: %d convos, %d msgs, %d logs, %d notes",
             stats["conversations_imported"], stats["messages_imported"],
@@ -743,8 +782,10 @@ def _import_graph(
 
         # Import nodes first
         node_count = 0
+        node_ids: dict[str, str] = {}
         for row in data.get("nodes", []):
             row["project_id"] = project_id
+            node_ids[row.get("id")] = row["id"] = _id_for(conn, "graph_nodes", row.get("id"), project_id)
             cols = ["id", "project_id", "node_type", "label", "metadata", "created_at", "updated_at"]
             vals = {c: row.get(c) for c in cols}
             try:
@@ -755,7 +796,7 @@ def _import_graph(
                     ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_type=excluded.node_type, label=excluded.label, metadata=excluded.metadata, created_at=excluded.created_at, updated_at=excluded.updated_at
                     WHERE graph_nodes.project_id = excluded.project_id
                 """, vals)
-                node_count += 1
+                node_count += conn.execute("SELECT changes()").fetchone()[0]
             except Exception as e:
                 logger.debug("Skipping graph node %s: %s", row.get("id"), e)
 
@@ -763,6 +804,9 @@ def _import_graph(
         edge_count = 0
         for row in data.get("edges", []):
             row["project_id"] = project_id
+            row["id"] = _id_for(conn, "graph_edges", row.get("id"), project_id)
+            row["node_a_id"] = node_ids.get(row.get("node_a_id"), row.get("node_a_id"))
+            row["node_b_id"] = node_ids.get(row.get("node_b_id"), row.get("node_b_id"))
             cols = ["id", "project_id", "node_a_id", "node_b_id", "relationship", "weight", "created_at"]
             vals = {c: row.get(c) for c in cols}
             try:
@@ -773,7 +817,7 @@ def _import_graph(
                     ON CONFLICT(id) DO UPDATE SET project_id=excluded.project_id, node_a_id=excluded.node_a_id, node_b_id=excluded.node_b_id, relationship=excluded.relationship, weight=excluded.weight, created_at=excluded.created_at
                     WHERE graph_edges.project_id = excluded.project_id
                 """, vals)
-                edge_count += 1
+                edge_count += conn.execute("SELECT changes()").fetchone()[0]
             except Exception as e:
                 logger.debug("Skipping graph edge %s: %s", row.get("id"), e)
 

@@ -190,3 +190,33 @@ def test_default_project_export_reads_data_workspace(env):
     (s.workspace_dir / "report.md").write_text("default workspace file")
     zf = zipfile.ZipFile(io.BytesIO(export_project("default", components=["files"])))
     assert zf.read("files/workspace/report.md") == b"default workspace file"
+
+
+@pytest.mark.asyncio
+async def test_import_next_to_the_original_copies_memory_with_fresh_ids(env):
+    """Same-instance copies reused every id; the importer skipped those rows silently."""
+    from api.project_export import export_project
+    from api.project_import import import_project
+    from api.project_purge import inventory
+    from memory.graph import GraphMemory
+    s = env["s"]
+    await _fill("keep", b"\x89PNG shared" * 40)
+    g = GraphMemory(project_id="keep", db_path=s.graph_db_path)
+    a = await g.add_node(node_type="person", label="Brent")
+    b = await g.add_node(node_type="concept", label="Pantheon")
+    await g.add_edge(a, b, "builds")
+    archive = export_project("keep", components=["metadata", "memory", "artifacts"])
+    with patch("artifacts.embedder.schedule_embed"):
+        res = import_project(archive, target_project_id="keep-copy", target_project_name="Copy")
+    assert res.success and res.stats["conversations_imported"] == 1 and res.stats["notes_imported"] == 1
+    assert res.stats["graph_nodes_imported"] == 3 and res.stats["graph_edges_imported"] == 1
+    orig, copy = inventory("keep"), inventory("keep-copy")
+    for label in ("conversations", "chat messages", "memory notes", "graph entities", "graph links", "artifacts"):
+        assert copy.get(label) == orig.get(label), label
+    conn = sqlite3.connect(s.episodic_db_path)
+    sids = conn.execute("SELECT project_id, session_id FROM conversations WHERE project_id IN ('keep','keep-copy')").fetchall()
+    assert len({sid for _, sid in sids}) == 2                          # the copy got its own session
+    gc = sqlite3.connect(s.graph_db_path)
+    edge = gc.execute("SELECT node_a_id, node_b_id FROM graph_edges WHERE project_id='keep-copy'").fetchone()
+    owners = {r[0] for r in gc.execute("SELECT project_id FROM graph_nodes WHERE id IN (?,?)", edge)}
+    assert owners == {"keep-copy"}                                     # edge points at the copy's nodes
