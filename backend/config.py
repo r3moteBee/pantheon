@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # districts); Qwen recommends 0-2 for its quantized models. Providers that
     # reject the field: leave at 0.
     agent_presence_penalty: float = 0.0
+    # Interactive chats: after this many web_search/web_fetch calls in one turn the
+    # agent must answer from what it has (0 = no limit). Background tasks are exempt.
+    agent_web_budget: int = 12
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = False

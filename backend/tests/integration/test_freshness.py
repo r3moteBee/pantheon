@@ -340,3 +340,39 @@ def test_presence_penalty_is_added_only_when_set():
         assert _with_sampling(kw)["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}, "presence_penalty": 1.5}
         assert _with_sampling({}) == {"extra_body": {"presence_penalty": 1.5}}
     assert "presence_penalty" not in kw["extra_body"]          # caller's dict untouched
+
+
+@pytest.mark.asyncio
+async def test_web_budget_stops_the_search_loop_in_chat():
+    """48 district-by-district searches for one message (2026-10-02): past the budget the agent must answer."""
+    from agent.core import AgentCore, WEB_BUDGET_NOTE
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.seen.append((messages, extra_body))
+            n = len(self.seen)
+            if n <= 10:     # keeps searching, and once more after the notice
+                yield {"type": "tool_call", "id": f"c{n}", "name": "web_search", "args": {"query": f"district {n}"}}
+            else:
+                yield {"type": "text_delta", "content": "never reached"}
+            yield {"type": "done"}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=True)
+    tools = [{"type": "function", "function": {"name": "web_search", "parameters": {}}}]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_args"]["query"]); return "results"
+
+    async def fake_final(self, messages, reasoning, agent_extra, tools):
+        yield "Here is what I could verify."
+    with patch.object(get_settings(), "agent_web_budget", 3), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec), patch.object(AgentCore, "_finalize_stream", fake_final):
+        events = [e async for e in agent.chat("give me every Ohio district with both candidates")]
+    assert len(calls) == 3                                           # the 4th call was dropped, not run
+    msgs, extra = prov.seen[3]
+    assert msgs[-1]["content"] == WEB_BUDGET_NOTE.format(n=3) and extra["tool_choice"] == "none"
+    assert [e for e in events if e["type"] == "done"][0]["full_response"].startswith("Here is what I could verify.")

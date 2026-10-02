@@ -160,6 +160,9 @@ def _with_sampling(kw: dict) -> dict:
     return {**kw, "extra_body": {**(kw.get("extra_body") or {}), "presence_penalty": p}}
 
 
+WEB_BUDGET_NOTE = ("[Pantheon notice] That was {n} web lookups for this message - enough. Do not search again. "
+                   "Write your answer now from what the results above show. For anything you could not verify, say so "
+                   "and name the page where the user can find it.")
 CUT_OFF_NOTE = ("\n\n*(This reply reached the length limit and was cut off here. "
                 "Ask for a smaller part - one state, one section - to get the rest.)*")
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
@@ -716,6 +719,13 @@ class AgentCore:
                                  "content": tool_results.for_model("web_search", result)})
                 fresh_question = False          # nothing left for the round-1 guard to do
                 pre_searched = True             # round 1 keeps thinking: it reasons over dated evidence
+            # Web lookup budget for a chat turn (AGENT_WEB_BUDGET): asked for every Ohio
+            # district with both candidates, the agent searched district by district
+            # with guessed names - 48 lookups, 3 minutes, no answer it could stand
+            # behind (2026-10-02). Past the budget it must answer from what it has.
+            web_budget = get_settings().agent_web_budget if self.interactive else 0
+            web_calls = 1 if pre_searched else 0
+            wrap_up = False
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
@@ -727,6 +737,8 @@ class AgentCore:
                         and not (pre_searched and iterations == 1):
                     round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
+                if wrap_up:
+                    round_kw = {**round_kw, "extra_body": {**(round_kw.get("extra_body") or {}), "tool_choice": "none"}}
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
@@ -823,6 +835,12 @@ class AgentCore:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
 
+                if wrap_up and tool_calls_this_round:
+                    # llama.cpp may not enforce tool_choice "none": the budget is ours
+                    logger.info("Web budget spent - dropping %d more tool call(s)", len(tool_calls_this_round))
+                    tool_calls_this_round = []
+                    if not (current_text or "").strip() and not round_reasoning.strip():
+                        round_reasoning = "(I have made enough lookups; I answer from the results above.)"
                 if (not tool_calls_this_round and not (current_text or "").strip()
                         and round_reasoning.strip()):
                     # A thinking model ended its turn with the answer inside its
@@ -918,6 +936,12 @@ class AgentCore:
                         "tool_call_id": tool_id,
                         "content": tool_results.for_model(tool_name, result),
                     })
+
+                web_calls += sum(1 for tc in tool_calls_this_round if tc["name"] in ("web_search", "web_fetch"))
+                if web_budget and web_calls >= web_budget and not wrap_up:
+                    wrap_up = True
+                    logger.info("Web budget reached (%d lookups) - asking for the answer now", web_calls)
+                    messages.append({"role": "user", "content": WEB_BUDGET_NOTE.format(n=web_calls)})
 
                 # Re-anchor: long tool loops bury the original instructions
                 # under accumulated tool output and models drift from them
