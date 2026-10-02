@@ -287,6 +287,43 @@ def _collect_tasks(project_id: str) -> list[dict[str, Any]]:
     return tasks
 
 
+def _collect_artifacts(project_id: str) -> dict[str, Any]:
+    """Live (not deleted) artifacts of the project with all their versions, and the
+    blob files they reference (relative paths under data/blobs)."""
+    out: dict[str, Any] = {"artifacts": [], "versions": [], "blobs": []}
+    path = settings.db_dir / "artifacts.db"
+    if not path.exists():
+        return out
+    import sqlite3
+    conn = _connect_ro(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        has = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'").fetchone()
+        if not has:
+            return out
+        arts = [dict(r) for r in conn.execute(
+            "SELECT * FROM artifacts WHERE project_id=? AND deleted_at IS NULL ORDER BY created_at", (project_id,))]
+        ids = [a["id"] for a in arts]
+        versions: list[dict[str, Any]] = []
+        for i in range(0, len(ids), 500):
+            chunk = ids[i:i + 500]
+            versions += [dict(r) for r in conn.execute(
+                f"SELECT * FROM artifact_versions WHERE artifact_id IN ({','.join('?' * len(chunk))}) "
+                "ORDER BY artifact_id, version_number", chunk)]
+    finally:
+        conn.close()
+    out["artifacts"], out["versions"] = arts, versions
+    out["blobs"] = sorted({r["blob_path"] for r in arts + versions if r.get("blob_path")})
+    return out
+
+
+def workspace_dir(project_id: str) -> Path:
+    """The project's workspace - the default project's lives at data/workspace."""
+    if project_id == "default":
+        return settings.workspace_dir
+    return settings.projects_dir / project_id / "workspace"
+
+
 def _add_directory_to_zip(
     zf: zipfile.ZipFile,
     src_dir: Path,
@@ -318,7 +355,7 @@ def export_project(
     Args:
         project_id: The project to export.
         components: List of components to include. If None, exports all.
-            Valid values: "metadata", "memory", "files", "tasks"
+            Valid values: "metadata", "memory", "files", "artifacts", "tasks"
             "memory" includes episodic, semantic, and graph tiers.
 
     Returns:
@@ -327,7 +364,7 @@ def export_project(
     Raises:
         FileNotFoundError: If the project doesn't exist.
     """
-    valid_components = {"metadata", "memory", "files", "tasks"}
+    valid_components = {"metadata", "memory", "files", "artifacts", "tasks"}
     if components is None:
         components = list(valid_components)
     else:
@@ -397,7 +434,7 @@ def export_project(
             project_dir = settings.projects_dir / project_id
             file_count = 0
             for subdir in ("workspace", "personality", "notes"):
-                src = project_dir / subdir
+                src = workspace_dir(project_id) if subdir == "workspace" else project_dir / subdir
                 file_count += _add_directory_to_zip(zf, src, f"files/{subdir}")
 
             # Include project_summary.md if it exists
@@ -407,6 +444,28 @@ def export_project(
                 file_count += 1
 
             manifest["stats"]["files"] = file_count
+
+        # ── Artifacts ────────────────────────────────────────────────
+        if "artifacts" in components:
+            arts = _collect_artifacts(project_id)
+            blobs_dir = settings.data_dir / "blobs"
+            missing = 0
+            for rel in arts["blobs"]:
+                src = blobs_dir / rel
+                if src.is_file():
+                    zf.write(src, f"artifacts/blobs/{rel}")
+                else:
+                    missing += 1
+            data_json = json.dumps({"artifacts": arts["artifacts"], "versions": arts["versions"]},
+                                   indent=2, default=str).encode()
+            zf.writestr("artifacts/artifacts.json", data_json)
+            manifest["checksums"]["artifacts"] = _hash_bytes(data_json)
+            manifest["stats"]["artifacts"] = len(arts["artifacts"])
+            manifest["stats"]["artifact_versions"] = len(arts["versions"])
+            manifest["stats"]["artifact_blobs"] = len(arts["blobs"]) - missing
+            if missing:
+                manifest["warnings"] = manifest.get("warnings", []) + [
+                    f"artifacts: {missing} blob file(s) missing on disk"]
 
         # ── Tasks ────────────────────────────────────────────────────
         if "tasks" in components:

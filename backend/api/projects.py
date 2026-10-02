@@ -137,24 +137,46 @@ async def update_project(project_id: str, req: UpdateProjectRequest) -> dict[str
     return projects[project_id]
 
 
+@router.get("/projects/{project_id}/delete-preview")
+async def delete_preview(project_id: str) -> dict[str, Any]:
+    """What deleting this project would remove (label -> count), for the confirm dialog."""
+    check_project_id(project_id)
+    projects = _load_projects()
+    if project_id not in projects:
+        raise HTTPException(status_code=404, detail="Project not found")
+    from api.project_purge import inventory, running_jobs
+    return {"project_id": project_id, "name": projects[project_id].get("name", project_id),
+            "deletable": project_id != "default", "running_jobs": len(running_jobs(project_id)),
+            "items": inventory(project_id)}
+
+
 @router.delete("/projects/{project_id}")
-async def delete_project(project_id: str) -> dict[str, str]:
-    """Delete a project and all its data."""
+async def delete_project(project_id: str) -> dict[str, Any]:
+    """Delete a project and everything it owns (api/project_purge.py): conversations,
+    memory, graph, artifacts, files, jobs, schedules, settings and vector stores."""
+    check_project_id(project_id)
     if project_id == "default":
         raise HTTPException(status_code=400, detail="Cannot delete the default project")
     projects = _load_projects()
     if project_id not in projects:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Delete project files
-    project_dir = settings.projects_dir / project_id
-    if project_dir.exists():
-        shutil.rmtree(project_dir)
+    from api.project_purge import ProjectBusy, purge
+    try:
+        removed = purge(project_id)
+    except ProjectBusy as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    try:
+        from agent.browser_tools import browser_close
+        await browser_close(project_id)
+    except Exception:
+        pass
 
-    del projects[project_id]
+    projects = _load_projects()
+    projects.pop(project_id, None)
     _save_projects(projects)
     logger.info(f"Project deleted: {project_id}")
-    return {"status": "deleted", "project_id": project_id}
+    return {"status": "deleted", "project_id": project_id, "removed": removed}
 
 
 # ── Export / Import ──────────────────────────────────────────────────────────
@@ -171,7 +193,7 @@ async def export_project_endpoint(
 ) -> Response:
     """Export a project as a .zip archive with selectable components.
 
-    Components: "metadata", "memory", "files", "tasks". Omit for all.
+    Components: "metadata", "memory", "files", "artifacts", "tasks". Omit for all.
     """
     check_project_id(project_id)
     from api.project_export import export_project
@@ -205,9 +227,11 @@ async def export_preview(
         _collect_graph,
         _collect_semantic,
         _collect_tasks,
+        _collect_artifacts,
+        workspace_dir,
     )
 
-    components = req.components if req else ["metadata", "memory", "files", "tasks"]
+    components = req.components if req else ["metadata", "memory", "files", "artifacts", "tasks"]
     meta = _collect_metadata(project_id)
     if not meta and project_id != "default":
         raise HTTPException(status_code=404, detail="Project not found")
@@ -241,10 +265,15 @@ async def export_preview(
         project_dir = settings.projects_dir / project_id
         file_count = 0
         for subdir in ("workspace", "personality", "notes"):
-            src = project_dir / subdir
+            src = workspace_dir(project_id) if subdir == "workspace" else project_dir / subdir
             if src.is_dir():
                 file_count += sum(1 for _ in src.rglob("*") if _.is_file())
         preview["components"]["files"] = {"count": file_count}
+
+    if "artifacts" in components:
+        arts = _collect_artifacts(project_id)
+        preview["components"]["artifacts"] = {"count": len(arts["artifacts"]), "versions": len(arts["versions"]),
+                                              "files": len(arts["blobs"])}
 
     if "tasks" in components:
         tasks = _collect_tasks(project_id)

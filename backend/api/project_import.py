@@ -207,7 +207,7 @@ def scan_archive(archive_bytes: bytes) -> ScanResult:
             continue
 
         # Disallowed directory prefixes (only allow known structure)
-        allowed_prefixes = ("metadata/", "memory/", "files/", "tasks/")
+        allowed_prefixes = ("metadata/", "memory/", "files/", "artifacts/", "tasks/")
         if not any(name.startswith(p) for p in allowed_prefixes) and name != "manifest.json":
             findings.append(ScanFinding(
                 severity=ScanSeverity.warning,
@@ -516,6 +516,15 @@ def import_project(
         except Exception as e:
             logger.error("Failed to import files: %s", e, exc_info=True)
             warnings.append(f"files: {e}")
+
+    # ── Step 6b: Import artifacts ────────────────────────────────────
+    if "artifacts" in components and "artifacts/artifacts.json" in zf.namelist():
+        try:
+            _import_artifacts(zf, project_id, import_stats, warnings)
+            imported_components.append("artifacts")
+        except Exception as e:
+            logger.error("Failed to import artifacts: %s", e, exc_info=True)
+            warnings.append(f"artifacts: {e}")
 
     # ── Step 7: Import tasks ─────────────────────────────────────────
     if "tasks" in components and "tasks/tasks.json" in zf.namelist():
@@ -912,11 +921,11 @@ def _import_tasks(
 
 def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
     """Restore workspace, personality, and notes files."""
+    from api.project_export import workspace_dir
     project_dir = settings.projects_dir / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    dest_resolved = project_dir.resolve()
 
     for name in zf.namelist():
         if not name.startswith("files/") or name.endswith("/"):
@@ -926,8 +935,15 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
         if not relative:
             continue
 
-        target = (project_dir / relative).resolve()
-        if not str(target).startswith(str(dest_resolved)):
+        # the default project's workspace lives at data/workspace, not projects/default/workspace
+        if relative.startswith("workspace/"):
+            base, relative = workspace_dir(project_id), relative[len("workspace/"):]
+        else:
+            base = project_dir
+        base.mkdir(parents=True, exist_ok=True)
+        dest_resolved = base.resolve()
+        target = (base / relative).resolve()
+        if not target.is_relative_to(dest_resolved):
             logger.warning("Skipping path traversal attempt: %s", name)
             continue
 
@@ -937,3 +953,89 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
         count += 1
 
     return count
+
+
+def _import_artifacts(zf: zipfile.ZipFile, project_id: str, stats: dict[str, Any], warnings: list[str]) -> None:
+    """Restore artifacts with fresh ids (all their versions). Binary content comes from
+    artifacts/blobs/ and must match its sha256. An artifact whose path already exists in
+    the target project is skipped."""
+    import hashlib
+    import uuid
+    from artifacts.store import get_store
+    data = json.loads(zf.read("artifacts/artifacts.json"))
+    arts, versions = data.get("artifacts") or [], data.get("versions") or []
+    if len(arts) > _MAX_JSON_RECORDS or len(versions) > _MAX_JSON_RECORDS:
+        raise ValueError("too many artifact records")
+    store = get_store()
+    names = set(zf.namelist())
+    blob_map: dict[str, str] = {}
+
+    def blob(rel: str | None) -> str | None:
+        if not rel:
+            return None
+        if rel in blob_map:
+            return blob_map[rel]
+        member = f"artifacts/blobs/{rel}"
+        if member not in names:
+            raise ValueError(f"missing blob {rel}")
+        raw = zf.read(member)
+        sha = hashlib.sha256(raw).hexdigest()
+        if sha != Path(rel).name:
+            raise ValueError(f"blob {rel} does not match its hash")
+        blob_map[rel] = store._store_blob(raw)[1]
+        return blob_map[rel]
+
+    by_artifact: dict[str, list[dict[str, Any]]] = {}
+    for v in versions:
+        by_artifact.setdefault(v.get("artifact_id"), []).append(v)
+    imported = skipped = n_versions = 0
+    new_ids: list[str] = []
+    with store._connect() as conn:
+        for a in arts:
+            try:
+                if conn.execute("SELECT 1 FROM artifacts WHERE project_id=? AND path=? AND deleted_at IS NULL",
+                                (project_id, a["path"])).fetchone():
+                    skipped += 1
+                    continue
+                aid = str(uuid.uuid4())
+                vids: dict[str, str] = {}
+                rows = []
+                for v in sorted(by_artifact.get(a["id"], []), key=lambda v: v.get("version_number") or 0):
+                    vids[v["id"]] = str(uuid.uuid4())
+                    rows.append((vids[v["id"]], aid, int(v["version_number"]), v.get("content"), blob(v.get("blob_path")),
+                                 int(v.get("size_bytes") or 0), v.get("sha256") or "", v.get("edit_summary"),
+                                 v.get("edited_by"), v.get("created_at") or datetime.now(timezone.utc).isoformat()))
+                current = vids.get(a.get("current_version_id"))
+                if not current:
+                    skipped += 1
+                    warnings.append(f"artifact {a.get('path')}: current version missing - skipped")
+                    continue
+                conn.execute(
+                    "INSERT INTO artifacts (id, project_id, path, title, content_type, content, blob_path, size_bytes,"
+                    " sha256, tags, source, pinned, current_version_id, created_at, updated_at, deleted_at)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)",
+                    (aid, project_id, a["path"], a.get("title"), a["content_type"], a.get("content"),
+                     blob(a.get("blob_path")), int(a.get("size_bytes") or 0), a.get("sha256") or "",
+                     a.get("tags") if isinstance(a.get("tags"), str) else json.dumps(a.get("tags") or []),
+                     a.get("source") if isinstance(a.get("source"), str) else json.dumps(a.get("source") or {}),
+                     int(bool(a.get("pinned"))), current, a.get("created_at"), a.get("updated_at")))
+                conn.executemany(
+                    "INSERT INTO artifact_versions (id, artifact_id, version_number, content, blob_path, size_bytes,"
+                    " sha256, edit_summary, edited_by, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+                imported += 1
+                n_versions += len(rows)
+                new_ids.append(aid)
+            except (KeyError, ValueError) as e:
+                skipped += 1
+                warnings.append(f"artifact {a.get('path')}: {e}")
+        conn.commit()
+    stats["artifacts_imported"] = imported
+    stats["artifact_versions_imported"] = n_versions
+    if skipped:
+        stats["artifacts_skipped"] = skipped
+    try:   # make them searchable again (semantic chunks are not in the archive)
+        from artifacts.embedder import schedule_embed
+        for aid in new_ids:
+            schedule_embed(aid, project_id)
+    except Exception as e:
+        logger.info("artifact re-embedding not scheduled: %s", e)

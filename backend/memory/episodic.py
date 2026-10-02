@@ -38,6 +38,16 @@ def _recency_score(timestamp_iso: str) -> float:
         return 0.5
 
 
+def episodic_collection_name(project_id: str) -> str:
+    """Chroma collection for a project's message vectors (3-63 chars, alnum + '-')."""
+    import re
+    safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', f"episodic-{project_id}")
+    safe_name = re.sub(r'-+', '-', safe_name).strip('-')[:63]
+    if len(safe_name) < 3:
+        safe_name = f"ep-{safe_name}"
+    return safe_name
+
+
 class EpisodicMemory:
     """Tier 2: Persistent conversation history, task logs, and memory notes.
 
@@ -133,11 +143,7 @@ class EpisodicMemory:
             return self._vector_collection
         try:
             import chromadb
-            import re
-            safe_name = re.sub(r'[^a-zA-Z0-9-]', '-', f"episodic-{self.project_id}")
-            safe_name = re.sub(r'-+', '-', safe_name).strip('-')[:63]
-            if len(safe_name) < 3:
-                safe_name = f"ep-{safe_name}"
+            safe_name = episodic_collection_name(self.project_id)
 
             from config import get_settings
             cfg = get_settings()
