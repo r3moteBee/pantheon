@@ -637,6 +637,7 @@ class AgentCore:
             # ...or a follow-up in a conversation about current facts ("and Docker Engine?",
             # "can you do a similar breakdown for the house?"): searched as a standalone query
             if get_settings().agent_force_search and "web_search" in tool_names and not fresh_question \
+                    and not _user_urls(user_message) \
                     and followup_needs_fresh(user_message, self.working_memory[:-1]):
                 fresh_question = True
                 auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
