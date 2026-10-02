@@ -38,7 +38,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
   - `always`: every context.
   - `never`: no context.
   Autonomous jobs, scheduled runs, iteration loops and messaging bots are background contexts.
-- **Task review:** `create_task(skip_review=true)` is honoured only in interactive web chat. Tasks created from jobs or bots always land as proposals that need approval.
+- **Task review:** `create_task(skip_review=true)` is honoured only in interactive web chat. Tasks created from jobs or bots always land as proposals that need approval. Coding tasks (`create_task(job_type="coding_task")`, `start_coding_task`) run with host exec and have no proposal state, so they can only be started from the web chat; from jobs or bots they are refused.
 - **Job creation:** `POST /api/jobs` accepts only `autonomous_task`, `iteration_loop` and `coding_task`.
 - **Git credentials** are never put in URLs. `_git_auth_env(token)` sets `http.extraheader` through `GIT_CONFIG_*` environment variables.
 

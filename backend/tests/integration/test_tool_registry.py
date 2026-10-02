@@ -126,3 +126,24 @@ def test_retired_names_are_not_shown_to_the_model():
             + build_system_prompt(project_id="default", host_exec=False)
             + (Path(__file__).resolve().parents[2] / "data" / "personality" / "agent.md").read_text())
     assert {n for n in tools.LEGACY_TOOLS if re.search(rf"\b{n}\b", text)} == set()
+
+
+@pytest.mark.asyncio
+async def test_coding_tasks_start_only_from_the_web_chat(monkeypatch):
+    """A coding task runs with host exec; a bot or background job must not be able to queue one
+    (create_task(job_type="coding_task") used to skip the interactive/plan-review checks)."""
+    from jobs import store as job_store
+    created = []
+
+    class Store:
+        def create(self, **kw):
+            created.append(kw)
+            return {"id": "job-1234567890"}
+    monkeypatch.setattr(job_store, "get_store", lambda: Store())
+    args = {"name": "Fix login", "description": "Fix it", "plan": "1. edit", "job_type": "coding_task"}
+    out = await tools.execute_tool("create_task", dict(args), None, interactive=False)
+    assert "refused" in out and created == []
+    out = await tools.execute_tool("start_coding_task", {"task_description": "x"}, None, interactive=False)
+    assert "refused" in out and created == []
+    out = await tools.execute_tool("create_task", dict(args), None, interactive=True)
+    assert "Coding task queued" in out and created[0]["job_type"] == "coding_task"

@@ -547,6 +547,15 @@ async def _tool_list_recent_jobs(ctx: ToolContext, tool_name: str, tool_args: di
 
 @tool('start_coding_task')
 async def _tool_start_coding_task(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
+    # A coding task runs with host exec (run_command, git_*) as if a person had
+    # asked for it, so only a person in the web chat can start one. Background
+    # runs (jobs, messaging bots) may be steered by content they read; for other
+    # tasks create_task turns their requests into proposals, but coding tasks
+    # have no proposal state, so they are refused here.
+    if not ctx.interactive:
+        return ("start_coding_task refused: coding tasks run commands on the host and can only be "
+                "started from the web chat. Tell the user what you would like the coding agent to do "
+                "so they can start it there.")
     effective_project = ctx.effective_project
     from jobs.store import get_store
     title = tool_args.get("title") or "Coding task"
