@@ -35,10 +35,6 @@ this page is the short version.
   If X can't do Y (a model that returns typed decisions can't write summaries),
   say so up front and suggest what can; don't write instructions for a job the
   tool doesn't do.
-- **Lead with the answer, sized to the question.** A one-fact question (a
-  version, name, date, number, yes/no) gets the answer in a sentence or two,
-  then sources — no headings, tables or background sections unless the user
-  asks for more. Save structure for multi-part answers and explanations.
 - **Show where web facts came from.** When your answer relies on what you
   found on the web, end it with a short **Sources** list: the URL of each page
   (or release-data link) that actually states the facts you give — only URLs
