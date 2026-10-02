@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -49,7 +48,7 @@ def test_unique_path_scoped_per_project(store):
 
 
 def test_rename_auto_suffixes_on_collision(store):
-    a = store.create(project_id="p1", path="p1/foo.md", content="first", content_type="text/markdown")
+    store.create(project_id="p1", path="p1/foo.md", content="first", content_type="text/markdown")
     b = store.create(project_id="p1", path="p1/bar.md", content="second", content_type="text/markdown")
     result = store.rename(b["id"], "p1/foo.md")
     assert result["path"] == "p1/foo-1.md"

@@ -1,6 +1,5 @@
 """Central configuration loaded from environment variables."""
 from __future__ import annotations
-import os
 from pathlib import Path
 from functools import lru_cache
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -111,15 +110,9 @@ class Settings(BaseSettings):
     # An answer built on web results that cites nothing gets a "Sources:" list
     # of the result URLs whose text contains the answer's key facts (agent/sources.py).
     answer_sources: bool = True
-    # URL of a search backend (SearXNG, Brave, or any OpenSearch-compatible JSON API).
-    # Leave empty to fall back to DuckDuckGo HTML scraping.
-    # Examples:
-    #   SearXNG:  http://localhost:8080
-    #   Brave:    https://api.search.brave.com/res/v1/web
+    # URL of the SearXNG provider in the web-search chain (agent/search_providers.py),
+    # e.g. http://localhost:8888. Empty = that provider's configured/default URL.
     search_url: str = ""
-    # Optional API key — sent as  X-Subscription-Token  (Brave)
-    # or  Authorization: Bearer  header depending on backend.
-    search_api_key: str = ""
 
     # ChromaDB
     # Empty = embedded ChromaDB under data/chroma; set a host for a Chroma server

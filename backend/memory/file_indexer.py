@@ -344,14 +344,6 @@ class FileIndex:
             ))
             conn.commit()
 
-    def remove_indexed(self, project_id: str, file_path: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM indexed_files WHERE project_id = ? AND file_path = ?",
-                (project_id, file_path)
-            )
-            conn.commit()
-
     def list_indexed(self, project_id: str) -> list[dict]:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
@@ -913,7 +905,6 @@ class FileIndexer:
             return entities_created
 
         # ── Shape 2: legacy vendor/product (backward compat) ──
-        fm_type = frontmatter.get("type", "")
         vendor = frontmatter.get("vendor", "")
         product = frontmatter.get("product", "")
 

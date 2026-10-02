@@ -39,7 +39,7 @@ function MessageActions({ content, onSaveMessage }) {
 
 // Which task class / model answered (set by the per-turn chat router),
 // with 👍/👎 that feed routing tuning (Settings → Routing tuning).
-export function RouteBadge({ route, rateable = false }) {
+function RouteBadge({ route, rateable = false }) {
   const [rating, setRating] = React.useState(route?.rating || 0)
   if (!route || !route.task_class) return null
   const model = route.served_model || route.model

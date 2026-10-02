@@ -44,8 +44,3 @@ def get_sandbox() -> "SandboxBackend":
     _INSTANCE = SubprocessSandbox()
     logger.info("Sandbox backend: subprocess")
     return _INSTANCE
-
-
-def reset_sandbox_for_tests() -> None:
-    global _INSTANCE
-    _INSTANCE = None

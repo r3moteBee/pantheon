@@ -1,11 +1,8 @@
-"""Telegram messaging adapter for Pantheon.
-
-Refactored from ``telegram_bot/bot.py`` — same feature set, now conforming
-to :class:`~messaging.base.BaseMessagingAdapter`.
+"""Telegram messaging adapter for Pantheon, conforming to
+:class:`~messaging.base.BaseMessagingAdapter`.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -602,26 +599,7 @@ class TelegramAdapter(BaseMessagingAdapter):
             logger.error("Failed to send Telegram message to %s: %s", channel_id, e)
 
 
-# ── Module-level convenience functions (backward compat) ─────────────────────
-
-
-async def start_telegram_bot(*, raise_on_error: bool = False) -> None:
-    """Convenience wrapper used by the backward-compat shim."""
-    adapter = TelegramAdapter()
-    await adapter.start(raise_on_error=raise_on_error)
-
-
-async def stop_telegram_bot() -> None:
-    """Convenience wrapper used by the backward-compat shim."""
-    adapter = TelegramAdapter()
-    await adapter.stop()
-
-
-async def restart_telegram_bot() -> dict[str, str]:
-    """Convenience wrapper used by the backward-compat shim."""
-    from messaging.gateway import get_messaging_gateway
-    gw = get_messaging_gateway()
-    return await gw.restart_adapter("telegram")
+# ── Module-level helpers ─────────────────────────────────────────────────────
 
 
 async def send_message_to_all(message: str) -> None:

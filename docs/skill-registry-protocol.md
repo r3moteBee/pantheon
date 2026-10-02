@@ -6,6 +6,13 @@
 that Pantheon agents can browse and install from. Companion to
 `docs/mcp-registry-protocol.md` — same shape, different payload.
 
+> **What the current client implements.** `GenericSkillRegistryAdapter`
+> (`backend/skills/importer.py`) uses discovery, `search` (first page only,
+> `q` only), `get` (for the `bundle` block) and `download`, with SHA-256
+> verification, a 5 MiB cap and the full scanner. Items marked
+> *(not implemented)* below are part of the contract for future clients;
+> Pantheon does not use them yet.
+
 ---
 
 ## 1. Overview
@@ -20,13 +27,13 @@ This document is the contract. If your registry returns the shapes described
 here, Pantheon will:
 
 1. discover it via a well-known URL,
-2. search and paginate through your skill catalog,
-3. download skill bundles as `.tar.gz` or `.zip`,
-4. run the full security scanner pipeline before activation,
-5. verify trust metadata (and signatures, if present).
+2. search your skill catalog,
+3. download skill bundles as `.tar.gz` or `.zip` and verify their SHA-256,
+4. run the full security scanner pipeline before activation.
 
-**Skills vs MCP servers.** Skills are instructions + optional sandboxed
-scripts; they live entirely inside Pantheon and run under the skill executor.
+**Skills vs MCP servers.** Skills are prompt context: instructions plus
+optional bundled files. Pantheon never runs scripts bundled with a skill
+(there is no skill executor).
 MCP servers are long-running processes with their own transport. The two have
 separate registries on purpose. If you're publishing a long-running tool
 server, see `docs/mcp-registry-protocol.md` instead.
@@ -39,11 +46,10 @@ discovery + bundle-download API.
 
 ## 2. Transport and authentication
 
-- **Transport:** HTTPS only. Plain HTTP is rejected except for `localhost` in
-  development mode.
-- **Private networks:** RFC1918 addresses and `.internal` / `.corp` / `.lan`
-  TLDs are permitted. Pantheon suppresses its usual "unfamiliar domain"
-  warnings for registries that were explicitly added by an admin.
+- **Transport:** HTTPS. Plain HTTP is accepted only for `http://localhost`
+  and `http://127.0.0.1` URLs.
+- **Private networks:** private addresses and internal hostnames are
+  permitted for registries an admin adds.
 - **Content type:** `application/json; charset=utf-8` for metadata endpoints;
   `application/gzip` or `application/zip` for bundle downloads.
 - **Authentication options** (the registry declares which it uses in the
@@ -51,9 +57,11 @@ discovery + bundle-download API.
   - `none` — public registry, no credential.
   - `bearer` — `Authorization: Bearer <token>`. Pantheon stores the token in
     its vault, per registry.
-  - `mtls` — mutual TLS. Pantheon presents an admin-configured client cert.
+  - `mtls` — mutual TLS *(not implemented: Pantheon offers only `none` and
+    `bearer`)*.
 - **Rate limiting:** return standard `429 Too Many Requests` with a
-  `Retry-After` header. Pantheon honors it.
+  `Retry-After` header. Pantheon does not retry yet; a failed search returns
+  no results.
 - **CORS:** not required. Pantheon calls the registry from the backend.
 
 ---
@@ -91,8 +99,10 @@ Example response:
 ```
 
 Required fields: `protocol_version`, `name`, `auth`, `endpoints.search`,
-`endpoints.get`, `endpoints.download`. Endpoint paths are resolved relative
-to the discovery URL's origin. `{id}` is a URL-encoded skill ID.
+`endpoints.get`, `endpoints.download`. Endpoint paths that are not absolute
+URLs are appended to the configured registry URL. `{id}` is the skill ID
+from the search result, substituted as-is (Pantheon does not URL-encode it,
+so keep IDs URL-safe).
 
 ---
 
@@ -102,7 +112,9 @@ to the discovery URL's origin. `{id}` is a URL-encoded skill ID.
 GET {endpoints.search}?q=<query>&tag=<tag>&capability=<cap>&cursor=<opaque>
 ```
 
-All query parameters are optional. Response:
+All query parameters are optional. Pantheon currently sends only `q` and
+reads only `results` (no `tag`/`capability` filters, no paging past the
+first page). Response:
 
 ```json
 {
@@ -121,7 +133,7 @@ The minimum Pantheon needs to render a search result row.
 | Field         | Type     | Required | Notes |
 |---------------|----------|----------|-------|
 | `id`          | string   | yes      | Stable identifier, URL-safe. |
-| `name`        | string   | yes      | Display name (also the installed skill name). |
+| `name`        | string   | yes      | Display name. The installed name comes from the bundle's `skill.json` / `SKILL.md`. |
 | `description` | string   | yes      | One-line summary, ≤ 200 chars. |
 | `author`      | string   | no       | Team or individual. |
 | `version`     | string   | yes      | Date-based (`2026-04-08`) preferred. |
@@ -130,6 +142,7 @@ The minimum Pantheon needs to render a search result row.
 | `triggers_preview` | string[] | no  | A few sample trigger phrases. |
 | `approved`    | boolean  | no       | Enterprise trust badge. |
 | `updated_at`  | RFC3339  | no       | For "Updated N days ago" display. |
+| `homepage`    | string   | no       | Shown as the result's link. |
 
 ---
 
@@ -179,8 +192,8 @@ Returns a `SkillDetail` — full metadata for the install dialog.
 
 | Field        | Type    | Required | Notes |
 |--------------|---------|----------|-------|
-| `format`     | enum    | yes      | `tar.gz` or `zip`. Must be one of the formats declared in `capabilities.bundle_formats`. |
-| `size_bytes` | int     | yes      | Hard cap: 5 MiB. Pantheon refuses larger bundles by default; admins can raise the cap per-registry. |
+| `format`     | enum    | yes      | `tar.gz` (or `tgz`) or `zip`; defaults to `tar.gz`. Should be one of the formats declared in `capabilities.bundle_formats` (not checked). |
+| `size_bytes` | int     | yes      | Hard cap: 5 MiB (fixed). Pantheon refuses bundles that declare or download larger. |
 | `sha256`     | string  | yes      | Hex digest of the bundle. Pantheon verifies it before extraction. |
 
 ### 5.2 `trust` block
@@ -189,7 +202,8 @@ Optional but recommended.
 
 - `approved_by` / `approved_at` are displayed in the install dialog.
 - `signature` — if the discovery doc declared `signing: sigstore`, this is a
-  Sigstore bundle. Pantheon verifies it before extraction.
+  Sigstore bundle *(not implemented: Pantheon does not read the `trust`
+  block or verify signatures yet)*.
 
 ---
 
@@ -202,7 +216,7 @@ GET {endpoints.download}    (with {id} substituted)
 Returns the raw bundle bytes with `Content-Type: application/gzip` (for
 `tar.gz`) or `application/zip` (for `zip`). Pantheon:
 
-1. streams the bytes to a temp file (capped at the declared `bundle.size_bytes`),
+1. downloads the bytes (refusing more than 5 MiB),
 2. verifies the SHA-256 against `bundle.sha256`,
 3. extracts using the same `_safe_extract_zip` / `_safe_extract_tar` helpers
    as the local-upload adapter (zip-slip safe, symlinks rejected),
@@ -214,7 +228,7 @@ or a `SKILL.md` (SkillsMP / SkillsLLM frontmatter format) at the bundle root.
 
 ---
 
-## 7. Icon endpoint (optional)
+## 7. Icon endpoint (optional, not implemented)
 
 ```
 GET {endpoints.icon}    (with {id} substituted)
@@ -224,7 +238,9 @@ Returns `image/png` or `image/svg+xml`. Max 256 KiB. Cached for 24 hours.
 
 ---
 
-## 8. Versioning and updates
+## 8. Versioning and updates (not implemented)
+
+Pantheon does not poll registries for updates yet. The intended behaviour:
 
 - The `version` string is opaque to Pantheon for comparison; any change
   triggers an "Update available" badge in the installed-skills UI.
@@ -234,9 +250,9 @@ Returns `image/png` or `image/svg+xml`. Max 256 KiB. Cached for 24 hours.
 - Updates are never applied automatically. The user reviews the new detail
   document, sees a diff against the currently installed version, and
   explicitly accepts. If the user has locally evolved the skill since
-  install, the conflict resolution flow from Section 11.5 of
-  `archive/SKILLS_FEATURE_PLAN.md` applies (accept hub / keep local / AI-assisted
-  merge).
+  install, the conflict resolution flow in §11 of
+  [`archive/SKILLS_FEATURE_PLAN.md`](archive/SKILLS_FEATURE_PLAN.md) applies
+  (accept hub / keep local / AI-assisted merge).
 
 ---
 
@@ -248,8 +264,8 @@ Standard HTTP status codes. Error body:
 { "error": "short_machine_code", "message": "Human-readable explanation" }
 ```
 
-Pantheon surfaces `message` to the user verbatim. Do not include secrets or
-internal paths.
+Pantheon currently reports the HTTP status, not `message`. Do not include
+secrets or internal paths.
 
 ---
 
@@ -263,7 +279,7 @@ A registry is conformant if it:
 - [ ] Implements `get` returning a valid `SkillDetail`
 - [ ] Implements `download` returning a valid bundle in a declared format
 - [ ] Returns a `bundle.sha256` that matches the actual download bytes
-- [ ] Honors `429` with `Retry-After` on overload
+- [ ] Returns `429` with `Retry-After` on overload
 - [ ] Uses HTTPS (or localhost in dev)
 - [ ] Bundle root contains `skill.json` or `SKILL.md`
 
@@ -271,24 +287,28 @@ A registry is conformant if it:
 
 ## 11. Adding a registry to Pantheon
 
-Admins add a registry via `pantheon.config.json`:
+Admins add a registry in **Settings → Skills → Skill Registry Hubs → Add Hub**,
+or with `POST /api/skills/registries`. Registries are stored in
+`data/skill_registries.json`; bearer tokens go to the vault
+(`skill_registry:<id>`), never into the file:
 
 ```json
 {
-  "skill_registries": [
+  "registries": [
     {
+      "id": "acme",
       "url": "https://skills.acme.internal",
-      "auth": { "type": "bearer", "token_ref": "vault:skill_registry_acme" }
+      "display_name": "Acme Internal Skills",
+      "auth": { "type": "bearer", "token_ref": "vault:skill_registry:acme" }
     }
   ]
 }
 ```
 
-…or via the Pantheon Settings → Skills → Hubs UI. Pantheon fetches the
-discovery document, validates `protocol_version`, and makes the registry
-available in the skill importer's "Search Hubs" tab.
+Pantheon fetches the discovery document, validates `protocol_version`, and
+makes the registry available in the skill importer's "Search Hubs" tab.
 
-The built-in adapters (`GitHubAdapter`, `LocalUploadAdapter`,
+The built-in adapters (`GitHubAdapter`, `ClawHubAdapter`, `LocalUploadAdapter`,
 `SkillMdAdapter`) remain available regardless of which registries are
 configured. They're for one-off imports from sources that don't speak this
 protocol; configured registries are for ongoing, browsable, trust-tagged

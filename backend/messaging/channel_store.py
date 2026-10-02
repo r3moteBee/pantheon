@@ -61,19 +61,6 @@ class ChannelStore:
             ))
         return result
 
-    def get_mapping(self, channel_id: str) -> ChannelMapping | None:
-        """Return the mapping for a single channel, or ``None``."""
-        raw = self._load_mappings()
-        info = raw.get(channel_id)
-        if info is None:
-            return None
-        return ChannelMapping(
-            channel_id=channel_id,
-            platform=info.get("platform", channel_id.split(":")[0] if ":" in channel_id else "unknown"),
-            channel_name=info.get("channel_name", ""),
-            project_id=info.get("project_id", _DEFAULT_PROJECT),
-        )
-
     def set_mapping(
         self,
         channel_id: str,

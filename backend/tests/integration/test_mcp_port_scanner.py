@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from api.mcp import _scan_port, scan_local_mcp_ports
+from api.mcp import _scan_port
 
 @pytest.mark.asyncio
 @patch("asyncio.open_connection", new_callable=AsyncMock)

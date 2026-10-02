@@ -271,14 +271,15 @@ A registry is conformant if it:
 - [ ] All `secret: true` config fields correspond to values that are safe to
       transmit once at install time and never logged
 
-JSON Schemas for `ServerListing` and `ServerDetail` live alongside this doc at
-`docs/examples/minimal-registry/schemas/` and can be used in registry CI.
+JSON Schemas for `ServerListing` and `ServerDetail` have not been written
+yet; the reference server in `docs/examples/minimal-registry/` shows the shapes.
 
 ---
 
-## 10. Adding a registry to Pantheon
+## 10. Adding a registry to Pantheon (proposed)
 
-Admins add a registry via `pantheon.config.json`:
+None of this exists yet. The intended flow: admins add a registry via
+`pantheon.config.json`:
 
 ```json
 {

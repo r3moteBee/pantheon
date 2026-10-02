@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from jobs.store import JobStore
 
@@ -58,26 +58,6 @@ class JobContext:
         """Merge into the in-memory partial result. The worker writes this
         out on success."""
         self.partial_result.update(partial)
-
-    @staticmethod
-    def heartbeat_pinger(ctx: "JobContext", interval: float = 30.0) -> Callable[[], Awaitable[None]]:
-        """Return an async coroutine that heartbeats every `interval`
-        seconds until cancelled. Use during long single-call awaits where
-        the handler can't manually heartbeat between steps:
-
-            async with create_pinger(ctx) as ping:
-                result = await long_running_call()
-
-        The async-context-manager wrapper is below in `pinger_for`.
-        """
-        async def _loop():
-            while True:
-                await asyncio.sleep(interval)
-                try:
-                    await ctx._write_heartbeat()
-                except Exception:
-                    pass
-        return _loop
 
 
 # Default for agent-driven handlers: if the agent reports no progress for

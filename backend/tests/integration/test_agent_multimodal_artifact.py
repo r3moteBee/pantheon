@@ -2,11 +2,8 @@
 when the message references artifact:<id>."""
 from __future__ import annotations
 
-import asyncio
 import os
 import tempfile
-
-import pytest
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="pantheon-tests-"))
 os.environ.setdefault("AUTH_PASSWORD", "")

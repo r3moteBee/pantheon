@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
-  ShieldCheck, ShieldAlert, ShieldX, ShieldQuestion, ScanSearch, RefreshCw,
-  AlertTriangle, Package, ChevronDown, ChevronRight, Trash2, Eye
+  ShieldCheck, ShieldX, ShieldQuestion, ScanSearch, RefreshCw,
+  AlertTriangle, Package, ChevronDown, ChevronRight, Trash2
 } from 'lucide-react'
 import { useStore } from '../store'
 import { skillsApi } from '../api/client'

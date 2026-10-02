@@ -5,7 +5,6 @@ import asyncio
 import os
 import tempfile
 from types import SimpleNamespace
-from urllib.parse import urlsplit
 
 import httpx
 import pytest

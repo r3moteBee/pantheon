@@ -8,7 +8,7 @@ FileIndexer pipeline so adapters don't have to reimplement that.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -63,10 +63,6 @@ class AdapterResult:
     skipped: bool = False
     skip_reason: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
-
-
-# Type alias — the registry uses this to validate signatures.
-GraphMapFn = Callable[[dict[str, Any], str], Awaitable[tuple[int, int]]]
 
 
 class SourceAdapter:

@@ -8,7 +8,7 @@ Usage::
 
     from security_log import sec_log
 
-    sec_log.auth_failure(ip="1.2.3.4", reason="bad password")
+    sec_log.auth_login_failure(ip="1.2.3.4", reason="bad password")
     sec_log.skill_scan_failed(skill="shady", risk=0.85, findings=12)
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from config import get_settings
@@ -45,7 +44,6 @@ def _ensure_init() -> None:
     handler.setFormatter(logging.Formatter("%(message)s"))  # raw JSON lines
     _logger.addHandler(handler)
     _logger.setLevel(logging.INFO)
-    # Don't propagate to root logger — we handle our own formatting
     _logger.propagate = True  # still show in console via root
 
 
@@ -119,20 +117,6 @@ class _SecurityLog:
 
     def skill_name_collision_blocked(self, *, skill: str, reason: str) -> None:
         _emit("skill.name_collision_blocked", level="WARNING", skill=skill, reason=reason)
-
-    # ── Skills: executor sandbox ─────────────────────────────────────────
-
-    def skill_execution_start(self, *, skill: str, script: str) -> None:
-        _emit("skill.execution_start", skill=skill, script=script)
-
-    def skill_execution_timeout(self, *, skill: str, script: str, timeout: int) -> None:
-        _emit("skill.execution_timeout", level="WARNING", skill=skill, script=script, timeout=timeout)
-
-    def skill_execution_failed(self, *, skill: str, script: str, exit_code: int) -> None:
-        _emit("skill.execution_failed", level="WARNING", skill=skill, script=script, exit_code=exit_code)
-
-    def skill_path_traversal_blocked(self, *, skill: str, path: str) -> None:
-        _emit("skill.path_traversal_blocked", level="CRITICAL", skill=skill, path=path)
 
     # ── Vault / secrets ──────────────────────────────────────────────────
 

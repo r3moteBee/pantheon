@@ -1,18 +1,15 @@
 """Account-level connections + per-project bindings.
 
-Refactored from api/sources.py for Phase G:
   * GitHub PATs are stored as account-level connections (project_id is now
     optional; legacy per-project rows still work and are migrated lazily).
   * A separate project_repo_bindings table pins one repo per project.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
@@ -46,7 +43,7 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     apply_sqlite_pragmas(conn)
-    # github_connections (existing) + project_repo_bindings (new in Phase G)
+    # github_connections + project_repo_bindings (both in sources.db)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_connections (
             id TEXT PRIMARY KEY,

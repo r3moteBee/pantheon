@@ -41,7 +41,7 @@ New projects follow the global personality unless you pick a preset when creatin
 The agent's tool layer has no implicit handle on your previous messages or its own. When you say "save this" or "remember that observation", it's reliable to either:
 
 - Name the target explicitly: *"Save your previous response verbatim to `ANALYSIS/2026-04-07-ai-maturity.md`."*
-- Or trust the new `save_last_response` behaviour (see §5) which interprets self-references automatically.
+- Or rely on `save_last_response` (see §5), which interprets self-references automatically.
 
 ### Give paths, not just verbs
 *"Write a note"* is ambiguous. *"Write a note to `research/notes/hbm-supply-chain.md`"* produces exactly what you want.
@@ -95,34 +95,40 @@ How automatic recall behaves:
 
 A common pattern: the agent produces a long analysis, and you want to file it. Use any of these:
 
-- **"Save your last response to `ANALYSIS/<filename>.md`"** — routes through the `save_last_response` tool, which reads the previous assistant message directly.
+- **"Save your last response to `ANALYSIS/<filename>.md`"** — routes through the `save_last_response` tool, which reads the previous assistant message directly and saves it as an artifact.
 - **"Add this observation as a trend in the ANALYSIS folder"** — the agent interprets "this/that/above" as a reference to its own last message and will not ask you to paste it back.
 - **Control the scope and transform.** `save_last_response` accepts `history_count` and `mode`, so you can say:
   - *"Save the last 5 messages verbatim to `notes/session.md`"*
   - *"Summarize the last 3 messages and save to `ANALYSIS/ai-maturity-summary.md`"* (`mode=summarize`)
   - *"Research the last observation further and save the expanded note to `research/hbm-deep-dive.md`"* (`mode=research` — runs a web search pass and asks the model to write an enriched briefing)
   - *"Save the last response as a bulleted action-items list to `todos.md`"* (`mode=custom` with your own transform prompt)
-- For .md files, a YAML frontmatter block (title, date, tags, mode, source_messages) is added automatically.
+- For .md files, a YAML frontmatter block (title, date, mode, source_messages, tags, source) and a title heading are added automatically.
 
 ### Example Chat Exchange
 > **User**: *Provide a high-level summary of the architectural tiers of Pantheon.*
 > **Agent**: *(Outputs the detailed memory and runtime architecture...)*
 > **User**: *Save that response verbatim to docs/memory_tiers.md with title 'Memory Tiers Overview' and tags 'architecture, docs'*
 > 
-> *The agent calls `save_last_response` with path=`docs/memory_tiers.md` and generates a markdown file in the workspace with automatic frontmatter:*
+> *The agent calls `save_last_response` with path=`docs/memory_tiers.md` and saves a markdown artifact (Artifacts page) with automatic frontmatter:*
 > ```markdown
 > ---
 > title: Memory Tiers Overview
 > date: 2026-05-30
+> mode: verbatim
+> source_messages: 1
 > tags: [architecture, docs]
+> source: agent_response
 > ---
+>
+> # Memory Tiers Overview
+>
 > (The detailed architectural breakdown is written here verbatim)
 > ```
 
 ## 6. Web search and the browser
 
 ### Search provider chain
-Pantheon's `web_search` tool walks a configurable chain of providers (default: **Brave → SearXNG → DuckDuckGo**). It falls through to the next provider on any of:
+Pantheon's `web_search` tool walks a configurable chain of providers (default: **SearXNG → Brave → DuckDuckGo**; Brave is skipped until it has an API key). It falls through to the next provider on any of:
 
 - HTTP error / network failure
 - Empty result set (HTTP 200 but zero hits)
@@ -144,7 +150,7 @@ Pantheon also ships with:
   - **Bing Web Search** (requires Bing Web Search API Key)
   - **Wikipedia** (returns structured Wiki summaries and articles)
 - `web_fetch` — reads a page as markdown **without saving it**. To keep a source (indexed, searchable, linked into the graph), use `ingest_source` instead.
-- **Browser tools** (if you installed with `--with-browser`) — Playwright-backed `browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_screenshot`. Use these for JavaScript-heavy sites, logged-in pages, or multi-step interactions. The browser session persists per project across tool calls.
+- **Browser tools** (if you installed with `--with-browser`) — Playwright-backed `browser_open`, `browser_read`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_close`. Use these for JavaScript-heavy sites, logged-in pages, or multi-step interactions. The browser session persists per project across tool calls.
 
 Set `BROWSER_HEADLESS=false` in `.env` to watch the browser drive itself during debugging.
 
@@ -192,12 +198,14 @@ After setting the bot token and allowed chat IDs, your bot supports:
 | *(plain text)* | Chat with the agent |
 
 ### `/note` — capture anything on the go
-`/note` is a fast-capture command. Anything you send with it lands in `<project>/workspace/notes/`:
+`/note` is a fast-capture command. On Telegram and Discord, anything you send with it lands in `<project>/workspace/notes/`. On Slack, Matrix and Mattermost, `/note <text>` saves the text to semantic memory only.
+
+On Telegram:
 
 - **Text only**: `/note Interesting thought about HBM supply chains…` → saves `note-<timestamp>.md`.
 - **Photo with caption**: attach a photo and use `/note caption text` → saves both the image and a markdown sidecar linking to it.
 - **File upload**: attach any document with caption `/note your commentary` → saves the file and a markdown note.
-- **Voice memo**: attach a voice clip with caption `/note` → saves the `.ogg`.
+- **Voice memo**: attach a voice clip with caption `/note` → saves the `.ogg`. Audio and video work the same way.
 
 All notes are also indexed into semantic memory so you can recall them later via `/memory` or through the agent in chat.
 

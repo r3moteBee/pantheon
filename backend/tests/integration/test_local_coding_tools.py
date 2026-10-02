@@ -10,7 +10,6 @@ os.environ.setdefault("DATA_DIR", "/tmp/pantheon-tests-data")
 
 import pytest
 from unittest.mock import patch, AsyncMock
-from pathlib import Path
 
 from agent.tools import execute_tool, _repo_checkout_dir
 

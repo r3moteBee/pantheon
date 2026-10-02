@@ -9,7 +9,6 @@ here once - add new ones to STORES/_purge_* and to the export (api/project_expor
 """
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import sqlite3

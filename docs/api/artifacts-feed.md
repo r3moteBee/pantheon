@@ -9,7 +9,7 @@ Agent-facing forward-walk over a project's artifacts. Designed for two patterns:
 
 Both patterns use the same primitives — a `(updated_since, after_id)` cursor — so an agent that does change-detection today can switch to bulk without changing its request shape.
 
-The list-shaped `GET /api/artifacts` is **not** an agent endpoint. It is UI-shaped (pinned-first, recency-DESC, silently capped at 200) and is not safe for either pattern.
+The list-shaped `GET /api/artifacts` is **not** an agent endpoint. It is UI-shaped (pinned-first, recency-DESC, `limit` 200 by default with `offset` paging) and is not safe for either pattern.
 
 ---
 

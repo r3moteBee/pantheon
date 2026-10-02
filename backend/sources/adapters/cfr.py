@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sources.base import (

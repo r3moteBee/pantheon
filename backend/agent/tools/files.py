@@ -166,8 +166,6 @@ async def _tool_show_file(ctx: ToolContext, tool_name: str, tool_args: dict[str,
     if not safe_path.exists():
         return f"File not found: {tool_args['path']}"
     rel_path = tool_args["path"]
-    caption = tool_args.get("caption", "")
-    suffix = safe_path.suffix.lower()
     from urllib.parse import quote
     encoded_path = quote(rel_path, safe="/")
     # Return structured result: display directive for frontend + clear success for LLM
@@ -355,7 +353,7 @@ async def _tool_batch_convert_documents(ctx: ToolContext, tool_name: str, tool_a
             out_dir_path = _ws._safe_workspace_path(out_dir, project_id)
             out_dir_path.mkdir(parents=True, exist_ok=True)
 
-        from utils.document_converter import DocumentConverter, BinaryMissingError
+        from utils.document_converter import DocumentConverter
         converter = DocumentConverter()
 
         converted_files = []

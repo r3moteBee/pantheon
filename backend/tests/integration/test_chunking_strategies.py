@@ -1,4 +1,3 @@
-import pytest
 from memory.file_indexer import chunk_text
 
 def test_fixed_chunking_strategy():

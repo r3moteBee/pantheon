@@ -802,7 +802,7 @@ class GenericSkillRegistryAdapter(HubAdapter):
 # ── Importer Orchestrator ───────────────────────────────────────────────────
 
 # Static built-in adapters. Configured registries are added at runtime via
-# register_skill_registry() based on pantheon.config.json or the Settings UI.
+# register_skill_registry() from the hubs saved in Settings → Skills (data/skill_registries.json).
 _ADAPTERS: dict[str, HubAdapter] = {
     "skill_md": SkillMdAdapter(),
     "github": GitHubAdapter(),
@@ -832,35 +832,6 @@ def unregister_skill_registry(registry_id: str) -> None:
     if registry_id in {"skill_md", "github", "local", "clawhub"}:
         raise ValueError(f"Cannot unregister built-in hub: {registry_id}")
     _ADAPTERS.pop(registry_id, None)
-
-
-def load_configured_registries() -> None:
-    """Load skill registries from settings.skill_registries (if present).
-
-    Each entry: {id, url, display_name?, auth: {type, token_ref?}}
-    Token references like 'vault:my_key' are resolved against the vault.
-    """
-    configured = getattr(settings, "skill_registries", None) or []
-    for entry in configured:
-        try:
-            registry_id = entry["id"]
-            url = entry["url"]
-            display_name = entry.get("display_name")
-            auth = entry.get("auth") or {}
-            token = None
-            if auth.get("type") == "bearer":
-                token_ref = auth.get("token_ref", "")
-                if token_ref.startswith("vault:"):
-                    from secrets.vault import get_vault  # local import to avoid cycle
-                    token = get_vault().get_secret(token_ref[len("vault:"):])
-                else:
-                    token = auth.get("token")
-            register_skill_registry(
-                registry_id, url,
-                display_name=display_name, auth_token=token,
-            )
-        except Exception as e:
-            logger.error("Failed to load skill registry %r: %s", entry, e)
 
 
 def get_adapter(hub: str) -> HubAdapter:

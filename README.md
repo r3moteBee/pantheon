@@ -121,11 +121,12 @@ cd ~/pantheon/backend
 ../.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-### Handy Docker Development Targets
-* `make dev-backend` — Start backend container with hot reload enabled.
-* `make test` — Execute pytest suite inside the backend container.
-* `make shell-backend` — Open a terminal session inside the backend container.
-* `make clean` — Stop containers, delete volumes, and purge build cache.
+### Handy Make Targets
+Run `make help` for the full list.
+* `make dev-backend` — Install requirements and run the backend on the host with hot reload (uses whatever `python`/`pip` is active).
+* `make test` — Run the backend tests on the host (`python -m pytest tests/`).
+* `make shell-backend` — Open a shell inside the running backend container.
+* `make clean` — Remove containers, volumes and locally built images, then `docker system prune -f`.
 
 ---
 
@@ -144,9 +145,12 @@ cd ~/pantheon/backend
 ├── frontend/              # Vite + React dashboard code
 ├── data/                  # Runtime storage (SQLite DBs, ChromaDB, workspaces)
 ├── docs/                  # API and feature documentation
+├── skills/                # Bundled skills (skill.json + instructions.md)
+├── scripts/               # Maintenance scripts (vault key rotation, migrations, tools doc)
 ├── deploy.sh              # Unified installer script
 ├── setup_options.sh       # Component toggle wizard
 ├── start.sh / stop.sh     # Host runner scripts
+├── update.sh / uninstall.sh  # Local-mode updater and uninstaller
 └── Makefile               # Docker helper command definitions
 ```
 

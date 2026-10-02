@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 from pathlib import Path
 from agent.tools import execute_tool
 

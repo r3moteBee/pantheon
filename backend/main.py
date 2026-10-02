@@ -257,8 +257,7 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse({"error": reason}, status_code=503)
 
     # CSRF guard: browsers attach Origin to cross-site POST/PUT/DELETE. With
-    # no password (or a query-string token) a form on any site could
-    # otherwise trigger state changes.
+    # no password a form on any site could otherwise trigger state changes.
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
         if origin and not origin_is_allowed(origin, request.headers.get("host")):

@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from typing import TYPE_CHECKING
 
 from sources.base import (
     FetchedContent,
@@ -45,6 +45,9 @@ from sources.base import (
 )
 from sources.registry import register_adapter
 from sources.util import slugify
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 

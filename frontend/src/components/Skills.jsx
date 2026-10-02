@@ -119,7 +119,7 @@ function SkillCard({ skill, projectId, stats, onToggle, onDelete, onScan, onEdit
   const handleScan = async () => {
     setScanning(true)
     try {
-      const res = await onScan(skill.name)
+      await onScan(skill.name)
       // Refresh details to pick up scan result
       const detailRes = await skillsApi.get(skill.name)
       setDetails(detailRes.data)

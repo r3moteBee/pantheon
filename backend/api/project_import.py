@@ -15,7 +15,6 @@ import io
 import json
 import logging
 import re
-import shutil
 import zipfile
 from datetime import datetime, timezone
 from enum import Enum
@@ -483,7 +482,7 @@ def import_project(
         # Episodic
         if "memory/episodic.json" in zf.namelist():
             try:
-                n = _import_episodic(zf, project_id, import_stats)
+                _import_episodic(zf, project_id, import_stats)
                 imported_components.append("memory:episodic")
             except Exception as e:
                 logger.error("Failed to import episodic memory: %s", e, exc_info=True)
@@ -898,7 +897,7 @@ def _import_tasks(
         existing_names = {j.get("name", "").lower() for j in existing_jobs}
         existing_descs = {j.get("description", "").lower() for j in existing_jobs}
 
-        scheduler = get_scheduler()
+        get_scheduler()
 
         for task in tasks:
             task_name = task.get("name", "")

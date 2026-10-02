@@ -4,7 +4,6 @@ import tempfile
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="pantheon-tests-"))
 
 import pytest
-import asyncio
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 

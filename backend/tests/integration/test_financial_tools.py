@@ -10,7 +10,6 @@ os.makedirs("/tmp/pantheon-tests-data/db", exist_ok=True)
 
 import pytest
 from unittest.mock import patch, MagicMock
-from pathlib import Path
 
 from agent.tools import execute_tool
 

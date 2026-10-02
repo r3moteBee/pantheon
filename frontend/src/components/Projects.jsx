@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Trash2, Plus, Check, RefreshCw, Calendar, User } from 'lucide-react'
+import { Trash2, Check, RefreshCw, Calendar, User } from 'lucide-react'
 import { useStore } from '../store'
 import { projectsApi, personasApi, personalityApi } from '../api/client'
 import { ExportButton, ImportButton } from './ProjectPortability'

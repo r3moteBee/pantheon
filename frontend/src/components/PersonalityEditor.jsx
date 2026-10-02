@@ -39,7 +39,6 @@ export default function PersonalityEditor() {
   // Project selection — null means global
   const [selectedProjectId, setSelectedProjectId] = useState(null)
   const [projects, setProjects] = useState([])
-  const [projectSearch, setProjectSearch] = useState('')
 
   // Presets (stored as "personas"): a soul.md voice applied to a project.
   const [personas, setPersonas] = useState([])
@@ -237,14 +236,6 @@ export default function PersonalityEditor() {
   const isEmpty = contentLoaded && !currentContent.trim()
 
   const scopeLabel = projectId ? projects.find((p) => p.id === projectId)?.name || projectId : 'Global'
-
-  // Filter projects for the dropdown search
-  const filteredProjects = projectSearch
-    ? projects.filter((p) =>
-        p.name.toLowerCase().includes(projectSearch.toLowerCase()) ||
-        p.id.toLowerCase().includes(projectSearch.toLowerCase())
-      )
-    : projects
 
   const TABS = [
     {

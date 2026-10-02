@@ -4,7 +4,6 @@ from __future__ import annotations
 import io
 import logging
 import mimetypes
-import zipfile
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote
@@ -13,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import Response, StreamingResponse, FileResponse
 from pydantic import BaseModel
 
-from artifacts.store import get_store, is_text_type, MAX_TEXT_BYTES
+from artifacts.store import get_store, is_text_type
 from artifacts import embedder, preview as preview_mod
 
 logger = logging.getLogger(__name__)

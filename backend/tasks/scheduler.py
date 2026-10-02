@@ -1,6 +1,5 @@
 """APScheduler setup and job management for autonomous tasks."""
 from __future__ import annotations
-import asyncio
 import functools
 import logging
 import uuid

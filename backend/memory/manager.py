@@ -1,4 +1,4 @@
-"""Memory manager — orchestrates all 5 memory tiers with active curation.
+"""Memory manager — orchestrates the memory tiers with active curation.
 
 Enhanced with:
 - Graph-augmented retrieval (semantic results enriched with graph context)
@@ -159,7 +159,6 @@ class MemoryManager:
         project_id: str = "default",
         session_id: str | None = None,
         embedding_fn: Any = None,
-        max_working_tokens: int = 8000,
         context_budget: ContextBudget | None = None,
         embedding_model: str | None = None,
         embedding_batch_fn: Any = None,
@@ -799,21 +798,13 @@ class MemoryManager:
             force=force,
             source_label=path,
         )
-        # Cross-artifact similarity pipeline: store topic embeddings
-        # and (when auto-linking is on) add SEMANTICALLY_SIMILAR_TO
-        # edges + queue merge proposals. Caller controls via the
-        # auto_link_similarity flag on the originating adapter — in
-        # this generic path we always run the upsert step (so
-        # embeddings exist for later backfill or manual link runs)
-        # but only run the full link pipeline when explicitly
-        # requested via index_artifact(..., link_similarity=True).
+        # Cross-artifact similarity: always upsert topic embeddings here so
+        # they exist for later backfill or manual link runs. The link
+        # pipeline itself (SEMANTICALLY_SIMILAR_TO edges + merge proposals)
+        # runs elsewhere — after ingest when the originating source adapter
+        # sets auto_link_similarity, or via the link_topic_similarity tool.
         try:
-            from sources.similarity import link_artifact_topics
             from memory.topic_embeddings import upsert_topic_embedding
-            # Always upsert topic embeddings so they're available
-            # later, even if linking is deferred.
-            for t in (a.get("tags") or []):
-                pass  # tags are already handled by file indexer; topic embeddings are below
             # Walk the frontmatter topics ourselves rather than re-
             # parsing — index_text already parsed it but didn't
             # surface the topic list.

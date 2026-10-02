@@ -4,8 +4,6 @@ Enhanced with automatic memory extraction after conversations and
 file attachment support with semantic indexing.
 """
 from __future__ import annotations
-import asyncio
-import base64
 import json
 import logging
 import uuid
@@ -49,12 +47,6 @@ class ChatResponse(BaseModel):
     response: str
     project_id: str
     route: dict[str, Any] | None = None
-
-
-class HistoryRequest(BaseModel):
-    session_id: str
-    project_id: str = "default"
-    limit: int = 50
 
 
 # Active WebSocket connections

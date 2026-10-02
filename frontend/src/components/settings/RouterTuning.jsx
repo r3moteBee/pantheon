@@ -12,7 +12,7 @@ const WINDOWS = [
 const pct = (x) => (x == null ? '—' : `${Math.round(x * 100)}%`)
 const ms = (v) => (v == null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${v}ms`)
 
-// Phase 3: how routed chat turns turned out, and suggestions from that.
+// How routed chat turns turned out, and suggestions from that.
 export default function RouterTuning({ onApplied }) {
   const [hours, setHours] = useState(24 * 7)
   const [data, setData] = useState(null)

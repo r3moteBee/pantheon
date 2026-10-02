@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import {
-  FolderOpen, Folder, FileText, Code, Image as ImageIcon, FileSpreadsheet,
+  FolderOpen, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
-  Save, Download, X, Tag, Edit3, Eye, History, Pin, MoreVertical, FileCode,
+  Save, Download, X, Tag, Edit3, Eye, History, FileCode,
   PanelLeftClose, PanelLeftOpen, Move, Copy,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'

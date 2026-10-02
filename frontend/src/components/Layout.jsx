@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Outlet, NavLink, useNavigate } from 'react-router-dom'
+import React, { useState, useEffect } from 'react'
+import { Outlet, NavLink } from 'react-router-dom'
 import {
-  MessageSquare, FolderOpen, User, Settings,
+  MessageSquare, FolderOpen, Settings,
   Briefcase, Menu, X, Bot, LogOut, Zap, Plug,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
@@ -36,7 +36,6 @@ export default function Layout() {
   const setActiveProject = useStore((s) => s.setActiveProject)
   const notifications = useStore((s) => s.notifications)
   const removeNotification = useStore((s) => s.removeNotification)
-  const navigate = useNavigate()
 
   // Load projects once at mount so the chat-bar pill picker has its list.
   // The sidebar itself no longer renders a project picker — the chat

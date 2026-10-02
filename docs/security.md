@@ -8,10 +8,10 @@ Pantheon is a single-user app that usually runs on localhost. The controls below
 - **Sessions:** `POST /api/auth/login` issues a random 32-byte token. Only its SHA-256 is stored, in `data/db/auth_sessions.db`, and it expires after `AUTH_SESSION_DAYS` (30). Each session is tagged with a fingerprint of `AUTH_PASSWORD`+`SECRET_KEY`, so changing either one logs everything out.
 - **Transport:** the `pantheon_session` cookie (`HttpOnly; SameSite=Strict`, `Secure` over HTTPS or `X-Forwarded-Proto: https`), or `Authorization: Bearer <token>` for scripts. **Tokens are never accepted in the query string.**
 - **Login throttle:** 10 failures per IP per 5 min, then 429.
-- **CSRF:** non-GET requests with a foreign `Origin` (not same-host and not in `CORS_ORIGINS`) get 403.
+- **CSRF:** requests other than GET/HEAD/OPTIONS with a foreign `Origin` (not same-host and not in `CORS_ORIGINS`) get 403.
 - **WebSockets** skip the HTTP middleware, so every WS endpoint calls `authorize_websocket(ws)` before `accept()`. It checks the insecure-default lock, `Origin`, the host guard and the session.
 - **Auth off:** requests whose `Host` is a public dotted name not listed in `ALLOWED_HOSTS` get 421. IP literals, `localhost` and `.local`/`.lan`/`.internal`/… names are allowed.
-- **Public paths:** `/`, health, docs, login, config, logout, and the MCP OAuth callback.
+- **Public paths:** `/`, `/health`, `/api/health`, `/docs`, `/redoc`, `/openapi.json`, `/api/auth/{login,config,logout}` and `/api/mcp/oauth/callback`. When the frontend is built, any path outside `/api/` and `/ws/` (the static UI shell) is public too.
 
 ## Insecure-default lockdown
 
@@ -34,7 +34,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 ## Agent tool gating
 
 - **Host exec:** `HOST_EXEC_TOOLS` = `run_command`, `code_execute`, `git_sync_repo`, `git_status`, `git_create_branch`, `git_merge`, `git_commit`, `git_push_pr`. These tools are hidden and refused unless `AgentCore(host_exec=True)`. `AGENT_HOST_EXEC` controls this:
-  - `interactive` (default): web chat and `coding_task` only.
+  - `interactive` (default): web chat, and coding tasks started from it.
   - `always`: every context.
   - `never`: no context.
   Autonomous jobs, scheduled runs, iteration loops and messaging bots are background contexts.
@@ -62,11 +62,11 @@ Limits:
 ## Paths and rendering
 
 - **Untrusted names become paths only through `utils.paths`:** `is_within`, `check_project_id` (raises `InvalidProjectId`, returned as 400) and `safe_filename`. Document conversion formats go through `document_converter.validate_format`.
-- **Workspace HTML** renders in `SandboxedHtml`: `srcDoc` with `sandbox="allow-scripts"`, no same-origin. Any HTML set via `innerHTML` goes through DOMPurify.
+- **Workspace HTML** renders in `SandboxedHtml`: `srcDoc` with `sandbox="allow-scripts"`, no same-origin. Any HTML set via `innerHTML` goes through DOMPurify; Mermaid SVG relies on mermaid's `securityLevel: 'strict'` instead.
 
 ## Messaging bots
 
-Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Bots run without host exec. See [messaging.md](messaging.md).
+Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Bots are a background context, so they get no host exec unless `AGENT_HOST_EXEC=always`. See [messaging.md](messaging.md).
 
 ## MCP OAuth
 
@@ -78,17 +78,17 @@ Refreshes are serialized per connection (`_REFRESH_LOCKS`). If the authorization
 
 Imported skill bundles can contain arbitrary files, so `skills/scanner.py` scans them in three layers:
 
-1. **Static checks.** Extension allow- and blocklists, size caps (10 MB total, 500 KB per file, 50 files), and regex checks for `os.system`, `shell=True`, `eval`/`exec`, hardcoded credentials and `rm -rf /` (all critical), plus warnings for network, env, obfuscation and deletion patterns. Markdown (`instructions.md`) is checked for prompt-injection phrasing: "ignore previous instructions", bypassing guards and sending credentials are critical; hiding actions from the user is a warning (`INSTRUCTION_PATTERNS`).
+1. **Static checks.** Extension allow- and blocklists, size caps (10 MB total, 500 KB per file, 50 files), and regex checks for `os.system`, `shell=True`, `eval`/`exec`, hardcoded credentials and `rm -rf /` (all critical), plus warnings for network, env, obfuscation and deletion patterns. Markdown and text files (`.md`, `.txt`) are checked for prompt-injection phrasing: "ignore previous instructions", bypassing guards and sending credentials are critical; hiding actions from the user is a warning (`INSTRUCTION_PATTERNS`).
 2. **Capability analysis.** Compares declared capabilities with what the code appears to do.
 3. **AI review** (optional). An LLM (the `extract` class) looks for malicious intent in scripts and for prompt injection in the instructions, including markdown-only skills.
 
 Findings are weighted 0.02 (info), 0.10 (warning) and 0.35 (critical). A scan fails on any critical finding or a score of 0.5 or more.
 
-- **Import** always scans. A failed import, or a failed `POST /skills/{name}/scan`, moves the skill to `data/skills/.quarantine/`. Bundled skills are flagged, never moved.
+- **Import** always scans. A failed import, or a failed `POST /api/skills/{name}/scan`, moves the skill to `data/skills/.quarantine/`. Bundled skills are flagged, never moved.
 - **Enable gate:** enabling a non-bundled skill that has no scan or a failed scan returns 403. A failed skill is `scan_blocked`: it is never offered to the agent, `/slug` ignores it, and scheduled runs fail.
 - **Scan cache:** results are cached with a content hash, so any file edit invalidates the scan.
 - **Scan at load:** any non-bundled skill without a valid scan — new, edited in the editor, or written by hand — gets layers 1–2 when the registry loads (`SkillRegistry._static_scan`, no LLM call), so nothing reaches the prompt unscanned. The `create_skill` agent tool also runs the full scan (with AI review), because the model wrote that text.
-- **Override:** `PUT /skills/{name}/toggle` with `force_enable: true` and an `override_password` that matches vault `skill_security_override_password`. The comparison is constant-time and every attempt is logged.
+- **Override:** `PUT /api/skills/{name}/toggle` with `force_enable: true` and an `override_password` that matches vault `skill_security_override_password`. The comparison is constant-time and every attempt against a configured password is logged.
 - **Anti-spoofing:** `is_bundled` is set by the loader, never read from `skill.json`. A user skill can't shadow a bundled name, and unquarantine returns 409 on a collision.
 
 ## Audit log (`backend/security_log.py`)

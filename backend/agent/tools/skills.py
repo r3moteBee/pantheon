@@ -95,7 +95,6 @@ async def _tool_get_self_documentation(ctx: ToolContext, tool_name: str, tool_ar
 @tool('create_skill')
 async def _tool_create_skill(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     from skills import editor as _skill_ed
-    from skills.registry import get_skill_registry
     import json as _json, re as _re
 
     name = (tool_args.get("name") or "").strip().lower()

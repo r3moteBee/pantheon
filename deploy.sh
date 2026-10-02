@@ -69,16 +69,16 @@ while [[ $# -gt 0 ]]; do
       echo "  --dir PATH       Installation directory (default: ~/pantheon)"
       echo "  --port PORT      HTTP port — Docker mode only (default: 80)"
       echo "  --api-key KEY    LLM API key (can also set LLM_API_KEY env var)"
-      echo "  --model MODEL    LLM model name (default: gpt-4o)"
-      echo "  --base-url URL   LLM provider base URL (default: OpenAI)"
+      echo "  --model MODEL    LLM model name (default: qwen2.5:3b)"
+      echo "  --base-url URL   LLM provider base URL (default: http://localhost:11434/v1, Ollama)"
       echo "  --branch NAME    Git branch to deploy (default: main)"
       echo "  --domain DOMAIN      Domain name for HTTPS via Caddy (e.g. agent.example.com)"
       echo "  --auth-password PASS     Web interface password (prompted if omitted)"
-      echo "  --with-ollama        Install Ollama + Nemotron-3-Nano-4B as the default LLM"
+      echo "  --with-ollama        Install Ollama + Qwen 2.5 as the default LLM"
       echo "  --with-searxng       Run a local SearXNG container as the default search backend"
       echo "  --with-office        Install LibreOffice + poppler for Office/PDF artifact previews"
       echo "  --with-browser       Install Playwright chromium and enable agent browser tools"
-      echo "  --ollama-tag TAG     Nemotron tag (4b, 4b-q8_0, 4b-bf16) — default: 4b"
+      echo "  --ollama-tag TAG     Qwen 2.5 tag (e.g. 1.5b, 3b, 7b) — default: 3b"
       echo "  --yes, -y            Skip confirmation and model selection prompts"
       echo ""
       echo "When run interactively (without --yes), the installer will:"
@@ -1301,7 +1301,7 @@ fi
 if [[ "$WITH_OLLAMA" == "true" || "$WITH_SEARXNG" == "true" || "$WITH_BROWSER" == "true" || "$WITH_OFFICE" == "true" ]]; then
   header "Running setup_options.sh for optional extras"
   DEMO_ARGS=()
-  [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "$OLLAMA_TAG")
+  [[ "$WITH_OLLAMA" == "true" ]]  && DEMO_ARGS+=(--with-ollama --tag "${OLLAMA_TAG:-3b}")
   [[ "$WITH_SEARXNG" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-searxng)
   [[ "$WITH_BROWSER" == "true" && "$MODE" == "local" ]] && DEMO_ARGS+=(--with-browser)
   [[ "$WITH_OFFICE" == "true" && "$MODE" == "local" ]]  && DEMO_ARGS+=(--with-office)
@@ -1339,8 +1339,8 @@ if [[ -n "$DOMAIN" ]]; then
   echo -e "  ${BOLD}Caddy config${RESET} →  /etc/caddy/Caddyfile"
 elif [[ "$MODE" == "docker" ]]; then
   echo -e "  ${BOLD}API Docs${RESET}     →  http://localhost:${HTTP_PORT}/docs"
-  echo -e "  ${BOLD}Logs${RESET}         →  docker compose -C ${INSTALL_DIR} logs -f backend"
-  echo -e "  ${BOLD}Stop${RESET}         →  docker compose -C ${INSTALL_DIR} down"
+  echo -e "  ${BOLD}Logs${RESET}         →  cd ${INSTALL_DIR} && docker compose logs -f backend"
+  echo -e "  ${BOLD}Stop${RESET}         →  cd ${INSTALL_DIR} && docker compose down"
 else
   echo -e "  ${BOLD}API Docs${RESET}     →  http://localhost:${BACKEND_PORT}/docs"
   echo -e "  ${BOLD}Stop${RESET}         →  ${INSTALL_DIR}/stop.sh"
@@ -1350,10 +1350,10 @@ echo ""
 if [[ "$SKIPPED_LLM" == "true" ]]; then
   echo -e "  ${RED}${BOLD}CRITICAL NEXT STEP:${RESET} You skipped LLM endpoint configuration. The agent will NOT"
   echo -e "                      work until you add an endpoint and map roles in the Web UI"
-  echo -e "                      under ${BOLD}Settings → LLM Endpoints${RESET}."
+  echo -e "                      under ${BOLD}Settings → LLMs${RESET}."
 else
   echo -e "  ${YELLOW}Next step:${RESET} Open the Web UI and start chatting. You can customize models"
-  echo -e "             and providers at any time in Settings → LLM Endpoints."
+  echo -e "             and providers at any time in Settings → LLMs."
 fi
 echo ""
 echo -e "  ${CYAN}Optional extras:${RESET}"

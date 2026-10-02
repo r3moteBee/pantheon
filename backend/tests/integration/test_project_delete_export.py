@@ -146,7 +146,6 @@ async def test_delete_refuses_while_a_job_runs(env):
 async def test_export_includes_artifacts_and_import_restores_them(env):
     from api.project_export import export_project
     from api.project_import import import_project
-    from artifacts.store import get_store
     await _fill("keep", b"\x89PNG shared" * 40)
     archive = export_project("keep", components=["metadata", "artifacts"])
     zf = zipfile.ZipFile(io.BytesIO(archive))

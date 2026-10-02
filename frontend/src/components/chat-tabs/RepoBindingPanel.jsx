@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Github, Check, X, RefreshCw, AlertTriangle, GitBranch, Loader,
+  Github, Check, RefreshCw, AlertTriangle, GitBranch, Loader,
 } from 'lucide-react'
 import { connectionsApi, projectRepoApi } from '../../api/client'
 
