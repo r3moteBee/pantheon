@@ -465,6 +465,12 @@ class AgentCore:
                             "Pre-recall exceeded %.1fs, answering without memory context "
                             "(PRE_RECALL_TIMEOUT_SECONDS)", recall_budget,
                         )
+                    if results and wants_self_description(user_message):
+                        # Pantheon's own state comes from get_self_documentation; an earlier
+                        # reply of ours about it may be wrong and was being repeated
+                        # (2026-10-02: a generic "Microsoft Agent Framework" answer).
+                        results = [r for r in results
+                                   if not (r.get("tier") == "episodic" and str(r.get("content", "")).startswith("[assistant]"))]
                     if results:
                         recalled_memories = results
                         logger.debug("Pre-recalled %d memories for context", len(results))

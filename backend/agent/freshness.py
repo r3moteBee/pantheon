@@ -39,6 +39,7 @@ _SELF_RE = re.compile(
     r"\b(?:your|yourself|yourselves)\s+(?:own\s+)?(?:config(?:uration)?|settings?|setup|set-up|tools?|capabilit(?:y|ies)|memor(?:y|ies)"
     r"|instructions?|system prompt|prompt|model|models|version|skills?|name|personality|persona|limits?|features?|architecture)\b"
     r"|\babout (?:you|yourself)\b"
+    r"|\bthe current (?:config(?:uration)?|setup|set-up|settings)\b(?!\s+(?:of|for|in|on)\b)"
     r"|\b(?:what|which) (?:tools?|models?|llms?|skills?|capabilit(?:y|ies)|version|memory|settings?) (?:do|are|can|did|have) you\b"
     r"|\b(?:are|is) you running\b|\byou(?:'re| are)? running on\b|\bwhat are you running\b"
     r"|\b(?:this|the) (?:agent|assistant|harness|agent harness|system|bot|chat|conversation|session|project|workspace|server"

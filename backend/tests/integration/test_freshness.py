@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -185,6 +185,7 @@ async def test_describe_the_current_configuration_does_not_search():
 
 @pytest.mark.parametrize("msg,want", [
     ("describe the current configuration of this agent harness", True), ("What tools do you have?", True),
+    ("describe the current configuration", True), ("What's the current configuration of nginx on Ubuntu?", False),
     ("How is Pantheon configured right now?", True), ("What model are you running on?", True),
     ("Summarize my notes from today's meeting", False), ("Who is the current Pope?", False), ("Rate my essay", False),
 ])
@@ -209,3 +210,21 @@ async def test_self_description_reads_pantheon_s_own_docs_first():
         [e async for e in agent.chat("describe the current configuration of this agent harness")]
     assert calls == ["get_self_documentation"]
     assert prov.seen[0][-1]["role"] == "tool"            # round 1 already has Pantheon's own state
+
+
+
+@pytest.mark.asyncio
+async def test_self_description_drops_our_own_earlier_replies_from_recall():
+    from agent.core import AgentCore
+    from config import get_settings
+    from types import SimpleNamespace
+    prov = _Prov()
+    mgr = SimpleNamespace(recall=AsyncMock(return_value=[
+        {"tier": "episodic", "content": "[assistant] This harness follows Microsoft Agent Framework...", "score": 0.9},
+        {"tier": "episodic", "content": "[user] I set the agent model to qwen", "score": 0.8}]))
+    agent = AgentCore(provider=prov, memory_manager=mgr, project_id="p", session_id="s")
+    with patch.object(get_settings(), "agent_thinking", False), patch("agent.core.get_all_tool_schemas", return_value=[]), \
+         patch("agent.core.build_system_prompt", return_value="sys"):
+        [e async for e in agent.chat("describe the current configuration of this agent harness")]
+    sent = prov.seen[0][-1]["content"]
+    assert "Microsoft Agent Framework" not in sent and "qwen" in sent
