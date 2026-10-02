@@ -101,7 +101,7 @@ def test_prereleases_are_never_the_answer():
 
 
 @pytest.mark.asyncio
-async def test_github_lookup_falls_back_to_repo_search_and_never_raises():
+async def test_github_lookup_uses_repo_search_and_never_raises():
     import agent.release_facts as rf
     async def gh(path, ttl):
         if path.startswith("search/"):
@@ -112,3 +112,20 @@ async def test_github_lookup_falls_back_to_repo_search_and_never_raises():
         assert await github_release_facts("Jellyfin installation guide", "") == ""          # no version intent
     with patch.object(rf, "_gh_json", AsyncMock(side_effect=OSError("rate limited"))):
         assert await github_release_facts("Jellyfin latest version", "") == ""
+
+
+@pytest.mark.asyncio
+async def test_the_most_starred_matching_repo_is_the_project():
+    import agent.release_facts as rf
+    results = "https://github.com/home-assistant/operating-system/releases"     # only the side repo is linked
+    async def gh(path, ttl):
+        if path.startswith("search/"):
+            return {"items": [{"name": "core", "owner": {"login": "home-assistant"}, "stargazers_count": 80000}]}
+        if path == "repos/home-assistant/operating-system": return {"stargazers_count": 5000}
+        if path == "repos/home-assistant/core": return {"stargazers_count": 80000}
+        if path.endswith("core/releases?per_page=15"):
+            return [{"tag_name": "2026.9.4", "prerelease": False, "published_at": "2026-09-27T00:00:00Z"}]
+        return [{"tag_name": "18.3", "prerelease": False, "published_at": "2026-09-17T00:00:00Z"}]
+    with patch.object(rf, "_gh_json", gh):
+        out = await github_release_facts("What's the latest stable version of Home Assistant?", results)
+    assert "home-assistant/core" in out and "2026.9.4" in out

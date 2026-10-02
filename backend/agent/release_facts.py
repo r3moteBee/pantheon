@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from datetime import date
@@ -175,7 +176,11 @@ async def _gh_json(path: str, ttl: float):
         return hit[1]
     from utils.http import pooled_client
     async with pooled_client(timeout=6.0) as client:
-        resp = await asyncio.wait_for(client.get(f"{GITHUB_API}/{path}", headers={"Accept": "application/vnd.github+json"}), timeout=6.0)
+        headers = {"Accept": "application/vnd.github+json"}
+        token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if token:   # optional: unauthenticated search is 10 requests/minute per IP
+            headers["Authorization"] = f"Bearer {token}"
+        resp = await asyncio.wait_for(client.get(f"{GITHUB_API}/{path}", headers=headers), timeout=6.0)
         resp.raise_for_status()
         data = resp.json()
     _cache["gh:" + path] = (time.time(), data)
@@ -205,18 +210,39 @@ async def github_release_facts(query: str, search_results: str) -> str:
     if not get_settings().search_release_facts or not _VERSION_INTENT_RE.search(query or ""):
         return ""
     try:
-        repos = repo_candidates(query, search_results)
-        if not repos:
-            phrase = _product_phrase(query)
-            if not phrase:
-                return ""
+        q = _norm(query)
+        stars: dict[str, int] = {}
+        # 1) GitHub repo search for the product name (gives stars for free)
+        phrase = _product_phrase(query)
+        if phrase:
             from urllib.parse import quote
-            found = await _gh_json(f"search/repositories?q={quote(phrase + ' in:name')}&sort=stars&per_page=3", _PRODUCTS_TTL)
-            q = _norm(query)
-            repos = [f"{r['owner']['login']}/{r['name']}" for r in (found.get("items") or [])
-                     if r.get("stargazers_count", 0) >= 500 and (_norm(r["name"]) in q or _norm(r["owner"]["login"]) in q)
-                     and len(_norm(r["name"])) >= 4][:1]
-        for repo in repos[:1]:
+            try:
+                found = await _gh_json(f"search/repositories?q={quote(phrase + ' in:name')}&sort=stars&per_page=5", _PRODUCTS_TTL)
+                for r in found.get("items") or []:
+                    if (r.get("stargazers_count", 0) >= 500 and len(_norm(r["name"])) >= 4
+                            and (_norm(r["name"]) in q or _norm(r["owner"]["login"]) in q)):
+                        stars[f"{r['owner']['login']}/{r['name']}"] = r["stargazers_count"]
+            except Exception as e:
+                logger.info("GitHub repo search skipped for %r: %s", phrase, e)
+        # 2) repo links in the search results (stars looked up, cached)
+        for repo in repo_candidates(query, search_results)[:3]:
+            if repo not in stars:
+                try:
+                    stars[repo] = (await _gh_json(f"repos/{repo}", _PRODUCTS_TTL)).get("stargazers_count", 0)
+                except Exception:
+                    stars[repo] = 0
+        # 3) when an organization is named after the product, its most-starred repos too
+        #    (home-assistant/core and tailscale/tailscale don't match a repo-name search)
+        for owner in {r.split("/")[0] for r in stars if _norm(r.split("/")[0]) in q}:
+            try:
+                top = await _gh_json(f"search/repositories?q=user:{owner}&sort=stars&per_page=3", _PRODUCTS_TTL)
+                for r in top.get("items") or []:
+                    stars.setdefault(f"{r['owner']['login']}/{r['name']}", r.get("stargazers_count", 0))
+            except Exception as e:
+                logger.info("GitHub org search skipped for %r: %s", owner, e)
+        # The project's main repository is the most-starred match: results can link a side repo
+        # ("home-assistant/operating-system" = HA OS 18.3, "tailscale/github-action" = v4.2.0).
+        for repo in sorted(stars, key=lambda r: -stars[r])[:1]:
             block = format_github(repo, await _gh_json(f"repos/{repo}/releases?per_page=15", _CYCLES_TTL))
             if block:
                 return block
