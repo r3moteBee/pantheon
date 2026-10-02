@@ -392,7 +392,8 @@ async def list_sessions(
     return {"sessions": sessions, "project_id": project_id}
 
 
-@router.websocket("/ws/chat")
+# Registered by main.py at /ws/chat (no /api prefix) - not on this router, which
+# would also have served it at /api/ws/chat.
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for streaming chat with the agent."""
     from api.auth import authorize_websocket
