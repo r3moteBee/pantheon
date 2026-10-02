@@ -50,7 +50,7 @@ Every adapter builds the same pipeline for a plain message:
 
 Session ids are stable per channel (`telegram-<chat>`, `slack:<channel>`, `discord-<channel>`, `matrix:<room>`, `mattermost:<channel>`), so episodic memory builds up per conversation.
 
-**Host exec is off for bots.** `host_exec_allowed("background")` is false unless `AGENT_HOST_EXEC=always`, so bots never see `run_command`, `code_execute` or `git_*`. Bots also never pass `interactive=True`, so a `create_task` issued from a bot lands as a **proposed** plan awaiting approval in the web UI (see [jobs.md](jobs.md)). Exception: `create_task(job_type="coding_task")` is queued immediately, without review.
+**Host exec is off for bots.** `host_exec_allowed("background")` is false unless `AGENT_HOST_EXEC=always`, so bots never see `run_command`, `code_execute` or `git_*`. Bots also never pass `interactive=True`, so a `create_task` issued from a bot lands as a **proposed** plan awaiting approval in the web UI (see [jobs.md](jobs.md)).
 
 ## Outbound
 

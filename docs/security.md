@@ -34,7 +34,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 ## Agent tool gating
 
 - **Host exec:** `HOST_EXEC_TOOLS` = `run_command`, `code_execute`, `git_sync_repo`, `git_status`, `git_create_branch`, `git_merge`, `git_commit`, `git_push_pr`. These tools are hidden and refused unless `AgentCore(host_exec=True)`. `AGENT_HOST_EXEC` controls this:
-  - `interactive` (default): web chat and `coding_task` only.
+  - `interactive` (default): web chat, and coding tasks started from it.
   - `always`: every context.
   - `never`: no context.
   Autonomous jobs, scheduled runs, iteration loops and messaging bots are background contexts.
