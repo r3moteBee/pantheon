@@ -315,7 +315,6 @@ class ModelProvider:
         tool_call_accum: dict[int, dict[str, Any]] = {}
         current_text = ""
         current_reasoning = ""   # reasoning_content deltas (thinking models); not shown to the user
-        finish_reason: str | None = None
 
         try:
             async with pooled_client(timeout=120.0) as client:
@@ -354,13 +353,10 @@ class ModelProvider:
                         if not choices:
                             continue
                         delta = choices[0].get("delta", {})
-                        # Track finish_reason but don't break early — wait for
-                        # [DONE]. Some providers (Gemini, RouteLLM) send
+                        # Don't stop on finish_reason — wait for [DONE].
+                        # Some providers (Gemini, RouteLLM) send
                         # finish_reason in the same chunk as the last content
-                        # token, so breaking here truncates the response.
-                        chunk_finish = choices[0].get("finish_reason")
-                        if chunk_finish:
-                            finish_reason = chunk_finish
+                        # token, so breaking there truncates the response.
 
                         # Text content
                         content = delta.get("content", "")
@@ -547,7 +543,7 @@ class ModelProvider:
             ``choices[0].message.images[].image_url.url`` (Abacus RouteLLM,
             OpenRouter, Gemini-style multimodal models).
         The style that works is remembered per base_url+model; the first
-        call tries /images/generations and falls back to chat on 404/405.
+        call tries /images/generations and falls back to chat on 400/404/405/422.
         """
         key = (self.base_url, self.model)
         style = _IMAGE_API_STYLE.get(key)
@@ -661,11 +657,6 @@ class ModelProvider:
                 + " — check that this model supports image output"
             )
         return [await _fetch_image_ref(r) for r in refs[:max(1, n)]]
-
-    async def list_models(self) -> list[str]:
-        """Fetch available models from the provider."""
-        from models.discovery import fetch_models
-        return await fetch_models(self.base_url, self.api_key)
 
 
 # ── Task-class routing ───────────────────────────────────────────────

@@ -33,7 +33,7 @@ from sources.base import (
     SourceAdapter,
 )
 from sources.registry import register_adapter
-from sources.util import parse_relative_date, slugify
+from sources.util import parse_relative_date
 
 logger = logging.getLogger(__name__)
 

@@ -170,7 +170,6 @@ class SlackAdapter(BaseMessagingAdapter):
                 return
 
             text = event.get("text", "").strip()
-            user_id = event.get("user", "user")
 
             # Clean mention prefix
             bot_user_id = req.payload.get("authorizations", [{}])[0].get("user_id", "")

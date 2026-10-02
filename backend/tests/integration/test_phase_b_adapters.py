@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
 
 # Keep settings.ensure_dirs() out of /app.
 os.environ.setdefault("DATA_DIR", "/tmp/pantheon-tests-data")
@@ -83,7 +82,6 @@ def test_reddit_raw_payload_escape_hatch():
     directly via extras['raw_payload'] and the adapter must skip
     network fetch entirely."""
     import asyncio
-    from dataclasses import asdict
     from sources.adapters.forum import RedditThread
     from sources.base import IngestRequest
 

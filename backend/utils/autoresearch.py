@@ -8,9 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import difflib
-import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -150,7 +148,6 @@ class AutoresearchRunner:
         # Build trial history summary
         history_summary = []
         for h in self.history[-8:]:  # Include last 8 trials to keep context window small
-            status_icon = "✅" if h["status"] == "SUCCESS" else "❌"
             history_summary.append(
                 f"Trial {h['iteration']} ({h['status']}):\n"
                 f"- Metric: {h['metric']}\n"
@@ -325,18 +322,6 @@ class AutoresearchRunner:
         
         initial_metric = str(self.initial_metric) if self.initial_metric is not None else "None"
                 
-        # Calculate diff from initial to best
-        initial_code = ""
-        # Let's try to restore initial code from git if available, or use the first trial's target
-        # For simplicity, we compare final best_code with target file's starting state
-        try:
-            # Reconstruct starting code: if the first trial was a success, starting code was current_code,
-            # otherwise it is what is currently in target_path (since we revert on failure).
-            # We can also just read the backup/initial state if we kept it.
-            pass
-        except Exception:
-            pass
-            
         history_rows = []
         for h in self.history:
             metric_str = f"{h['metric']:.4f}" if h["metric"] is not None else "N/A"

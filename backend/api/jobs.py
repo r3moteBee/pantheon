@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from jobs.store import get_store, JobNotFound, JobStatus
+from jobs.store import get_store, JobNotFound
 from jobs.handlers import known_types
 
 logger = logging.getLogger(__name__)
@@ -54,10 +54,9 @@ async def get_job(job_id: str) -> dict[str, Any]:
     return j
 
 
-# Job types a client may create directly. Internal types (extraction,
-# indexing, image_extraction, scheduled_job) are enqueued by the backend
-# itself with payloads it builds — accepting them here would let a request
-# choose payload fields those handlers trust.
+# Job types a client may create directly. Internal types (image_extraction)
+# are enqueued by the backend itself with payloads it builds — accepting
+# them here would let a request choose payload fields those handlers trust.
 CREATABLE_JOB_TYPES = ("autonomous_task", "iteration_loop", "coding_task")
 
 

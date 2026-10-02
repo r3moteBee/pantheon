@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, MagicMock
 from agent.search_providers import SearchProviderManager
 
 @pytest.mark.asyncio

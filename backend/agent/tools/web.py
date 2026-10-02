@@ -114,7 +114,7 @@ async def _web_search(query: str) -> str:
     try:
         from agent.search_providers import get_search_manager
         return await get_search_manager().search(query)
-    except Exception as e:
+    except Exception:
         logger.exception("search provider chain failed; falling back to DDG-only")
         return await _ddg_search(query)
 

@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import date
 
 
 def slugify(s: str, max_len: int = 60) -> str:
@@ -54,7 +58,7 @@ def parse_relative_date(value: str | None, *, today: "date | None" = None) -> st
     if _re.match(r"^\d{4}-\d{2}-\d{2}", s):
         return s[:10]
 
-    from datetime import date, timedelta, timezone, datetime
+    from datetime import timedelta, timezone, datetime
     base = today or datetime.now(timezone.utc).date()
 
     if s in ("today", "just now"):

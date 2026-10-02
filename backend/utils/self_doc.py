@@ -7,9 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import platform
-import shutil
 import sqlite3
 import sys
 from pathlib import Path
@@ -308,7 +306,7 @@ def generate_self_doc() -> str:
         "long_context (chat router only), extract (JSON extraction), summarize, vision, "
         "image_gen (the generate_image tool), embed, rerank. There are no 'chat'/'prefill' "
         "roles anymore — those were migrated to agent and summarize. Configure in "
-        "Settings → Model routing."
+        "Settings → LLMs → Model routing."
     )
     try:
         from llm_config import router as _chat_router

@@ -56,10 +56,6 @@ def known_types() -> list[str]:
     return sorted(HANDLERS.keys())
 
 
-# Eager-import handler modules so they self-register.
-# Each module is responsible for calling register() at import time.
-def _load_handlers() -> None:
-    # The actual imports happen in jobs.handlers.bootstrap (below) to
-    # keep this module's import graph minimal. main.py calls bootstrap()
-    # during the FastAPI lifespan startup.
-    pass
+# Handler modules self-register via @register at import time;
+# jobs.handlers.bootstrap.bootstrap_handlers() imports them (main.py calls
+# it during lifespan startup) to keep this module's import graph minimal.

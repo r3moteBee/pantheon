@@ -18,16 +18,6 @@ class SandboxResult:
     def success(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "exit_code": self.exit_code,
-            "stdout": self.stdout,
-            "stderr": self.stderr,
-            "timed_out": self.timed_out,
-            "duration_ms": self.duration_ms,
-            "success": self.success,
-        }
-
 
 @dataclass
 class SandboxConfig:

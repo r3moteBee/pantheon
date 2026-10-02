@@ -53,7 +53,7 @@ def test_check_update_no_auth(mock_run, clean_settings, client):
 def test_check_update_with_auth(mock_run, clean_settings, client):
     """Test checking for updates returns auth_enabled=True when AUTH_PASSWORD is set."""
     os.environ["AUTH_PASSWORD"] = "test-admin-pass"
-    settings = get_settings()
+    get_settings()
     token = create_session()
     
     # Mock subprocess git fetches
@@ -89,7 +89,7 @@ def test_execute_update_confirm_gate_no_auth(mock_popen, clean_settings, client)
 def test_execute_update_password_gate_with_auth(mock_popen, clean_settings, client):
     """When auth is enabled, password field is checked. Invalid password gives 401."""
     os.environ["AUTH_PASSWORD"] = "super-secret"
-    settings = get_settings()
+    get_settings()
     token = create_session()
     headers = {"Authorization": f"Bearer {token}"}
     

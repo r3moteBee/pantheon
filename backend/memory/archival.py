@@ -75,13 +75,6 @@ class ArchivalMemory:
             logger.error(f"Archival read error for {path}: {e}")
             return f"Error reading {path}: {e}"
 
-    async def write_file(self, path: str, content: str) -> None:
-        """Write content to an archival file."""
-        full_path = self._resolve_path(path)
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding="utf-8")
-        logger.info(f"Archival file written: {path}")
-
     async def append_note(self, content: str, filename: str | None = None) -> str:
         """Append a note to the project's notes directory."""
         self.notes_dir.mkdir(parents=True, exist_ok=True)

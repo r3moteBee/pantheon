@@ -5,8 +5,8 @@ Layout in the vault:
   - llm_role_mapping          JSON object: role -> {endpoint, model}
   - llm_endpoint_key__<name>  one secret per endpoint, the API key
   - llm_config_migrated_v1    flag set by migration.py, read here only
-                              to decide whether resolve_role should
-                              trigger migration on first call
+                              to decide whether the first read should
+                              trigger the migration
   - llm_routes                JSON object: task class -> [{endpoint, model}, ...]
                               (primary first, then fallbacks). Seeded once
                               from llm_role_mapping (llm_routes_migrated_v1).
@@ -134,13 +134,6 @@ def delete_endpoint(name: str) -> None:
     if scrubbed != routes:
         vault.set_secret(ROUTES_KEY, json.dumps(scrubbed))
     record_advertised(name, {})
-
-
-def get_endpoint(name: str) -> EndpointPublic | None:
-    for e in list_endpoints():
-        if e.name == name:
-            return e
-    return None
 
 
 def get_endpoint_api_key(name: str) -> str | None:

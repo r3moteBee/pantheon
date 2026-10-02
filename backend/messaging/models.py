@@ -35,22 +35,3 @@ class AdapterStatus(BaseModel):
     channel_count: int = 0
     error: str | None = None
 
-
-class Attachment(BaseModel):
-    """File attachment on an inbound message."""
-
-    filename: str = ""
-    content_type: str = ""
-    url: str = ""
-    data: bytes | None = None
-
-
-class InboundMessage(BaseModel):
-    """Normalised inbound message from any platform."""
-
-    platform: str
-    channel_id: str
-    user_id: str
-    user_display_name: str = ""
-    text: str = ""
-    attachments: list[Attachment] = []

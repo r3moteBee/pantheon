@@ -13,7 +13,6 @@ import pytest
 
 
 def _manager(ep_hits):
-    import models.provider
     from memory.manager import ContextBudget, MemoryManager
     m = MemoryManager.__new__(MemoryManager)
     m.project_id, m.session_id = "p", "now"

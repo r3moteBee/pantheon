@@ -7,10 +7,8 @@ import logging
 import re
 import uuid
 import time
-from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from agent.personality import get_full_personality
 from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources

@@ -4,9 +4,7 @@ import re
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
-# Allowed values — kept here as the source of truth so the API and
-# frontend can read the same enums.
-API_TYPES = ("openai", "anthropic", "ollama", "custom")
+# Allowed values — kept here as the source of truth for the API.
 ROLES = ("chat", "prefill", "vision", "embed", "rerank")
 
 ApiType = Literal["openai", "anthropic", "ollama", "custom"]
@@ -137,9 +135,6 @@ class RouteEntry(BaseModel):
 class RoutesPayload(BaseModel):
     """PUT /api/llm/routes — full routing table. Classes left out are cleared."""
     routes: dict[TaskClass, list[RouteEntry]]
-
-
-TIERS = ("fast", "standard", "frontier")
 
 
 class ModelProfile(BaseModel):

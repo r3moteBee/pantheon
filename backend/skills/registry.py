@@ -19,13 +19,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config import get_settings
 from security_log import sec_log
-from skills.models import LoadedSkill, ScanResult, SkillManifest, ProjectSkillSettings
+from skills.models import LoadedSkill, ScanResult, SkillManifest
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

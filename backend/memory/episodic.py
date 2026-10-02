@@ -439,27 +439,6 @@ class EpisodicMemory:
             })
         return results
 
-    async def search_by_date(
-        self,
-        project_id: str,
-        start_date: str,
-        end_date: str,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        """Search messages within a date range."""
-        with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT id, session_id, role, content, timestamp, metadata
-                FROM messages
-                WHERE project_id = ? AND timestamp >= ? AND timestamp <= ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            """, (project_id, start_date, end_date, limit)).fetchall()
-        return [
-            {**dict(r), "metadata": json.loads(r["metadata"] or "{}")}
-            for r in rows
-        ]
-
     async def get_recent_messages(
         self,
         project_id: str = "default",

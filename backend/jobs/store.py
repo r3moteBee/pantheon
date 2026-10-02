@@ -24,9 +24,6 @@ class JobStatus:
     CANCELLED = "cancelled"
     STALLED   = "stalled"
 
-    TERMINAL = {"completed", "failed", "cancelled", "stalled"}
-    ACTIVE   = {"queued", "running"}
-
 
 class JobNotFound(KeyError):
     pass
@@ -206,16 +203,6 @@ class JobStore:
                 (schedule_id,),
             ).fetchone()
         return self._hydrate(row) if row else None
-
-    def list_for_schedule(self, schedule_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        """Return all jobs that fired from this schedule, newest first."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT * FROM jobs WHERE schedule_id = ?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (schedule_id, limit),
-            ).fetchall()
-        return [self._hydrate(r) for r in rows]
 
     def list(
         self,

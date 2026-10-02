@@ -17,7 +17,6 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import httpx

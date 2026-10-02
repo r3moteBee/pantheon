@@ -15,10 +15,8 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from typing import Any, Awaitable, Callable
 
-import httpx
 
 from utils.http import pooled_client
 from utils.progress import report_progress
@@ -481,7 +479,7 @@ class MCPClient:
     async def test_connection(self) -> dict[str, Any]:
         """Test the connection by initializing and listing tools."""
         try:
-            init_result = await self.initialize()
+            await self.initialize()
             tools = await self.discover_tools()
             return {
                 "status": "ok",

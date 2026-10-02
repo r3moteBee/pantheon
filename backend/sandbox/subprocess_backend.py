@@ -1,6 +1,6 @@
 """SubprocessSandbox — local subprocess with timeout/memory limits.
 
-Runs ad-hoc agent code (the code_execute tool) in a subprocess.
+Runs ad-hoc agent code (the code_execute and run_command tools) in a subprocess.
 """
 from __future__ import annotations
 import asyncio

@@ -51,7 +51,7 @@ def _read_local(path: str) -> bytes:
 
 async def _download(url: str) -> bytes:
     try:
-        import httpx
+        import httpx  # noqa: F401  (availability check; safe_http_get uses it)
     except ImportError:
         raise RuntimeError(
             "httpx not installed. pip install httpx --break-system-packages"

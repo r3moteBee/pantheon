@@ -54,7 +54,7 @@ async def handle_coding_task(ctx: JobContext) -> dict[str, Any]:
 
     # Resolve repo binding for the project
     await ctx.heartbeat(progress="Resolving repo binding…")
-    from api.connections import get_project_repo_for_tools, get_token, mark_used, mark_error
+    from api.connections import get_project_repo_for_tools, get_token, mark_used
     spec = get_project_repo_for_tools(ctx.project_id)
     if not spec:
         return {"status": "failed",

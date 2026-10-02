@@ -302,7 +302,7 @@ async def _tool_save_transcript_artifact(ctx: ToolContext, tool_name: str, tool_
     memory_manager = ctx.memory_manager
     session_id = ctx.session_id
     effective_project = ctx.effective_project
-    from artifacts.store import get_store, is_text_type, project_slug as _ps_st
+    from artifacts.store import get_store, project_slug as _ps_st
     from artifacts import embedder as _emb_st
     from mcp_client.manager import get_mcp_manager
     import sqlite3 as _sqlite3st

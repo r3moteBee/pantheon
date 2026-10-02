@@ -225,7 +225,6 @@ async def export_preview(
         _collect_metadata,
         _collect_episodic,
         _collect_graph,
-        _collect_semantic,
         _collect_tasks,
         _collect_artifacts,
         workspace_dir,
@@ -320,8 +319,8 @@ async def import_project_endpoint(
 
 @router.get("/projects/{project_id}/export/debug")
 async def export_debug(project_id: str) -> dict[str, Any]:
-    check_project_id(project_id)
     """Diagnostic endpoint — shows what the exporter sees for each data source."""
+    check_project_id(project_id)
     from api.project_export import (
         _collect_metadata,
         _resolve_episodic_db_path,

@@ -8,7 +8,6 @@ import tempfile
 import uuid
 from unittest.mock import AsyncMock, patch
 
-import pytest
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="pantheon-tests-"))
 os.environ.setdefault("AUTH_PASSWORD", "")
@@ -16,7 +15,7 @@ os.environ.setdefault("AUTH_PASSWORD", "")
 from artifacts.store import get_store as get_artifact_store  # noqa: E402
 from jobs.store import get_store as get_job_store  # noqa: E402
 from jobs.context import JobContext  # noqa: E402
-from jobs.handlers import image_extraction  # noqa: E402  (registers handler)
+from jobs.handlers import image_extraction  # noqa: E402,F401  (registers handler)
 from jobs.handlers import get_handler  # noqa: E402
 
 

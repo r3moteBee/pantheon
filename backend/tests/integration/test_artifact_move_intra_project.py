@@ -32,7 +32,7 @@ def test_move_intra_project_changes_path_keeps_id(store):
 
 
 def test_move_intra_project_collision_suffixes(store):
-    a = store.create(project_id="p1", path="p1/a/foo.md", content="first",
+    store.create(project_id="p1", path="p1/a/foo.md", content="first",
                      content_type="text/markdown")
     b = store.create(project_id="p1", path="p1/b/foo.md", content="second",
                      content_type="text/markdown")

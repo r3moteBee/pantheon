@@ -20,7 +20,6 @@ from __future__ import annotations
 import inspect
 import os
 import re
-import textwrap
 from pathlib import Path
 
 import pytest

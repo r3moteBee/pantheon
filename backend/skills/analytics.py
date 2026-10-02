@@ -99,10 +99,6 @@ def get_all_stats() -> dict[str, dict[str, Any]]:
         return _load().get("skills", {})
 
 
-def get_stats(skill_name: str) -> dict[str, Any]:
-    return get_all_stats().get(skill_name, _empty_stats())
-
-
 def reset_stats(skill_name: str | None = None) -> None:
     with _LOCK:
         data = _load()

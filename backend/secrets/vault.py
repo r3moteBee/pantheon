@@ -1,13 +1,11 @@
 """Fernet-encrypted secrets vault backed by SQLite."""
 from __future__ import annotations
 import base64
-import hashlib
 import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes

@@ -27,7 +27,6 @@ def _ws_app():
 
 def _settings(password=""):
     import tempfile
-    from pathlib import Path
     return SimpleNamespace(
         auth_password=password, secret_key="s",
         cors_origins_list=["http://localhost:5173"],

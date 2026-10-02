@@ -575,14 +575,6 @@ class MCPManager:
                 return set(cfg.get("excluded_tools", []))
         return set()
 
-    def get_tool_names(self) -> list[str]:
-        """Get all available MCP tool names (prefixed)."""
-        names = []
-        for client in self._clients.values():
-            for tool in client.tools:
-                names.append(tool_function_name(client.name, tool["name"]))
-        return names
-
     def resolve_tool_call(self, prefixed_name: str) -> tuple[MCPClient, str] | None:
         """Resolve a prefixed tool name to (client, original_tool_name).
 

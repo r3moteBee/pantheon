@@ -4,8 +4,8 @@ Runs after conversations (or on a timer) to extract entities, facts,
 relationships, and user preferences from chat messages, then routes
 them to semantic and graph memory tiers automatically.
 
-Uses the prefill/curation model (Nemotron Nano or similar) to keep
-inference costs near zero while running on local hardware.
+Uses the "extract" task-class model (falling back to the agent model), so a
+small local model can do this work cheaply.
 """
 from __future__ import annotations
 
@@ -103,7 +103,7 @@ class MemoryExtractor:
         self.max_transcript_chars = max_transcript_chars
 
     def _get_provider(self):
-        """Get the curation model provider (prefill model preferred)."""
+        """Get the extraction model provider (extract class, else agent)."""
         if self._provider:
             return self._provider
         try:

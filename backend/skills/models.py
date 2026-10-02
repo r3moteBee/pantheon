@@ -215,11 +215,3 @@ class LoadedSkill(BaseModel):
             "scan_result": self.manifest.security_scan.model_dump() if self.manifest.security_scan else None,
         }
 
-
-# ── Project-level skill settings ────────────────────────────────────────────
-
-class ProjectSkillSettings(BaseModel):
-    """Per-project skill settings (stored in projects.json)."""
-    skill_discovery: SkillDiscoveryMode = SkillDiscoveryMode.off
-    enabled_skills: list[str] = Field(default_factory=list)
-    disabled_skills: list[str] = Field(default_factory=list)
