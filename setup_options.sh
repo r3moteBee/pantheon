@@ -359,7 +359,6 @@ EOF
   fi
 
   _env_set "SEARCH_URL" "http://localhost:${SEARXNG_PORT}"
-  _env_set "SEARCH_API_KEY" ""
   success "Pantheon configured to use SearXNG"
 else
   # If explicitly disabled in non-interactive flag execution or previously enabled but deselected

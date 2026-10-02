@@ -1,4 +1,4 @@
-.PHONY: help build up down logs restart clean dev-backend dev-frontend shell-backend migrate
+.PHONY: help build up down logs logs-backend logs-frontend restart restart-backend clean dev-backend dev-frontend shell-backend shell-db init-data setup ps test format lint
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -67,10 +67,10 @@ ps: ## Show running services
 test: ## Run backend tests
 	cd backend && python -m pytest tests/ -v
 
-format: ## Format Python code
+format: ## Format Python code (needs black + isort installed)
 	cd backend && black . && isort .
 
-lint: ## Lint Python code
+lint: ## Lint Python code (needs flake8 installed)
 	cd backend && flake8 . --max-line-length=100
 
 .DEFAULT_GOAL := help
