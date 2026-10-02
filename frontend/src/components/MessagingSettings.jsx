@@ -419,7 +419,6 @@ function TokenField({ label, value, onChange, tokenSet }) {
 function ChannelMappingTable({ channels, mappings, projects, defaultProject, onSetMapping, onRemoveMapping, onSetDefault }) {
   // Merge channels + mappings into a single view
   const rows = []
-  const mappedIds = new Set(mappings.map((m) => m.channel_id))
 
   // Channels from running adapters
   for (const ch of channels) {

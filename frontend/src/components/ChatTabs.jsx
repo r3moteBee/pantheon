@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useLayoutEffect, useRef, useState, useEffect } from 'react'
+import React, { Suspense, lazy, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useSearchParams } from 'react-router-dom'
 import {

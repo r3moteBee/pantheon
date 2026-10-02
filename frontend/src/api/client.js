@@ -50,12 +50,6 @@ export const authApi = {
 
 // Chat API
 export const chatApi = {
-  send: (message, sessionId, projectId) =>
-    api.post('/api/chat', { message, session_id: sessionId, project_id: projectId, stream: false }),
-  getHistory: (sessionId, projectId, limit = 50) =>
-    api.get('/api/chat/history', { params: { session_id: sessionId, project_id: projectId, limit } }),
-  getSessions: (projectId, limit = 20) =>
-    api.get('/api/chat/sessions', { params: { project_id: projectId, limit } }),
   /**
    * Upload a file as a chat attachment. Backend stores it in ArtifactStore
    * under chat-attachments/YYYY-MM-DD/ and, for images, enqueues a
@@ -79,12 +73,6 @@ export const chatApi = {
 
 // Memory API
 export const memoryApi = {
-  store: (content, tier, projectId, metadata = {}) =>
-    api.post('/api/memory/store', { content, tier, project_id: projectId, metadata }),
-  search: (query, projectId, tiers = ['semantic', 'episodic'], limit = 10) =>
-    api.post('/api/memory/search', { query, project_id: projectId, tiers, limit }),
-  audit: (tier, projectId) =>
-    api.get(`/api/memory/audit/${tier}`, { params: { project_id: projectId } }),
   listSemantic: (projectId, limit = 50, offset = 0) =>
     api.get('/api/memory/semantic', { params: { project_id: projectId, limit, offset } }),
   deleteSemantic: (docId, projectId) =>
@@ -93,24 +81,12 @@ export const memoryApi = {
     api.get('/api/memory/episodic/notes', { params: { project_id: projectId } }),
   listMessages: (projectId, limit = 50) =>
     api.get('/api/memory/episodic/messages', { params: { project_id: projectId, limit } }),
-  updateNote: (noteId, content) =>
-    api.put(`/api/memory/episodic/notes/${noteId}`, { content }),
   deleteNote: (noteId) =>
     api.delete(`/api/memory/episodic/notes/${noteId}`),
   deleteMessage: (messageId) =>
     api.delete(`/api/memory/episodic/messages/${messageId}`),
-  listGraphNodes: (projectId, nodeType) =>
-    api.get('/api/memory/graph/nodes', { params: { project_id: projectId, node_type: nodeType } }),
-  listGraphEdges: (projectId) =>
-    api.get('/api/memory/graph/edges', { params: { project_id: projectId } }),
-  createGraphNode: (nodeType, label, projectId, metadata = {}) =>
-    api.post('/api/memory/graph/nodes', { node_type: nodeType, label, project_id: projectId, metadata }),
   createGraphEdge: (labelA, labelB, relationship, projectId) =>
     api.post('/api/memory/graph/edges', { label_a: labelA, label_b: labelB, relationship, project_id: projectId }),
-  deleteGraphNode: (nodeId, projectId) =>
-    api.delete(`/api/memory/graph/nodes/${nodeId}`, { params: { project_id: projectId } }),
-  deleteGraphEdge: (edgeId, projectId) =>
-    api.delete(`/api/memory/graph/edges/${edgeId}`, { params: { project_id: projectId } }),
   listArchivalNotes: (projectId) =>
     api.get('/api/memory/archival/notes', { params: { project_id: projectId } }),
   readArchivalNote: (filename, projectId) =>
@@ -123,18 +99,12 @@ export const memoryApi = {
     api.get('/api/memory/archival/summary', { params: { project_id: projectId } }),
   updateArchivalSummary: (content, projectId) =>
     api.put('/api/memory/archival/summary', { content }, { params: { project_id: projectId } }),
-  consolidate: (projectId, sessionId) =>
-    api.post('/api/memory/consolidate', null, { params: { project_id: projectId, session_id: sessionId } }),
   graphFull: (projectId, type, limit = 500) =>
     api.get('/api/memory/graph/full', { params: { project_id: projectId, type, limit } }),
   graphPath: (projectId, from, to, opts = {}) =>
     api.get('/api/memory/graph/path', {
       params: { project_id: projectId, from, to, k: opts.k || 1, weighted: opts.weighted ? true : undefined },
     }),
-  reembed: (projectId) =>
-    api.post('/api/memory/reembed', null, { params: { project_id: projectId } }),
-  embeddingModelStats: (projectId) =>
-    api.get('/api/memory/embedding-model-stats', { params: { project_id: projectId } }),
 }
 
 export const systemApi = {
@@ -145,8 +115,6 @@ export const systemApi = {
 
 export const connectionsApi = {
   list: () => api.get('/api/connections/github'),
-  listRepos: (token) =>
-    api.post('/api/connections/github/repos', { token }),
   create: ({ token, repo, default_branch }) =>
     api.post('/api/connections/github', { token, repo, default_branch }),
   delete: (id) => api.delete(`/api/connections/github/${id}`),
@@ -168,11 +136,10 @@ export const projectSettingsApi = {
   update: (projectId, body) => api.put(`/api/projects/${projectId}/settings`, body),
 }
 
-// Phase H — unified jobs API
+// Unified jobs API
 export const jobsApi = {
   list: (params = {}) => api.get('/api/jobs', { params }),
   get: (id) => api.get(`/api/jobs/${id}`),
-  create: (body) => api.post('/api/jobs', body),
   cancel: (id) => api.post(`/api/jobs/${id}/cancel`),
   rerun: (id) => api.post(`/api/jobs/${id}/rerun`),
   delete: (id) => api.delete(`/api/jobs/${id}`),
@@ -181,15 +148,11 @@ export const jobsApi = {
 export const conversationsApi = {
   list: (projectId, limit = 50) =>
     api.get('/api/conversations', { params: { project_id: projectId, limit } }),
-  get: (sessionId, projectId) =>
-    api.get(`/api/conversations/${sessionId}`, { params: { project_id: projectId } }),
   resume: (sessionId, projectId) =>
     api.post(`/api/conversations/${sessionId}/resume`, null, { params: { project_id: projectId } }),
   delete: (sessionId) => api.delete(`/api/conversations/${sessionId}`),
   saveAsArtifact: (sessionId, projectId, body = {}) =>
     api.post(`/api/conversations/${sessionId}/save-as-artifact`, body, { params: { project_id: projectId } }),
-  updateMetadata: (sessionId, metadata, projectId) =>
-    api.put(`/api/conversations/${sessionId}/metadata`, metadata, { params: { project_id: projectId } }),
 }
 
 export const artifactsApi = {
@@ -216,66 +179,24 @@ export const artifactsApi = {
     return api.post('/api/artifacts/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
   update: (id, body) => api.patch(`/api/artifacts/${id}`, body),
-  rename: (id, new_path) => api.post(`/api/artifacts/${id}/rename`, { new_path }),
   move: (id, dest_folder, { dest_project_id = null, mode = 'move' } = {}) =>
     api.post(`/api/artifacts/${id}/move`, { dest_folder, dest_project_id, mode }),
   moveBulk: (ids, dest_folder, { dest_project_id = null, mode = 'move' } = {}) =>
     api.post('/api/artifacts/bulk/move', { ids, dest_folder, dest_project_id, mode }),
   pin: (id, pinned) => api.post(`/api/artifacts/${id}/pin`, { pinned }),
   delete: (id) => api.delete(`/api/artifacts/${id}`),
-  restore: (id) => api.post(`/api/artifacts/${id}/restore`),
   versions: (id) => api.get(`/api/artifacts/${id}/versions`),
-  getVersion: (id, n) => api.get(`/api/artifacts/${id}/versions/${n}`),
   diff: (id, a, b) => api.get(`/api/artifacts/${id}/diff`, { params: { a, b } }),
   restoreVersion: (id, n) => api.post(`/api/artifacts/${id}/versions/${n}/restore`),
-  bulkTags: (ids, tags, add = true) => api.post('/api/artifacts/bulk/tags', { ids, tags, add }),
   bulkDelete: (ids) => api.post('/api/artifacts/bulk/delete', { ids }),
   bulkExport: (ids) =>
     api.post('/api/artifacts/bulk/export', { ids }, { responseType: 'blob' }),
-  exportAll: (projectId) =>
-    api.get('/api/artifacts/export-all', {
-      params: { project_id: projectId }, responseType: 'blob',
-    }),
 }
 
 // Files API
 export const filesApi = {
-  list: (projectId, path = '') =>
-    api.get('/api/files', { params: { project_id: projectId, path } }),
   read: (path, projectId) =>
     api.get('/api/files/read', { params: { path, project_id: projectId } }),
-  write: (path, content, projectId) =>
-    api.put('/api/files/write', { content }, { params: { path, project_id: projectId } }),
-  upload: (file, projectId, path = '') => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return api.post('/api/files/upload', formData, {
-      params: { project_id: projectId, path },
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-  },
-  uploadMultiple: (files, projectId, path = '') => {
-    const formData = new FormData()
-    for (const file of files) {
-      formData.append('files', file)
-    }
-    return api.post('/api/files/upload-multiple', formData, {
-      params: { project_id: projectId, path },
-      headers: { 'Content-Type': 'multipart/form-data' },
-    })
-  },
-  delete: (path, projectId) =>
-    api.delete('/api/files', { params: { path, project_id: projectId } }),
-  mkdir: (path, projectId) =>
-    api.post('/api/files/mkdir', null, { params: { path, project_id: projectId } }),
-  downloadZip: (paths, projectId) =>
-    api.post('/api/files/download-zip', { paths }, {
-      params: { project_id: projectId },
-      responseType: 'blob',
-    }),
-  downloadUrl: (path, projectId) => {
-    return `${BASE_URL}/api/files/download?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}`
-  },
   viewUrl: (path, projectId) => {
     return `${BASE_URL}/api/files/view?path=${encodeURIComponent(path)}&project_id=${encodeURIComponent(projectId)}`
   },
@@ -381,14 +302,10 @@ export const skillsApi = {
   scanAll: (aiReview = false) =>
     api.post('/api/skills/scan/all', null, { params: { ai_review: aiReview } }),
   scanSummary: () => api.get('/api/skills/scan/summary'),
-  quarantine: (skillName) => api.post(`/api/skills/${skillName}/quarantine`),
   listQuarantined: () => api.get('/api/skills/quarantine/list'),
   unquarantine: (skillName) => api.post(`/api/skills/${skillName}/unquarantine`),
-  getDiscovery: (projectId) => api.get(`/api/skills/discovery/${projectId}`),
-  setDiscovery: (projectId, mode) =>
-    api.put(`/api/skills/discovery/${projectId}`, null, { params: { mode } }),
 
-  // AI-Assisted Editor (Phase 4)
+  // AI-assisted editor
   createBlank: (name, description = '') =>
     api.post('/api/skills/editor/blank', { name, description }),
   listFiles: (skillName) =>
@@ -416,19 +333,13 @@ export const skillsApi = {
   renameFile: (skillName, oldPath, newPath) =>
     api.post(`/api/skills/editor/${skillName}/file/rename`, { old_path: oldPath, new_path: newPath }),
 
-  // Phase 5: versioning, sharing, analytics, publishing
+  // Versioning, analytics, publishing
   listVersions: (skillName) =>
     api.get(`/api/skills/editor/${skillName}/versions`),
-  listVersionFiles: (skillName, versionId) =>
-    api.get(`/api/skills/editor/${skillName}/versions/${versionId}/files`),
-  readVersionFile: (skillName, versionId, path) =>
-    api.get(`/api/skills/editor/${skillName}/versions/${versionId}/file`, { params: { path } }),
   restoreVersion: (skillName, versionId) =>
     api.post(`/api/skills/editor/${skillName}/versions/${versionId}/restore`),
   exportUrl: (skillName) => `/api/skills/editor/${skillName}/export`,
   getAnalytics: () => api.get('/api/skills/analytics'),
-  resetAnalytics: (skill = null) =>
-    api.post('/api/skills/analytics/reset', null, { params: skill ? { skill } : {} }),
   publishSkill: (skillName, registryId, note = '') =>
     api.post(`/api/skills/editor/${skillName}/publish`, { registry_id: registryId, note }),
   testSkill: (skillName, message) =>
@@ -460,26 +371,19 @@ export const skillsApi = {
 
 // Tasks API
 export const tasksApi = {
-  list: (projectId) => api.get('/api/tasks', { params: { project_id: projectId } }),
   listAll: () => api.get('/api/tasks/all'),
-  create: (name, description, schedule, projectId) =>
-    api.post('/api/tasks', { name, description, schedule, project_id: projectId }),
   cancel: (taskId) => api.delete(`/api/tasks/${taskId}`),
   runNow: (taskId) => api.post(`/api/tasks/${taskId}/run-now`),
   approve: (taskId) => api.post(`/api/tasks/${taskId}/approve`),
   updatePlan: (taskId, plan) => api.patch(`/api/tasks/${taskId}/plan`, { plan }),
   getLogs: (taskId, projectId) =>
     api.get(`/api/tasks/${taskId}/logs`, { params: { project_id: projectId } }),
-  getAllLogs: (projectId) =>
-    api.get('/api/tasks/logs/all', { params: { project_id: projectId } }),
 }
 
 // Personas API
 export const personasApi = {
   list: () => api.get('/api/personas').then((r) => r.data),
-  get: (personaId) => api.get(`/api/personas/${personaId}`).then((r) => r.data),
   create: (data) => api.post('/api/personas', data).then((r) => r.data),
-  update: (personaId, data) => api.put(`/api/personas/${personaId}`, data).then((r) => r.data),
   delete: (personaId) => api.delete(`/api/personas/${personaId}`).then((r) => r.data),
   apply: (personaId, projectId) =>
     api.post(`/api/personas/${personaId}/apply/${projectId}`).then((r) => r.data),
@@ -493,7 +397,6 @@ export const personalityApi = {
   getAgent: (projectId) => api.get('/api/personality/agent', { params: { project_id: projectId } }),
   updateAgent: (content, projectId) =>
     api.put('/api/personality/agent', { content }, { params: { project_id: projectId } }),
-  status: () => api.get('/api/personality/status'),
   // Project: drop its override (follow global). Global: restore bundled files.
   reset: (projectId) => api.post('/api/personality/reset', null, { params: { project_id: projectId } }),
 }
@@ -541,7 +444,6 @@ export const messagingApi = {
   restartAdapter: (name) => api.post(`/api/messaging/${name}/restart`),
   getChannels: () => api.get('/api/messaging/channels'),
   getMappings: () => api.get('/api/messaging/mappings'),
-  updateMappings: (mappings) => api.put('/api/messaging/mappings', { mappings }),
   setMapping: (channelId, projectId) =>
     api.put(`/api/messaging/mappings/${encodeURIComponent(channelId)}`, { project_id: projectId }),
   removeMapping: (channelId) =>
@@ -551,7 +453,6 @@ export const messagingApi = {
     api.put('/api/messaging/default-project', { project_id: projectId }),
 }
 
-// WebSocket helper
 // ── Persistent chat WebSocket ──────────────────────────────────────────────
 // Kept as a module-level singleton so page navigation within the SPA doesn't
 // tear it down while the agent is still processing a long-running tool call.
@@ -608,9 +509,4 @@ export function createChatSocket(onMessage, onClose) {
 
   _chatSocket = socket
   return socket
-}
-
-export function closeChatSocket() {
-  if (_chatSocket) { try { _chatSocket.close(1000) } catch {} }
-  _cleanupSocket()
 }

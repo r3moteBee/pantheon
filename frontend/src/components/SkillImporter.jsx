@@ -1,8 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Download, Search, Globe, Github, FileArchive, Upload, X,
-  Loader2, ShieldCheck, ShieldX, AlertTriangle, ExternalLink,
-  Package, CheckCircle2,
+  Loader2, ShieldX, AlertTriangle, CheckCircle2,
 } from 'lucide-react'
 import { skillsApi } from '../api/client'
 

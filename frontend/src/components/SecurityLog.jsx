@@ -17,6 +17,7 @@ const EVENT_CONFIG = {
   'skill.unquarantined':         { icon: ShieldCheck, color: 'text-amber-400', label: 'Unquarantined' },
   'skill.deleted':               { icon: Trash2, color: 'text-red-400', label: 'Skill deleted' },
   'skill.name_collision_blocked': { icon: AlertTriangle, color: 'text-amber-400', label: 'Name collision blocked' },
+  // No longer emitted (there is no skill executor); kept so older log entries still get labels.
   'skill.execution_start':       { icon: Zap, color: 'text-blue-400', label: 'Script started' },
   'skill.execution_timeout':     { icon: AlertTriangle, color: 'text-amber-400', label: 'Script timeout' },
   'skill.execution_failed':      { icon: ShieldX, color: 'text-red-400', label: 'Script failed' },

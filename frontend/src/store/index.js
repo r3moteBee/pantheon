@@ -11,7 +11,7 @@ const _initialProjectId = (() => {
 })()
 
 
-export const useStore = create((set, get) => ({
+export const useStore = create((set) => ({
   // Active project
   activeProject: { id: _initialProjectId, name: '' },
   setActiveProject: (project) => {
@@ -70,15 +70,6 @@ export const useStore = create((set, get) => ({
   projects: [],
   setProjects: (projects) => set({ projects }),
 
-  // Settings
-  settings: null,
-  setSettings: (s) => set({ settings: s }),
-
-  // Skills
-  skills: [],
-  setSkills: (skills) => set({ skills }),
-  activeSkill: null,
-  setActiveSkill: (skill) => set({ activeSkill: skill }),
   // Sidebar open/closed (mobile)
   sidebarOpen: false,
   setSidebarOpen: (v) => set({ sidebarOpen: v }),
