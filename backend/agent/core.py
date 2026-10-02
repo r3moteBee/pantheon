@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.freshness import needs_fresh_facts, unknown_entities
+from agent.freshness import needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
@@ -465,6 +465,12 @@ class AgentCore:
                             "Pre-recall exceeded %.1fs, answering without memory context "
                             "(PRE_RECALL_TIMEOUT_SECONDS)", recall_budget,
                         )
+                    if results and wants_self_description(user_message):
+                        # Pantheon's own state comes from get_self_documentation; an earlier
+                        # reply of ours about it may be wrong and was being repeated
+                        # (2026-10-02: a generic "Microsoft Agent Framework" answer).
+                        results = [r for r in results
+                                   if not (r.get("tier") == "episodic" and str(r.get("content", "")).startswith("[assistant]"))]
                     if results:
                         recalled_memories = results
                         logger.debug("Pre-recalled %d memories for context", len(results))
@@ -580,6 +586,24 @@ class AgentCore:
             # letting round 1 decide - saves a whole model round (~1.5 s with
             # thinking), and round 1 streams its answer instead of being held.
             pre_searched = False
+            # "Describe your configuration / this harness / your tools": read Pantheon's
+            # real state before round 1 instead of answering from memory or the web.
+            if "get_self_documentation" in tool_names and wants_self_description(user_message):
+                sd = {"type": "tool_call", "id": f"auto-selfdoc-{uuid.uuid4().hex[:8]}",
+                      "name": "get_self_documentation", "args": {}}
+                logger.info("Self-description question - reading get_self_documentation first")
+                yield sd
+                result = await execute_tool(
+                    tool_name="get_self_documentation", tool_args={}, memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                yield {"type": "tool_result", "name": "get_self_documentation", "result": result,
+                       "tool_id": sd["id"], "is_error": tool_results.is_error(result)}
+                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": sd["id"], "type": "function", "function": {"name": "get_self_documentation", "arguments": "{}"}}]})
+                messages.append({"role": "tool", "tool_call_id": sd["id"],
+                                 "content": tool_results.for_model("get_self_documentation", result)})
             if fresh_question and get_settings().agent_pre_search:
                 # Time-sensitive questions get the current month/year in the query:
                 # with the user's bare words ("Who is the current PM of the UK?")
@@ -590,6 +614,7 @@ class AgentCore:
                 dated = not entities and not _VERSION_Q.search(user_message)
                 q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
                 pre = _auto_search_call(q)
+                logger.info("Pre-search for a time-sensitive / unfamiliar-name question: %r", q)
                 yield pre
                 result = await execute_tool(
                     tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,

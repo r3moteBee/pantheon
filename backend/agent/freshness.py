@@ -13,11 +13,16 @@ from __future__ import annotations
 import re
 
 _FRESH_RE = re.compile(
-    # explicit time / recency
-    r"\b(latest|newest|current(ly)?|today|tonight|tomorrow|yesterday|right now|this (week|month|year|season)"
+    # explicit time / recency ("current" only next to something that changes in the world - see below)
+    r"\b(latest|newest|today|tonight|tomorrow|yesterday|right now|this (week|month|year|season)"
     r"|last (night|week|month|weekend)|recent(ly)?|most recent|news|breaking|so far|still|anymore|nowadays)\b"
+    r"|\bcurrent(ly)?\s+(?:\w+\s+){0,2}?(price|prices|rate|rates|version|release|status|weather|forecast|score|standings"
+    r"|leader|president|prime minister|pm|chancellor|pope|ceo|cfo|cto|mp|mayor|governor|champion|record|population|events?"
+    r"|news|government|holder)\b"
     # values that move
-    r"|\b(price|prices|rate|rates|exchange rate|stock|weather|forecast|score|standings|polls?|results?|won|winner)\b"
+    r"|\b(price|prices|stock price|exchange rate|weather|forecast|score|standings|polls?|election|won|winner)\b"
+    r"|\b(interest|exchange|deposit|mortgage|inflation|unemployment|tax|policy|refinancing|facility|base)\s+rates?\b"
+    r"|\b(election|race|match|game|vote|poll)\s+results?\b"
     # who holds an office or title now ("Who is the prime minister of Japan?")
     r"|\bwho(?:'s| is| are)\s+(?:the\s+)?(?:current\s+)?(president|prime minister|premier|chancellor|pope|king|queen"
     r"|monarch|ceo|chair(man|woman|person)?|leader|head of|governor|mayor|speaker|secretary[- ]general|minister"
@@ -25,9 +30,33 @@ _FRESH_RE = re.compile(
     re.I,
 )
 
+# Questions about Pantheon itself or the user's own things are never "look it up on
+# the web": "describe the current configuration (of this agent harness)" was answered
+# from Windows and Microsoft Agent Framework pages because "current" forced a search
+# (2026-10-02). The agent has its own tools for these (get_self_documentation,
+# recall, list_artifacts, ...).
+_SELF_RE = re.compile(
+    r"\b(?:your|yourself|yourselves)\s+(?:own\s+)?(?:config(?:uration)?|settings?|setup|set-up|tools?|capabilit(?:y|ies)|memor(?:y|ies)"
+    r"|instructions?|system prompt|prompt|model|models|version|skills?|name|personality|persona|limits?|features?|architecture)\b"
+    r"|\babout (?:you|yourself)\b"
+    r"|\bthe current (?:config(?:uration)?|setup|set-up|settings)\b(?!\s+(?:of|for|in|on)\b)"
+    r"|\b(?:what|which) (?:tools?|models?|llms?|skills?|capabilit(?:y|ies)|version|memory|settings?) (?:do|are|can|did|have) you\b"
+    r"|\b(?:are|is) you running\b|\byou(?:'re| are)? running on\b|\bwhat are you running\b"
+    r"|\b(?:this|the) (?:agent|assistant|harness|agent harness|system|bot|chat|conversation|session|project|workspace|server"
+    r"|setup|deployment|instance|app|tool)\b"
+    r"|\bpantheon\b"
+    r"|\bmy (?:own )?(?:projects?|files?|notes?|memor(?:y|ies)|config(?:uration)?|settings?|setup|tasks?|jobs?|artifacts?"
+    r"|workspace|account|data|conversations?|chats?|documents?|uploads?)\b",
+    re.I,
+)
+
+
+def about_self(message: str) -> bool:
+    return bool(_SELF_RE.search(message or ""))
+
 
 def needs_fresh_facts(message: str) -> bool:
-    return bool(_FRESH_RE.search(message or ""))
+    return bool(_FRESH_RE.search(message or "")) and not about_self(message)
 
 
 # ── Names the model may not know ─────────────────────────────────────────────
@@ -59,6 +88,8 @@ _COMMON = set("""I I'm I've Me My We Our You Your It Its This That These Those T
 
 def unknown_entities(message: str, known: set[str] | None = None) -> list[str]:
     """Names in an entity question / "use X" request, minus Pantheon's own tools/skills (``known``, lower-case)."""
+    if about_self(message):
+        return []
     known = {k.lower() for k in (known or set())}
     out = []
     for rx in _ENTITY_RES:
@@ -70,3 +101,17 @@ def unknown_entities(message: str, known: set[str] | None = None) -> list[str]:
             if name not in out:
                 out.append(name)
     return out
+
+
+# Self-description questions get Pantheon's real state first: with only the web
+# search suppressed, "describe the current configuration of this agent harness"
+# was still answered from a recalled earlier (wrong) reply, without any tool.
+_SELF_DESCRIBE_RE = re.compile(
+    r"\b(config(?:uration|ured)?|settings?|set ?up|architecture|tools?|capabilit(?:y|ies)|version|models?|"
+    r"memory (?:system|tiers?|setup)|how (?:are|is) (?:you|it|this|pantheon) (?:set up|configured|built|running))\b",
+    re.I,
+)
+
+
+def wants_self_description(message: str) -> bool:
+    return about_self(message) and bool(_SELF_DESCRIBE_RE.search(message or ""))

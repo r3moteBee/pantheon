@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -153,3 +153,78 @@ async def test_pre_search_uses_the_name_for_unknown_entities_and_skips_other_tur
 async def test_version_questions_pre_search_without_a_date():
     _, calls, _ = await _run("What's the latest stable version of PostgreSQL?", pre=True)
     assert calls[0] == ("web_search", {"query": "What's the latest stable version of PostgreSQL?"})
+
+
+# ── Questions about Pantheon itself / the user's own things (2026-10-02 regression) ──
+
+@pytest.mark.parametrize("msg", [
+    "describe the current configuration", "describe the current configuration of this agent harness",
+    "What is your current configuration?", "What tools do you have?", "What's in my current project?",
+    "Summarize my notes from today's meeting", "Show me the results of my last task", "Rate my essay",
+    "What model are you running on?", "How is Pantheon configured right now?",
+])
+def test_questions_about_pantheon_or_the_user_are_not_web_lookups(msg):
+    from agent.freshness import needs_fresh_facts, unknown_entities
+    assert not needs_fresh_facts(msg) and unknown_entities(msg) == []
+
+
+@pytest.mark.parametrize("msg", [
+    "Can you tell me who the current PM of Japan is?", "What's the current price of bitcoin?",
+    "How did the election results turn out?", "What is the ECB's current deposit facility rate?",
+])
+def test_world_facts_with_current_still_are(msg):
+    from agent.freshness import needs_fresh_facts
+    assert needs_fresh_facts(msg)
+
+
+@pytest.mark.asyncio
+async def test_describe_the_current_configuration_does_not_search():
+    text, calls, _ = await _run("describe the current configuration of this agent harness", pre=True)
+    assert calls == []
+
+
+@pytest.mark.parametrize("msg,want", [
+    ("describe the current configuration of this agent harness", True), ("What tools do you have?", True),
+    ("describe the current configuration", True), ("What's the current configuration of nginx on Ubuntu?", False),
+    ("How is Pantheon configured right now?", True), ("What model are you running on?", True),
+    ("Summarize my notes from today's meeting", False), ("Who is the current Pope?", False), ("Rate my essay", False),
+])
+def test_self_description_questions(msg, want):
+    from agent.freshness import wants_self_description
+    assert wants_self_description(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_self_description_reads_pantheon_s_own_docs_first():
+    from agent.core import AgentCore
+    from config import get_settings
+    prov = _Prov()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "get_self_documentation")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_name"]); return "Pantheon self-doc: model routes ..."
+    with patch.object(get_settings(), "agent_thinking", False), patch("agent.core.get_all_tool_schemas", return_value=tools), \
+         patch("agent.core.build_system_prompt", return_value="sys"), patch("agent.core.execute_tool", fake_exec):
+        [e async for e in agent.chat("describe the current configuration of this agent harness")]
+    assert calls == ["get_self_documentation"]
+    assert prov.seen[0][-1]["role"] == "tool"            # round 1 already has Pantheon's own state
+
+
+
+@pytest.mark.asyncio
+async def test_self_description_drops_our_own_earlier_replies_from_recall():
+    from agent.core import AgentCore
+    from config import get_settings
+    from types import SimpleNamespace
+    prov = _Prov()
+    mgr = SimpleNamespace(recall=AsyncMock(return_value=[
+        {"tier": "episodic", "content": "[assistant] This harness follows Microsoft Agent Framework...", "score": 0.9},
+        {"tier": "episodic", "content": "[user] I set the agent model to qwen", "score": 0.8}]))
+    agent = AgentCore(provider=prov, memory_manager=mgr, project_id="p", session_id="s")
+    with patch.object(get_settings(), "agent_thinking", False), patch("agent.core.get_all_tool_schemas", return_value=[]), \
+         patch("agent.core.build_system_prompt", return_value="sys"):
+        [e async for e in agent.chat("describe the current configuration of this agent harness")]
+    sent = prov.seen[0][-1]["content"]
+    assert "Microsoft Agent Framework" not in sent and "qwen" in sent
