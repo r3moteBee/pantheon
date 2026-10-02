@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.freshness import needs_fresh_facts, unknown_entities, wants_self_description
+from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
@@ -152,6 +152,19 @@ def _skill_names() -> set[str]:
         return set()
 
 
+def _with_sampling(kw: dict) -> dict:
+    """Add AGENT_PRESENCE_PENALTY (when set) to a model call's extra_body."""
+    p = get_settings().agent_presence_penalty
+    if not p:
+        return kw
+    return {**kw, "extra_body": {**(kw.get("extra_body") or {}), "presence_penalty": p}}
+
+
+WEB_BUDGET_NOTE = ("[Pantheon notice] That was {n} web lookups for this message - enough. Do not search again. "
+                   "Write your answer now from what the results above show. For anything you could not verify, say so "
+                   "and name the page where the user can find it.")
+CUT_OFF_NOTE = ("\n\n*(This reply reached the length limit and was cut off here. "
+                "Ask for a smaller part - one state, one section - to get the rest.)*")
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
 
 
@@ -370,6 +383,32 @@ class AgentCore:
             if isinstance(m.get("content"), str):
                 texts.add(m["content"].strip())
         return texts
+
+    async def _standalone_query(self, message: str, prior: list[dict]) -> str:
+        """A follow-up ("and AMD?") as a standalone web query, written by the
+        model from the last few messages; the previous question + the follow-up
+        if that fails."""
+        last_user = next((str(m.get("content") or "") for m in reversed(prior) if m.get("role") == "user"), "")
+        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else message
+        lines = [f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in prior[-4:]]
+        prompt = ("Conversation so far:\n" + "\n".join(lines) + f"\n\nLatest user message: {message}\n\n"
+                  "Write ONE web search query (at most 12 words) that finds what the latest message asks for. "
+                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. "
+                  "Reply with the query only.")
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
+        try:
+            r = await asyncio.wait_for(self.provider.chat_complete(
+                [{"role": "user", "content": prompt}], extra_body=extra), timeout=10)
+            q = (r.get("content") or "").strip().splitlines()[0].strip(' "\'`*') if (r.get("content") or "").strip() else ""
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.info("standalone query rewrite failed: %s", e)
+            q = ""
+        if not q or len(q) > 200:
+            q = fallback
+        logger.info("Follow-up about current facts - searching %r", q)
+        return q
 
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
@@ -595,6 +634,13 @@ class AgentCore:
                 entities = unknown_entities(user_message, tool_names | _skill_names())
                 fresh_question = bool(entities)
             auto_query = f"What is {entities[0]}?" if entities else user_message
+            # ...or a follow-up in a conversation about current facts ("and Docker Engine?",
+            # "can you do a similar breakdown for the house?"): searched as a standalone query
+            if get_settings().agent_force_search and "web_search" in tool_names and not fresh_question \
+                    and not _user_urls(user_message) \
+                    and followup_needs_fresh(user_message, self.working_memory[:-1]):
+                fresh_question = True
+                auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
 
             results_seen = False
             # Search first (AGENT_PRE_SEARCH): for a question the guard above would
@@ -653,7 +699,8 @@ class AgentCore:
                 # 44 -> 28/45); the model's own queries carried the date.
                 # Not for version questions: they get release tables (agent/release_facts.py),
                 # and "... PostgreSQL October 2026" pulled beta announcements (19.0 Beta 4).
-                dated = not entities and not _VERSION_Q.search(user_message)
+                dated = (not entities and not _VERSION_Q.search(user_message) and not _VERSION_Q.search(auto_query)
+                         and not re.search(r"\b20\d\d\b", auto_query))
                 q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
                 pre = _auto_search_call(q)
                 logger.info("Pre-search for a time-sensitive / unfamiliar-name question: %r", q)
@@ -673,6 +720,13 @@ class AgentCore:
                                  "content": tool_results.for_model("web_search", result)})
                 fresh_question = False          # nothing left for the round-1 guard to do
                 pre_searched = True             # round 1 keeps thinking: it reasons over dated evidence
+            # Web lookup budget for a chat turn (AGENT_WEB_BUDGET): asked for every Ohio
+            # district with both candidates, the agent searched district by district
+            # with guessed names - 48 lookups, 3 minutes, no answer it could stand
+            # behind (2026-10-02). Past the budget it must answer from what it has.
+            web_budget = get_settings().agent_web_budget if self.interactive else 0
+            web_calls = 1 if pre_searched else 0
+            wrap_up = False
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
@@ -684,10 +738,13 @@ class AgentCore:
                         and not (pre_searched and iterations == 1):
                     round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
+                if wrap_up:
+                    round_kw = {**round_kw, "extra_body": {**(round_kw.get("extra_body") or {}), "tool_choice": "none"}}
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
                 round_reasoning = ""
+                round_finish = None
 
                 if stream:
                     # Streaming mode. A reply that starts like a textual tool
@@ -701,7 +758,7 @@ class AgentCore:
                         messages=messages,
                         tools=all_tools,
                         stream=True,
-                        **round_kw,
+                        **_with_sampling(round_kw),
                     ):
                         self._progress()
                         if chunk["type"] == "text_delta":
@@ -725,6 +782,7 @@ class AgentCore:
                             stream_error = True
                         elif chunk["type"] == "done":
                             round_reasoning = chunk.get("reasoning") or ""
+                            round_finish = chunk.get("finish_reason")
                     if held and not stream_error and not tool_calls_this_round:
                         recovered = recover_tool_calls(held, tool_names)
                         if recovered:
@@ -750,7 +808,7 @@ class AgentCore:
                     response = await self.provider.chat_complete(
                         messages=messages,
                         tools=all_tools,
-                        **round_kw,
+                        **_with_sampling(round_kw),
                     )
                     current_text = response.get("content", "")
                     round_reasoning = response.get("reasoning") or ""
@@ -778,6 +836,12 @@ class AgentCore:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
 
+                if wrap_up and tool_calls_this_round:
+                    # llama.cpp may not enforce tool_choice "none": the budget is ours
+                    logger.info("Web budget spent - dropping %d more tool call(s)", len(tool_calls_this_round))
+                    tool_calls_this_round = []
+                    if not (current_text or "").strip() and not round_reasoning.strip():
+                        round_reasoning = "(I have made enough lookups; I answer from the results above.)"
                 if (not tool_calls_this_round and not (current_text or "").strip()
                         and round_reasoning.strip()):
                     # A thinking model ended its turn with the answer inside its
@@ -801,7 +865,14 @@ class AgentCore:
                     full_response = current_text
 
                 if not tool_calls_this_round:
-                    # No tool calls, we're done
+                    # No tool calls, we're done. A reply that ran into max_tokens
+                    # says so instead of ending mid-table: the House breakdown hit
+                    # the cap three times in a row, cut off without a word (2026-10-02).
+                    if round_finish == "length" and current_text.strip():
+                        note = CUT_OFF_NOTE
+                        yield {"type": "text_delta", "content": note}
+                        current_text += note
+                        full_response = current_text
                     break
 
                 # Add assistant message with tool calls to conversation
@@ -866,6 +937,12 @@ class AgentCore:
                         "tool_call_id": tool_id,
                         "content": tool_results.for_model(tool_name, result),
                     })
+
+                web_calls += sum(1 for tc in tool_calls_this_round if tc["name"] in ("web_search", "web_fetch"))
+                if web_budget and web_calls >= web_budget and not wrap_up:
+                    wrap_up = True
+                    logger.info("Web budget reached (%d lookups) - asking for the answer now", web_calls)
+                    messages.append({"role": "user", "content": WEB_BUDGET_NOTE.format(n=web_calls)})
 
                 # Re-anchor: long tool loops bury the original instructions
                 # under accumulated tool output and models drift from them
@@ -956,7 +1033,7 @@ class AgentCore:
             extra["tool_choice"] = "none"
         try:
             kw = {"extra_body": extra} if extra else {}
-            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **kw)
+            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **_with_sampling(kw))
             text = (r.get("content") or "").strip()
             logger.info("Finalized an empty thinking-mode reply (%d chars)", len(text))
             return text
@@ -979,7 +1056,7 @@ class AgentCore:
         kw = {"extra_body": extra} if extra else {}
         n = 0
         try:
-            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **kw):
+            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **_with_sampling(kw)):
                 if chunk.get("type") == "text_delta" and chunk.get("content"):
                     n += len(chunk["content"])
                     yield chunk["content"]

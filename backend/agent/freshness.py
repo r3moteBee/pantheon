@@ -18,15 +18,17 @@ _FRESH_RE = re.compile(
     r"|last (night|week|month|weekend)|recent(ly)?|most recent|news|breaking|so far|still|anymore|nowadays)\b"
     r"|\bcurrent(ly)?\s+(?:\w+\s+){0,2}?(price|prices|rate|rates|version|release|status|weather|forecast|score|standings"
     r"|leader|president|prime minister|pm|chancellor|pope|ceo|cfo|cto|mp|mayor|governor|champion|record|population|events?"
-    r"|news|government|holder)\b"
+    r"|news|government|holder|senator|representative|congress(?:wo)?m[ae]n|justice|cabinet|minister)s?\b"
     # values that move
-    r"|\b(price|prices|stock price|exchange rate|weather|forecast|score|standings|polls?|election|won|winner)\b"
+    r"|\b(price|prices|stock price|exchange rate|weather|forecast|score|standings|polls?|polling|election|elections|midterms?"
+    r"|primaries|primary (?:election|race|results?)|won|winner)\b"
+    r"|\bupcoming (?:\w+\s+){0,2}?(?:elections?|races?|votes?|launch(?:es)?|releases?|match(?:es)?|games?|fights?|events?)\b"
     r"|\b(interest|exchange|deposit|mortgage|inflation|unemployment|tax|policy|refinancing|facility|base)\s+rates?\b"
     r"|\b(election|race|match|game|vote|poll)\s+results?\b"
     # who holds an office or title now ("Who is the prime minister of Japan?")
     r"|\bwho(?:'s| is| are)\s+(?:the\s+)?(?:current\s+)?(president|prime minister|premier|chancellor|pope|king|queen"
     r"|monarch|ceo|chair(man|woman|person)?|leader|head of|governor|mayor|speaker|secretary[- ]general|minister"
-    r"|champion|coach|manager|owner)\b",
+    r"|champion|coach|manager|owner)s?\b",
     re.I,
 )
 
@@ -115,3 +117,65 @@ _SELF_DESCRIBE_RE = re.compile(
 
 def wants_self_description(message: str) -> bool:
     return about_self(message) and bool(_SELF_DESCRIBE_RE.search(message or ""))
+
+
+# ── Follow-ups inherit the lookup ────────────────────────────────────────────
+#
+# "can you do a similar breakdown for the house?" right after two searched
+# questions about the Senate races has no time words of its own, so it went to
+# the quick route unsearched, filled a 435-seat table from memory until
+# max_tokens and repeated "Greg Landsman" across Ohio districts (2026-10-02).
+# "and Docker Engine?" after "latest Kubernetes version" answered v27.1.1
+# (2024). A short follow-up in a conversation about current facts is itself
+# about current facts - unless it's an acknowledgement or asks to reshape the
+# answer already given.
+_ACK_RE = re.compile(
+    r"^\W*(?:(?:ok(?:ay)?|k|thanks?|thank you|thx|ty|cheers|cool|great|nice|perfect|got it|awesome|sounds good|"
+    r"makes sense|good|wow|lol|haha|interesting|i see|understood|noted|sure|yes|yep|yeah|no|nope|bye|so|very|much"
+    r"|that'?s|it|helpful|all|for now)\W*)+$",
+    re.I,
+)
+# reshaping what was already said needs no new facts
+_RESHAPE_RE = re.compile(
+    r"\b(summari[sz]e|rewrite|rephrase|reword|translate|shorter|longer|shorten|simplif\w*|format|bullet|table of that"
+    r"|tl;?dr|poem|joke|in (?:french|spanish|german|english)|explain (?:that|this|it)|eli5|why did you)\b",
+    re.I,
+)
+FOLLOWUP_MAX_CHARS = 300
+FOLLOWUP_LOOKBACK = 3   # user messages
+
+
+def is_ack(message: str) -> bool:
+    return bool(_ACK_RE.match((message or "").strip()))
+
+
+# an answer that ended with a Sources list (ours - core.py - or the model's own) was looked up
+_SOURCED_RE = re.compile(r"(?im)^\W*sources?\W*$[\s\S]*?https?://")
+
+
+def looked_up(reply: str) -> bool:
+    return bool(_SOURCED_RE.search(reply or ""))
+
+
+def followup_needs_fresh(message: str, history: list[dict]) -> bool:
+    """True when ``message`` continues a conversation about current facts and so
+    needs a lookup too. ``history`` = this session's earlier messages
+    ({"role", "content"}, oldest first). A user question that needed fresh facts,
+    or an answer built on web sources, makes the conversation "current"; it stays
+    so through short follow-ups and acknowledgements, and a long or self-directed
+    message ends it."""
+    m = (message or "").strip()
+    if (not m or len(m) > FOLLOWUP_MAX_CHARS or is_ack(m) or about_self(m) or _RESHAPE_RE.search(m)
+            or needs_fresh_facts(m)):
+        return False
+    users = [i for i, h in enumerate(history) if h.get("role") == "user"][-FOLLOWUP_LOOKBACK:]
+    live = False
+    for n, i in enumerate(users):
+        p = str(history[i].get("content") or "")
+        end = users[n + 1] if n + 1 < len(users) else len(history)
+        replies = " ".join(str(h.get("content") or "") for h in history[i + 1:end] if h.get("role") == "assistant")
+        if needs_fresh_facts(p) or looked_up(replies):
+            live = True
+        elif about_self(p) or len(p) > FOLLOWUP_MAX_CHARS:
+            live = False
+    return live

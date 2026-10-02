@@ -42,6 +42,22 @@ SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+def compact_links(text: str, url: str) -> str:
+    """Shrink a long page before it is cut: footnote markers, in-page anchors and
+    links within the same site keep only their text (links to other sites stay).
+    A Wikipedia list is mostly link URLs: "List of current United States
+    governors" came to 43.7k chars and the governors table started after the 20k
+    cut, so the model wrote the table from memory (Youngkin, Carney; 2026-10-02).
+    Without same-site URLs it is 20.8k and the table is in."""
+    import re as _re
+    from urllib.parse import urlparse
+    host = _re.escape(urlparse(url).netloc or "-")
+    text = _re.sub(r"\[\[[^\]]{1,12}\]\]\(#[^)\s]*\)", "", text)                       # [[15]](#cite_note-15)
+    text = _re.sub(r"\[([^\]]*)\]\(#[^)\s]*\)", r"\1", text)                             # [x](#anchor)
+    text = _re.sub(r"\[([^\]]*)\]\((?:https?://" + host + r")?/(?:[^()\s]|\([^()\s]*\))*\)", r"\1", text)  # same site
+    return text
+
+
 async def _web_fetch(url: str, max_chars: Any = None) -> str:
     """Fetch a public page through the SSRF guard and return readable markdown."""
     import re as _re
@@ -79,6 +95,8 @@ async def _web_fetch(url: str, max_chars: Any = None) -> str:
     else:
         text = body
     text = text.strip()
+    if len(text) > limit:
+        text = compact_links(text, url)
     total = len(text)
     if total > limit:
         text = text[:limit] + f"\n\n[… truncated {total - limit} of {total} chars — pass max_chars or use ingest_source for the full text]"

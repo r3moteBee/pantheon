@@ -83,6 +83,8 @@ How automatic recall behaves:
 
 **Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
 
+**Follow-ups:** a short follow-up in a conversation about current facts ("and AMD?", "can you do the same for the House?") is looked up too, with a search the agent writes from the conversation, so it isn't answered from the model's memory. Acknowledgements ("thanks") and requests to reshape the last answer ("summarize that") aren't. In chat the agent makes at most `AGENT_WEB_BUDGET` (12) web lookups per message, then answers from what it found and says what it couldn't verify. A reply that hits the model's length limit says it was cut off.
+
 **Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
 
 **Links you paste:** a URL in your message (up to three) is opened before the agent starts its answer, so a summary or answer is based on the page itself, not on what the model already believes. Turn off with `AGENT_PREFETCH_URLS=false`.

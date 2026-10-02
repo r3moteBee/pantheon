@@ -398,7 +398,8 @@ class ModelProvider:
                     event["args_error"] = args_error
                 yield event
 
-            yield {"type": "done", "content": current_text, "reasoning": current_reasoning}
+            yield {"type": "done", "content": current_text, "reasoning": current_reasoning,
+                   "finish_reason": finish_reason}
 
         except httpx.HTTPStatusError as e:
             # Defensive fallback — the inline status check above handles the

@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     agent_pre_search: bool = True
     # A URL in the user's message is fetched before the first model round.
     agent_prefetch_urls: bool = True
+    # presence_penalty sent with the agent loop's model calls (0 = not sent).
+    # Small local models can loop on long lists ("Greg Landsman" in nine Ohio
+    # districts); Qwen recommends 0-2 for its quantized models. Providers that
+    # reject the field: leave at 0.
+    agent_presence_penalty: float = 0.0
+    # Interactive chats: after this many web_search/web_fetch calls in one turn the
+    # agent must answer from what it has (0 = no limit). Background tasks are exempt.
+    agent_web_budget: int = 12
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = False

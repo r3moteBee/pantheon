@@ -119,7 +119,8 @@ async def test_provider_sends_extra_body_and_returns_reasoning():
         r = await p.chat_complete([{"role": "user", "content": "x"}], extra_body=extra)
         await p.chat_complete([{"role": "user", "content": "x"}])
     await client.aclose()
-    assert events[-1] == {"type": "done", "content": "hi", "reasoning": "think more"}
+    assert events[-1] == {"type": "done", "content": "hi", "reasoning": "think more",
+                          "finish_reason": "stop"}
     assert r["reasoning"] == "all in here"
     assert seen[0]["chat_template_kwargs"] == {"enable_thinking": True}
     assert seen[1]["chat_template_kwargs"] == {"enable_thinking": True}
