@@ -64,6 +64,26 @@ _TOOL_INTENT_RE = re.compile(
     r"|https?://|/\w",
     re.I,
 )
+# Short messages that still need the agent. The quick class is fine for small
+# talk, trivia, arithmetic and questions about the user's own memory (recall
+# puts the facts in the prompt) - measured on homely's 9B with thinking off:
+# arithmetic 24/27 on quick vs 22/27 on agent, memory probes 15/15. What it
+# does badly is anything time-sensitive: it answered "I don't have access to
+# real-time information" instead of searching 2 times in 18 (agent: 18/18).
+# Those, actions, and multi-step requests go to the agent.
+_NEEDS_AGENT_RE = re.compile(
+    # time-sensitive / current facts -> needs a search
+    r"\b(latest|newest|current(ly)?|today|tonight|tomorrow|yesterday|this (week|month|year)|last (night|week)"
+    r"|right now|news|price[sd]?|how much (is|are|does|do)|stock|exchange rate|weather|forecast|release[sd]?|out yet"
+    r"|launch\w*|announce\w*|won|winning|leading|trending|outages?|open for)\b"
+    # actions
+    # ("book a table", not "that book"; "remind me to ...", not "remind me what we decided")
+    r"|\b(e-?mail|send|text|message|book (a|an|me|us)|remind (me|us) (to|at|in|on|tomorrow|tonight)"
+    r"|set an? (alarm|timer|reminder)|reminder)\b"
+    # multi-step work
+    r"|\b(plan|itinerary|compare|debug)\b",
+    re.I,
+)
 
 
 @dataclass
@@ -246,7 +266,7 @@ def looks_quick(message: str, max_chars: int) -> bool:
     msg = (message or "").strip()
     if not msg or len(msg) > max_chars or "\n\n" in msg:
         return False
-    return not _TOOL_INTENT_RE.search(msg)
+    return not (_TOOL_INTENT_RE.search(msg) or _NEEDS_AGENT_RE.search(msg))
 
 
 def _skill_class(skill: Any) -> str | None:

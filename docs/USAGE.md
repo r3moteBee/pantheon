@@ -65,6 +65,24 @@ When you want the agent to remember something across sessions, ask it to `rememb
 
 To recall, say *"what do you know about X"* — the agent will search across tiers. You can also use `/memory <query>` in a messaging bot. Recall runs on every chat turn anyway, so you don't need magic phrases to reach earlier work.
 
+How automatic recall behaves:
+
+- It looks for memories related to your message, reranks them, and leaves out ones the reranker scores as unrelated (`RECALL_MIN_RELEVANCE`, default 0.05). Small talk gets no memories at all. It also skips messages from the current conversation, because the agent can already see those.
+- The agent sees each memory labelled by where it came from: `[note]` (things you asked it to remember, indexed sources), `[user said]` (something you said in an earlier chat), `[your earlier reply]` (its own past answer, which may be out of date) and `[graph]` / `[archive]`. For anything time-sensitive, like latest versions, prices or news, it is told to use its tools even when a memory seems to answer.
+- Memories and the current time are added to your newest message, not to the system prompt. The long, unchanging part of the prompt therefore stays identical from turn to turn, and local model servers (llama.cpp, vLLM) can reuse their cache for it, which makes replies noticeably faster.
+
+**Long conversations:** each turn sends only the newest part of the chat that fits `HISTORY_TOKEN_BUDGET` (by default a quarter of the model's context window, at most 24K tokens). Older turns drop out in blocks of about 10 turns, so the model server can keep reusing its cache between drops. They aren't forgotten: when your message relates to an earlier turn, recall repeats that turn next to your message, labelled `[earlier in this chat, ...]`. It does the same for relevant turns still in the history but far back, because small models tend to miss facts in the middle of a long prompt. Asking "did I mention X earlier?" works the same way.
+
+**"What's the latest version of X?"** When a search asks about a product's version, `web_search` also returns that product's release table from endoflife.date, or, for projects released on GitHub, its newest stable release (newer pre-releases are flagged as not stable). These sit above the search snippets, which are often months old. The lookup sends only the product name. Turn it off with `SEARCH_RELEASE_FACTS=false`.
+
+**New or unfamiliar names:** if you ask what something is, or ask the agent to use, set up or switch to something with a capitalised or camel-case name, such as "What is Jev?" or "use Jev to…", and its first draft didn't search the web, Pantheon searches "What is <name>?" before it answers. The same check applies to time-sensitive questions (`AGENT_FORCE_SEARCH`). The agent guide also tells it to check that a product can actually do what you're asking before giving setup steps.
+
+**Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
+
+**Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
+
+**Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
+
 ## 5. Saving the agent's own output
 
 A common pattern: the agent produces a long analysis, and you want to file it. Use any of these:

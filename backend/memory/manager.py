@@ -24,6 +24,35 @@ logger = logging.getLogger(__name__)
 # ── Token estimation ─────────────────────────────────────────────────────────
 
 CHARS_PER_TOKEN = 4
+SESSION_FALLBACK_MAX = 2
+
+# Seconds pre-recall needs besides reranking (semantic/episodic/graph search,
+# graph augmentation, budgeting). The rerank budget is capped so it always
+# leaves this much of settings.pre_recall_timeout_seconds.
+RERANK_RECALL_HEADROOM_S = 1.5
+
+
+def rerank_timeout() -> float:
+    """Seconds ``_rerank`` may take before keeping the original order.
+
+    agent.core cancels the whole recall at pre_recall_timeout_seconds, so a
+    reranker slower than that (e.g. still loading, 15-20 s cold) used to cost
+    the turn every recalled memory. Capping rerank below that budget makes a
+    slow reranker degrade to "unranked" instead.
+    """
+    from config import get_settings
+    s = get_settings()
+    cap = max(0.5, s.pre_recall_timeout_seconds - RERANK_RECALL_HEADROOM_S)
+    return max(0.1, min(s.rerank_timeout_seconds, cap))
+
+
+def _as_probabilities(scores: list[float]) -> list[float]:
+    """Rerank scores on a 0-1 scale. Cohere/Jina/TEI return probabilities;
+    llama.cpp (and TEI with raw_scores) return cross-encoder logits, which are
+    unbounded and can't be thresholded or blended with recency as they are."""
+    if all(0.0 <= s <= 1.0 for s in scores):
+        return scores
+    return [1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, s)))) for s in scores]
 
 
 def _estimate_tokens(text: str) -> int:
@@ -227,8 +256,33 @@ class MemoryManager:
         project_id: str | None = None,
         limit_per_tier: int = 3,
         context_focus: str | None = None,
+        in_context: set[str] | None = None,
+        min_relevance: float = 0.0,
+        session_fallback: str | None = None,
+        session_min_similarity: float = 0.0,
+        session_exclude: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Search across memory tiers with graph augmentation and budget management.
+
+        ``in_context``: message texts the caller already sends the model (the
+        conversation so far and the new message). Episodic hits with the same
+        text are dropped BEFORE the per-tier cut, so they neither repeat what
+        the model can already see nor push older sessions' messages out.
+
+        ``min_relevance``: when the results were reranked, drop those the
+        reranker scores below it (0-1). Pre-recall passes
+        settings.recall_min_relevance so unrelated memories are not injected;
+        a failed or timed-out rerank drops nothing.
+
+        ``session_fallback``: the current conversation's id. Up to
+        SESSION_FALLBACK_MAX of its messages not in ``session_exclude``
+        (default: ``in_context``) are added when their embedding similarity
+        is >= ``session_min_similarity``, whatever the reranker thought:
+        cross-encoders score questions ABOUT the conversation ("did I mention
+        a speech?") near zero even when the right turn is ranked first.
+        AgentCore excludes only the newest messages, so a relevant turn deep
+        in a long prompt is ALSO repeated next to the question — small models
+        miss facts in the middle of a long history.
 
         Returns list of dicts with keys: content, source, score, metadata, tier
         """
@@ -255,6 +309,9 @@ class MemoryManager:
                     project_id=active_project,
                     limit=limit_per_tier * 2,
                 )
+                if in_context:
+                    ep_results = [r for r in ep_results
+                                  if (r.get("content") or "").strip() not in in_context]
                 for r in ep_results[:limit_per_tier]:
                     all_results.append({
                         "id": r.get("id", ""),
@@ -311,6 +368,19 @@ class MemoryManager:
                     all_results = await self._rerank(query, all_results, reranker)
             except Exception as e:
                 logger.warning("Reranking failed, using original order: %s", e)
+            if min_relevance > 0 and all_results and all_results[0].get("reranked"):
+                kept = [r for r in all_results if r.get("score", 0) >= min_relevance]
+                if len(kept) < len(all_results):
+                    logger.info("Recall: dropped %d of %d results below relevance %.2f",
+                                len(all_results) - len(kept), len(all_results), min_relevance)
+                all_results = kept
+
+        if session_fallback and session_min_similarity > 0:
+            all_results = await self._add_session_fallback(
+                query, active_project, session_fallback,
+                in_context or set() if session_exclude is None else session_exclude,
+                session_min_similarity, all_results,
+            )
 
         # Graph-augmented enrichment: expand entities found in top results
         all_results = await self._graph_augment(all_results)
@@ -382,6 +452,31 @@ class MemoryManager:
 
         return results
 
+    async def _add_session_fallback(self, query, project_id, session_id, in_context, min_sim, results):
+        try:
+            hits = await self.episodic.search_messages(query=query, project_id=project_id,
+                                                       limit=10, session_id=session_id)
+        except Exception as e:
+            logger.warning("Session fallback search failed: %s", e)
+            return results
+        have = {r.get("content") for r in results}
+        added = []
+        for r in hits:
+            if len(added) >= SESSION_FALLBACK_MAX:
+                break
+            text = (r.get("content") or "").strip()
+            content = f"[{r.get('role', 'unknown')}] {r.get('content', '')}"
+            if r.get("similarity", 0) < min_sim or text in in_context or content in have:
+                continue
+            added.append({
+                "id": r.get("id", ""), "content": content, "source": "episodic", "tier": "episodic",
+                "score": round(r["similarity"], 4),
+                "metadata": {"session_id": session_id, "timestamp": r.get("timestamp"), "earlier_in_session": True},
+            })
+        if added:
+            logger.info("Recall: %d earlier turn(s) of this conversation added by similarity", len(added))
+        return results + added
+
     def _apply_budget(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Trim recalled results to fit within the recall token budget.
 
@@ -441,26 +536,39 @@ class MemoryManager:
         if reranker.api_key and reranker.api_key.lower() not in ("", "none", "ollama"):
             headers["Authorization"] = f"Bearer {reranker.api_key}"
 
+        timeout = rerank_timeout()
         logger.info("Reranking %d results with model %s", len(documents), reranker.model)
         try:
             from utils.http import pooled_client
-            async with pooled_client(timeout=15.0) as client:
-                resp = await client.post(url, headers=headers, json=payload)
+            async with pooled_client(timeout=timeout) as client:
+                # Hard total cap: httpx timeouts are per phase, and a model that
+                # is still loading holds the connection open without sending.
+                resp = await asyncio.wait_for(
+                    client.post(url, headers=headers, json=payload), timeout=timeout,
+                )
                 resp.raise_for_status()
                 data = resp.json()
 
             ranked = data.get("results", [])
             if ranked:
+                ranked = sorted(ranked, key=lambda x: x.get("relevance_score", 0), reverse=True)
+                probs = _as_probabilities([item.get("relevance_score", 0) for item in ranked])
                 reranked = []
-                for item in sorted(ranked, key=lambda x: x.get("relevance_score", 0), reverse=True):
+                for item, p in zip(ranked, probs):
                     idx = item.get("index", 0)
                     if idx < len(results):
                         entry = results[idx].copy()
-                        entry["score"] = round(item.get("relevance_score", 0), 4)
+                        entry["score"] = round(p, 4)
+                        entry["rerank_raw"] = item.get("relevance_score", 0)
                         entry["reranked"] = True
                         reranked.append(entry)
                 logger.info("Reranking complete — top score: %.4f", reranked[0]["score"] if reranked else 0)
                 return reranked
+        except (asyncio.TimeoutError, httpx.TimeoutException):
+            logger.warning(
+                "Rerank timed out after %.1fs (is %s still loading?) — keeping the original order",
+                timeout, reranker.model,
+            )
         except httpx.HTTPStatusError as e:
             logger.warning("Rerank endpoint returned %s, skipping rerank", e.response.status_code)
         except Exception as e:

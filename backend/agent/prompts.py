@@ -31,10 +31,86 @@ _PERSONALITY_SCOPES: dict[str, str] = {
 }
 
 
+# ── Recalled memory ──────────────────────────────────────────────────────────
+# Recall is automatic and relevance-ranked, so what comes back is a mix: the
+# user's knowledge base (things they asked us to remember, ingested sources,
+# file chunks, summaries), things the user said in earlier chats, and our own
+# earlier replies. They deserve different trust. Framing everything as "your
+# primary source, only search to fill gaps" made the agent repeat its own stale
+# answers instead of searching (measured: 7/14 "latest version of X" questions
+# answered from memory with outdated versions).
+MEMORY_LABELS = {
+    "semantic": "note",
+    "graph": "graph",
+    "archival": "archive",
+}
+MEMORY_GUIDANCE = (
+    "A user message may start with a <context> block that Pantheon adds, not the user: the current time and "
+    "entries retrieved automatically from this project's memory because they may be relevant to that message.\n"
+    "- [note], [graph] and [archive] entries come from the user's knowledge base (things they asked you to "
+    "remember, ingested sources, files, summaries). For questions about that material, treat them as "
+    "authoritative and cite them.\n"
+    "- [user said] entries are what the user told you before: trust them for their own preferences, plans "
+    "and circumstances.\n"
+    "- [earlier in this chat, ...] entries are turns of THIS conversation, repeated here because they "
+    "look relevant (older ones may no longer be shown above); treat them as part of the conversation.\n"
+    "- [your earlier reply] entries are your own past answers. They may be wrong or out of date: never "
+    "repeat one as fact without checking it.\n"
+    "- Memory does not replace tools: for anything time-sensitive (latest versions, prices, news, current "
+    "status) or anything the user asks you to search or look up, use your tools even when a memory "
+    "seems to answer it.\n"
+    "- Ignore entries that are not relevant to the current message."
+)
+
+
+def _memory_label(m: dict) -> tuple[str, str]:
+    """(label, content) for one recalled item; episodic items carry their role as a "[role] " prefix."""
+    tier = m.get("tier", m.get("source", "memory"))
+    content = m.get("content", "") or ""
+    if tier == "episodic" and (m.get("metadata") or {}).get("earlier_in_session"):
+        if content.startswith("[user] "):
+            return "earlier in this chat, user said", content[len("[user] "):]
+        if content.startswith("[assistant] "):
+            return "earlier in this chat, you said", content[len("[assistant] "):]
+    if tier == "episodic":
+        if content.startswith("[user] "):
+            return "user said", content[len("[user] "):]
+        if content.startswith("[assistant] "):
+            return "your earlier reply", content[len("[assistant] "):]
+    return MEMORY_LABELS.get(tier, tier), content
+
+
+def render_turn_context(recalled_memories: list[dict] | None, now: str | None = None,
+                        omitted_messages: int = 0) -> str:
+    """The <context> block AgentCore puts in front of the new user message:
+    current time + this turn's recalled memory, labelled by provenance.
+
+    Everything that changes per turn lives here, after the conversation
+    history, so the tools + system prompt + history stay a stable prefix and
+    the model server reuses its KV cache for them (measured: the first call
+    of a turn recomputed ~3.3K tokens when memories sat mid-system-prompt).
+    How to treat the block is explained once, in the system prompt
+    (MEMORY_GUIDANCE)."""
+    now = now or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines = []
+    for m in recalled_memories or []:
+        label, content = _memory_label(m)
+        if content.strip():
+            lines.append(f"[{label}] {content}")
+    body = f"Current time: {now}"
+    if omitted_messages > 0:
+        # Without this a model asked "did I mention X earlier?" denies it
+        # when X was in a turn the history budget dropped.
+        body += (f"\nEarlier in this conversation: {omitted_messages} older messages are not shown here; "
+                 "relevant parts appear under Recalled memory when found.")
+    if lines:
+        body += "\nRecalled memory:\n" + "\n\n".join(lines)
+    return f"<context>\n{body}\n</context>\n\n"
+
+
 def build_system_prompt(
     project_id: str | None = None,
     project_name: str | None = None,
-    recalled_memories: list[dict] | None = None,
     extra_context: str | None = None,
     personality_weight: str | None = None,
     host_exec: bool = True,
@@ -52,7 +128,6 @@ def build_system_prompt(
     scope_prefix = _PERSONALITY_SCOPES.get(weight, _PERSONALITY_SCOPES["balanced"])
     soul = scope_prefix + soul
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     project_section = ""
     if project_id:
         try:
@@ -142,22 +217,9 @@ def build_system_prompt(
                 "narrating success.\n"
             )
 
-    memory_section = ""
-    if recalled_memories:
-        memory_lines = []
-        for m in recalled_memories:
-            tier = m.get("tier", m.get("source", "memory"))
-            content = m.get("content", "")
-            if content:
-                memory_lines.append(f"[{tier}] {content}")
-        if memory_lines:
-            memory_section = (
-                "\n\n## Corpus Context (Retrieved from your knowledge base)"
-                "\nThe following was retrieved from your indexed corpus and graph. "
-                "**Treat this as your primary source. Cite it in your response and only use web search "
-                "to fill gaps or verify time-sensitive details not covered here.**\n\n"
-                + "\n\n".join(memory_lines)
-            )
+    # Static: the per-turn memories and time go in the user message
+    # (render_turn_context), so this prompt is identical from turn to turn.
+    memory_section = "\n\n## Recalled memory\n" + MEMORY_GUIDANCE
 
     extra_section = f"\n\n## Additional Context\n{extra_context}" if extra_context else ""
 
@@ -281,6 +343,4 @@ Only valid skip-the-propose-step exceptions:
   • The user explicitly says "just schedule it" / "no need to review" / "skip the review"
   • A trivial single-step ask with no tool ambiguity (e.g. "remind me at 9am" → `send_telegram` step is obvious)
 
-When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high.
-
-Current time: {now}"""
+When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high."""

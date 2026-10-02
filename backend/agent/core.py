@@ -6,11 +6,16 @@ import json
 import logging
 import re
 import uuid
+import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
 from agent.personality import get_full_personality
-from agent.prompts import build_system_prompt
+from agent.freshness import needs_fresh_facts, unknown_entities
+from agent.output_filter import ImageFilter, allowed_from, sanitize
+from agent.sources import evidence_from, has_url, pick_sources
+from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
+from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import tool_results
@@ -139,6 +144,28 @@ def _build_available_skills_block(project_id: str) -> str:
         lines.append(f"\n_... and {len(skills) - 30} more skills_")
     return "\n".join(lines)
 
+def _skill_names() -> set[str]:
+    try:
+        from skills.registry import get_skill_registry
+        return set(get_skill_registry().names())
+    except Exception:
+        return set()
+
+
+_VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
+
+
+def _has_web_call(calls: list[dict]) -> bool:
+    return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
+
+
+def _auto_search_call(user_message: str) -> dict:
+    """A web_search for the user's own words (not the model's guess - it searched
+    for "Joe Biden president 2026" when it believed that was the answer)."""
+    return {"type": "tool_call", "id": f"auto-search-{uuid.uuid4().hex[:8]}", "name": "web_search",
+            "args": {"query": user_message.strip()[:300]}}
+
+
 class AgentCore:
     """The main agent loop."""
 
@@ -167,6 +194,10 @@ class AgentCore:
         self.skill_context = skill_context
         self.active_skill_name = active_skill_name
         self.working_memory: list[dict[str, str]] = []
+        # Absolute position of working_memory[0] in the session (non-zero when
+        # from_session loaded only the newest messages); keeps agent.history's
+        # drop blocks aligned as the loaded window slides.
+        self.working_offset = 0
 
     @classmethod
     async def from_session(
@@ -205,6 +236,10 @@ class AgentCore:
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
+        try:
+            self.working_offset = max(0, await ep.count_messages(session_id) - len(history))
+        except Exception:
+            self.working_offset = 0
         for m in history:
             role = m.get("role")
             content = (m.get("content") or "").strip()
@@ -308,11 +343,58 @@ class AgentCore:
 
         return [{"type": "text", "text": message}, *image_blocks]
 
+    def _in_context_texts(self, user_message: str, history: list[dict] | None = None) -> set[str]:
+        """Texts the model will already see this turn (the history actually
+        sent and the new message; chat saves the message to episodic before
+        the agent runs, so recall would otherwise return the question itself).
+        Turns dropped by the history budget are NOT in this set, so recall
+        can bring them back."""
+        texts = {user_message.strip()}
+        for m in (self.working_memory if history is None else history):
+            if isinstance(m.get("content"), str):
+                texts.add(m["content"].strip())
+        return texts
+
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
         return self.working_memory.copy()
 
     async def chat(
+        self,
+        user_message: str,
+        stream: bool = True,
+        max_iterations: int | None = None,
+        reanchor_text: str | None = None,
+        reanchor_every: int = 15,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """``_chat_events`` with remote images in the reply shown as text, not loaded
+        (agent/output_filter.py): filtered while streaming and in full_response."""
+        filt = ImageFilter(allowed_from(user_message))
+        async for ev in self._chat_events(user_message, stream=stream, max_iterations=max_iterations,
+                                          reanchor_text=reanchor_text, reanchor_every=reanchor_every):
+            t = ev.get("type")
+            if t == "text_delta":
+                safe = filt.feed(ev.get("content") or "")
+                if safe:
+                    yield {**ev, "content": safe}
+                continue
+            if t in ("done", "error"):
+                rest = filt.flush()
+                if rest:
+                    yield {"type": "text_delta", "content": rest}
+                if t == "done":
+                    raw = ev.get("full_response") or ""
+                    clean = sanitize(raw, filt.allowed)
+                    if clean != raw:
+                        logger.info("Reply contained external image(s) - shown as text")
+                        for m in reversed(self.working_memory):
+                            if m.get("role") == "assistant" and m.get("content") == raw:
+                                m["content"] = clean
+                                break
+                    ev = {**ev, "full_response": clean}
+            yield ev
+
+    async def _chat_events(
         self,
         user_message: str,
         stream: bool = True,
@@ -341,11 +423,25 @@ class AgentCore:
             _personality_weight = _cs["tone_weight"]
             _context_focus = _cs["context_focus"]
 
+            # History actually sent this turn: newest messages within the
+            # token budget, oldest dropped in whole blocks (agent/history.py).
+            history, history_dropped = budget_history(
+                self._get_working_messages(), self.working_offset,
+                resolve_budget(self.provider, get_settings().history_token_budget),
+            )
+            if history_dropped:
+                logger.info("History: sending %d of %d messages (%d older ones left to recall)",
+                            len(history), len(history) + history_dropped, history_dropped)
+
             # Pre-recall relevant memories to inject into system prompt context
             recalled_memories = None
             try:
                 if _cs["memory_recall"] and self.memory_manager:
                     mgr = self.memory_manager
+                    # Rerank has its own shorter budget inside recall
+                    # (memory.manager.rerank_timeout) so a slow reranker
+                    # cannot run this out and cost the turn every memory.
+                    recall_budget = get_settings().pre_recall_timeout_seconds
                     try:
                         results = await asyncio.wait_for(
                             mgr.recall(
@@ -354,12 +450,21 @@ class AgentCore:
                                 project_id=self.project_id or "default",
                                 limit_per_tier=5,
                                 context_focus=_context_focus,
+                                in_context=self._in_context_texts(user_message, history),
+                                min_relevance=get_settings().recall_min_relevance,
+                                session_fallback=(self.session_id if len(history) > SESSION_RECENT_MESSAGES
+                                                  or history_dropped + self.working_offset else None),
+                                session_min_similarity=get_settings().recall_session_min_similarity,
+                                session_exclude=self._in_context_texts(user_message, history[-SESSION_RECENT_MESSAGES:]),
                             ),
-                            timeout=4.0,
+                            timeout=recall_budget,
                         )
                     except asyncio.TimeoutError:
                         results = None
-                        logger.warning("Pre-recall timed out, proceeding without context")
+                        logger.warning(
+                            "Pre-recall exceeded %.1fs, answering without memory context "
+                            "(PRE_RECALL_TIMEOUT_SECONDS)", recall_budget,
+                        )
                     if results:
                         recalled_memories = results
                         logger.debug("Pre-recalled %d memories for context", len(results))
@@ -383,7 +488,6 @@ class AgentCore:
             system_prompt = build_system_prompt(
                 project_id=self.project_id,
                 project_name=self.project_name,
-                recalled_memories=recalled_memories,
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
                 host_exec=self.host_exec,
@@ -391,11 +495,12 @@ class AgentCore:
 
             # Phase H.5 — append a "recent background jobs" block so the
             # agent doesn't confabulate progress against dead tasks.
+            # (appended after the skills block below: it changes with job
+            # state, the skills list almost never — keep the stable part first)
             try:
                 jobs_block = _build_recent_jobs_block(self.project_id)
-                if jobs_block:
-                    system_prompt = system_prompt + "\n\n" + jobs_block
             except Exception as e:
+                jobs_block = ""
                 logger.debug("recent-jobs block injection failed: %s", e)
 
             # H7p — append an "Available skills" block so the agent
@@ -409,12 +514,20 @@ class AgentCore:
                     system_prompt = system_prompt + "\n\n" + skills_block
             except Exception as e:
                 logger.debug("available-skills block injection failed: %s", e)
+            if jobs_block:
+                system_prompt = system_prompt + "\n\n" + jobs_block
 
-            # Get conversation history from working memory
-            history = self._get_working_messages()
 
             # Add current user message — inline images for vision models
             user_content = self._build_user_content(user_message)
+            # Per-turn context (time + recalled memory) rides in front of the
+            # new message, after the history — see prompts.render_turn_context.
+            turn_context = render_turn_context(
+                recalled_memories, omitted_messages=history_dropped + self.working_offset)
+            if isinstance(user_content, list):
+                user_content = [{"type": "text", "text": turn_context}] + user_content
+            else:
+                user_content = turn_context + user_content
             messages = [{"role": "system", "content": system_prompt}]
             messages.extend(history)
             messages.append({"role": "user", "content": user_content})
@@ -423,6 +536,7 @@ class AgentCore:
             self._add_working_message("user", user_message)
 
             full_response = ""
+            web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -436,11 +550,77 @@ class AgentCore:
 
             tool_names = {t.get("function", {}).get("name") for t in all_tools}
 
+            # Opt-in reasoning for the agent-class model (settings.agent_thinking).
+            # Only the agent class: a code/quick route may be a model where
+            # thinking is slow or meaningless.
+            agent_extra = None
+            if get_settings().agent_thinking and getattr(self.provider, "task_class", "agent") == "agent":
+                agent_extra = {"chat_template_kwargs": {"enable_thinking": True}}
+            # Only sent when set, so the call is unchanged for every other provider.
+            extra_kw = {"extra_body": agent_extra} if agent_extra else {}
+            # Time-sensitive question (agent/freshness.py): the first round must
+            # look something up on the web, or the answer comes from stale
+            # training data. tool_choice="required" is NOT enforced by llama.cpp
+            # with Qwen templates (measured: the model wrote prose until
+            # max_tokens), so the guard is ours: round 1 is held back, and if it
+            # made no web_search/web_fetch call its text is dropped and a
+            # web_search for the user's own words is added.
+            fresh_question = get_settings().agent_force_search and "web_search" in tool_names and (
+                needs_fresh_facts(user_message))
+            # ...or a name the model may not know (a product announced after training)
+            entities = []
+            if get_settings().agent_force_search and "web_search" in tool_names and not fresh_question:
+                entities = unknown_entities(user_message, tool_names | _skill_names())
+                fresh_question = bool(entities)
+            auto_query = f"What is {entities[0]}?" if entities else user_message
+
+            results_seen = False
+            # Search first (AGENT_PRE_SEARCH): for a question the guard above would
+            # force a lookup on anyway, run the search before round 1 instead of
+            # letting round 1 decide - saves a whole model round (~1.5 s with
+            # thinking), and round 1 streams its answer instead of being held.
+            pre_searched = False
+            if fresh_question and get_settings().agent_pre_search:
+                # Time-sensitive questions get the current month/year in the query:
+                # with the user's bare words ("Who is the current PM of the UK?")
+                # engines ranked 2024 pages first and the answer went stale (politics
+                # 44 -> 28/45); the model's own queries carried the date.
+                # Not for version questions: they get release tables (agent/release_facts.py),
+                # and "... PostgreSQL October 2026" pulled beta announcements (19.0 Beta 4).
+                dated = not entities and not _VERSION_Q.search(user_message)
+                q = f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}" if dated else auto_query
+                pre = _auto_search_call(q)
+                yield pre
+                result = await execute_tool(
+                    tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                web_evidence.update(evidence_from("web_search", pre["args"], result))
+                yield {"type": "tool_result", "name": "web_search", "result": result, "tool_id": pre["id"],
+                       "is_error": tool_results.is_error(result)}
+                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": pre["id"], "type": "function",
+                    "function": {"name": "web_search", "arguments": json.dumps(pre["args"])}}]})
+                messages.append({"role": "tool", "tool_call_id": pre["id"],
+                                 "content": tool_results.for_model("web_search", result)})
+                fresh_question = False          # nothing left for the round-1 guard to do
+                pre_searched = True             # round 1 keeps thinking: it reasons over dated evidence
             while iterations < iteration_limit:
                 iterations += 1
+                round_kw = extra_kw
+                # Thinking pays off for deciding what to look up; once tool results
+                # are in, the answer round runs with thinking off - it was the round
+                # that most often ended with the answer stuck in the reasoning (a
+                # whole extra non-streamed finalize call) and the bulk of the tokens.
+                if agent_extra and results_seen and not get_settings().agent_thinking_after_tools \
+                        and not (pre_searched and iterations == 1):
+                    round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+                guard_round = fresh_question and iterations == 1
                 self._progress()
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
+                round_reasoning = ""
 
                 if stream:
                     # Streaming mode. A reply that starts like a textual tool
@@ -454,10 +634,14 @@ class AgentCore:
                         messages=messages,
                         tools=all_tools,
                         stream=True,
+                        **round_kw,
                     ):
                         self._progress()
                         if chunk["type"] == "text_delta":
                             current_text += chunk["content"]
+                            if guard_round:
+                                held += chunk["content"]
+                                continue
                             if hold is False:
                                 yield chunk
                                 continue
@@ -473,7 +657,7 @@ class AgentCore:
                             yield chunk
                             stream_error = True
                         elif chunk["type"] == "done":
-                            pass
+                            round_reasoning = chunk.get("reasoning") or ""
                     if held and not stream_error and not tool_calls_this_round:
                         recovered = recover_tool_calls(held, tool_names)
                         if recovered:
@@ -484,6 +668,12 @@ class AgentCore:
                             for tc in recovered:
                                 yield tc
                             held = ""
+                    if guard_round and not stream_error and not _has_web_call(tool_calls_this_round):
+                        auto = _auto_search_call(auto_query)
+                        logger.info("Time-sensitive question answered without a web search - searching for it")
+                        tool_calls_this_round.append(auto)
+                        current_text = held = ""
+                        yield auto
                     if held:
                         yield {"type": "text_delta", "content": held}
                     if stream_error:
@@ -493,8 +683,10 @@ class AgentCore:
                     response = await self.provider.chat_complete(
                         messages=messages,
                         tools=all_tools,
+                        **round_kw,
                     )
                     current_text = response.get("content", "")
+                    round_reasoning = response.get("reasoning") or ""
                     tool_calls_this_round = response.get("tool_calls", [])
                     if current_text and not tool_calls_this_round:
                         recovered = recover_tool_calls(current_text, tool_names)
@@ -503,6 +695,10 @@ class AgentCore:
                                         len(recovered), [c["name"] for c in recovered])
                             tool_calls_this_round = recovered
                             current_text = ""
+                    if guard_round and not _has_web_call(tool_calls_this_round):
+                        logger.info("Time-sensitive question answered without a web search - searching for it")
+                        tool_calls_this_round = list(tool_calls_this_round) + [_auto_search_call(auto_query)]
+                        current_text = ""
                     if current_text:
                         yield {"type": "text_delta", "content": current_text}
                     # Streaming mode yields tool_call chunks as they arrive.
@@ -514,6 +710,25 @@ class AgentCore:
                     for tc in tool_calls_this_round:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
+
+                if (not tool_calls_this_round and not (current_text or "").strip()
+                        and round_reasoning.strip()):
+                    # A thinking model ended its turn with the answer inside its
+                    # reasoning and no reply text (seen ~1 in 10 with a 9B model).
+                    if stream:
+                        # Streamed: the answer appears as it is written instead of all at
+                        # once at the end (latency harness: first text = total time).
+                        final = ""
+                        async for piece in self._finalize_stream(messages, round_reasoning, agent_extra, all_tools):
+                            final += piece
+                            yield {"type": "text_delta", "content": piece}
+                    else:
+                        final = await self._finalize_from_reasoning(messages, round_reasoning, agent_extra,
+                                                                     tools=all_tools)
+                        if final:
+                            yield {"type": "text_delta", "content": final}
+                    if final:
+                        current_text = final
 
                 if current_text:
                     full_response = current_text
@@ -540,6 +755,7 @@ class AgentCore:
                 }
                 messages.append(assistant_msg)
 
+                results_seen = True
                 # Execute each tool call
                 for tc in tool_calls_this_round:
                     tool_name = tc["name"]
@@ -570,6 +786,8 @@ class AgentCore:
                             host_exec=self.host_exec,
                         )
                     self._progress()
+                    if tool_name in ("web_search", "web_fetch"):
+                        web_evidence.update(evidence_from(tool_name, tool_args, result))
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -579,7 +797,7 @@ class AgentCore:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_id,
-                        "content": tool_results.cap(result),
+                        "content": tool_results.for_model(tool_name, result),
                     })
 
                 # Re-anchor: long tool loops bury the original instructions
@@ -614,6 +832,15 @@ class AgentCore:
                         ),
                     })
 
+            # An answer built on web results but citing nothing gets the URLs
+            # whose text holds its key facts (agent/sources.py).
+            if full_response and web_evidence and get_settings().answer_sources and not has_url(full_response):
+                picked = pick_sources(full_response, web_evidence)
+                if picked:
+                    tail = "\n\nSources:\n" + "\n".join(f"- {u}" for u in picked)
+                    full_response += tail
+                    yield {"type": "text_delta", "content": tail}
+
             # Save assistant response
             if full_response:
                 self._add_working_message("assistant", full_response)
@@ -640,6 +867,58 @@ class AgentCore:
         """Tell the job stall watchdog (if running under one) we're alive."""
         from utils.progress import report_progress
         report_progress()
+
+    async def _finalize_from_reasoning(self, messages: list[dict], reasoning: str,
+                                       agent_extra: dict | None, tools: list[dict] | None = None) -> str:
+        """Ask once more for the reply itself: thinking off, tool calls off, with
+        the model's own reasoning handed back as working notes. Returns '' on
+        failure so the caller falls back to the old behaviour.
+
+        The round's tools are sent again with tool_choice "none" rather than
+        dropped: templates render tools at the top of the prompt, so dropping
+        them made this call recompute the whole prompt (~5K tokens, 3 s on a
+        9B model) instead of reusing the round's KV cache."""
+        notes = reasoning.strip()[-8000:]
+        msgs = messages + [
+            {"role": "assistant", "content": "(my working notes)\n" + notes},
+            {"role": "user", "content": "Write your reply to my request above now, based on your "
+                                        "working notes. Reply directly; do not call tools."},
+        ]
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
+        if tools:
+            extra["tool_choice"] = "none"
+        try:
+            kw = {"extra_body": extra} if extra else {}
+            r = await self.provider.chat_complete(messages=msgs, tools=tools or None, **kw)
+            text = (r.get("content") or "").strip()
+            logger.info("Finalized an empty thinking-mode reply (%d chars)", len(text))
+            return text
+        except Exception as e:
+            logger.warning("Finalize round failed: %s", e)
+            return ""
+
+    async def _finalize_stream(self, messages: list[dict], reasoning: str, agent_extra: dict | None,
+                               tools: list[dict] | None):
+        """Streaming twin of _finalize_from_reasoning: yields the reply's text as it arrives."""
+        notes = reasoning.strip()[-8000:]
+        msgs = messages + [
+            {"role": "assistant", "content": "(my working notes)\n" + notes},
+            {"role": "user", "content": "Write your reply to my request above now, based on your "
+                                        "working notes. Reply directly; do not call tools."},
+        ]
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
+        if tools:
+            extra["tool_choice"] = "none"
+        kw = {"extra_body": extra} if extra else {}
+        n = 0
+        try:
+            async for chunk in self.provider.chat(messages=msgs, tools=tools or None, stream=True, **kw):
+                if chunk.get("type") == "text_delta" and chunk.get("content"):
+                    n += len(chunk["content"])
+                    yield chunk["content"]
+        except Exception as e:
+            logger.warning("Finalize round failed: %s", e)
+        logger.info("Finalized an empty thinking-mode reply (%d chars, streamed)", n)
 
     async def run_autonomous(self, task_description: str) -> str:
         """Run a task autonomously (no streaming, returns final response).

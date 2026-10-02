@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+import asyncio
 import httpx
 import logging
 from agent.tools.registry import ToolContext, tool
@@ -13,7 +14,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for current information. Returns titles, URLs, and snippets for the top results.",
+            "description": "Search the web for current information. Returns titles, URLs, and snippets for the top results. Snippets are often outdated: for a latest version, price or status, open the source (a releases/downloads listing for versions) with web_fetch before answering.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -124,7 +125,15 @@ async def _ddg_search(query: str) -> str:
 
 @tool('web_search')
 async def _tool_web_search(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
-    return await _web_search(tool_args["query"])
+    query = tool_args["query"]
+    from agent.release_facts import github_release_facts, release_facts
+    results, facts = await asyncio.gather(_web_search(query), release_facts(query))
+    if not facts:
+        facts = await github_release_facts(query, results)
+    if facts:
+        # Release tables beat snippets for "latest version" questions (agent/release_facts.py).
+        return f"{facts}\n\nSearch results (snippets may be outdated):\n{results}"
+    return results
 
 
 

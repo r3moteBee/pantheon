@@ -266,6 +266,13 @@ class EpisodicMemory:
             for r in rows
         ]
 
+    async def count_messages(self, session_id: str) -> int:
+        """Messages in a session (for absolute positions when only the newest
+        N were loaded — see agent.history)."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)).fetchone()
+        return int(row[0]) if row else 0
+
     async def get_session_project_id(self, session_id: str) -> str | None:
         """Return the owning project_id for a session, or None when the
         conversation row is missing. Canonical lookup — messages also
@@ -332,16 +339,20 @@ class EpisodicMemory:
         query: str,
         project_id: str = "default",
         limit: int = 20,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Search messages — uses semantic search when available, falls back to LIKE."""
+        """Search messages — uses semantic search when available, falls back to LIKE.
+        ``session_id`` restricts the semantic search to one conversation."""
         # Try semantic search first
         if self._embedding_fn:
             try:
-                results = await self._semantic_search(query, project_id, limit)
+                results = await self._semantic_search(query, project_id, limit, session_id)
                 if results:
                     return results
             except Exception as e:
                 logger.debug("Semantic episodic search failed, falling back to LIKE: %s", e)
+        if session_id:
+            return []   # callers of the session filter want similarity scores
 
         # Fallback: LIKE search
         return await self._like_search(query, project_id, limit)
@@ -351,6 +362,7 @@ class EpisodicMemory:
         query: str,
         project_id: str,
         limit: int,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Vector similarity search across episodic messages."""
         collection = await _asyncio.to_thread(self._get_vector_collection)
@@ -367,7 +379,8 @@ class EpisodicMemory:
             query_embeddings=[query_embedding],
             n_results=min(limit, count),
             include=["documents", "metadatas", "distances"],
-            where={"project_id": project_id},
+            where=({"$and": [{"project_id": project_id}, {"session_id": session_id}]}
+                   if session_id else {"project_id": project_id}),
         )
 
         items = []
