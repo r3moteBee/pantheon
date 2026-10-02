@@ -315,6 +315,7 @@ class ModelProvider:
         tool_call_accum: dict[int, dict[str, Any]] = {}
         current_text = ""
         current_reasoning = ""   # reasoning_content deltas (thinking models); not shown to the user
+        finish_reason: str | None = None
 
         try:
             async with pooled_client(timeout=120.0) as client:
@@ -353,10 +354,13 @@ class ModelProvider:
                         if not choices:
                             continue
                         delta = choices[0].get("delta", {})
-                        # Don't stop on finish_reason — wait for [DONE].
-                        # Some providers (Gemini, RouteLLM) send
+                        # Track finish_reason but don't break early — wait for
+                        # [DONE]. Some providers (Gemini, RouteLLM) send
                         # finish_reason in the same chunk as the last content
-                        # token, so breaking there truncates the response.
+                        # token, so breaking here truncates the response.
+                        chunk_finish = choices[0].get("finish_reason")
+                        if chunk_finish:
+                            finish_reason = chunk_finish
 
                         # Text content
                         content = delta.get("content", "")
