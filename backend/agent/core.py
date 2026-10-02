@@ -155,6 +155,22 @@ def _skill_names() -> set[str]:
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
 
 
+_MSG_URL = re.compile(r"https?://(?:[^\s<>\"'`()\[\]]|\([^\s()]*\))+")
+
+
+def _user_urls(message: str) -> list[str]:
+    """http(s) URLs the user wrote (not inside code fences), trailing punctuation stripped, de-duplicated."""
+    text = re.sub(r"```.*?```", " ", message or "", flags=re.S)
+    out = []
+    for u in _MSG_URL.findall(text):
+        u = u.rstrip(".,;:!?*_]>'\"")
+        while u.endswith(")") and u.count("(") < u.count(")"):
+            u = u[:-1]
+        if u not in out:
+            out.append(u)
+    return out
+
+
 def _has_web_call(calls: list[dict]) -> bool:
     return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
 
@@ -604,6 +620,32 @@ class AgentCore:
                     "id": sd["id"], "type": "function", "function": {"name": "get_self_documentation", "arguments": "{}"}}]})
                 messages.append({"role": "tool", "tool_call_id": sd["id"],
                                  "content": tool_results.for_model("get_self_documentation", result)})
+            # A URL in the user's message is read before round 1 (AGENT_PREFETCH_URLS):
+            # asked "<url> - what's this about?" the agent searched memory and artifacts
+            # instead of opening it (0/3), and once summarized a page from its own
+            # knowledge. Read-only; the SSRF guard in web_fetch still applies.
+            urls = _user_urls(user_message) if ("web_fetch" in tool_names and get_settings().agent_prefetch_urls) else []
+            for u in urls[:3]:
+                pf = {"type": "tool_call", "id": f"auto-fetch-{uuid.uuid4().hex[:8]}", "name": "web_fetch", "args": {"url": u}}
+                logger.info("Pre-fetching the URL in the user's message: %s", u)
+                yield pf
+                result = await execute_tool(
+                    tool_name="web_fetch", tool_args=pf["args"], memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                web_evidence.update(evidence_from("web_fetch", pf["args"], result))
+                yield {"type": "tool_result", "name": "web_fetch", "result": result, "tool_id": pf["id"],
+                       "is_error": tool_results.is_error(result)}
+                # Say what this step is: with an empty assistant turn the model read the
+                # fetch as the start of a task to finish ("Done. I've fetched and saved
+                # ...") and called save_to_artifact / remember unasked.
+                messages.append({"role": "assistant", "content": "(Opening the link from your message so I can "
+                                 "answer from the page itself - nothing else has been done.)", "tool_calls": [{
+                    "id": pf["id"], "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps(pf["args"])}}]})
+                messages.append({"role": "tool", "tool_call_id": pf["id"], "content": tool_results.for_model("web_fetch", result)})
+            if urls:
+                fresh_question = False      # the page is the source; no web pre-search / round-1 guard
             if fresh_question and get_settings().agent_pre_search:
                 # Time-sensitive questions get the current month/year in the query:
                 # with the user's bare words ("Who is the current PM of the UK?")
