@@ -263,6 +263,9 @@ def test_followup_needs_fresh(msg, history, want):
 @pytest.mark.parametrize("msg,want", [
     (SENATE, True), ("any upcoming SpaceX launches?", True), ("who won the Ohio primary election?", True),
     ("What is the primary key of this table?", False), ("what's on my upcoming calendar?", False),
+    # plural offices: "current governors" was answered from memory (Youngkin, not Spanberger)
+    ("Who are the current governors of all 50 US states?", True), ("List all 100 current US senators", True),
+    ("what is the current account balance", False),
 ])
 def test_election_words_need_fresh_facts(msg, want):
     from agent.freshness import needs_fresh_facts

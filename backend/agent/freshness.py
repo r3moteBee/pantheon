@@ -18,7 +18,7 @@ _FRESH_RE = re.compile(
     r"|last (night|week|month|weekend)|recent(ly)?|most recent|news|breaking|so far|still|anymore|nowadays)\b"
     r"|\bcurrent(ly)?\s+(?:\w+\s+){0,2}?(price|prices|rate|rates|version|release|status|weather|forecast|score|standings"
     r"|leader|president|prime minister|pm|chancellor|pope|ceo|cfo|cto|mp|mayor|governor|champion|record|population|events?"
-    r"|news|government|holder)\b"
+    r"|news|government|holder|senator|representative|congress(?:wo)?m[ae]n|justice|cabinet|minister)s?\b"
     # values that move
     r"|\b(price|prices|stock price|exchange rate|weather|forecast|score|standings|polls?|polling|election|elections|midterms?"
     r"|primaries|primary (?:election|race|results?)|won|winner)\b"
@@ -28,7 +28,7 @@ _FRESH_RE = re.compile(
     # who holds an office or title now ("Who is the prime minister of Japan?")
     r"|\bwho(?:'s| is| are)\s+(?:the\s+)?(?:current\s+)?(president|prime minister|premier|chancellor|pope|king|queen"
     r"|monarch|ceo|chair(man|woman|person)?|leader|head of|governor|mayor|speaker|secretary[- ]general|minister"
-    r"|champion|coach|manager|owner)\b",
+    r"|champion|coach|manager|owner)s?\b",
     re.I,
 )
 
