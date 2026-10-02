@@ -81,6 +81,8 @@ How automatic recall behaves:
 
 **Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
 
+**Links you paste:** a URL in your message (up to three) is opened before the agent starts its answer, so a summary or answer is based on the page itself, not on what the model already believes. Turn off with `AGENT_PREFETCH_URLS=false`.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output

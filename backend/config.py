@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # For those questions, run the search BEFORE the first model round (with the
     # user's words / "What is <name>?") instead of letting round 1 decide.
     agent_pre_search: bool = True
+    # A URL in the user's message is fetched before the first model round.
+    agent_prefetch_urls: bool = True
     # Let agent tools / source adapters fetch private, loopback and
     # link-local addresses (intranet ingest). Off by default: SSRF guard.
     allow_private_fetch: bool = False
