@@ -20,23 +20,6 @@ from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-def _resolve_app_version() -> str:
-    """Read version from frontend/package.json or VERSION file."""
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    pkg_json_path = root_dir / "frontend" / "package.json"
-    if pkg_json_path.exists():
-        try:
-            return json.loads(pkg_json_path.read_text(encoding="utf-8"))["version"]
-        except Exception:
-            pass
-    version_file = root_dir / "VERSION"
-    if version_file.exists():
-        try:
-            return version_file.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-    return "unknown"
-
 def _get_git_info() -> dict[str, str]:
     """Retrieve Git repository status."""
     root_dir = Path(__file__).resolve().parent.parent.parent
@@ -138,7 +121,8 @@ def _mask_value(key: str, val: Any) -> Any:
 def generate_self_doc() -> str:
     """Compile the Pantheon system documentation in Markdown format."""
     settings = get_settings()
-    app_version = _resolve_app_version()
+    from utils.version import app_version as _app_version
+    app_version = _app_version()
     git_info = _get_git_info()
     
     # 1. System Environment

@@ -104,4 +104,4 @@ cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration
 
 ## Versioning
 
-Single source of truth: `frontend/package.json` `"version"`, format `YYYY.MM.DD.HXX`. The backend reads it at startup via `_resolve_app_version()` in `main.py` and surfaces it at `/api/health`. Bump on every push, then run `npm install --package-lock-only` in `frontend/` and commit the lockfile.
+Single source of truth: `frontend/package.json` `"version"`, format `YYYY.MM.DD.HXX`. The backend reads it via `utils/version.app_version()` and surfaces it at `/api/health` and in `get_self_documentation`. Bump on every push, then run `npm install --package-lock-only` in `frontend/` and commit the lockfile.
