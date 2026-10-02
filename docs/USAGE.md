@@ -79,6 +79,8 @@ How automatic recall behaves:
 
 **Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
 
+**Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
+
 **Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ## 5. Saving the agent's own output
