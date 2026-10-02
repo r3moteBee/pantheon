@@ -637,7 +637,11 @@ class AgentCore:
                 web_evidence.update(evidence_from("web_fetch", pf["args"], result))
                 yield {"type": "tool_result", "name": "web_fetch", "result": result, "tool_id": pf["id"],
                        "is_error": tool_results.is_error(result)}
-                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                # Say what this step is: with an empty assistant turn the model read the
+                # fetch as the start of a task to finish ("Done. I've fetched and saved
+                # ...") and called save_to_artifact / remember unasked.
+                messages.append({"role": "assistant", "content": "(Opening the link from your message so I can "
+                                 "answer from the page itself - nothing else has been done.)", "tool_calls": [{
                     "id": pf["id"], "type": "function", "function": {"name": "web_fetch", "arguments": json.dumps(pf["args"])}}]})
                 messages.append({"role": "tool", "tool_call_id": pf["id"], "content": tool_results.for_model("web_fetch", result)})
             if urls:
