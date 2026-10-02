@@ -181,3 +181,31 @@ def test_world_facts_with_current_still_are(msg):
 async def test_describe_the_current_configuration_does_not_search():
     text, calls, _ = await _run("describe the current configuration of this agent harness", pre=True)
     assert calls == []
+
+
+@pytest.mark.parametrize("msg,want", [
+    ("describe the current configuration of this agent harness", True), ("What tools do you have?", True),
+    ("How is Pantheon configured right now?", True), ("What model are you running on?", True),
+    ("Summarize my notes from today's meeting", False), ("Who is the current Pope?", False), ("Rate my essay", False),
+])
+def test_self_description_questions(msg, want):
+    from agent.freshness import wants_self_description
+    assert wants_self_description(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_self_description_reads_pantheon_s_own_docs_first():
+    from agent.core import AgentCore
+    from config import get_settings
+    prov = _Prov()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "get_self_documentation")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_name"]); return "Pantheon self-doc: model routes ..."
+    with patch.object(get_settings(), "agent_thinking", False), patch("agent.core.get_all_tool_schemas", return_value=tools), \
+         patch("agent.core.build_system_prompt", return_value="sys"), patch("agent.core.execute_tool", fake_exec):
+        [e async for e in agent.chat("describe the current configuration of this agent harness")]
+    assert calls == ["get_self_documentation"]
+    assert prov.seen[0][-1]["role"] == "tool"            # round 1 already has Pantheon's own state

@@ -39,6 +39,8 @@ _SELF_RE = re.compile(
     r"\b(?:your|yourself|yourselves)\s+(?:own\s+)?(?:config(?:uration)?|settings?|setup|set-up|tools?|capabilit(?:y|ies)|memor(?:y|ies)"
     r"|instructions?|system prompt|prompt|model|models|version|skills?|name|personality|persona|limits?|features?|architecture)\b"
     r"|\babout (?:you|yourself)\b"
+    r"|\b(?:what|which) (?:tools?|models?|llms?|skills?|capabilit(?:y|ies)|version|memory|settings?) (?:do|are|can|did|have) you\b"
+    r"|\b(?:are|is) you running\b|\byou(?:'re| are)? running on\b|\bwhat are you running\b"
     r"|\b(?:this|the) (?:agent|assistant|harness|agent harness|system|bot|chat|conversation|session|project|workspace|server"
     r"|setup|deployment|instance|app|tool)\b"
     r"|\bpantheon\b"
@@ -98,3 +100,17 @@ def unknown_entities(message: str, known: set[str] | None = None) -> list[str]:
             if name not in out:
                 out.append(name)
     return out
+
+
+# Self-description questions get Pantheon's real state first: with only the web
+# search suppressed, "describe the current configuration of this agent harness"
+# was still answered from a recalled earlier (wrong) reply, without any tool.
+_SELF_DESCRIBE_RE = re.compile(
+    r"\b(config(?:uration|ured)?|settings?|set ?up|architecture|tools?|capabilit(?:y|ies)|version|models?|"
+    r"memory (?:system|tiers?|setup)|how (?:are|is) (?:you|it|this|pantheon) (?:set up|configured|built|running))\b",
+    re.I,
+)
+
+
+def wants_self_description(message: str) -> bool:
+    return about_self(message) and bool(_SELF_DESCRIBE_RE.search(message or ""))
