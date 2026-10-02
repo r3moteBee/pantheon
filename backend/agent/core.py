@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import uuid
+import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
@@ -575,8 +576,14 @@ class AgentCore:
             # force a lookup on anyway, run the search before round 1 instead of
             # letting round 1 decide - saves a whole model round (~1.5 s with
             # thinking), and round 1 streams its answer instead of being held.
+            pre_searched = False
             if fresh_question and get_settings().agent_pre_search:
-                pre = _auto_search_call(auto_query)
+                # Time-sensitive questions get the current month/year in the query:
+                # with the user's bare words ("Who is the current PM of the UK?")
+                # engines ranked 2024 pages first and the answer went stale (politics
+                # 44 -> 28/45); the model's own queries carried the date.
+                q = auto_query if entities else f"{auto_query.rstrip('?. ')} {time.strftime('%B %Y')}"
+                pre = _auto_search_call(q)
                 yield pre
                 result = await execute_tool(
                     tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,
@@ -591,8 +598,8 @@ class AgentCore:
                     "function": {"name": "web_search", "arguments": json.dumps(pre["args"])}}]})
                 messages.append({"role": "tool", "tool_call_id": pre["id"],
                                  "content": tool_results.for_model("web_search", result)})
-                results_seen = True
                 fresh_question = False          # nothing left for the round-1 guard to do
+                pre_searched = True             # round 1 keeps thinking: it reasons over dated evidence
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
@@ -600,7 +607,8 @@ class AgentCore:
                 # are in, the answer round runs with thinking off - it was the round
                 # that most often ended with the answer stuck in the reasoning (a
                 # whole extra non-streamed finalize call) and the bulk of the tokens.
-                if agent_extra and results_seen and not get_settings().agent_thinking_after_tools:
+                if agent_extra and results_seen and not get_settings().agent_thinking_after_tools \
+                        and not (pre_searched and iterations == 1):
                     round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
                 self._progress()

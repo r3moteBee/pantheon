@@ -134,7 +134,8 @@ async def test_an_unknown_name_is_searched_by_name_when_the_model_guesses():
 @pytest.mark.asyncio
 async def test_pre_search_runs_before_round_one_and_round_one_answers():
     text, calls, prov = await _run("Who is the current Pope?", pre=True)
-    assert calls == [("web_search", {"query": "Who is the current Pope?"})]   # one search, before any model round
+    import time as _t
+    assert calls == [("web_search", {"query": f"Who is the current Pope {_t.strftime('%B %Y')}"})]   # dated, before any round
     first_round = prov.seen[0]
     assert first_round[-1]["role"] == "tool" and first_round[-2]["tool_calls"][0]["function"]["name"] == "web_search"
 
