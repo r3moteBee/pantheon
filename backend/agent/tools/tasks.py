@@ -1,6 +1,8 @@
 """Scheduled tasks and jobs: create_task, job status, reruns, coding tasks, Telegram."""
 from __future__ import annotations
 
+import re
+
 from typing import Any
 from agent.tools.registry import ToolContext, tool
 
@@ -66,15 +68,19 @@ SCHEMAS: list[dict[str, Any]] = [
                     },
                     "job_type": {
                         "type": "string",
-                        "enum": ["autonomous_task", "iteration_loop", "coding_task"],
+                        "enum": ["autonomous_task", "iteration_loop", "coding_task", "research_batch"],
                         "default": "autonomous_task",
                         "description": (
                             "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
                             "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
                             "each turn is saved as iteration/<job_id>/turn-N.md. 'coding_task': a background "
                             "coding agent edits the bound GitHub repo and opens a PR — ONLY for authoring code "
-                            "(fix, feature, refactor), never for ingest or research; starts now, no plan review. "
-                            "Put the stack and file layout in coding_context (read them with the github tool first)."
+                            "(fix, feature, refactor), never for ingest or research; web chat only, starts now. "
+                            "Put the stack and file layout in coding_context (read them with the github tool first). "
+                            "'research_batch': research a LIST of items one at a time (states, companies, products) - "
+                            "each item gets its own lookups and a sourced note saved as an artifact, then a summary is "
+                            "written from the notes. Use it whenever a request needs more lookups than one chat turn "
+                            "allows (more than ~5 items); give items and item_question."
                         )
                     },
                     "coding_context": {
@@ -88,6 +94,19 @@ SCHEMAS: list[dict[str, Any]] = [
                     "base_branch": {
                         "type": "string",
                         "description": "coding_task only: base branch (repo default if omitted)."
+                    },
+                    "items": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": "research_batch only: the items to research, one note each (e.g. the 50 state names)."
+                    },
+                    "item_question": {
+                        "type": "string",
+                        "description": "research_batch only: the question for each item, with {item} where the item goes, "
+                                       "e.g. 'Who is running for US Senate in {item} in 2026, and who is favoured?'"
+                    },
+                    "lookups_per_item": {
+                        "type": "integer", "default": 6,
+                        "description": "research_batch only: web lookups per item (1-15)."
                     },
                     "max_turns": {
                         "type": "integer",
@@ -401,13 +420,29 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         except (TypeError, ValueError):
             max_iterations = None
     job_type = (tool_args.get("job_type") or "autonomous_task").strip()
-    if job_type not in ("autonomous_task", "iteration_loop"):
+    if job_type not in ("autonomous_task", "iteration_loop", "research_batch"):
         return (
             f"create_task rejected: job_type {job_type!r} is not "
-            f"recognized. Use 'autonomous_task' (default) or "
-            f"'iteration_loop'."
+            f"recognized. Use 'autonomous_task' (default), "
+            f"'iteration_loop' or 'research_batch'."
         )
     extras: dict | None = None
+    if job_type == "research_batch":
+        items = tool_args.get("items")
+        if isinstance(items, str):
+            items = [i.strip() for i in re.split(r"[,\n]", items) if i.strip()]
+        question = (tool_args.get("item_question") or "").strip()
+        if not items or not isinstance(items, list) or not question:
+            return ("create_task rejected: research_batch needs items (a list, e.g. the state names) and "
+                    "item_question (with {item} where each item goes).")
+        if "{item}" not in question:
+            question += " ({item})"
+        try:
+            per_item = max(1, min(int(tool_args.get("lookups_per_item") or 6), 15))
+        except (TypeError, ValueError):
+            per_item = 6
+        extras = {"topic": tool_args.get("name") or "research", "items": [str(i) for i in items][:200],
+                  "item_question": question, "lookups_per_item": per_item}
     if job_type == "iteration_loop":
         try:
             max_turns = int(tool_args.get("max_turns", 10))

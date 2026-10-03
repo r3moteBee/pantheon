@@ -231,8 +231,15 @@ class AgentCore:
         active_skill_name: str | None = None,
         host_exec: bool = False,
         interactive: bool = False,
+        only_tools: set[str] | None = None,
+        web_budget: int | None = None,
     ):
         self.provider = provider
+        # Restrict the tools this agent is offered (None = all it may use).
+        # research_batch gives each per-item turn only web_search/web_fetch.
+        self.only_tools = only_tools
+        # Web lookups per turn before it must answer (None = AGENT_WEB_BUDGET in chat, unlimited elsewhere).
+        self.web_budget = web_budget
         # True only for turns a person drives from the web UI.
         self.interactive = interactive
         # Host-exec tools (shell/code/git) are opt-in per construction site.
@@ -636,6 +643,8 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
+            if self.only_tools is not None:
+                all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 
             tool_names = {t.get("function", {}).get("name") for t in all_tools}
 
@@ -755,7 +764,8 @@ class AgentCore:
             # district with both candidates, the agent searched district by district
             # with guessed names - 48 lookups, 3 minutes, no answer it could stand
             # behind (2026-10-02). Past the budget it must answer from what it has.
-            web_budget = get_settings().agent_web_budget if self.interactive else 0
+            web_budget = self.web_budget if self.web_budget is not None else (
+                get_settings().agent_web_budget if self.interactive else 0)
             web_calls = 1 if pre_searched else 0
             wrap_up = False
             while iterations < iteration_limit:
