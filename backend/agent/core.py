@@ -163,6 +163,17 @@ def _needs_written_query(message: str) -> bool:
     return len(m) > 120 or sentences >= 2 or (len(m) > 60 and bool(_INSTRUCTION_RE.search(m)))
 
 
+_SAVE_TOOLS = ("save_to_artifact", "update_artifact", "write_file")
+SAVED_SHOWN_MAX = 8000
+_SAVED_NOTE_RE = re.compile(r"\b(saved|stored|written|created)\b", re.I)
+
+
+def _only_saved_note(text: str) -> bool:
+    """A reply that only reports saving something, e.g. "Done. The briefing has been saved as `x.md`." """
+    t = (text or "").strip()
+    return 0 < len(t) < 300 and bool(_SAVED_NOTE_RE.search(t)) and t.count("\n") <= 3
+
+
 def _with_sampling(kw: dict) -> dict:
     """Add AGENT_PRESENCE_PENALTY (when set) to a model call's extra_body."""
     p = get_settings().agent_presence_penalty
@@ -614,6 +625,7 @@ class AgentCore:
 
             full_response = ""
             web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
+            saved_contents: list[str] = []      # what save_to_artifact / update_artifact / write_file wrote this turn
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -945,6 +957,9 @@ class AgentCore:
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
                         web_evidence.update(evidence_from(tool_name, tool_args, result))
+                    if tool_name in _SAVE_TOOLS and isinstance(tool_args.get("content"), str) \
+                            and not tool_results.is_error(result):
+                        saved_contents.append(tool_args["content"])
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -994,6 +1009,14 @@ class AgentCore:
                             "resumable; one without is not."
                         ),
                     })
+
+            # "Done, saved to X" is not an answer: asked to research and save, the
+            # model often replied with only that (2026-10-03, 4 of 10 research runs).
+            # The user then gets what was saved.
+            if saved_contents and _only_saved_note(full_response):
+                shown = "\n\n---\n\n" + "\n\n".join(saved_contents)[:SAVED_SHOWN_MAX]
+                full_response += shown
+                yield {"type": "text_delta", "content": shown}
 
             # An answer built on web results but citing nothing gets the URLs
             # whose text holds its key facts (agent/sources.py).

@@ -441,3 +441,38 @@ async def test_written_query_falls_back_to_the_first_sentence():
     agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
     assert await agent._standalone_query(LONG_REQ, []) == \
         "Please do a multi-step breakdown of the US Senate and House elections."
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_only_says_saved_shows_what_was_saved():
+    """'Done. The briefing has been saved as x.md.' was the whole reply in 4 of 10 research runs (2026-10-03)."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, **kw):
+            self.seen.append(messages)
+            if len(self.seen) == 1:
+                yield {"type": "tool_call", "id": "s1", "name": "save_to_artifact",
+                       "args": {"path": "brief.md", "content": "# Briefing\n\n- Canada: Mark Carney"}}
+            else:
+                yield {"type": "text_delta", "content": "Done. The briefing has been saved as `brief.md`."}
+            yield {"type": "done"}
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": "save_to_artifact", "parameters": {}}}]
+
+    async def fake_exec(**kw):
+        return "Saved artifact brief.md"
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat("write me a briefing and save it")]
+    done = [e for e in events if e["type"] == "done"][0]["full_response"]
+    assert done.startswith("Done. The briefing has been saved") and "- Canada: Mark Carney" in done
+
+
+def test_only_saved_note():
+    from agent.core import _only_saved_note
+    assert _only_saved_note("Done. The summary has been saved to `f1.md`.")
+    assert not _only_saved_note("Canada: Mark Carney (since March 2025). Saved to brief.md.\n" + "x" * 400)
+    assert not _only_saved_note("Here is the answer: 42")
