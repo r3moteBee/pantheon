@@ -313,6 +313,16 @@ async def _tool_rerun_job(ctx: ToolContext, tool_name: str, tool_args: dict[str,
 
 
 
+# What the model does after proposing a task. Without the last sentence it
+# proposed a 35-state election survey and then did it inline from memory in
+# the same turn (2026-10-02), saving 8 artifacts of invented data.
+PROPOSED_NEXT_STEP = (
+    "Tell the user the plan is queued for review and ask them to read the chat or open the Tasks tab to approve "
+    "or edit. The schedule will not fire until they approve. Do NOT also do the task's work now in this chat - "
+    "the task does it once approved; end your reply after telling the user."
+)
+
+
 @tool('create_task')
 async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     session_id = ctx.session_id
@@ -463,9 +473,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"actually ran, call list_recent_jobs() or "
         f"get_job_status(job_id={task_id!r}) — the latter "
         f"will resolve the schedule to its most recent run.\n\n"
-        f"Tell the user the plan is queued for review and ask "
-        f"them to read the chat or open the Tasks tab to approve "
-        f"or edit. The schedule will not fire until they approve."
+        + PROPOSED_NEXT_STEP
     )
 
 
