@@ -178,6 +178,15 @@ SURVEY_NOTE = (
 )
 
 
+SURVEY_WEB_BUDGET = 4
+SURVEY_BUDGET_NOTE = (
+    "[Pantheon notice] That was {n} web lookups - enough to find the list. This survey is too big for one reply. "
+    "Now call create_task(job_type=\"research_batch\", name=..., description=..., plan=..., items=[the items], "
+    "item_question=\"... {{item}} ...\") - no other tool - and then tell the user it waits for their approval. "
+    "Do not answer the survey from memory."
+)
+
+
 def is_survey_request(message: str) -> bool:
     """'5 states at a time', 'state by state', 'all 50 states', 'every district'."""
     return bool(_SURVEY_RE.search(message or ""))
@@ -792,6 +801,12 @@ class AgentCore:
             # behind (2026-10-02). Past the budget it must answer from what it has.
             web_budget = self.web_budget if self.web_budget is not None else (
                 get_settings().agent_web_budget if self.interactive else 0)
+            # A survey turn may only find the list and hand the work to research_batch:
+            # with the note alone the agent still researched 35 states inline (R8, 3 of 3 runs).
+            survey = self.interactive and "create_task" in tool_names and is_survey_request(user_message)
+            if survey:
+                web_budget = min(web_budget or SURVEY_WEB_BUDGET, SURVEY_WEB_BUDGET)
+            survey_handed_off = False
             web_calls = 1 if pre_searched else 0
             wrap_up = False
             while iterations < iteration_limit:
@@ -805,7 +820,7 @@ class AgentCore:
                         and not (pre_searched and iterations == 1):
                     round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
-                if wrap_up:
+                if wrap_up and not (survey and not survey_handed_off):
                     round_kw = {**round_kw, "extra_body": {**(round_kw.get("extra_body") or {}), "tool_choice": "none"}}
                 self._progress()
                 tool_calls_this_round: list[dict] = []
@@ -903,7 +918,15 @@ class AgentCore:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
 
-                if wrap_up and tool_calls_this_round:
+                if wrap_up and survey and not survey_handed_off and tool_calls_this_round:
+                    # the survey hand-off round: only create_task may run
+                    kept = [c for c in tool_calls_this_round if c.get("name") == "create_task"]
+                    if len(kept) != len(tool_calls_this_round):
+                        logger.info("Survey turn - dropping %d non-create_task call(s)",
+                                    len(tool_calls_this_round) - len(kept))
+                    tool_calls_this_round = kept
+                    survey_handed_off = bool(kept)
+                elif wrap_up and tool_calls_this_round:
                     # llama.cpp may not enforce tool_choice "none": the budget is ours
                     logger.info("Web budget spent - dropping %d more tool call(s)", len(tool_calls_this_round))
                     tool_calls_this_round = []
@@ -1012,7 +1035,8 @@ class AgentCore:
                 if web_budget and web_calls >= web_budget and not wrap_up:
                     wrap_up = True
                     logger.info("Web budget reached (%d lookups) - asking for the answer now", web_calls)
-                    messages.append({"role": "user", "content": WEB_BUDGET_NOTE.format(n=web_calls)})
+                    messages.append({"role": "user", "content": (SURVEY_BUDGET_NOTE if survey else WEB_BUDGET_NOTE)
+                                     .format(n=web_calls)})
 
                 # Re-anchor: long tool loops bury the original instructions
                 # under accumulated tool output and models drift from them

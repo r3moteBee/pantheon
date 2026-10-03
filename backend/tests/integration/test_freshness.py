@@ -517,3 +517,40 @@ async def test_survey_request_gets_the_research_batch_note_in_chat_only():
              patch("agent.core.get_all_tool_schemas", return_value=[]), patch("agent.core.build_system_prompt", return_value="sys"):
             [e async for e in agent.chat(LONG_REQ)]
         assert (SURVEY_NOTE in prov.seen[0][-1]["content"]) is interactive
+
+
+@pytest.mark.asyncio
+async def test_survey_turn_hands_off_to_research_batch_after_finding_the_list():
+    """With the note alone the agent still researched 35 states inline (3 of 3 runs)."""
+    from agent.core import AgentCore, SURVEY_BUDGET_NOTE, SURVEY_WEB_BUDGET
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.seen.append((list(messages), extra_body))
+            n = len(self.seen)
+            if n <= SURVEY_WEB_BUDGET:
+                yield {"type": "tool_call", "id": f"w{n}", "name": "web_search", "args": {"query": f"senate {n}"}}
+            elif n == SURVEY_WEB_BUDGET + 1:     # hand-off round: one more search + the proposal
+                yield {"type": "tool_call", "id": "w9", "name": "web_search", "args": {"query": "Ohio senate"}}
+                yield {"type": "tool_call", "id": "t1", "name": "create_task", "args": {"job_type": "research_batch"}}
+            else:
+                yield {"type": "text_delta", "content": "I've proposed a research task; it waits for your approval."}
+            yield {"type": "done"}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=True)
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "create_task")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_name"]); return "ok"
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat(LONG_REQ)]
+    assert calls == ["web_search"] * SURVEY_WEB_BUDGET + ["create_task"]          # the extra search was dropped
+    handoff_msgs, handoff_extra = prov.seen[SURVEY_WEB_BUDGET]
+    assert handoff_msgs[-1]["content"] == SURVEY_BUDGET_NOTE.format(n=SURVEY_WEB_BUDGET)
+    assert "tool_choice" not in (handoff_extra or {})                              # create_task must stay callable
+    assert prov.seen[-1][1]["tool_choice"] == "none"
+    assert [e for e in events if e["type"] == "done"][0]["full_response"].startswith("I've proposed a research task")
