@@ -385,3 +385,59 @@ def test_long_pages_drop_same_site_link_urls_before_the_cut():
           "[NGA](https://www.nga.org/governors/) or [top](#top) [rel](/wiki/X)")
     assert compact_links(md, "https://en.wikipedia.org/wiki/List_of_current_United_States_governors") == (
         "Alabama governor Kay Ivey see Jev and [NGA](https://www.nga.org/governors/) or top rel")
+
+
+# ── Long, instruction-style requests get a written search query (2026-10-02 17:10) ──
+
+LONG_REQ = ("Please do a multi-step breakdown of the US Senate and House elections. look at 5 states at a time, who is "
+            "running and probable outcomes. store results in an artifact to avoid future hallucination.")
+
+
+@pytest.mark.parametrize("msg,want", [
+    (LONG_REQ, True),
+    ("Can you research the latest stable versions of Kubernetes and Docker and save them in a table?", True),
+    ("Who is the current Prime Minister of the UK?", False),
+    ("What's the latest stable version of PostgreSQL?", False),
+    ("What's the weather in Boston right now?", False),
+])
+def test_needs_written_query(msg, want):
+    from agent.core import _needs_written_query
+    assert _needs_written_query(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_long_instruction_is_pre_searched_with_a_written_query():
+    """Its own words found dictionary pages for "Please"; the agent then answered 35 states from memory."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.rewrite_prompt = messages[0]["content"]
+            return {"content": "2026 US Senate races candidates by state"}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "recall")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"])); return "results"
+    with patch.object(get_settings(), "agent_force_search", True), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_pre_search", True), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        [e async for e in agent.chat(LONG_REQ)]
+    assert "Leave out instructions about saving" in prov.rewrite_prompt and "Conversation so far" not in prov.rewrite_prompt
+    assert calls[0] == ("web_search", {"query": "2026 US Senate races candidates by state"})   # has a year: no date added
+
+
+@pytest.mark.asyncio
+async def test_written_query_falls_back_to_the_first_sentence():
+    from agent.core import AgentCore
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            raise RuntimeError("down")
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    assert await agent._standalone_query(LONG_REQ, []) == \
+        "Please do a multi-step breakdown of the US Senate and House elections."

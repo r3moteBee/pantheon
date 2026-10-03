@@ -150,6 +150,19 @@ def _skill_names() -> set[str]:
         return set()
 
 
+_INSTRUCTION_RE = re.compile(
+    r"\b(please|store|save|artifact|table|summary|summari[sz]e|compare|briefing|put (?:it|them|together)"
+    r"|for my notes|step by step|multi-step|then)\b", re.I)
+
+
+def _needs_written_query(message: str) -> bool:
+    """A message whose own words make a poor search query: long, several
+    sentences, or instructions about what to do with the answer."""
+    m = (message or "").strip()
+    sentences = len(re.findall(r"[.?!](?:\s|$)", m))
+    return len(m) > 120 or sentences >= 2 or (len(m) > 60 and bool(_INSTRUCTION_RE.search(m)))
+
+
 def _with_sampling(kw: dict) -> dict:
     """Add AGENT_PRESENCE_PENALTY (when set) to a model call's extra_body."""
     p = get_settings().agent_presence_penalty
@@ -383,15 +396,20 @@ class AgentCore:
         return texts
 
     async def _standalone_query(self, message: str, prior: list[dict]) -> str:
-        """A follow-up ("and AMD?") as a standalone web query, written by the
-        model from the last few messages; the previous question + the follow-up
-        if that fails."""
+        """A web query written by the model for a message whose own words make a
+        poor one: a follow-up ("and AMD?"), or a long instruction ("Please do a
+        multi-step breakdown ... store results in an artifact ...", whose words
+        found dictionary pages for "Please"). Fallback: the previous question +
+        the follow-up, or the message's first sentence."""
         last_user = next((str(m.get("content") or "") for m in reversed(prior) if m.get("role") == "user"), "")
-        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else message
+        first = re.split(r"(?<=[.?!])\s+", message.strip(), maxsplit=1)[0][:150]
+        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else first
         lines = [f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in prior[-4:]]
-        prompt = ("Conversation so far:\n" + "\n".join(lines) + f"\n\nLatest user message: {message}\n\n"
-                  "Write ONE web search query (at most 12 words) that finds what the latest message asks for. "
-                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. "
+        convo = ("Conversation so far:\n" + "\n".join(lines) + "\n\n") if lines else ""
+        prompt = (convo + f"Latest user message: {message}\n\n"
+                  "Write ONE web search query (at most 12 words) that finds the facts the latest message needs. "
+                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. Leave out "
+                  "instructions about saving, formatting, artifacts or steps - search for the subject itself. "
                   "Reply with the query only.")
         extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
         try:
@@ -405,7 +423,7 @@ class AgentCore:
             q = ""
         if not q or len(q) > 200:
             q = fallback
-        logger.info("Follow-up about current facts - searching %r", q)
+        logger.info("Searching with a written query: %r", q)
         return q
 
     def _get_working_messages(self) -> list[dict[str, str]]:
@@ -638,6 +656,9 @@ class AgentCore:
                     and not _user_urls(user_message) \
                     and followup_needs_fresh(user_message, self.working_memory[:-1]):
                 fresh_question = True
+                auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
+            # ...and a long, instruction-style request gets a written query too
+            elif fresh_question and not entities and _needs_written_query(user_message):
                 auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
 
             results_seen = False
