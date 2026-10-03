@@ -490,3 +490,30 @@ async def test_written_query_prompt_carries_todays_date():
     p = P()
     await AgentCore(provider=p, memory_manager=None, project_id="p", session_id="s")._standalone_query(LONG_REQ, [])
     assert f"Today's date: {_t.strftime('%B %d, %Y')}." in p.prompt
+
+
+@pytest.mark.parametrize("msg,want", [
+    (LONG_REQ, True),
+    ("Go through the 2026 governor races state by state, a few states at a time", True),
+    ("List all 100 current US senators", False),
+    ("Give me every Ohio district with both candidates", True),
+    ("what about all 50 states?", True),
+    ("Who is the governor of Ohio?", False),
+    ("Compare the prices of Bitcoin and Ethereum", False),
+])
+def test_survey_requests(msg, want):
+    from agent.core import is_survey_request
+    assert is_survey_request(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_survey_request_gets_the_research_batch_note_in_chat_only():
+    from agent.core import AgentCore, SURVEY_NOTE
+    from config import get_settings
+    for interactive in (True, False):
+        prov = _Prov()
+        agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=interactive)
+        with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+             patch("agent.core.get_all_tool_schemas", return_value=[]), patch("agent.core.build_system_prompt", return_value="sys"):
+            [e async for e in agent.chat(LONG_REQ)]
+        assert (SURVEY_NOTE in prov.seen[0][-1]["content"]) is interactive

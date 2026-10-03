@@ -163,6 +163,26 @@ def _needs_written_query(message: str) -> bool:
     return len(m) > 120 or sentences >= 2 or (len(m) > 60 and bool(_INSTRUCTION_RE.search(m)))
 
 
+_SURVEY_RE = re.compile(
+    r"\b(?:all|every|each)\s+(?:of\s+the\s+)?(?:\d+\s+)?(?:[A-Z][a-z]+\s+)?(?:states?|districts?|counties|countries|seats|races|provinces)\b"
+    r"|\b\d{2,3}\s+(?:states|districts|counties|countries|seats|races|provinces)\b"
+    r"|\b(?:state|district|county|country)[- ]by[- ](?:state|district|county|country)\b"
+    r"|\b(?:\d+|a few|several)\s+(?:states|districts|items|countries|races)\s+at\s+a\s+time\b",
+    re.I)
+SURVEY_NOTE = (
+    "[Pantheon note] This request covers many items - more lookups than one reply can do reliably. "
+    "Do this: (1) find the list of items with one search or fetch; (2) propose "
+    "create_task(job_type=\"research_batch\", name=..., description=..., plan=..., items=[...], "
+    "item_question=\"... {item} ...\"); (3) tell the user what it will do and that it waits for their approval. "
+    "Do not research the items one by one in this reply.\n\n"
+)
+
+
+def is_survey_request(message: str) -> bool:
+    """'5 states at a time', 'state by state', 'all 50 states', 'every district'."""
+    return bool(_SURVEY_RE.search(message or ""))
+
+
 _SAVE_TOOLS = ("save_to_artifact", "update_artifact", "write_file")
 SAVED_SHOWN_MAX = 8000
 _SAVED_NOTE_RE = re.compile(r"\b(saved|stored|written|created)\b", re.I)
@@ -620,6 +640,11 @@ class AgentCore:
             # new message, after the history — see prompts.render_turn_context.
             turn_context = render_turn_context(
                 recalled_memories, omitted_messages=history_dropped + self.working_offset)
+            # A survey of many items can't be researched in one reply: the guide's
+            # research_batch rule alone was never followed (0 of 18 runs), so the
+            # turn gets an explicit note (agent/tools/tasks.py: research_batch).
+            if self.interactive and is_survey_request(user_message):
+                turn_context = turn_context + SURVEY_NOTE
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:
