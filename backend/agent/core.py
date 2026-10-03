@@ -474,6 +474,48 @@ class AgentCore:
         logger.info("Searching with a written query: %r", q)
         return q
 
+    async def _propose_research_batch(self, user_message: str, web_evidence: dict[str, str]) -> str:
+        """File the research_batch proposal a survey turn talked about but didn't make:
+        the model names the items (from what the turn found) and the per-item question
+        as JSON, and create_task proposes it - the user still approves it in the Tasks
+        tab. Returns the note added to the reply, or "" when nothing was filed."""
+        found = "\n\n".join(f"{u}\n{t[:1500]}" for u, t in list(web_evidence.items())[:6])[:8000]
+        prompt = (f"User request: {user_message}\n\nWhat a few web lookups found:\n{found or '(nothing)'}\n\n"
+                  "This request will be researched one item at a time. Reply with JSON only: "
+                  '{"name": "<short task name>", "items": ["<item>", ...], "item_question": "<question with {item}>"}. '
+                  "items = the things to research one by one (for example the states with a race), taken from the "
+                  "request and the lookups above; item_question = what to find out for each item.")
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
+        try:
+            r = await asyncio.wait_for(self.provider.chat_complete([{"role": "user", "content": prompt}],
+                                                                   extra_body=extra), timeout=60)
+            m = re.search(r"\{.*\}", r.get("content") or "", re.S)
+            spec = json.loads(m.group(0)) if m else {}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.info("research_batch proposal skipped: %s", e)
+            return ""
+        items = [str(i).strip() for i in (spec.get("items") or []) if str(i).strip()]
+        question = str(spec.get("item_question") or "").strip()
+        if len(items) < 2 or not question:
+            return ""
+        name = str(spec.get("name") or "Research")[:80]
+        result = await execute_tool(
+            tool_name="create_task",
+            tool_args={"name": name, "description": user_message[:500], "job_type": "research_batch",
+                       "items": items, "item_question": question,
+                       "plan": "1. Research each item separately and save a sourced note per item.\n"
+                               "2. Write the summary from the notes."},
+            memory_manager=self.memory_manager, project_id=self.project_id, session_id=self.session_id,
+            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec)
+        if not str(result).startswith("Task PROPOSED"):
+            logger.info("research_batch proposal not filed: %s", str(result)[:200])
+            return ""
+        logger.info("Filed a research_batch proposal for a survey turn: %d items", len(items))
+        return (f"\n\n**Research task proposed:** *{name}* - {len(items)} items, researched one at a time with a "
+                f"sourced note each, then a summary. It waits for your approval in the Tasks tab.")
+
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
         return self.working_memory.copy()
@@ -668,6 +710,7 @@ class AgentCore:
             full_response = ""
             web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
             saved_contents: list[str] = []      # what save_to_artifact / update_artifact / write_file wrote this turn
+            task_created = False
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -1019,6 +1062,9 @@ class AgentCore:
                     if tool_name in _SAVE_TOOLS and isinstance(tool_args.get("content"), str) \
                             and not tool_results.is_error(result):
                         saved_contents.append(tool_args["content"])
+                    if tool_name == "create_task" and not tool_results.is_error(result) \
+                            and str(result).startswith(("Task PROPOSED", "Task scheduled")):
+                        task_created = True
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -1069,6 +1115,14 @@ class AgentCore:
                             "resumable; one without is not."
                         ),
                     })
+
+            # A survey turn that only DESCRIBED the research_batch task (5 of 6 runs with
+            # the hand-off alone) gets the proposal filed for it.
+            if survey and not task_created and full_response:
+                note = await self._propose_research_batch(user_message, web_evidence)
+                if note:
+                    full_response += note
+                    yield {"type": "text_delta", "content": note}
 
             # "Done, saved to X" is not an answer: asked to research and save, the
             # model often replied with only that (2026-10-03, 4 of 10 research runs).

@@ -554,3 +554,43 @@ async def test_survey_turn_hands_off_to_research_batch_after_finding_the_list():
     assert "tool_choice" not in (handoff_extra or {})                              # create_task must stay callable
     assert prov.seen[-1][1]["tool_choice"] == "none"
     assert [e for e in events if e["type"] == "done"][0]["full_response"].startswith("I've proposed a research task")
+
+
+@pytest.mark.asyncio
+async def test_survey_turn_that_only_describes_the_task_gets_it_filed():
+    """5 of 6 survey runs wrote 'I propose a research_batch task...' without calling create_task."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.seen.append(list(messages))
+            if len(self.seen) == 1:
+                yield {"type": "tool_call", "id": "w1", "name": "web_search", "args": {"query": "2026 senate races"}}
+            else:
+                yield {"type": "text_delta", "content": "I propose a research_batch task covering the 35 races."}
+            yield {"type": "done"}
+
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.spec_prompt = messages[0]["content"]
+            return {"content": '{"name": "2026 Senate", "items": ["Ohio", "Maine"], '
+                               '"item_question": "Who runs for Senate in {item}?"}'}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=True)
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "create_task")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"]))
+        if kw["tool_name"] == "create_task":
+            return "Task PROPOSED — paused, awaiting your approval."
+        return "1. 2026 Senate races\n   https://x.test/races\n   Races in Ohio and Maine this November."
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat(LONG_REQ)]
+    ct = [a for n, a in calls if n == "create_task"]
+    assert ct and ct[0]["job_type"] == "research_batch" and ct[0]["items"] == ["Ohio", "Maine"]
+    assert "x.test/races" in prov.spec_prompt
+    done = [e for e in events if e["type"] == "done"][0]["full_response"]
+    assert "**Research task proposed:** *2026 Senate* - 2 items" in done
