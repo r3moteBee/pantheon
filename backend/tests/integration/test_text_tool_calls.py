@@ -179,3 +179,59 @@ async def test_tool_loads_source_image_artifact(tmp_path):
         assert fake.generate_image.await_args.kwargs["images"] == [_PNG]
         bad = await execute_tool("generate_image", {"prompt": "x", "source_image": "nope"}, None)
         assert "not found" in bad
+
+
+QWEN_XML = ("<tool_call>\n<function=save_to_artifact>\n<parameter=path>\nBriefings/heads.md\n</parameter>\n"
+            "<parameter=content>\n# Heads of Government\n\n- Canada: Mark Carney\n</parameter>\n</function>\n</tool_call>")
+
+
+def test_qwen_xml_calls_are_recovered():
+    """A whole save_to_artifact call in Qwen3's XML format was shown to the user as the reply (2026-10-03)."""
+    got = recover(QWEN_XML, TOOLS | {"save_to_artifact"})
+    assert got and got[0]["name"] == "save_to_artifact"
+    assert got[0]["args"] == {"path": "Briefings/heads.md", "content": "# Heads of Government\n\n- Canada: Mark Carney"}
+    # stopped before the closing tag; typed parameter values
+    got = recover("<tool_call>\n<function=recall>\n<parameter=query>\ngpus\n</parameter>\n<parameter=limit>\n3\n"
+                  "</parameter>\n</function>", TOOLS)
+    assert got[0]["args"] == {"query": "gpus", "limit": 3}
+    # prose around it, or an unknown tool: not a call
+    assert recover("Here you go: " + QWEN_XML, TOOLS | {"save_to_artifact"}) is None
+    assert recover(QWEN_XML, TOOLS) is None
+
+
+@pytest.mark.asyncio
+async def test_xml_call_after_the_web_budget_becomes_an_answer():
+    """Past the lookup budget the model wrote the call as text; it must not reach the user as markup."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P:
+        model, task_class = "m", "agent"
+
+        def __init__(self):
+            self.n = 0
+
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.n += 1
+            if self.n == 1:
+                yield {"type": "tool_call", "id": "c1", "name": "web_search", "args": {"query": "canada pm"}}
+            else:
+                yield {"type": "text_delta", "content": QWEN_XML}
+            yield {"type": "done"}
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "save_to_artifact")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_name"]); return "Mark Carney is Prime Minister of Canada"
+
+    async def fake_final(self, messages, reasoning, agent_extra, tools):
+        yield "Canada's prime minister is Mark Carney."
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s", interactive=True)
+    with patch.object(get_settings(), "agent_web_budget", 1), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec), patch.object(AgentCore, "_finalize_stream", fake_final):
+        events = [e async for e in agent.chat("who leads canada? save it")]
+    done = [e for e in events if e["type"] == "done"][0]["full_response"]
+    assert "<tool_call>" not in done and done.startswith("Canada's prime minister is Mark Carney.")
+    assert calls == ["web_search"]
