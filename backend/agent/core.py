@@ -424,8 +424,9 @@ class AgentCore:
         fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else first
         lines = [f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in prior[-4:]]
         convo = ("Conversation so far:\n" + "\n".join(lines) + "\n\n") if lines else ""
-        prompt = (convo + f"Latest user message: {message}\n\n"
+        prompt = (convo + f"Latest user message: {message}\n\nToday's date: {time.strftime('%B %d, %Y')}.\n"
                   "Write ONE web search query (at most 12 words) that finds the facts the latest message needs. "
+                  "If you put a year in it, use the one the user means relative to today's date. "
                   "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. Leave out "
                   "instructions about saving, formatting, artifacts or steps - search for the subject itself. "
                   "Reply with the query only.")

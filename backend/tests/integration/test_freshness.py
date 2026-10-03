@@ -476,3 +476,17 @@ def test_only_saved_note():
     assert _only_saved_note("Done. The summary has been saved to `f1.md`.")
     assert not _only_saved_note("Canada: Mark Carney (since March 2025). Saved to brief.md.\n" + "x" * 400)
     assert not _only_saved_note("Here is the answer: 42")
+
+
+@pytest.mark.asyncio
+async def test_written_query_prompt_carries_todays_date():
+    """Written queries said '... 2024 general election' / '2025 candidates' in October 2026 (training-year bias)."""
+    import time as _t
+    from agent.core import AgentCore
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.prompt = messages[0]["content"]; return {"content": "q"}
+    p = P()
+    await AgentCore(provider=p, memory_manager=None, project_id="p", session_id="s")._standalone_query(LONG_REQ, [])
+    assert f"Today's date: {_t.strftime('%B %d, %Y')}." in p.prompt
