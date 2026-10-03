@@ -29,6 +29,10 @@ def bootstrap_handlers() -> None:
     except Exception as e:
         logger.debug("autoresearch handler unavailable: %s", e)
     try:
+        from jobs.handlers import research_batch    # noqa: F401
+    except Exception as e:
+        logger.debug("research_batch handler unavailable: %s", e)
+    try:
         from jobs.handlers import iteration_loop    # noqa: F401
     except Exception as e:
         logger.debug("iteration_loop handler unavailable: %s", e)

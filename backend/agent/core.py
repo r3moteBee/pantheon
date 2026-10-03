@@ -150,6 +150,59 @@ def _skill_names() -> set[str]:
         return set()
 
 
+_INSTRUCTION_RE = re.compile(
+    r"\b(please|store|save|artifact|table|summary|summari[sz]e|compare|briefing|put (?:it|them|together)"
+    r"|for my notes|step by step|multi-step|then)\b", re.I)
+
+
+def _needs_written_query(message: str) -> bool:
+    """A message whose own words make a poor search query: long, several
+    sentences, or instructions about what to do with the answer."""
+    m = (message or "").strip()
+    sentences = len(re.findall(r"[.?!](?:\s|$)", m))
+    return len(m) > 120 or sentences >= 2 or (len(m) > 60 and bool(_INSTRUCTION_RE.search(m)))
+
+
+_SURVEY_RE = re.compile(
+    r"\b(?:all|every|each)\s+(?:of\s+the\s+)?(?:\d+\s+)?(?:[A-Z][a-z]+\s+)?(?:states?|districts?|counties|countries|seats|races|provinces)\b"
+    r"|\b\d{2,3}\s+(?:states|districts|counties|countries|seats|races|provinces)\b"
+    r"|\b(?:state|district|county|country)[- ]by[- ](?:state|district|county|country)\b"
+    r"|\b(?:\d+|a few|several)\s+(?:states|districts|items|countries|races)\s+at\s+a\s+time\b",
+    re.I)
+SURVEY_NOTE = (
+    "[Pantheon note] This request covers many items - more lookups than one reply can do reliably. "
+    "Do this: (1) find the list of items with one search or fetch; (2) propose "
+    "create_task(job_type=\"research_batch\", name=..., description=..., plan=..., items=[...], "
+    "item_question=\"... {item} ...\"); (3) tell the user what it will do and that it waits for their approval. "
+    "Do not research the items one by one in this reply.\n\n"
+)
+
+
+SURVEY_WEB_BUDGET = 4
+SURVEY_BUDGET_NOTE = (
+    "[Pantheon notice] That was {n} web lookups - enough to find the list. This survey is too big for one reply. "
+    "Now call create_task(job_type=\"research_batch\", name=..., description=..., plan=..., items=[the items], "
+    "item_question=\"... {{item}} ...\") - no other tool - and then tell the user it waits for their approval. "
+    "Do not answer the survey from memory."
+)
+
+
+def is_survey_request(message: str) -> bool:
+    """'5 states at a time', 'state by state', 'all 50 states', 'every district'."""
+    return bool(_SURVEY_RE.search(message or ""))
+
+
+_SAVE_TOOLS = ("save_to_artifact", "update_artifact", "write_file")
+SAVED_SHOWN_MAX = 8000
+_SAVED_NOTE_RE = re.compile(r"\b(saved|stored|written|created)\b", re.I)
+
+
+def _only_saved_note(text: str) -> bool:
+    """A reply that only reports saving something, e.g. "Done. The briefing has been saved as `x.md`." """
+    t = (text or "").strip()
+    return 0 < len(t) < 300 and bool(_SAVED_NOTE_RE.search(t)) and t.count("\n") <= 3
+
+
 def _with_sampling(kw: dict) -> dict:
     """Add AGENT_PRESENCE_PENALTY (when set) to a model call's extra_body."""
     p = get_settings().agent_presence_penalty
@@ -207,8 +260,15 @@ class AgentCore:
         active_skill_name: str | None = None,
         host_exec: bool = False,
         interactive: bool = False,
+        only_tools: set[str] | None = None,
+        web_budget: int | None = None,
     ):
         self.provider = provider
+        # Restrict the tools this agent is offered (None = all it may use).
+        # research_batch gives each per-item turn only web_search/web_fetch.
+        self.only_tools = only_tools
+        # Web lookups per turn before it must answer (None = AGENT_WEB_BUDGET in chat, unlimited elsewhere).
+        self.web_budget = web_budget
         # True only for turns a person drives from the web UI.
         self.interactive = interactive
         # Host-exec tools (shell/code/git) are opt-in per construction site.
@@ -383,15 +443,21 @@ class AgentCore:
         return texts
 
     async def _standalone_query(self, message: str, prior: list[dict]) -> str:
-        """A follow-up ("and AMD?") as a standalone web query, written by the
-        model from the last few messages; the previous question + the follow-up
-        if that fails."""
+        """A web query written by the model for a message whose own words make a
+        poor one: a follow-up ("and AMD?"), or a long instruction ("Please do a
+        multi-step breakdown ... store results in an artifact ...", whose words
+        found dictionary pages for "Please"). Fallback: the previous question +
+        the follow-up, or the message's first sentence."""
         last_user = next((str(m.get("content") or "") for m in reversed(prior) if m.get("role") == "user"), "")
-        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else message
+        first = re.split(r"(?<=[.?!])\s+", message.strip(), maxsplit=1)[0][:150]
+        fallback = f"{last_user.rstrip('?. ')} - {message}" if last_user else first
         lines = [f"{m.get('role')}: {str(m.get('content') or '')[:300]}" for m in prior[-4:]]
-        prompt = ("Conversation so far:\n" + "\n".join(lines) + f"\n\nLatest user message: {message}\n\n"
-                  "Write ONE web search query (at most 12 words) that finds what the latest message asks for. "
-                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. "
+        convo = ("Conversation so far:\n" + "\n".join(lines) + "\n\n") if lines else ""
+        prompt = (convo + f"Latest user message: {message}\n\nToday's date: {time.strftime('%B %d, %Y')}.\n"
+                  "Write ONE web search query (at most 12 words) that finds the facts the latest message needs. "
+                  "If you put a year in it, use the one the user means relative to today's date. "
+                  "It must stand alone: spell out what 'that', 'similar', 'the same' or 'and X?' refer to. Leave out "
+                  "instructions about saving, formatting, artifacts or steps - search for the subject itself. "
                   "Reply with the query only.")
         extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
         try:
@@ -405,8 +471,50 @@ class AgentCore:
             q = ""
         if not q or len(q) > 200:
             q = fallback
-        logger.info("Follow-up about current facts - searching %r", q)
+        logger.info("Searching with a written query: %r", q)
         return q
+
+    async def _propose_research_batch(self, user_message: str, web_evidence: dict[str, str]) -> str:
+        """File the research_batch proposal a survey turn talked about but didn't make:
+        the model names the items (from what the turn found) and the per-item question
+        as JSON, and create_task proposes it - the user still approves it in the Tasks
+        tab. Returns the note added to the reply, or "" when nothing was filed."""
+        found = "\n\n".join(f"{u}\n{t[:1500]}" for u, t in list(web_evidence.items())[:6])[:8000]
+        prompt = (f"User request: {user_message}\n\nWhat a few web lookups found:\n{found or '(nothing)'}\n\n"
+                  "This request will be researched one item at a time. Reply with JSON only: "
+                  '{"name": "<short task name>", "items": ["<item>", ...], "item_question": "<question with {item}>"}. '
+                  "items = the things to research one by one (for example the states with a race), taken from the "
+                  "request and the lookups above; item_question = what to find out for each item.")
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if get_settings().agent_thinking else None
+        try:
+            r = await asyncio.wait_for(self.provider.chat_complete([{"role": "user", "content": prompt}],
+                                                                   extra_body=extra), timeout=60)
+            m = re.search(r"\{.*\}", r.get("content") or "", re.S)
+            spec = json.loads(m.group(0)) if m else {}
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.info("research_batch proposal skipped: %s", e)
+            return ""
+        items = [str(i).strip() for i in (spec.get("items") or []) if str(i).strip()]
+        question = str(spec.get("item_question") or "").strip()
+        if len(items) < 2 or not question:
+            return ""
+        name = str(spec.get("name") or "Research")[:80]
+        result = await execute_tool(
+            tool_name="create_task",
+            tool_args={"name": name, "description": user_message[:500], "job_type": "research_batch",
+                       "items": items, "item_question": question,
+                       "plan": "1. Research each item separately and save a sourced note per item.\n"
+                               "2. Write the summary from the notes."},
+            memory_manager=self.memory_manager, project_id=self.project_id, session_id=self.session_id,
+            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec)
+        if not str(result).startswith("Task PROPOSED"):
+            logger.info("research_batch proposal not filed: %s", str(result)[:200])
+            return ""
+        logger.info("Filed a research_batch proposal for a survey turn: %d items", len(items))
+        return (f"\n\n**Research task proposed:** *{name}* - {len(items)} items, researched one at a time with a "
+                f"sourced note each, then a summary. It waits for your approval in the Tasks tab.")
 
     def _get_working_messages(self) -> list[dict[str, str]]:
         """Get working memory messages."""
@@ -583,6 +691,11 @@ class AgentCore:
             # new message, after the history — see prompts.render_turn_context.
             turn_context = render_turn_context(
                 recalled_memories, omitted_messages=history_dropped + self.working_offset)
+            # A survey of many items can't be researched in one reply: the guide's
+            # research_batch rule alone was never followed (0 of 18 runs), so the
+            # turn gets an explicit note (agent/tools/tasks.py: research_batch).
+            if self.interactive and is_survey_request(user_message):
+                turn_context = turn_context + SURVEY_NOTE
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:
@@ -596,6 +709,8 @@ class AgentCore:
 
             full_response = ""
             web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
+            saved_contents: list[str] = []      # what save_to_artifact / update_artifact / write_file wrote this turn
+            task_created = False
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -606,6 +721,8 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
+            if self.only_tools is not None:
+                all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 
             tool_names = {t.get("function", {}).get("name") for t in all_tools}
 
@@ -638,6 +755,9 @@ class AgentCore:
                     and not _user_urls(user_message) \
                     and followup_needs_fresh(user_message, self.working_memory[:-1]):
                 fresh_question = True
+                auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
+            # ...and a long, instruction-style request gets a written query too
+            elif fresh_question and not entities and _needs_written_query(user_message):
                 auto_query = await self._standalone_query(user_message, self.working_memory[:-1])
 
             results_seen = False
@@ -722,7 +842,14 @@ class AgentCore:
             # district with both candidates, the agent searched district by district
             # with guessed names - 48 lookups, 3 minutes, no answer it could stand
             # behind (2026-10-02). Past the budget it must answer from what it has.
-            web_budget = get_settings().agent_web_budget if self.interactive else 0
+            web_budget = self.web_budget if self.web_budget is not None else (
+                get_settings().agent_web_budget if self.interactive else 0)
+            # A survey turn may only find the list and hand the work to research_batch:
+            # with the note alone the agent still researched 35 states inline (R8, 3 of 3 runs).
+            survey = self.interactive and "create_task" in tool_names and is_survey_request(user_message)
+            if survey:
+                web_budget = min(web_budget or SURVEY_WEB_BUDGET, SURVEY_WEB_BUDGET)
+            survey_handed_off = False
             web_calls = 1 if pre_searched else 0
             wrap_up = False
             while iterations < iteration_limit:
@@ -736,7 +863,7 @@ class AgentCore:
                         and not (pre_searched and iterations == 1):
                     round_kw = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
                 guard_round = fresh_question and iterations == 1
-                if wrap_up:
+                if wrap_up and not (survey and not survey_handed_off):
                     round_kw = {**round_kw, "extra_body": {**(round_kw.get("extra_body") or {}), "tool_choice": "none"}}
                 self._progress()
                 tool_calls_this_round: list[dict] = []
@@ -834,7 +961,15 @@ class AgentCore:
                         yield {"type": "tool_call", "name": tc.get("name"),
                                "args": tc.get("args", {}), "id": tc.get("id")}
 
-                if wrap_up and tool_calls_this_round:
+                if wrap_up and survey and not survey_handed_off and tool_calls_this_round:
+                    # the survey hand-off round: only create_task may run
+                    kept = [c for c in tool_calls_this_round if c.get("name") == "create_task"]
+                    if len(kept) != len(tool_calls_this_round):
+                        logger.info("Survey turn - dropping %d non-create_task call(s)",
+                                    len(tool_calls_this_round) - len(kept))
+                    tool_calls_this_round = kept
+                    survey_handed_off = bool(kept)
+                elif wrap_up and tool_calls_this_round:
                     # llama.cpp may not enforce tool_choice "none": the budget is ours
                     logger.info("Web budget spent - dropping %d more tool call(s)", len(tool_calls_this_round))
                     tool_calls_this_round = []
@@ -924,6 +1059,12 @@ class AgentCore:
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
                         web_evidence.update(evidence_from(tool_name, tool_args, result))
+                    if tool_name in _SAVE_TOOLS and isinstance(tool_args.get("content"), str) \
+                            and not tool_results.is_error(result):
+                        saved_contents.append(tool_args["content"])
+                    if tool_name == "create_task" and not tool_results.is_error(result) \
+                            and str(result).startswith(("Task PROPOSED", "Task scheduled")):
+                        task_created = True
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -940,7 +1081,8 @@ class AgentCore:
                 if web_budget and web_calls >= web_budget and not wrap_up:
                     wrap_up = True
                     logger.info("Web budget reached (%d lookups) - asking for the answer now", web_calls)
-                    messages.append({"role": "user", "content": WEB_BUDGET_NOTE.format(n=web_calls)})
+                    messages.append({"role": "user", "content": (SURVEY_BUDGET_NOTE if survey else WEB_BUDGET_NOTE)
+                                     .format(n=web_calls)})
 
                 # Re-anchor: long tool loops bury the original instructions
                 # under accumulated tool output and models drift from them
@@ -973,6 +1115,22 @@ class AgentCore:
                             "resumable; one without is not."
                         ),
                     })
+
+            # A survey turn that only DESCRIBED the research_batch task (5 of 6 runs with
+            # the hand-off alone) gets the proposal filed for it.
+            if survey and not task_created and full_response:
+                note = await self._propose_research_batch(user_message, web_evidence)
+                if note:
+                    full_response += note
+                    yield {"type": "text_delta", "content": note}
+
+            # "Done, saved to X" is not an answer: asked to research and save, the
+            # model often replied with only that (2026-10-03, 4 of 10 research runs).
+            # The user then gets what was saved.
+            if saved_contents and _only_saved_note(full_response):
+                shown = "\n\n---\n\n" + "\n\n".join(saved_contents)[:SAVED_SHOWN_MAX]
+                full_response += shown
+                yield {"type": "text_delta", "content": shown}
 
             # An answer built on web results but citing nothing gets the URLs
             # whose text holds its key facts (agent/sources.py).

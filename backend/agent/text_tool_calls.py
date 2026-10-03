@@ -6,6 +6,7 @@ model's chat template) often reply with the call as plain text:
     {"action": "generate_image", "action_input": {"prompt": "..."}}   (ReAct)
     {"name": "recall", "arguments": {"query": "..."}}                 (OpenAI-ish)
     <tool_call>{"name": "...", "arguments": {...}}</tool_call>          (Hermes/Qwen)
+    <tool_call><function=name><parameter=k>v</parameter></function>   (Qwen3 XML)
     ```json {...} ```                                                   (fenced)
     ```tool_code\nrecall(query="nvidia")\n```                          (Gemma)
 
@@ -137,19 +138,43 @@ def _from_python_call(text: str) -> list[tuple[str, dict]] | None:
     return [(name, args)]
 
 
+_XML_FN_RE = re.compile(r"<function=([\w.\-]+)>\s*(.*?)\s*</function>", re.S)
+_XML_PARAM_RE = re.compile(r"<parameter=([\w.\-]+)>\n?(.*?)\n?</parameter>", re.S)
+
+
+def _from_xml(body: str) -> list[tuple[str, dict]] | None:
+    """Qwen3's XML call format: <function=save_to_artifact><parameter=path>a.md</parameter>...</function>.
+    A model left a whole save_to_artifact call like this as its reply (2026-10-03)."""
+    fns = _XML_FN_RE.findall(body)
+    if not fns or _XML_FN_RE.sub("", body).strip():
+        return None
+    out = []
+    for name, inner in fns:
+        args: dict[str, Any] = {}
+        for k, v in _XML_PARAM_RE.findall(inner):
+            parsed = _loads(v.strip())
+            args[k] = parsed if isinstance(parsed, (dict, list, int, float, bool)) else v
+        if _XML_PARAM_RE.sub("", inner).strip():
+            return None
+        out.append((name, args))
+    return out
+
+
 def recover(text: str, known_tools: set[str]) -> list[dict] | None:
     """Tool calls in the agent's event shape ({type, name, args, id}), or
     None when ``text`` isn't (entirely) a call to known tools."""
     if not text or len(text) > MAX_LEN:
         return None
     s = text.strip()
+    if s.startswith("<tool_call>") and "</tool_call>" not in s:
+        s += "</tool_call>"          # the model stopped before closing the tag
     calls: list[tuple[str, dict]] | None = None
 
     tags = _TAG_RE.findall(s)
     if tags and not _TAG_RE.sub("", s).strip():
         found: list[tuple[str, dict]] = []
         for body in tags:
-            got = _from_obj(_loads(body)) or _lenient_action(body)
+            got = _from_obj(_loads(body)) or _lenient_action(body) or _from_xml(body)
             if not got:
                 return None
             found.extend(got)

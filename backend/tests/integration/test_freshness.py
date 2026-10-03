@@ -385,3 +385,212 @@ def test_long_pages_drop_same_site_link_urls_before_the_cut():
           "[NGA](https://www.nga.org/governors/) or [top](#top) [rel](/wiki/X)")
     assert compact_links(md, "https://en.wikipedia.org/wiki/List_of_current_United_States_governors") == (
         "Alabama governor Kay Ivey see Jev and [NGA](https://www.nga.org/governors/) or top rel")
+
+
+# ── Long, instruction-style requests get a written search query (2026-10-02 17:10) ──
+
+LONG_REQ = ("Please do a multi-step breakdown of the US Senate and House elections. look at 5 states at a time, who is "
+            "running and probable outcomes. store results in an artifact to avoid future hallucination.")
+
+
+@pytest.mark.parametrize("msg,want", [
+    (LONG_REQ, True),
+    ("Can you research the latest stable versions of Kubernetes and Docker and save them in a table?", True),
+    ("Who is the current Prime Minister of the UK?", False),
+    ("What's the latest stable version of PostgreSQL?", False),
+    ("What's the weather in Boston right now?", False),
+])
+def test_needs_written_query(msg, want):
+    from agent.core import _needs_written_query
+    assert _needs_written_query(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_long_instruction_is_pre_searched_with_a_written_query():
+    """Its own words found dictionary pages for "Please"; the agent then answered 35 states from memory."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.rewrite_prompt = messages[0]["content"]
+            return {"content": "2026 US Senate races candidates by state"}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "recall")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"])); return "results"
+    with patch.object(get_settings(), "agent_force_search", True), patch.object(get_settings(), "agent_thinking", False), \
+         patch.object(get_settings(), "agent_pre_search", True), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        [e async for e in agent.chat(LONG_REQ)]
+    assert "Leave out instructions about saving" in prov.rewrite_prompt and "Conversation so far" not in prov.rewrite_prompt
+    assert calls[0] == ("web_search", {"query": "2026 US Senate races candidates by state"})   # has a year: no date added
+
+
+@pytest.mark.asyncio
+async def test_written_query_falls_back_to_the_first_sentence():
+    from agent.core import AgentCore
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            raise RuntimeError("down")
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    assert await agent._standalone_query(LONG_REQ, []) == \
+        "Please do a multi-step breakdown of the US Senate and House elections."
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_only_says_saved_shows_what_was_saved():
+    """'Done. The briefing has been saved as x.md.' was the whole reply in 4 of 10 research runs (2026-10-03)."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, **kw):
+            self.seen.append(messages)
+            if len(self.seen) == 1:
+                yield {"type": "tool_call", "id": "s1", "name": "save_to_artifact",
+                       "args": {"path": "brief.md", "content": "# Briefing\n\n- Canada: Mark Carney"}}
+            else:
+                yield {"type": "text_delta", "content": "Done. The briefing has been saved as `brief.md`."}
+            yield {"type": "done"}
+    agent = AgentCore(provider=P(), memory_manager=None, project_id="p", session_id="s")
+    tools = [{"type": "function", "function": {"name": "save_to_artifact", "parameters": {}}}]
+
+    async def fake_exec(**kw):
+        return "Saved artifact brief.md"
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat("write me a briefing and save it")]
+    done = [e for e in events if e["type"] == "done"][0]["full_response"]
+    assert done.startswith("Done. The briefing has been saved") and "- Canada: Mark Carney" in done
+
+
+def test_only_saved_note():
+    from agent.core import _only_saved_note
+    assert _only_saved_note("Done. The summary has been saved to `f1.md`.")
+    assert not _only_saved_note("Canada: Mark Carney (since March 2025). Saved to brief.md.\n" + "x" * 400)
+    assert not _only_saved_note("Here is the answer: 42")
+
+
+@pytest.mark.asyncio
+async def test_written_query_prompt_carries_todays_date():
+    """Written queries said '... 2024 general election' / '2025 candidates' in October 2026 (training-year bias)."""
+    import time as _t
+    from agent.core import AgentCore
+
+    class P(_Prov):
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.prompt = messages[0]["content"]; return {"content": "q"}
+    p = P()
+    await AgentCore(provider=p, memory_manager=None, project_id="p", session_id="s")._standalone_query(LONG_REQ, [])
+    assert f"Today's date: {_t.strftime('%B %d, %Y')}." in p.prompt
+
+
+@pytest.mark.parametrize("msg,want", [
+    (LONG_REQ, True),
+    ("Go through the 2026 governor races state by state, a few states at a time", True),
+    ("List all 100 current US senators", False),
+    ("Give me every Ohio district with both candidates", True),
+    ("what about all 50 states?", True),
+    ("Who is the governor of Ohio?", False),
+    ("Compare the prices of Bitcoin and Ethereum", False),
+])
+def test_survey_requests(msg, want):
+    from agent.core import is_survey_request
+    assert is_survey_request(msg) is want
+
+
+@pytest.mark.asyncio
+async def test_survey_request_gets_the_research_batch_note_in_chat_only():
+    from agent.core import AgentCore, SURVEY_NOTE
+    from config import get_settings
+    for interactive in (True, False):
+        prov = _Prov()
+        agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=interactive)
+        with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+             patch("agent.core.get_all_tool_schemas", return_value=[]), patch("agent.core.build_system_prompt", return_value="sys"):
+            [e async for e in agent.chat(LONG_REQ)]
+        assert (SURVEY_NOTE in prov.seen[0][-1]["content"]) is interactive
+
+
+@pytest.mark.asyncio
+async def test_survey_turn_hands_off_to_research_batch_after_finding_the_list():
+    """With the note alone the agent still researched 35 states inline (3 of 3 runs)."""
+    from agent.core import AgentCore, SURVEY_BUDGET_NOTE, SURVEY_WEB_BUDGET
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.seen.append((list(messages), extra_body))
+            n = len(self.seen)
+            if n <= SURVEY_WEB_BUDGET:
+                yield {"type": "tool_call", "id": f"w{n}", "name": "web_search", "args": {"query": f"senate {n}"}}
+            elif n == SURVEY_WEB_BUDGET + 1:     # hand-off round: one more search + the proposal
+                yield {"type": "tool_call", "id": "w9", "name": "web_search", "args": {"query": "Ohio senate"}}
+                yield {"type": "tool_call", "id": "t1", "name": "create_task", "args": {"job_type": "research_batch"}}
+            else:
+                yield {"type": "text_delta", "content": "I've proposed a research task; it waits for your approval."}
+            yield {"type": "done"}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=True)
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "create_task")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append(kw["tool_name"]); return "ok"
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat(LONG_REQ)]
+    assert calls == ["web_search"] * SURVEY_WEB_BUDGET + ["create_task"]          # the extra search was dropped
+    handoff_msgs, handoff_extra = prov.seen[SURVEY_WEB_BUDGET]
+    assert handoff_msgs[-1]["content"] == SURVEY_BUDGET_NOTE.format(n=SURVEY_WEB_BUDGET)
+    assert "tool_choice" not in (handoff_extra or {})                              # create_task must stay callable
+    assert prov.seen[-1][1]["tool_choice"] == "none"
+    assert [e for e in events if e["type"] == "done"][0]["full_response"].startswith("I've proposed a research task")
+
+
+@pytest.mark.asyncio
+async def test_survey_turn_that_only_describes_the_task_gets_it_filed():
+    """5 of 6 survey runs wrote 'I propose a research_batch task...' without calling create_task."""
+    from agent.core import AgentCore
+    from config import get_settings
+
+    class P(_Prov):
+        async def chat(self, messages, tools=None, stream=True, extra_body=None, **kw):
+            self.seen.append(list(messages))
+            if len(self.seen) == 1:
+                yield {"type": "tool_call", "id": "w1", "name": "web_search", "args": {"query": "2026 senate races"}}
+            else:
+                yield {"type": "text_delta", "content": "I propose a research_batch task covering the 35 races."}
+            yield {"type": "done"}
+
+        async def chat_complete(self, messages, tools=None, extra_body=None):
+            self.spec_prompt = messages[0]["content"]
+            return {"content": '{"name": "2026 Senate", "items": ["Ohio", "Maine"], '
+                               '"item_question": "Who runs for Senate in {item}?"}'}
+    prov = P()
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s", interactive=True)
+    tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "create_task")]
+    calls = []
+
+    async def fake_exec(**kw):
+        calls.append((kw["tool_name"], kw["tool_args"]))
+        if kw["tool_name"] == "create_task":
+            return "Task PROPOSED — paused, awaiting your approval."
+        return "1. 2026 Senate races\n   https://x.test/races\n   Races in Ohio and Maine this November."
+    with patch.object(get_settings(), "agent_thinking", False), patch.object(get_settings(), "agent_force_search", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=tools), patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", fake_exec):
+        events = [e async for e in agent.chat(LONG_REQ)]
+    ct = [a for n, a in calls if n == "create_task"]
+    assert ct and ct[0]["job_type"] == "research_batch" and ct[0]["items"] == ["Ohio", "Maine"]
+    assert "x.test/races" in prov.spec_prompt
+    done = [e for e in events if e["type"] == "done"][0]["full_response"]
+    assert "**Research task proposed:** *2026 Senate* - 2 items" in done
