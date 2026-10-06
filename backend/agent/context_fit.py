@@ -26,9 +26,11 @@ import json
 import re
 from typing import Any
 
-# Tool results are web pages, JSON and code; at ~3 chars per token they come out
-# a little high, which is the safe side. (history.py's 4 is fine for prose.)
-CHARS_PER_TOKEN = 3
+# Same ratio as history.py. A cautious 3 chars/token trimmed evidence the model still
+# had room for (homely A/B 2026-10-06: answers 7/12 -> 3/12 with no overflows to prevent),
+# so the estimate aims at reality and a server-reported overflow is the safety net:
+# the round is re-fitted with the server's own token count and retried.
+CHARS_PER_TOKEN = 4
 MSG_OVERHEAD = 8              # role markers and template tokens per message
 REPLY_RESERVE = 4096          # the provider's default max_tokens for a round
 SAFETY_MARGIN = 1024          # estimate error and chat-template overhead
