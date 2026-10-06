@@ -147,3 +147,16 @@ async def test_coding_tasks_start_only_from_the_web_chat(monkeypatch):
     assert "refused" in out and created == []
     out = await tools.execute_tool("create_task", dict(args), None, interactive=True)
     assert "Coding task queued" in out and created[0]["job_type"] == "coding_task"
+
+
+@pytest.mark.asyncio
+async def test_proposed_task_reply_says_not_to_do_the_work_inline(monkeypatch):
+    """A proposed 35-state survey was then done inline from memory in the same turn (2026-10-02)."""
+    from agent.tools import tasks as t
+
+    async def fake_schedule(**kw):
+        return "sched-1"
+    monkeypatch.setattr("tasks.scheduler.schedule_agent_task", fake_schedule)
+    out = await tools.execute_tool("create_task", {"name": "Survey", "description": "50 states", "plan": "1. search each"},
+                                   None, interactive=True)
+    assert "PROPOSED" in out and t.PROPOSED_NEXT_STEP in out and "Do NOT also do the task's work now" in out
