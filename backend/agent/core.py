@@ -16,7 +16,7 @@ from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budge
 from agent.prompts import build_system_prompt, render_turn_context
 from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
-from agent import tool_results
+from agent import context_fit, tool_results
 from config import get_settings
 from models.provider import ModelProvider
 
@@ -725,6 +725,11 @@ class AgentCore:
             web_budget = get_settings().agent_web_budget if self.interactive else 0
             web_calls = 1 if pre_searched else 0
             wrap_up = False
+            # Tool results pile up inside a turn; keep the prompt inside the model's
+            # window (agent/context_fit.py). On a server-reported overflow the round is
+            # re-fitted with the server's own token count and retried once.
+            ctx_window = context_fit.context_window(self.provider)
+            ctx_calibration, ctx_retried = 1.0, False
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
@@ -739,6 +744,12 @@ class AgentCore:
                 if wrap_up:
                     round_kw = {**round_kw, "extra_body": {**(round_kw.get("extra_body") or {}), "tool_choice": "none"}}
                 self._progress()
+                if ctx_window:
+                    fit = context_fit.fit_messages(messages, ctx_window, all_tools, calibration=ctx_calibration)
+                    if fit["trimmed"]:
+                        logger.info("Context fit: shrank %d tool result(s), ~%d -> ~%d tokens (budget %d)",
+                                    fit["trimmed"], fit["before"], fit["after"], fit["budget"])
+                ctx_overflow = None
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
                 round_reasoning = ""
@@ -776,11 +787,17 @@ class AgentCore:
                             tool_calls_this_round.append(chunk)
                             yield chunk
                         elif chunk["type"] == "error":
-                            yield chunk
+                            ctx_overflow = None if ctx_retried else context_fit.context_overflow(chunk.get("message"))
+                            if not ctx_overflow:
+                                yield chunk
                             stream_error = True
                         elif chunk["type"] == "done":
                             round_reasoning = chunk.get("reasoning") or ""
                             round_finish = chunk.get("finish_reason")
+                    if ctx_overflow:
+                        ctx_window, ctx_calibration, ctx_retried = self._recalibrate(ctx_overflow, messages, all_tools)
+                        iterations -= 1
+                        continue
                     if held and not stream_error and not tool_calls_this_round:
                         recovered = recover_tool_calls(held, tool_names)
                         if recovered:
@@ -803,11 +820,19 @@ class AgentCore:
                         break
                 else:
                     # Non-streaming mode
-                    response = await self.provider.chat_complete(
-                        messages=messages,
-                        tools=all_tools,
-                        **_with_sampling(round_kw),
-                    )
+                    try:
+                        response = await self.provider.chat_complete(
+                            messages=messages,
+                            tools=all_tools,
+                            **_with_sampling(round_kw),
+                        )
+                    except Exception as e:
+                        ctx_overflow = None if ctx_retried else context_fit.context_overflow(str(e))
+                        if not ctx_overflow:
+                            raise
+                        ctx_window, ctx_calibration, ctx_retried = self._recalibrate(ctx_overflow, messages, all_tools)
+                        iterations -= 1
+                        continue
                     current_text = response.get("content", "")
                     round_reasoning = response.get("reasoning") or ""
                     tool_calls_this_round = response.get("tool_calls", [])
@@ -1010,6 +1035,16 @@ class AgentCore:
         from utils.progress import report_progress
         report_progress()
 
+    @staticmethod
+    def _recalibrate(overflow: tuple[int, int], messages: list[dict], tools: list[dict]) -> tuple[int, float, bool]:
+        """After "request (N tokens) exceeds the available context size (M tokens)": use the
+        server's window and scale our estimate by how far off it was, for one retry."""
+        n_prompt, n_ctx = overflow
+        est = max(1, context_fit.estimate(messages, tools))
+        logger.warning("Context overflow: the server counted %d tokens against a %d-token window "
+                       "(estimated %d) - re-fitting and retrying the round once", n_prompt, n_ctx, est)
+        return n_ctx, max(1.0, n_prompt / est), True
+
     async def _finalize_from_reasoning(self, messages: list[dict], reasoning: str,
                                        agent_extra: dict | None, tools: list[dict] | None = None) -> str:
         """Ask once more for the reply itself: thinking off, tool calls off, with
@@ -1026,6 +1061,7 @@ class AgentCore:
             {"role": "user", "content": "Write your reply to my request above now, based on your "
                                         "working notes. Reply directly; do not call tools."},
         ]
+        context_fit.fit_messages(msgs, context_fit.context_window(self.provider), tools)
         extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
         if tools:
             extra["tool_choice"] = "none"
@@ -1048,6 +1084,7 @@ class AgentCore:
             {"role": "user", "content": "Write your reply to my request above now, based on your "
                                         "working notes. Reply directly; do not call tools."},
         ]
+        context_fit.fit_messages(msgs, context_fit.context_window(self.provider), tools)
         extra = {"chat_template_kwargs": {"enable_thinking": False}} if agent_extra else {}
         if tools:
             extra["tool_choice"] = "none"
