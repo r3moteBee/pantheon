@@ -9,6 +9,7 @@ import uuid
 import time
 from typing import Any, AsyncGenerator
 
+from agent.follow_through import MAX_NUDGES, announced_action, follow_through_nudge
 from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
@@ -711,6 +712,7 @@ class AgentCore:
             web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
             saved_contents: list[str] = []      # what save_to_artifact / update_artifact / write_file wrote this turn
             task_created = False
+            nudges = 0                          # follow-through rounds this turn (agent/follow_through.py)
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -1021,6 +1023,20 @@ class AgentCore:
 
                 if current_text:
                     full_response = current_text
+
+                promised = (announced_action(current_text) if not tool_calls_this_round and not wrap_up
+                            and nudges < MAX_NUDGES and iterations < iteration_limit
+                            and round_finish != "length" else None)
+                if promised:
+                    # The reply promises a step and ends the turn without taking it:
+                    # one more round to do it, queue it, or drop it.
+                    nudges += 1
+                    logger.info("Follow-through: reply ended with %r and no tool call - asking for it (%d/%d)",
+                                promised[:120], nudges, MAX_NUDGES)
+                    messages.append({"role": "assistant", "content": current_text})
+                    messages.append({"role": "user", "content": follow_through_nudge(promised)})
+                    yield {"type": "text_delta", "content": "\n\n"}
+                    continue
 
                 if not tool_calls_this_round:
                     # No tool calls, we're done. A reply that ran into max_tokens
