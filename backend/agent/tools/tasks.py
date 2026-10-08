@@ -1,10 +1,13 @@
 """Scheduled tasks and jobs: create_task, job status, reruns, coding tasks, Telegram."""
 from __future__ import annotations
 
+import logging
 import re
 
 from typing import Any
 from agent.tools.registry import ToolContext, tool
+
+logger = logging.getLogger(__name__)
 
 
 SCHEMAS: list[dict[str, Any]] = [
@@ -13,8 +16,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "create_task",
             "description": (
-                "Schedule an autonomous background task. Unless skip_review=true it is created "
-                "PAUSED with a proposed plan; it runs only after the user approves it in the Tasks tab. "
+                "Schedule an autonomous background task. When the user asked for it in this chat (a time "
+                "like 'in 15 minutes' / 'tomorrow at 9' / 'every morning', or 'set up a task') it is scheduled "
+                "right away; otherwise, or when its plan deletes, overwrites, merges or pushes, it is created "
+                "PAUSED for the user to approve in the Tasks tab. Do not wrap work you can do now in this turn "
+                "(one image, one lookup) in a task - just do it. "
                 "In the plan, name the exact tools each step uses (look at the tools you actually have — "
                 "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
                 "say so in the plan rather than pretending."
@@ -368,6 +374,17 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
     # content, so their tasks always land as proposals.
     if skip_review and not interactive:
         skip_review = False
+    # A task the user asked for in this chat message runs without the review step;
+    # review stays for the agent's own initiative and for plans that can lose data
+    # (agent/task_intent.py).
+    auto_approved = None
+    if not skip_review and ctx.user_requested_task:
+        from agent.task_intent import review_reason
+        held = review_reason(tool_args)
+        if held:
+            logger.info("create_task: requested in chat but held for review - %s", held)
+        else:
+            skip_review = auto_approved = True
 
     # SERVER-SIDE GUARDRAIL: reject create_task without a plan, and
     # reject skip_review=true unless the user explicitly approved
@@ -481,6 +498,15 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         job_type=job_type,
         extras=extras,
     )
+    if auto_approved:
+        return (
+            f"Task scheduled (the user asked for it in this chat, so it runs without the review step).\n"
+            f"  schedule_id: {task_id}  (SCHEDULE id, not a job run id)\n"
+            f"  name: {tool_args.get('name')}\n"
+            f"  schedule: {tool_args.get('schedule')}\n\n"
+            f"Tell the user in one line what you queued and when it runs. Do NOT also do the task's "
+            f"work now in this chat - the task does it."
+        )
     if skip_review:
         return (
             f"Task scheduled (review skipped — assumes the user "

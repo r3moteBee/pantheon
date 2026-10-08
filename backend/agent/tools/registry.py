@@ -21,6 +21,9 @@ class ToolContext:
     last_assistant_text: str = ""
     # True only for turns a person is driving in the web UI.
     interactive: bool = False
+    # True when that person's message itself asked for scheduled or background
+    # work (agent/task_intent.py): create_task then skips the review step.
+    user_requested_task: bool = False
     host_exec: bool = False
 
     @property
