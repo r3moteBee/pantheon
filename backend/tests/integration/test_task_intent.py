@@ -228,3 +228,17 @@ async def test_one_off_later_is_scheduled():
 async def test_image_request_gets_the_image_note():
     prov, _, _ = await _run("Make an infographic of the summary.", "Here it is.", "ok")
     assert "This asks for an image" in _user_text(prov.seen[0])
+
+
+@pytest.mark.asyncio
+async def test_a_job_type_given_as_skill_becomes_the_job_type():
+    from agent.tools import execute_tool
+    sched = AsyncMock(return_value="sched-1")
+    with patch("tasks.scheduler.schedule_agent_task", sched):
+        result = await execute_tool("create_task", {"name": "Research", "description": "d", "schedule": "now",
+                                                    "plan": "1. web_search", "skill_name": "research_batch",
+                                                    "items": ["a", "b"], "item_question": "What about {item}?"},
+                                    memory_manager=None, project_id="p", session_id="s", interactive=True,
+                                    user_requested_task=True, user_message="Research these in the background.")
+    assert sched.called and sched.call_args.kwargs["job_type"] == "research_batch"
+    assert sched.call_args.kwargs["skill_name"] is None

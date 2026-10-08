@@ -415,6 +415,11 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
 
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
+    # A job type given as a skill ("research_batch") is the job type: told the skill was not
+    # registered and to create it, the agent made a skill named research_batch (2026-10-08).
+    if skill_name and skill_name.replace("-", "_") in ("autonomous_task", "iteration_loop", "research_batch", "coding_task"):
+        tool_args = {**tool_args, "job_type": skill_name.replace("-", "_")}
+        skill_name = None
     # Validate the skill exists at scheduling time so the user
     # gets immediate feedback instead of a runtime failure.
     if skill_name:
@@ -432,7 +437,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             return (
                 f"create_task rejected: skill {tool_args.get('skill_name')!r} "
                 f"is not registered. Pick a slug from the available-skills list in "
-                f"your instructions (or create it with create_skill), then retry."
+                f"your instructions, or leave skill_name out (the plan alone drives the task). "
+                f"Do not create a skill just to make this call work."
             )
         skill_name = resolved
     timeout_seconds = tool_args.get("timeout_seconds")
