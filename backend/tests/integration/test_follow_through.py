@@ -18,6 +18,11 @@ PROMISES = [
     "Got it. I will create a daily task for the PR digest.",
     "Okay, now I'm going to check the GitHub issues.",
     "**Let me look that up.**",
+    # 2026-10-07: a promise behind a lead-in clause, followed by a numbered plan, then the turn ended
+    "I can see the image is still being extracted. Once the extraction is complete, I'll edit it to remove "
+    "the car and fill in the background.\n\nI'll use the image editing capability to:\n1. Remove the car\n"
+    "2. Fill in the space behind it\n3. Keep the lighting consistent",
+    "I'll report back here as soon as I have a list of promising listings!",
 ]
 NOT_PROMISES = [
     "Would you like me to save this as an artifact?",
@@ -43,10 +48,15 @@ def test_offers_questions_and_answers_are_not(text):
     assert announced_action(text) is None
 
 
-def test_only_the_closing_sentences_count():
-    text = ("I'll start by reading the page. " + "It covers the install steps in detail. " * 3
+def test_only_the_end_of_the_reply_counts():
+    text = ("I'll start by reading the page. " + "It covers the install steps in detail. " * 40
             + "That is everything the page says.")
     assert announced_action(text) is None
+
+
+def test_a_reply_ending_in_a_question_hands_the_turn_back():
+    assert announced_action("I'll set up a daily digest at 8 AM.\n\n1. Search releases\n2. Summarise\n\n"
+                            "Would you like me to proceed?") is None
 
 
 # ---- the agent loop ------------------------------------------------------------------------
