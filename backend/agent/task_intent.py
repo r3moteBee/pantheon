@@ -48,6 +48,38 @@ _RISKY_WORDS_RE = re.compile(r"\b(?:delete|remove|overwrite|replace|wipe|purge|d
                              r"merge|rename|move)\b", re.I)
 
 
+_REPEAT_RE = re.compile(
+    rf"\b(?:every|each) (?:\d+ {_UNITS}|day|morning|evening|night|weekday|week|month|hour|{_DAYS})\b"
+    r"|\b(?:daily|weekly|monthly|hourly|nightly|recurring|regularly|repeatedly|periodically)\b"
+    r"|\bkeep (?:checking|watching|an eye on)\b|\bmonitor\b|\bwatch for\b|\bon a schedule\b",
+    re.I,
+)
+_IMAGE_RE = re.compile(r"\b(?:infographic|image|picture|illustration|poster|drawing|photo(?:graph)? of|wallpaper|logo|"
+                       r"generate an? (?:graphic|visual)|draw)\b", re.I)
+
+
+def asks_to_repeat(text: str | None) -> bool:
+    """True when the message asks for something that recurs (a schedule that repeats)."""
+    return bool(_REPEAT_RE.search(text or ""))
+
+
+_NOT_PICTURE_RE = re.compile(r"\b(?:docker|container|podman|oci|disk|iso|vm|system|base|os|cloud|boot|"
+                             r"firmware|backup|kernel|qcow2?|raw)[- ]image|\bimage (?:tag|registry|digest|layer|pull|build)",
+                             re.I)
+
+
+def wants_image(text: str | None) -> bool:
+    """True when the message asks for a picture, not a container or disk image."""
+    t = _NOT_PICTURE_RE.sub(" ", text or "")
+    return bool(_IMAGE_RE.search(t))
+
+
+IMAGE_NOTE = ("[Pantheon note] This asks for an image. Call generate_image with a prompt that describes it - for an "
+              "infographic or poster, the layout plus the exact title and each short line of text in quotes (the "
+              "image model renders quoted text). Keep it to a title and at most five short facts, taken from this "
+              "conversation. Do not write plotting code or describe the image instead of generating it.\n\n")
+
+
 def future_timing(text: str | None) -> str | None:
     """The phrase that puts part of the request in the future, or None."""
     m = _FUTURE_RE.search(text or "")
@@ -78,9 +110,9 @@ def review_reason(tool_args: dict) -> str | None:
 def future_time_note(phrase: str) -> str:
     return (f"[Pantheon note] Part of this request happens later (\"{phrase}\"). Do the parts that can happen "
             "now, now. Queue the later part with create_task in this turn - the user asked for it, so do not ask "
-            "whether to set it up. schedule: 'delay:N' = N minutes from now, a cron expression for a time of day "
-            "or a repeat ('0 9 * * *' = 9:00 every day; work out tomorrow's date from the current time above), "
-            "'interval:N' = every N minutes. Put everything the later run needs into description and plan - it "
+            "whether to set it up. schedule: once, later -> 'delay:N' = N minutes from now (for 'tomorrow at 9' "
+            "work out the minutes from the current time above); repeating, only when the user asked for a repeat -> "
+            "a cron expression ('0 9 * * *' = 9:00 every day) or 'interval:N' = every N minutes. Put everything the later run needs into description and plan - it "
             "sees nothing else. If it waits for something the user will do (an upload), schedule it for the time "
             "they gave and have it check for that first. Only after create_task has returned, say in one line what was "
             "queued and when it runs - never say a task is queued without calling create_task.\n\n")

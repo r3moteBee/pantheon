@@ -24,6 +24,8 @@ class ToolContext:
     # True when that person's message itself asked for scheduled or background
     # work (agent/task_intent.py): create_task then skips the review step.
     user_requested_task: bool = False
+    # That person's message (interactive turns only), for checks such as "did they ask for a repeat?".
+    user_message: str = ""
     host_exec: bool = False
 
     @property

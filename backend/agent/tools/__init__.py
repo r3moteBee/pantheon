@@ -103,6 +103,7 @@ async def execute_tool(
     interactive: bool = False,
     host_exec: bool = False,
     user_requested_task: bool = False,
+    user_message: str = "",
 ) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -139,6 +140,7 @@ async def execute_tool(
             interactive=interactive,
             host_exec=host_exec,
             user_requested_task=interactive and user_requested_task,
+            user_message=user_message if interactive else "",
         )
         return await handler(ctx, tool_name, tool_args)
     except Exception as e:

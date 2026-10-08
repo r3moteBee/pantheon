@@ -163,3 +163,68 @@ async def test_no_note_when_the_reply_already_asks_for_approval():
     _, _, text = await _run("What is the latest llama.cpp release?", "Please approve it in the Tasks tab.",
                             "Task PROPOSED — paused, awaiting your approval.")
     assert "Waiting for your approval" not in text
+
+
+# ---- repeats nobody asked for; image requests (2026-10-08 research episode) ------------------
+
+from agent.task_intent import asks_to_repeat, wants_image  # noqa: E402
+
+
+@pytest.mark.parametrize("text", ["Every morning at 8, summarise new releases.", "Give me a weekly digest.",
+                                  "Keep checking the page and tell me when it changes.", "Monitor the releases."])
+def test_repeat_requests(text):
+    assert asks_to_repeat(text)
+
+
+@pytest.mark.parametrize("text", ["Run this research in the background.", "Remind me tomorrow at 9am.",
+                                  "In 15 minutes, check the releases page.", "Track what changed in ROCm this month."])
+def test_one_off_requests(text):
+    assert not asks_to_repeat(text)
+
+
+@pytest.mark.parametrize("text", ["Make an infographic of the summary.", "Generate an image of a red bicycle.",
+                                  "Create a poster for the event.", "Draw a lighthouse at dusk."])
+def test_picture_requests(text):
+    assert wants_image(text)
+
+
+@pytest.mark.parametrize("text", ["Update the Docker image for Jellyfin.", "Which container image tag is newest?",
+                                  "Rebuild the podman image and push it.", "Flash the firmware image to the board."])
+def test_container_and_disk_images_are_not_pictures(text):
+    assert not wants_image(text)
+
+
+async def _create_sched(message, schedule):
+    from agent.tools import execute_tool
+    sched = AsyncMock(return_value="sched-1")
+    with patch("tasks.scheduler.schedule_agent_task", sched):
+        result = await execute_tool("create_task", {"name": "Research", "description": "d", "schedule": schedule,
+                                                    "plan": "1. web_search"},
+                                    memory_manager=None, project_id="p", session_id="s", interactive=True,
+                                    user_requested_task=True, user_message=message)
+    return result, sched.called
+
+
+@pytest.mark.asyncio
+async def test_unrequested_repeat_is_rejected():
+    result, scheduled = await _create_sched("Research ROCm changes in the background.", "interval:60")
+    assert not scheduled and "does not" not in result and result.startswith("create_task rejected")
+    assert "'now'" in result
+
+
+@pytest.mark.asyncio
+async def test_requested_repeat_is_scheduled():
+    result, scheduled = await _create_sched("Every morning at 8, summarise new llama.cpp releases.", "0 8 * * *")
+    assert scheduled
+
+
+@pytest.mark.asyncio
+async def test_one_off_later_is_scheduled():
+    result, scheduled = await _create_sched("Remind me tomorrow at 9am to renew the domain.", "delay:600")
+    assert scheduled
+
+
+@pytest.mark.asyncio
+async def test_image_request_gets_the_image_note():
+    prov, _, _ = await _run("Make an infographic of the summary.", "Here it is.", "ok")
+    assert "This asks for an image" in _user_text(prov.seen[0])

@@ -402,6 +402,17 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             "context, memory recall, or similar past requests."
         )
 
+    # A repeating schedule nobody asked for runs forever: asked to research something "in the
+    # background", the agent scheduled it interval:60 (2026-10-08).
+    from tasks.scheduler import is_recurring_schedule
+    sched = (tool_args.get("schedule") or "now").strip()
+    if interactive and ctx.user_message and is_recurring_schedule(sched):
+        from agent.task_intent import asks_to_repeat
+        if not asks_to_repeat(ctx.user_message):
+            return (f"create_task rejected: schedule {sched!r} repeats, but the user did not ask for anything "
+                    "recurring. For a single background run use 'now'; for one run later use 'delay:N' (N minutes "
+                    "from now). Call create_task again with that schedule.")
+
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
     # Validate the skill exists at scheduling time so the user

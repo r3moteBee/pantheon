@@ -11,7 +11,7 @@ from typing import Any, AsyncGenerator
 
 from agent.follow_through import (MAX_NUDGES, announced_action, follow_through_nudge, unbacked_claim,
                                   unbacked_claim_nudge)
-from agent.task_intent import explicit_task_request, future_time_note, future_timing
+from agent.task_intent import IMAGE_NOTE, explicit_task_request, future_time_note, future_timing, wants_image
 from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
@@ -704,6 +704,9 @@ class AgentCore:
             later = future_timing(user_message) if self.interactive else None
             if later:
                 turn_context = turn_context + future_time_note(later)
+            # Asked for an infographic, the 9B wrote matplotlib code into the chat (2026-10-08).
+            if self.interactive and wants_image(user_message):
+                turn_context = turn_context + IMAGE_NOTE
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:
@@ -1111,6 +1114,7 @@ class AgentCore:
                             interactive=self.interactive,
                             host_exec=self.host_exec,
                             user_requested_task=task_requested,
+                            user_message=user_message,
                         )
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
