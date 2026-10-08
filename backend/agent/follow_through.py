@@ -32,6 +32,7 @@ _CLAIMS = (
     ("create_task", re.compile(
         r"\b(?:task|reminder|job|check|follow-?up|digest)\b[^.\n]{0,60}?\b(?:is|has been|was|been|are)\s+"
         r"(?:now\s+)?(?:queued|scheduled|created|set up|set)\b"
+        r"|\b(?:task|reminder|job|follow-?up|check)\s+(?:queued|scheduled|created|set)\b"   # "**Task queued:** ..."
         r"|\bI(?:'ve| have)\s+(?:already\s+|now\s+)?(?:queued|scheduled|created|set up)\b"
         r"(?=[^.\n]{0,50}?\b(?:task|reminder|job|check|follow-?up|digest|run)\b)", re.I),
      re.compile(r"\b(?:task|remind|schedule|every|daily|weekly|tomorrow|tonight|later|minutes?|hours?|next week|queue)\b", re.I)),

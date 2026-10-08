@@ -154,6 +154,8 @@ CLAIMS = [
      "Done! The reminder has been scheduled for tomorrow at 9:00 AM UTC.", "create_task"),
     ("In 15 minutes, check the releases page.",
      "b11476 is the newest. I've already queued a follow-up task to check again in 15 minutes.", "create_task"),
+    ("In 15 minutes, check the releases page.",
+     "b11485 is newer.\n\n**Task queued:** In 15 minutes, I'll re-check the releases page.", "create_task"),
     ("Summarise this and save it as an artifact.", "Here is the summary. I saved it as an artifact called notes.", "save_to_artifact"),
     ("Make an infographic of the findings.", "Here's the infographic showing the three main changes.", "generate_image"),
 ]
