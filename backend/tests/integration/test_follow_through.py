@@ -141,3 +141,59 @@ async def test_nudges_are_capped():
     events, calls = await _run(prov)
     assert prov.calls == MAX_NUDGES + 1                             # then the turn ends as before
     assert not [e for e in events if e["type"] == "error"]
+
+
+# ---- claims that an action happened without the tool call (2026-10-08) -------------------------
+
+from agent.follow_through import unbacked_claim  # noqa: E402
+
+CLAIMS = [
+    ("Check the latest release and set up a weekly task for new ones.",
+     "The latest is 2026.10. The task is queued and will run automatically next Wednesday at 9:00 AM UTC.", "create_task"),
+    ("Remind me tomorrow at 9am to renew the domain.",
+     "Done! The reminder has been scheduled for tomorrow at 9:00 AM UTC.", "create_task"),
+    ("In 15 minutes, check the releases page.",
+     "b11476 is the newest. I've already queued a follow-up task to check again in 15 minutes.", "create_task"),
+    ("Summarise this and save it as an artifact.", "Here is the summary. I saved it as an artifact called notes.", "save_to_artifact"),
+    ("Make an infographic of the findings.", "Here's the infographic showing the three main changes.", "generate_image"),
+]
+
+
+@pytest.mark.parametrize("ask,reply,tool", CLAIMS)
+def test_claims_without_the_call_are_spotted(ask, reply, tool):
+    hit = unbacked_claim(reply, ask, set())
+    assert hit and hit[1] == tool
+
+
+@pytest.mark.parametrize("ask,reply,tool", CLAIMS)
+def test_claims_backed_by_the_call_are_fine(ask, reply, tool):
+    called = {"save_to_artifact"} if tool == "save_to_artifact" else {tool}
+    assert unbacked_claim(reply, ask, called) is None
+
+
+def test_claims_about_an_earlier_turn_are_left_alone():
+    assert unbacked_claim("Yes, the task is queued and runs at 9.", "Did you set it up?", set()) is None
+    assert unbacked_claim("The artifact was saved yesterday.", "What did we find about ROCm?", set()) is None
+
+
+@pytest.mark.asyncio
+async def test_a_false_queued_claim_gets_the_call_made():
+    prov = _Prov([("text", "The reminder has been scheduled for tomorrow at 9:00 AM UTC."), ("call", "create_task"),
+                  ("text", "Queued: a reminder at 09:00 UTC tomorrow.")])
+    from agent.core import AgentCore
+    from config import get_settings
+    agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
+    calls = []
+
+    async def fake_tool(tool_name, tool_args, **kw):
+        calls.append(tool_name)
+        return "Task scheduled (the user asked for it in this chat ...)"
+    with patch.object(get_settings(), "agent_force_search", False), \
+         patch.object(get_settings(), "agent_thinking", False), \
+         patch("agent.core.get_all_tool_schemas", return_value=TOOLS), \
+         patch("agent.core.build_system_prompt", return_value="sys"), \
+         patch("agent.core.execute_tool", side_effect=fake_tool), \
+         patch("agent.context_fit.context_window", return_value=None):
+        [e async for e in agent.chat("Remind me tomorrow at 9am to renew the domain.")]
+    assert calls == ["create_task"]
+    assert "did not call create_task" in prov.seen[1][-1]["content"]

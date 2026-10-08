@@ -82,4 +82,5 @@ def future_time_note(phrase: str) -> str:
             "or a repeat ('0 9 * * *' = 9:00 every day; work out tomorrow's date from the current time above), "
             "'interval:N' = every N minutes. Put everything the later run needs into description and plan - it "
             "sees nothing else. If it waits for something the user will do (an upload), schedule it for the time "
-            "they gave and have it check for that first. Then say in one line what you queued and when it runs.\n\n")
+            "they gave and have it check for that first. Only after create_task has returned, say in one line what was "
+            "queued and when it runs - never say a task is queued without calling create_task.\n\n")

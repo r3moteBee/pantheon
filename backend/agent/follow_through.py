@@ -24,6 +24,26 @@ import re
 MAX_NUDGES = 2          # per turn: a model that keeps announcing without acting is not looped forever
 TAIL_CHARS = 900        # promises sit near the end of a reply, often followed by a numbered plan
 
+# Claims that an action happened. Told to say what it queued, the agent said "The task is queued and
+# will run next Wednesday" after two web searches and no create_task call (2026-10-08, 3 of 12 runs).
+# A claim counts only when this turn's request asked for that kind of action, so "yes, it is queued"
+# about an earlier turn's task is left alone.
+_CLAIMS = (
+    ("create_task", re.compile(
+        r"\b(?:task|reminder|job|check|follow-?up|digest)\b[^.\n]{0,60}?\b(?:is|has been|was|been|are)\s+"
+        r"(?:now\s+)?(?:queued|scheduled|created|set up|set)\b"
+        r"|\bI(?:'ve| have)\s+(?:already\s+|now\s+)?(?:queued|scheduled|created|set up)\b"
+        r"(?=[^.\n]{0,50}?\b(?:task|reminder|job|check|follow-?up|digest|run)\b)", re.I),
+     re.compile(r"\b(?:task|remind|schedule|every|daily|weekly|tomorrow|tonight|later|minutes?|hours?|next week|queue)\b", re.I)),
+    ("save", re.compile(r"\b(?:saved|stored|written)\b[^.\n]{0,40}?\b(?:artifact|note)\b"
+                        r"|\b(?:artifact|note)\b[^.\n]{0,40}?\b(?:has been |is |was )?(?:saved|created|stored)\b", re.I),
+     re.compile(r"\b(?:save|artifact|note|write it|store)\b", re.I)),
+    ("generate_image", re.compile(r"\b(?:I(?:'ve| have)\s+(?:generated|created|made)|here(?:'s| is) (?:the|your))\b[^.\n]{0,30}?"
+                                  r"\b(?:image|infographic|picture|illustration|poster)\b", re.I),
+     re.compile(r"\b(?:image|infographic|picture|illustration|poster|draw|render)\b", re.I)),
+)
+_SAVE_TOOLS = {"save_to_artifact", "update_artifact", "save_last_response", "write_file", "save_transcript_artifact"}
+
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?:]?")
 _PROMISE_RE = re.compile(
     # an optional lead-in clause that names what the step waits for ("Once the upload finishes, ...")
@@ -54,6 +74,28 @@ def announced_action(text: str | None) -> str | None:
         if m and m.group("verb").lower() not in _NOT_ACTIONS:
             return s
     return None
+
+
+def unbacked_claim(text: str | None, user_message: str | None, called: set[str]) -> tuple[str, str] | None:
+    """(sentence, tool) when the reply says an action happened that no tool call this turn did."""
+    if not text:
+        return None
+    for tool, claim_re, asked_re in _CLAIMS:
+        done = bool(called & _SAVE_TOOLS) if tool == "save" else tool in called
+        if done or not asked_re.search(user_message or ""):
+            continue
+        m = claim_re.search(text)
+        if m:
+            start = max(text.rfind(".", 0, m.start()), text.rfind("\n", 0, m.start())) + 1
+            end = min([i for i in (text.find(".", m.end()), text.find("\n", m.end())) if i >= 0] or [len(text)])
+            return text[start:end + 1].strip(), ("save_to_artifact" if tool == "save" else tool)
+    return None
+
+
+def unbacked_claim_nudge(sentence: str, tool: str) -> str:
+    return (f'You wrote "{sentence}" but you did not call {tool} in this turn, so it has not happened. '
+            f"Call {tool} now with the right arguments. If you decide not to, correct your reply in one sentence. "
+            "Do not repeat what you already wrote.")
 
 
 def follow_through_nudge(sentence: str) -> str:
