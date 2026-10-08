@@ -9,6 +9,9 @@ import uuid
 import time
 from typing import Any, AsyncGenerator
 
+from agent.follow_through import (MAX_NUDGES, announced_action, follow_through_nudge, unbacked_claim,
+                                  unbacked_claim_nudge)
+from agent.task_intent import explicit_task_request, future_time_note, future_timing
 from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
@@ -696,6 +699,11 @@ class AgentCore:
             # turn gets an explicit note (agent/tools/tasks.py: research_batch).
             if self.interactive and is_survey_request(user_message):
                 turn_context = turn_context + SURVEY_NOTE
+            # "In 15 minutes, check ...", "remind me tomorrow at 9": the later part goes
+            # to create_task, which the model never reached for unprompted (task_intent.py).
+            later = future_timing(user_message) if self.interactive else None
+            if later:
+                turn_context = turn_context + future_time_note(later)
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:
@@ -711,6 +719,10 @@ class AgentCore:
             web_evidence: dict[str, str] = {}   # url -> text from this turn's web tools (agent/sources.py)
             saved_contents: list[str] = []      # what save_to_artifact / update_artifact / write_file wrote this turn
             task_created = False
+            task_requested = self.interactive and explicit_task_request(user_message)
+            proposed_tasks: list[str] = []      # create_task proposals waiting for approval this turn
+            nudges = 0                          # follow-through rounds this turn (agent/follow_through.py)
+            called_tools: set[str] = set()      # tools actually run this turn (for unbacked_claim)
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
 
@@ -1022,6 +1034,23 @@ class AgentCore:
                 if current_text:
                     full_response = current_text
 
+                can_nudge = (not tool_calls_this_round and not wrap_up and nudges < MAX_NUDGES
+                             and iterations < iteration_limit and round_finish != "length")
+                claimed = unbacked_claim(current_text, user_message, called_tools) if can_nudge else None
+                promised = announced_action(current_text) if can_nudge and not claimed else None
+                if claimed or promised:
+                    # The reply says an action happened that no tool call did, or promises a
+                    # step and ends the turn without taking it: one more round to do it.
+                    nudges += 1
+                    logger.info("Follow-through: %s %r with no tool call - asking for it (%d/%d)",
+                                "reply claims" if claimed else "reply ended with",
+                                (claimed or (promised, ""))[0][:120], nudges, MAX_NUDGES)
+                    messages.append({"role": "assistant", "content": current_text})
+                    messages.append({"role": "user", "content": unbacked_claim_nudge(*claimed) if claimed
+                                     else follow_through_nudge(promised)})
+                    yield {"type": "text_delta", "content": "\n\n"}
+                    continue
+
                 if not tool_calls_this_round:
                     # No tool calls, we're done. A reply that ran into max_tokens
                     # says so instead of ending mid-table: the House breakdown hit
@@ -1057,6 +1086,7 @@ class AgentCore:
                     tool_name = tc["name"]
                     tool_args = tc.get("args", {})
                     tool_id = tc.get("id", str(uuid.uuid4()))
+                    called_tools.add(tool_name)
 
                     logger.info(f"Executing tool: {tool_name} with args: {tool_args}")
                     # Find the most recent assistant text for save_last_response
@@ -1080,6 +1110,7 @@ class AgentCore:
                             last_assistant_text=last_assistant_text,
                             interactive=self.interactive,
                             host_exec=self.host_exec,
+                            user_requested_task=task_requested,
                         )
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
@@ -1090,6 +1121,8 @@ class AgentCore:
                     if tool_name == "create_task" and not tool_results.is_error(result) \
                             and str(result).startswith(("Task PROPOSED", "Task scheduled")):
                         task_created = True
+                        if str(result).startswith("Task PROPOSED"):
+                            proposed_tasks.append(str(tool_args.get("name") or "task"))
                     yield {"type": "tool_result", "name": tool_name, "result": result, "tool_id": tool_id,
                            "is_error": tool_results.is_error(result)}
 
@@ -1165,6 +1198,15 @@ class AgentCore:
                     tail = "\n\nSources:\n" + "\n".join(f"- {u}" for u in picked)
                     full_response += tail
                     yield {"type": "text_delta", "content": tail}
+
+            # A proposal waits for a click in the Tasks tab; a reply that does not say so
+            # leaves the user waiting on a task that never starts (an image request, 2026-10).
+            if proposed_tasks and full_response and "approv" not in full_response.lower():
+                names = ", ".join(f"*{n}*" for n in proposed_tasks)
+                note = (f"\n\n**Waiting for your approval:** {names} - open the Tasks tab to approve or edit it. "
+                        "It does not run until then.")
+                full_response += note
+                yield {"type": "text_delta", "content": note}
 
             # Save assistant response
             if full_response:

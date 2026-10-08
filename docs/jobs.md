@@ -50,7 +50,7 @@ APScheduler defaults: `coalesce=True`, `max_instances=1`, `misfire_grace_time=30
 
 ### Plan review
 
-The `create_task` agent tool requires a `plan`. Unless `skip_review=true` **and** the turn is interactive (web chat), the schedule is created with `plan_status="proposed"` and **paused**. The user reviews it in the Tasks tab:
+The `create_task` agent tool requires a `plan`. The schedule is created `approved` and runs on time when the turn is interactive (web chat) **and** either `skip_review=true` or the user's message itself asked for scheduled or background work ("in 15 minutes", "tomorrow at 9", "every morning", "remind me", "set up a task" - `agent/task_intent.explicit_task_request`) and the plan has no step that can delete, overwrite, merge or push (`review_reason`). Otherwise - the agent decided on the task itself, or its plan can lose data - it is created with `plan_status="proposed"` and **paused**, and the reply always says so (AgentCore appends "Waiting for your approval" when the model did not). The user reviews it in the Tasks tab:
 
 - `PATCH /api/tasks/{id}/plan`: edit the plan.
 - `POST /api/tasks/{id}/approve`: set `approved` and resume. A one-shot whose time passed during review runs right away instead of being dropped as a misfire.
