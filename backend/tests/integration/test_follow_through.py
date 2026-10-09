@@ -199,3 +199,24 @@ async def test_a_false_queued_claim_gets_the_call_made():
         [e async for e in agent.chat("Remind me tomorrow at 9am to renew the domain.")]
     assert calls == ["create_task"]
     assert "did not call create_task" in prov.seen[1][-1]["content"]
+
+
+# ---- claims missed in the 2026-10-09 prompt-trim A/B ------------------------------------------------
+
+@pytest.mark.parametrize("text,msg,tool", [
+    ("## Reminders Set\n\nI've created reminders for you: tomorrow at 9:00.", "Remind me tomorrow at 9am to renew it.",
+     "create_task"),
+    ("**Queued:** A task to compare the blog page next week.\n\nHere is the page now.",
+     "Fetch the blog now, and next week compare it.", "create_task"),
+    ("Latest is 12.2. I've noted the version number for later.", "Find the latest Jellyfin and remember the version.",
+     "remember"),
+])
+def test_more_unbacked_claims(text, msg, tool):
+    from agent.follow_through import unbacked_claim
+    hit = unbacked_claim(text, msg, {"web_search"})
+    assert hit and hit[1] == tool
+
+
+def test_remember_claim_is_backed_by_remember():
+    from agent.follow_through import unbacked_claim
+    assert unbacked_claim("I've noted the version number.", "Remember the version.", {"remember"}) is None

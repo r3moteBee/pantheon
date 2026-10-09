@@ -330,28 +330,27 @@ SCHEMAS.append({
     "function": {
         "name": "github",
         "description": (
-            "GitHub API on the repo bound to this project (no local checkout needed). Actions and their args: "
-            "read_file(path, ref?) · list_directory(path?, ref?) · list_branches(name_prefix?) · "
-            "list_pulls(state?, head?, base?) · create_branch(new_branch, base_branch?) · "
-            "delete_branch(branch) — never the default branch · write_files(branch, message, files=[{path, content}]) "
-            "— one atomic commit, after create_branch · create_pr(title, head, base?, body?, draft?) · "
-            "merge_pr(pr_number, merge_method?) — only when the user approved merging · "
-            "list_connections() — diagnostic only."
+            "GitHub API on the project's bound repo. Actions: read_file(path, ref?), list_directory(path?, "
+            "ref?), list_branches(name_prefix?), list_pulls(state?, head?, base?), create_branch(new_branch, "
+            "base_branch?), delete_branch(branch) - never the default branch, write_files(branch, message, "
+            "files=[{path, content}]) - one commit, after create_branch, create_pr(title, head, base?, body?, "
+            "draft?), merge_pr(pr_number, merge_method?) - only when the user approved merging, "
+            "list_connections()."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": list(GITHUB_ACTIONS)},
-                "path": {"type": "string", "description": "File or directory path in the repo ('' = root)."},
-                "ref": {"type": "string", "description": "Branch or commit sha; default branch if omitted."},
+                "path": {"type": "string"},
+                "ref": {"type": "string"},
                 "name_prefix": {"type": "string"},
                 "state": {"type": "string", "enum": ["open", "closed", "all"]},
-                "head": {"type": "string", "description": "Branch with the changes (create_pr) or head filter (list_pulls)."},
-                "base": {"type": "string", "description": "Target branch (create_pr) or base filter (list_pulls)."},
+                "head": {"type": "string"},
+                "base": {"type": "string"},
                 "new_branch": {"type": "string"},
                 "base_branch": {"type": "string"},
                 "branch": {"type": "string"},
-                "message": {"type": "string", "description": "Commit message."},
+                "message": {"type": "string"},
                 "files": {"type": "array", "items": {"type": "object"}, "description": "[{path, content}]"},
                 "title": {"type": "string"},
                 "body": {"type": "string"},

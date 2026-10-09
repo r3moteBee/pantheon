@@ -169,3 +169,60 @@ async def test_non_streaming_overflow_is_retried():
     prov = _Prov(fetches=2, overflow_rounds={2})
     events = await _run(prov, window=None, stream=False)
     assert "the answer" in _text(events)
+
+
+# ── Long background jobs: dropping whole old rounds ──────────────────────────
+# A research job (2026-10-08) made 125 calls in 46 rounds; with 123 results already stubbed the calls
+# themselves still overflowed a 32K window, and the job died with "exceeds the available context size".
+
+def _job(rounds: int, calls_per_round: int = 3) -> list[dict]:
+    msgs = [{"role": "system", "content": "sys " * 3000}, {"role": "user", "content": "You are running a task"}]
+    for r in range(rounds):
+        calls = [{"id": f"c{r}-{k}", "type": "function", "function": {
+            "name": "web_search" if k else "ingest_source", "arguments": '{"query": "' + "q" * 300 + '"}'}}
+            for k in range(calls_per_round)]
+        msgs.append({"role": "assistant", "content": "Next I will look up more sources. " * 10, "tool_calls": calls})
+        msgs += [{"role": "tool", "tool_call_id": c["id"], "content": "result " * 40} for c in calls]
+    return msgs
+
+
+def _pairs_intact(msgs):
+    open_ids = set()
+    for m in msgs:
+        if m["role"] == "assistant":
+            assert not open_ids, "a tool call lost its result"
+            open_ids = {c["id"] for c in m.get("tool_calls") or []}
+        elif m["role"] == "tool":
+            assert m["tool_call_id"] in open_ids, "a tool result lost its call"
+            open_ids.discard(m["tool_call_id"])
+    return True
+
+
+def test_long_job_drops_old_rounds_when_stubs_are_not_enough():
+    msgs = _job(46)
+    st = cf.fit_messages(msgs, 32768)
+    assert st["after"] <= st["budget"] and st["dropped"] > 0
+    assert msgs[0]["role"] == "system" and msgs[1]["content"] == "You are running a task"
+    notes = [m for m in msgs if m["role"] == "assistant" and m["content"].startswith(cf.DROPPED_MARK)]
+    assert len(notes) == 1
+    assert f"web_search x{st['dropped'] * 2}" in notes[0]["content"]
+    assert f"ingest_source x{st['dropped']}" in notes[0]["content"]
+    assert msgs[-1]["tool_call_id"] == "c45-2"                                        # newest round kept
+    assert _pairs_intact(msgs)
+
+
+def test_later_fits_keep_one_note_and_keep_counting():
+    msgs = _job(46)
+    first = cf.fit_messages(msgs, 32768)["dropped"]
+    for r in range(46, 70):                                                              # the job goes on
+        msgs += _job(r + 1)[-4:]
+    second = cf.fit_messages(msgs, 32768)["dropped"]
+    notes = [m for m in msgs if m["role"] == "assistant" and m["content"].startswith(cf.DROPPED_MARK)]
+    assert len(notes) == 1 and f"ingest_source x{first + second}" in notes[0]["content"]
+    assert _pairs_intact(msgs)
+
+
+def test_the_newest_rounds_are_never_dropped():
+    msgs = _job(cf.KEEP_ROUNDS)
+    st = cf.fit_messages(msgs, 4096, reserve=512)
+    assert not st.get("dropped") and sum(1 for m in msgs if m.get("tool_calls")) == cf.KEEP_ROUNDS

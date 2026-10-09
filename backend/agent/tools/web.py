@@ -14,11 +14,14 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web for current information. Returns titles, URLs, and snippets for the top results. Snippets are often outdated: for a latest version, price or status, open the source (a releases/downloads listing for versions) with web_fetch before answering.",
+            "description": (
+                "Web search: titles, URLs and snippets. Snippets go stale - for versions, prices or status open "
+                "the source with web_fetch."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Search query"}
+                    "query": {"type": "string"}
                 },
                 "required": ["query"]
             }
@@ -28,12 +31,12 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Read a web page (article text as markdown) without saving it. To keep a source — indexed, searchable and linked into the graph — use ingest_source instead.",
+            "description": "Read a web page as markdown without saving it (ingest_source keeps it).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "http(s) URL"},
-                    "max_chars": {"type": "integer", "description": "Truncate the text (default 20000)"}
+                    "url": {"type": "string"},
+                    "max_chars": {"type": "integer", "description": "Default 20000."}
                 },
                 "required": ["url"]
             }

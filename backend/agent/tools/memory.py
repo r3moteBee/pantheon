@@ -12,19 +12,21 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "remember",
-            "description": "Store information in memory for future recall: 'episodic' for a dated note about this conversation, 'semantic' for a key insight or fact to find by meaning later, 'graph' to extract the entities and relationships in the text into the knowledge graph. For documents or reports use save_to_artifact instead.",
+            "description": (
+                "Store something in memory - call it whenever the user says 'remember', 'note' or 'keep in mind': "
+                "'episodic' for a dated note, 'semantic' for a fact to find by meaning, 'graph' to extract "
+                "entities and relations. Documents go to save_to_artifact."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "The information to remember"},
+                    "content": {"type": "string"},
                     "tier": {
                         "type": "string",
-                        "enum": ["episodic", "semantic", "graph"],
-                        "description": "Memory tier to store in"
+                        "enum": ["episodic", "semantic", "graph"]
                     },
                     "metadata": {
                         "type": "object",
-                        "description": "Optional metadata tags",
                         "additionalProperties": True
                     }
                 },
@@ -37,24 +39,17 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "recall",
             "description": (
-                "Search the project's memory across episodic "
-                "(past chats), semantic (indexed artifacts and "
-                "workspace files), and graph (linked concepts) "
-                "tiers. ARTIFACTS are first-class memory: any "
-                "transcript, note, or document saved via "
-                "save_to_artifact is indexed into semantic + "
-                "graph and turns up here. Always try this BEFORE "
-                "telling the user you can't find something — "
-                "the artifact may already be indexed."
+                "Search the project's memory: past chats, indexed artifacts and files, and the graph. Try it "
+                "before saying you can't find something."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "What to search for"},
+                    "query": {"type": "string"},
                     "tiers": {
                         "type": "array",
                         "items": {"type": "string", "enum": ["episodic", "semantic", "graph"]},
-                        "description": "Which memory tiers to search (default: all)"
+                        "description": "Default: all."
                     }
                 },
                 "required": ["query"]
@@ -65,19 +60,17 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_graph_node",
-            "description": "Create a node in the associative graph memory to represent a concept, person, project, or fact.",
+            "description": "Add a node (concept, person, project, event, fact) to the graph.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "node_type": {
                         "type": "string",
-                        "enum": ["concept", "person", "project", "event", "fact"],
-                        "description": "Type of the node"
+                        "enum": ["concept", "person", "project", "event", "fact"]
                     },
-                    "label": {"type": "string", "description": "Human-readable name for the node"},
+                    "label": {"type": "string"},
                     "metadata": {
                         "type": "object",
-                        "description": "Additional properties for this node",
                         "additionalProperties": True
                     }
                 },
@@ -89,13 +82,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "link_concepts",
-            "description": "Create a relationship edge between two nodes in the associative graph memory.",
+            "description": "Add a relation between two graph nodes.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "node_a_label": {"type": "string", "description": "Label of the first node"},
-                    "node_b_label": {"type": "string", "description": "Label of the second node"},
-                    "relationship": {"type": "string", "description": "Description of the relationship (e.g., 'works on', 'is related to', 'caused by')"}
+                    "node_a_label": {"type": "string"},
+                    "node_b_label": {"type": "string"},
+                    "relationship": {"type": "string", "description": "e.g. 'works on', 'caused by'."}
                 },
                 "required": ["node_a_label", "node_b_label", "relationship"]
             }
@@ -161,7 +154,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "consolidate_memory",
-            "description": "Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. Use at the end of a productive conversation or when the user asks you to remember what was discussed.",
+            "description": "Summarise this session and store its facts and relations in memory.",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -406,18 +399,17 @@ SCHEMAS.append({
     "function": {
         "name": "index",
         "description": (
-            "Index content into semantic memory and the graph so recall finds it. "
-            "target='artifact': id (one artifact) or path_prefix (a folder like 'NBJ/') — new artifacts are "
-            "indexed on save; use this to backfill or re-index after editing. target='workspace': path "
-            "(file or directory; '' = whole workspace) — Markdown, text, CSV, PDF, code. force re-indexes unchanged content."
+            "Index content so recall finds it. target='artifact': id or path_prefix ('NBJ/') - new artifacts are "
+            "indexed on save, so this is for backfill or after edits. target='workspace': path ('' = all). force "
+            "re-indexes unchanged content."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "target": {"type": "string", "enum": ["artifact", "workspace"]},
-                "id": {"type": "string", "description": "artifact: a single artifact id."},
-                "path_prefix": {"type": "string", "description": "artifact: folder prefix, e.g. 'NBJ/'."},
-                "path": {"type": "string", "description": "workspace: relative file or directory path."},
+                "id": {"type": "string"},
+                "path_prefix": {"type": "string"},
+                "path": {"type": "string"},
                 "force": {"type": "boolean"},
             },
             "required": ["target"],

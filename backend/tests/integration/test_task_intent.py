@@ -242,3 +242,37 @@ async def test_a_job_type_given_as_skill_becomes_the_job_type():
                                     user_requested_task=True, user_message="Research these in the background.")
     assert sched.called and sched.call_args.kwargs["job_type"] == "research_batch"
     assert sched.call_args.kwargs["skill_name"] is None
+
+
+@pytest.mark.parametrize("given,expected", [(600, None), ("300", None), (3600, 3600), (None, None)])
+@pytest.mark.asyncio
+async def test_short_timeouts_the_model_picks_get_the_default(given, expected):
+    """Two research jobs were killed at 600 s, a limit the model chose (2026-10-08)."""
+    from agent.tools import execute_tool
+    sched = AsyncMock(return_value="sched-1")
+    args = {"name": "Research", "description": "d", "schedule": "now", "plan": "1. web_search"}
+    if given is not None:
+        args["timeout_seconds"] = given
+    with patch("tasks.scheduler.schedule_agent_task", sched):
+        await execute_tool("create_task", args, memory_manager=None, project_id="p", session_id="s",
+                           interactive=True, user_requested_task=True, user_message="Research this in the background.")
+    assert sched.call_args.kwargs["timeout_seconds"] == expected
+
+
+@pytest.mark.asyncio
+async def test_a_delay_nobody_asked_for_runs_now():
+    """'In the background' became delay:60, reported to the user as '~60 seconds' (it is minutes)."""
+    result, scheduled = await _create_sched("Research the transformers changes in the background.", "delay:60")
+    assert scheduled and "= runs now" in result and "changed to 'now'" in result
+
+
+@pytest.mark.asyncio
+async def test_a_requested_delay_is_kept_and_spelled_out():
+    from agent.tools import execute_tool
+    sched = AsyncMock(return_value="sched-1")
+    with patch("tasks.scheduler.schedule_agent_task", sched):
+        result = await execute_tool("create_task", {"name": "Check", "description": "d", "schedule": "delay:15",
+                                                    "plan": "1. web_search"},
+                                    memory_manager=None, project_id="p", session_id="s", interactive=True,
+                                    user_requested_task=True, user_message="In 15 minutes, check the releases page.")
+    assert sched.call_args.kwargs["schedule"] == "delay:15" and "runs once in 15 minutes" in result

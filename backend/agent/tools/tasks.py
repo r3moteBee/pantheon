@@ -9,6 +9,8 @@ from agent.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
+MIN_TASK_TIMEOUT = 1800   # seconds; a create_task timeout below this is replaced by the job type's default
+
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -16,125 +18,113 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "create_task",
             "description": (
-                "Schedule an autonomous background task. When the user asked for it in this chat (a time "
-                "like 'in 15 minutes' / 'tomorrow at 9' / 'every morning', or 'set up a task') it is scheduled "
-                "right away; otherwise, or when its plan deletes, overwrites, merges or pushes, it is created "
-                "PAUSED for the user to approve in the Tasks tab. Do not wrap work you can do now in this turn "
-                "(one image, one lookup) in a task - just do it. "
-                "In the plan, name the exact tools each step uses (look at the tools you actually have — "
-                "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
-                "say so in the plan rather than pretending."
+                "Run work in the background: anything for later ('in 15 minutes', 'tomorrow at 9', 'next "
+                "week', 'remind me ...'), on a schedule ('every morning'), or too big for one reply. Call it in "
+                "the same turn the user asks; it starts right away when they asked for it in this chat. Tasks you "
+                "decide on yourself, or whose plan deletes, overwrites, merges or pushes, wait for the user's "
+                "approval in the Tasks tab. Work you can do now (one image, one lookup) is not a task - do it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Short label for the Tasks list, 3-7 words, e.g. 'Daily PR digest'."
+                        "description": "Short label, 3-7 words."
                     },
                     "description": {
                         "type": "string",
-                        "description": "What the agent should do, in full — the background run sees only this, the plan and project memory."
+                        "description": (
+                            "Everything the run needs to know; it sees only this, the plan and project memory."
+                        )
                     },
                     "schedule": {
                         "type": "string",
                         "description": (
-                            "One-shot: 'now' or 'delay:N' (N minutes from now). Recurring: 'interval:N' "
-                            "(every N minutes) or a cron expression ('0 9 * * *' = daily 9am). "
-                            "'in 2 minutes' is delay:2, not interval:2."
+                            "'now', 'delay:N' (once, N minutes from now), 'interval:N' (every N minutes) or cron "
+                            "('0 9 * * *'). Repeat only when the user asked for a repeat."
                         )
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": "Max run time, default 1800. Use 3600-7200 for batch ingests of 20+ items."
+                        "description": "Seconds; at least 1800 (the default), 3600-7200 for big batches."
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Agent-loop round budget, default 100. Raise (e.g. 300) for long multi-step work, with timeout_seconds."
+                        "description": "Round budget, default 100."
                     },
                     "skill_name": {
                         "type": "string",
-                        "description": (
-                            "Skill slug to drive the task (its instructions are loaded, like /<slug> in chat). "
-                            "Use this instead of writing '/slug' in the description. Required MCP connectors are checked at start."
-                        )
+                        "description": "Installed skill to run (its slug), instead of '/slug' in the description."
                     },
                     "plan": {
                         "type": "string",
                         "description": (
-                            "Required. Numbered markdown steps, each naming its tool, e.g. "
-                            "'1. List the channel's latest videos with `mcp_<server>_get_channel_latest_videos`. "
-                            "2. Ingest each with `ingest_source`.'"
+                            "Numbered steps, each naming the tool it uses. Say so if a step needs a tool you "
+                            "don't have."
                         )
                     },
                     "skip_review": {
                         "type": "boolean",
                         "default": False,
-                        "description": "True only when the user explicitly said not to review the plan."
+                        "description": "True only when the user said not to review the plan."
                     },
                     "job_type": {
                         "type": "string",
                         "enum": ["autonomous_task", "iteration_loop", "coding_task", "research_batch"],
                         "default": "autonomous_task",
                         "description": (
-                            "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
-                            "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
-                            "each turn is saved as iteration/<job_id>/turn-N.md. 'coding_task': a background "
-                            "coding agent edits the bound GitHub repo and opens a PR — ONLY for authoring code "
-                            "(fix, feature, refactor), never for ingest or research; web chat only, starts now. "
-                            "Put the stack and file layout in coding_context (read them with the github tool first). "
-                            "'research_batch': research a LIST of items one at a time (states, companies, products) - "
-                            "each item gets its own lookups and a sourced note saved as an artifact, then a summary is "
-                            "written from the notes. Use it whenever a request needs more lookups than one chat turn "
-                            "allows (more than ~5 items); give items and item_question."
+                            "autonomous_task: run the plan once. research_batch: research a list of items (more "
+                            "than ~5), a sourced note per item, then a summary; needs items and item_question. "
+                            "iteration_loop: repeated execute/review turns ('loop', 'iterate N times'). "
+                            "coding_task: a coding agent edits the bound repo and opens a PR - only for writing "
+                            "code."
                         )
                     },
                     "coding_context": {
                         "type": "string",
-                        "description": "coding_task only: tech stack, file layout, conventions."
+                        "description": "coding_task: stack, file layout, conventions."
                     },
                     "branch_name": {
                         "type": "string",
-                        "description": "coding_task only: branch to work on (auto-named if omitted)."
+                        "description": "coding_task: branch (auto if omitted)."
                     },
                     "base_branch": {
                         "type": "string",
-                        "description": "coding_task only: base branch (repo default if omitted)."
+                        "description": "coding_task: base branch."
                     },
                     "items": {
                         "type": "array", "items": {"type": "string"},
-                        "description": "research_batch only: the items to research, one note each (e.g. the 50 state names)."
+                        "description": "research_batch: the items, one note each."
                     },
                     "item_question": {
                         "type": "string",
-                        "description": "research_batch only: the question for each item, with {item} where the item goes, "
-                                       "e.g. 'Who is running for US Senate in {item} in 2026, and who is favoured?'"
+                        "description": (
+                            "research_batch: the question per item with {item}, e.g. 'What changed in {item} "
+                            "this month?'"
+                        )
                     },
                     "lookups_per_item": {
                         "type": "integer", "default": 6,
-                        "description": "research_batch only: web lookups per item (1-15)."
+                        "description": "research_batch: web lookups per item (1-15)."
                     },
                     "max_turns": {
                         "type": "integer",
                         "default": 10,
-                        "description": "iteration_loop only: max turns (stops early when the reviewer says STATUS: done)."
+                        "description": "iteration_loop: max turns."
                     },
                     "execute_instruction": {
                         "type": "string",
-                        "description": "iteration_loop only: per-turn execute instruction (default: the description)."
+                        "description": "iteration_loop: per-turn instruction."
                     },
                     "review_instruction": {
                         "type": "string",
-                        "description": "iteration_loop only: per-turn review instruction (default: find gaps, pick the next step, emit STATUS: continue|done)."
+                        "description": "iteration_loop: per-turn review instruction."
                     },
                     "branch_strategy": {
                         "type": "string",
                         "enum": ["single_feature", "main", "branch_per_turn"],
                         "default": "single_feature",
-                        "description": (
-                            "iteration_loop with a bound repo: 'single_feature' (default) commits every turn to "
-                            "iteration/<job_id>; 'main' commits to main; 'branch_per_turn' makes a branch per turn."
-                        )
+                        "description": "iteration_loop with a repo: where turns commit."
                     }
                 },
                 "required": ["name", "description", "schedule", "plan"]
@@ -145,11 +135,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "send_telegram",
-            "description": "Send a message to the operator via Telegram. Use for important updates, task completions, or when you need human input on a long-running task.",
+            "description": "Send the operator a Telegram message.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "message": {"type": "string", "description": "Message to send"}
+                    "message": {"type": "string"}
                 },
                 "required": ["message"]
             }
@@ -159,27 +149,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "rerun_job",
-            "description": (
-                "Re-run a finished job (completed / failed / stalled / "
-                "cancelled) with the exact same payload, title, "
-                "schedule_id, and timeout. Creates a NEW job entry "
-                "linked back to the original via parent_job_id; the "
-                "original record stays as audit history.\n\n"
-                "Useful when:\n"
-                "  - the user says 'run yesterday\'s research task again'\n"
-                "  - a recent ingest looks incomplete and you want to "
-                "redo the same work\n"
-                "  - a failed task got fixed (e.g. MCP reconnected) "
-                "and the user wants to retry without rebuilding the "
-                "schedule\n\n"
-                "Accepts the full job UUID or an 8-char prefix."
-            ),
+            "description": "Re-run a finished job with the same payload; the original stays as history.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "job_id": {
                         "type": "string",
-                        "description": "Full UUID or 8-char prefix from list_recent_jobs."
+                        "description": "UUID or 8-char prefix."
                     }
                 },
                 "required": ["job_id"]
@@ -191,16 +167,8 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "get_job_status",
             "description": (
-                "Get the current state of a background job. Pass either "
-                "a job UUID (full id from list_recent_jobs) OR a "
-                "schedule_id (the short 8-char hex id returned by "
-                "create_task — refers to the schedule, not a single "
-                "run). When given a schedule_id, this returns the most "
-                "recent run of that schedule. Use this when the user "
-                "asks about a task you started earlier — READ THE "
-                "ACTUAL STATUS before claiming the job did/didn't run. "
-                "Returns status, progress text, error, result, "
-                "session_id, artifact_id, and pr_url where applicable."
+                "Status of a background job, by job id or the 8-char schedule id from create_task (latest run). "
+                "Use it when the user asks about a task, before saying it did or didn't run - not to wait for one."
             ),
             "parameters": {
                 "type": "object",
@@ -215,24 +183,17 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_recent_jobs",
-            "description": (
-                "List recent background jobs for the active project. Use "
-                "this when the user asks 'what are you working on' / "
-                "'is anything still running' / 'did that finish'. Filter "
-                "by status when needed. By default omits system job types "
-                "(extraction, file_indexing) so the list is user-relevant."
-            ),
+            "description": "Recent background jobs in this project ('what are you working on', 'did that finish').",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["queued","running","completed","failed","cancelled","stalled"],
-                        "description": "Optional status filter."
+                        "enum": ["queued","running","completed","failed","cancelled","stalled"]
                     },
                     "include_system": {
                         "type": "boolean",
-                        "description": "Include extraction/file_indexing rows. Default false.",
+                        "description": "Include extraction/indexing jobs.",
                         "default": False
                     },
                     "limit": {"type": "integer", "default": 10}
@@ -284,19 +245,20 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "start_autoresearch",
-            "description": "Start the autoresearch loop as a background job: an LLM mutates one workspace file, runs the "
-                           "benchmark command after each change, keeps a change only if the metric improves, and saves a "
-                           "report artifact. Web chat only (the benchmark runs on the host). Agree the settings with the "
-                           "user first.",
+            "description": (
+                "Background loop that mutates one workspace file, runs a benchmark after each change, keeps "
+                "changes that improve the metric and saves a report. Web chat only. Agree the settings with the "
+                "user first."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {"type": "string", "description": "File to optimise, relative to the project workspace"},
-                    "eval_cmd": {"type": "string", "description": "Shell command run in the workspace after each change, e.g. 'python benchmark.py'"},
-                    "metric": {"type": "string", "description": "Metric name the benchmark prints, e.g. 'time' for 'time: 1.23'"},
-                    "direction": {"type": "string", "enum": ["min", "max"], "description": "min (time, loss) or max (accuracy, throughput)"},
-                    "iterations": {"type": "integer", "description": "Mutation rounds (default 10, max 50)"},
-                    "instructions": {"type": "string", "description": "Optimisation guidance and constraints"},
+                    "target_file": {"type": "string", "description": "Workspace-relative file to optimise."},
+                    "eval_cmd": {"type": "string", "description": "Benchmark command, e.g. 'python benchmark.py'."},
+                    "metric": {"type": "string", "description": "Metric name it prints, e.g. 'time'."},
+                    "direction": {"type": "string", "enum": ["min", "max"]},
+                    "iterations": {"type": "integer", "description": "Default 10, max 50."},
+                    "instructions": {"type": "string"},
                 },
                 "required": ["target_file", "eval_cmd", "metric", "direction"],
             },
@@ -413,6 +375,17 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
                     "recurring. For a single background run use 'now'; for one run later use 'delay:N' (N minutes "
                     "from now). Call create_task again with that schedule.")
 
+    # A delay nobody asked for: told to research something "in the background", the agent picked
+    # delay:60 and told the user "in ~60 seconds" - it runs in 60 MINUTES (2026-10-08).
+    delay_note = ""
+    if interactive and ctx.user_message and re.fullmatch(r"delay:\s*\d+", sched):
+        from agent.task_intent import future_timing
+        if not future_timing(ctx.user_message):
+            delay_note = (f"  (schedule {sched!r} was changed to 'now': the user did not ask for a later "
+                          "time.)\n")
+            sched = "now"
+            tool_args = {**tool_args, "schedule": "now"}
+
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
     # A job type given as a skill ("research_batch") is the job type: told the skill was not
@@ -447,6 +420,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             timeout_seconds = int(timeout_seconds)
         except (TypeError, ValueError):
             timeout_seconds = None
+    # The model guesses short limits (600 s twice in the 2026-10-08 research runs, both jobs killed mid-research);
+    # anything under MIN_TASK_TIMEOUT gets the job type's own default instead.
+    if timeout_seconds is not None and timeout_seconds < MIN_TASK_TIMEOUT:
+        timeout_seconds = None
     max_iterations = tool_args.get("max_iterations")
     if max_iterations is not None:
         try:
@@ -468,7 +445,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         question = (tool_args.get("item_question") or "").strip()
         if not items or not isinstance(items, list) or not question:
             return ("create_task rejected: research_batch needs items (a list, e.g. the state names) and "
-                    "item_question (with {item} where each item goes).")
+                    "item_question (with {item} where each item goes). For one topic with no list of items, use "
+                    "job_type autonomous_task.")
         if "{item}" not in question:
             question += " ({item})"
         try:
@@ -520,9 +498,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"Task scheduled (the user asked for it in this chat, so it runs without the review step).\n"
             f"  schedule_id: {task_id}  (SCHEDULE id, not a job run id)\n"
             f"  name: {tool_args.get('name')}\n"
-            f"  schedule: {tool_args.get('schedule')}\n\n"
-            f"Tell the user in one line what you queued and when it runs. Do NOT also do the task's "
-            f"work now in this chat - the task does it."
+            f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
+            f"Tell the user in one line what you queued and when it runs, then end your reply. Do NOT also do "
+            f"the task's work now in this chat, and do not wait for it or poll get_job_status - it runs on its "
+            f"own and the user will ask for the result."
         )
     if skip_review:
         return (
@@ -531,7 +510,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"  schedule_id: {task_id}  (SCHEDULE id, not a "
             f"job run id)\n"
             f"  name: {tool_args.get('name')}\n"
-            f"  schedule: {tool_args.get('schedule')}\n\n"
+            f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
             f"To check whether the schedule actually fired, "
             f"call list_recent_jobs() or "
             f"get_job_status(job_id={task_id!r}) — that "
@@ -545,7 +524,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"  schedule_id: {task_id}  (this is the SCHEDULE id, "
         f"not a job run id)\n"
         f"  name: {tool_args.get('name')}\n"
-        f"  schedule: {tool_args.get('schedule')}\n\n"
+        f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
         f"NOTE: Each time the schedule fires it produces a "
         f"separate JOB with its own UUID. To check whether it "
         f"actually ran, call list_recent_jobs() or "
@@ -554,6 +533,22 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         + PROPOSED_NEXT_STEP
     )
 
+
+
+def _runs_when(schedule: str | None) -> str:
+    """The schedule in words, so the reply to the user gets the time right (delay:N is minutes, not seconds)."""
+    from datetime import datetime, timedelta, timezone
+    s = (schedule or "now").strip()
+    m = re.fullmatch(r"delay:\s*(\d+)", s)
+    if m:
+        at = datetime.now(timezone.utc) + timedelta(minutes=int(m.group(1)))
+        return f"runs once in {int(m.group(1))} minutes (about {at:%H:%M} UTC)"
+    m = re.fullmatch(r"interval:\s*(\d+)", s)
+    if m:
+        return f"runs every {int(m.group(1))} minutes until cancelled"
+    if s == "now":
+        return "runs now"
+    return f"runs on the cron schedule {s!r} until cancelled"
 
 
 @tool('send_telegram')
@@ -620,6 +615,11 @@ async def _tool_get_job_status(ctx: ToolContext, tool_name: str, tool_args: dict
         summary = (j["result"] or {}).get("summary") if isinstance(j["result"], dict) else None
         if summary:
             lines.append(f"summary: {summary[:500]}")
+    # Right after create_task the agent polled this 36 times and wrote the job's summary itself, holding
+    # the chat turn for six minutes (2026-10-09). A job runs on its own; the turn should end.
+    if j["status"] in ("queued", "running"):
+        lines.append("\nThe job is still working in the background. Do not wait for it or check again in this "
+                     "reply - tell the user it is running and end your turn; they can ask for the result later.")
     return "\n".join(lines)
 
 

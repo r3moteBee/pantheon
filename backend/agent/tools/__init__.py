@@ -36,6 +36,12 @@ HOST_EXEC_TOOLS = frozenset({
     "start_autoresearch",   # queues a job that runs a benchmark command on the host
 })
 
+# Tools that act on the project's bound GitHub repo. A project without one isn't shown them (about 1.3K
+# prompt tokens per call); see repo_bound().
+REPO_TOOLS = frozenset({
+    "github", "git_sync_repo", "git_status", "git_create_branch", "git_merge", "git_commit", "git_push_pr",
+})
+
 # The order the model sees the tools in (kept stable across refactors).
 _ORDER = ['remember', 'recall', 'create_graph_node', 'link_concepts', 'read_file', 'write_file', 'list_workspace_files', 'web_search', 'web_fetch', 'create_task', 'send_telegram', 'index', 'link_topic_similarity', 'merge_topics', 'rerun_job', 'get_self_documentation', 'create_skill', 'list_source_adapters', 'ingest_source', 'batch_ingest_sources', 'extract_topics', 'save_last_response', 'show_file', 'download_file', 'generate_image', 'get_job_status', 'list_recent_jobs', 'consolidate_memory', 'code_execute', 'run_command', 'github', 'save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'batch_convert_documents', 'git_sync_repo', 'git_status', 'git_create_branch', 'git_merge', 'git_commit', 'git_push_pr', 'analyze_company_financials', 'compare_company_strategy_and_risks', 'analyze_earnings_call', 'start_autoresearch']
 
@@ -51,6 +57,19 @@ _BY_NAME = {s["function"]["name"]: s for m in (
 ) for s in getattr(m, "SCHEMAS", [])}
 TOOL_SCHEMAS: list[dict[str, Any]] = [_BY_NAME[n] for n in _ORDER] + [
     s for n, s in _BY_NAME.items() if n not in _ORDER and n not in LEGACY_TOOLS]
+
+
+def repo_bound(project_id: str | None) -> bool:
+    """Whether the project has a GitHub repo for the REPO_TOOLS to work on. Unknown (lookup failed) counts as
+    bound, so a broken lookup never hides tools."""
+    if not project_id:
+        return False
+    try:
+        from api.connections import get_project_repo_for_tools
+        return get_project_repo_for_tools(project_id) is not None
+    except Exception:
+        logger.debug("repo binding lookup failed for %s", project_id, exc_info=True)
+        return True
 
 
 def host_exec_allowed(context: str) -> bool:

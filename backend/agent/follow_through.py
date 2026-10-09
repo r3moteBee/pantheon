@@ -30,15 +30,20 @@ TAIL_CHARS = 900        # promises sit near the end of a reply, often followed b
 # about an earlier turn's task is left alone.
 _CLAIMS = (
     ("create_task", re.compile(
-        r"\b(?:task|reminder|job|check|follow-?up|digest)\b[^.\n]{0,60}?\b(?:is|has been|was|been|are)\s+"
+        r"\b(?:tasks?|reminders?|jobs?|checks?|follow-?ups?|digests?)\b[^.\n]{0,60}?\b(?:is|has been|was|been|are|have been)\s+"
         r"(?:now\s+)?(?:queued|scheduled|created|set up|set)\b"
-        r"|\b(?:task|reminder|job|follow-?up|check)\s+(?:queued|scheduled|created|set)\b"   # "**Task queued:** ..."
+        r"|\b(?:tasks?|reminders?|jobs?|follow-?ups?|checks?)\s+(?:queued|scheduled|created|set)\b"   # "**Task queued:** ..."
+        r"|(?:^|\n)[\s*#_>-]*(?:queued|scheduled|reminders? set)\s*:"                         # "**Queued:** a task to ..."
         r"|\bI(?:'ve| have)\s+(?:already\s+|now\s+)?(?:queued|scheduled|created|set up)\b"
-        r"(?=[^.\n]{0,50}?\b(?:task|reminder|job|check|follow-?up|digest|run)\b)", re.I),
+        r"(?=[^.\n]{0,50}?\b(?:tasks?|reminders?|jobs?|checks?|follow-?ups?|digests?|run)\b)", re.I),
      re.compile(r"\b(?:task|remind|schedule|every|daily|weekly|tomorrow|tonight|later|minutes?|hours?|next week|queue)\b", re.I)),
     ("save", re.compile(r"\b(?:saved|stored|written)\b[^.\n]{0,40}?\b(?:artifact|note)\b"
                         r"|\b(?:artifact|note)\b[^.\n]{0,40}?\b(?:has been |is |was )?(?:saved|created|stored)\b", re.I),
      re.compile(r"\b(?:save|artifact|note|write it|store)\b", re.I)),
+    ("remember", re.compile(r"\bI(?:'ve| have)\s+(?:also\s+)?(?:noted|remembered|stored|saved|recorded)\b[^.\n]{0,60}?"
+                            r"\b(?:memory|for (?:later|future|next time)|version|number|that|it)\b"
+                            r"|\b(?:noted|stored|saved) (?:it |this |that )?(?:in|to) (?:my |your )?memory\b", re.I),
+     re.compile(r"\b(?:remember|memorize|keep in mind|don't forget|make a note)\b", re.I)),
     ("generate_image", re.compile(r"\b(?:I(?:'ve| have)\s+(?:generated|created|made)|here(?:'s| is) (?:the|your))\b[^.\n]{0,30}?"
                                   r"\b(?:image|infographic|picture|illustration|poster)\b", re.I),
      re.compile(r"\b(?:image|infographic|picture|illustration|poster|draw|render)\b", re.I)),
@@ -82,7 +87,8 @@ def unbacked_claim(text: str | None, user_message: str | None, called: set[str])
     if not text:
         return None
     for tool, claim_re, asked_re in _CLAIMS:
-        done = bool(called & _SAVE_TOOLS) if tool == "save" else tool in called
+        done = (bool(called & _SAVE_TOOLS) if tool == "save"
+                else bool(called & (_SAVE_TOOLS | {"remember"})) if tool == "remember" else tool in called)
         if done or not asked_re.search(user_message or ""):
             continue
         m = claim_re.search(text)

@@ -12,30 +12,21 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "generate_image",
             "description": (
-                "Generate image(s) with the configured image model, or edit an existing "
-                "image. Saves each result as an artifact and shows it in the chat — do "
-                "not call show_file afterwards.\n"
-                "Prompt writing: start with the main subject and what it IS or DOES "
-                "(e.g. 'a basketball whose surface is the cratered moon, dribbled by a "
-                "bunny'); name each object once — image models draw every noun they "
-                "see, so 'the moon and a basketball' yields two objects, and writing "
-                "'no basketball' tends to ADD one — never mention what should not "
-                "appear. Then setting, composition, style, lighting.\n"
-                "To fix or change a previous image, pass its artifact id as "
-                "source_image and describe only the change ('make the bunny dribble "
-                "the moon-ball with its front paw; remove the orange basketball') — "
-                "this keeps what was right instead of starting over."
+                "Generate or edit an image; it is saved as an artifact and shown in the chat (no show_file "
+                "needed). Describe the subject first, name each object once and never mention what should not "
+                "appear (image models draw every noun). To change an earlier image, pass its artifact id as "
+                "source_image and describe only the change."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {"type": "string", "description": "What to draw (or, with source_image, what to change)"},
-                    "source_image": {"type": "string", "description": "Optional: artifact id (or path) of an image to edit — e.g. the id from a previous generate_image result"},
-                    "size": {"type": "string", "description": "WxH (1024x1024 default, 1536x1024, 1024x1536), an aspect ratio (16:9), or a named preset (square_hd, landscape_16_9, portrait_4_3, …). Any form works with any backend — it is converted automatically.", "default": "1024x1024"},
-                    "n": {"type": "integer", "description": "Number of images (1-4)", "default": 1},
-                    "quality": {"type": "string", "description": "Optional provider quality hint (e.g. low/medium/high, standard/hd)"},
-                    "path": {"type": "string", "description": "Optional artifact folder (default images/generated/<date>/)"},
-                    "name": {"type": "string", "description": "Optional short file name stem"}
+                    "prompt": {"type": "string", "description": "What to draw, or with source_image what to change."},
+                    "source_image": {"type": "string", "description": "Artifact id of an image to edit."},
+                    "size": {"type": "string", "description": "WxH (1024x1024, 1536x1024, 1024x1536) or a ratio like 16:9.", "default": "1024x1024"},
+                    "n": {"type": "integer", "description": "1-4.", "default": 1},
+                    "quality": {"type": "string"},
+                    "path": {"type": "string", "description": "Artifact folder (default images/generated/<date>/)."},
+                    "name": {"type": "string", "description": "File name stem."}
                 },
                 "required": ["prompt"]
             }

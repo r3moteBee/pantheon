@@ -12,35 +12,25 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "code_execute",
             "description": (
-                "Execute a code snippet in an isolated sandbox and return its "
-                "stdout, stderr, and exit code. Use this to test code, run "
-                "computations, validate logic, generate data, or prototype "
-                "before committing. Supports Python, Node, and Bash. The "
-                "sandbox has a default 30-second timeout and 256 MB memory "
-                "limit. Output is truncated at 1 MB. In subprocess mode the "
-                "snippet runs on the host with no filesystem isolation; use "
-                "Firecracker mode (PANTHEON_SANDBOX=firecracker) for real "
-                "isolation."
+                "Run a Python, Node or Bash snippet in the sandbox; returns stdout, stderr and exit code. "
+                "Default timeout 30 s, 256 MB."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "language": {
                         "type": "string",
-                        "enum": ["python", "node", "javascript", "bash"],
-                        "description": "Runtime for the snippet."
+                        "enum": ["python", "node", "javascript", "bash"]
                     },
                     "code": {
-                        "type": "string",
-                        "description": "The code to execute."
+                        "type": "string"
                     },
                     "filename": {
-                        "type": "string",
-                        "description": "Optional filename for the script (e.g. 'analysis.py'). Defaults are language-appropriate."
+                        "type": "string"
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": "Optional timeout override (1-300 seconds, default 30)."
+                        "description": "1-300, default 30."
                     }
                 },
                 "required": ["language", "code"]
@@ -52,29 +42,22 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "run_command",
             "description": (
-                "Run a shell (bash) command inside the project's local repo "
-                "checkout (created by git_sync_repo), or the project "
-                "workspace if no checkout exists. Use this to install "
-                "dependencies, run test suites (pytest, npm test), linters, "
-                "or build steps. Multi-line scripts are allowed; paths are "
-                "relative to the checkout root. Runs on the host in "
-                "subprocess sandbox mode — only use against trusted repos. "
-                "Default timeout 120s (max 1800)."
+                "Run a bash command in the project's repo checkout (git_sync_repo) or workspace: installs, "
+                "tests, linters, builds. Runs on the host - trusted repos only. Default timeout 120 s (max "
+                "1800)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
-                        "type": "string",
-                        "description": "Bash command or multi-line script to run."
+                        "type": "string"
                     },
                     "workdir": {
                         "type": "string",
-                        "description": "Optional subdirectory (relative to the repo checkout / workspace) to run in."
+                        "description": "Subdirectory to run in."
                     },
                     "timeout_seconds": {
-                        "type": "integer",
-                        "description": "Optional timeout override (1-1800 seconds, default 120). Raise it for dependency installs or slow test suites."
+                        "type": "integer"
                     }
                 },
                 "required": ["command"]
