@@ -9,6 +9,8 @@ from agent.tools.registry import ToolContext, tool
 
 logger = logging.getLogger(__name__)
 
+MIN_TASK_TIMEOUT = 1800   # seconds; a create_task timeout below this is replaced by the job type's default
+
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -43,7 +45,7 @@ SCHEMAS: list[dict[str, Any]] = [
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": "Default 1800; 3600-7200 for big batches."
+                        "description": "Seconds; at least 1800 (the default), 3600-7200 for big batches."
                     },
                     "max_iterations": {
                         "type": "integer",
@@ -406,6 +408,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             timeout_seconds = int(timeout_seconds)
         except (TypeError, ValueError):
             timeout_seconds = None
+    # The model guesses short limits (600 s twice in the 2026-10-08 research runs, both jobs killed mid-research);
+    # anything under MIN_TASK_TIMEOUT gets the job type's own default instead.
+    if timeout_seconds is not None and timeout_seconds < MIN_TASK_TIMEOUT:
+        timeout_seconds = None
     max_iterations = tool_args.get("max_iterations")
     if max_iterations is not None:
         try:

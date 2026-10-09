@@ -881,9 +881,10 @@ class AgentCore:
                 self._progress()
                 if ctx_window:
                     fit = context_fit.fit_messages(messages, ctx_window, all_tools, calibration=ctx_calibration)
-                    if fit["trimmed"]:
-                        logger.info("Context fit: shrank %d tool result(s), ~%d -> ~%d tokens (budget %d)",
-                                    fit["trimmed"], fit["before"], fit["after"], fit["budget"])
+                    if fit["trimmed"] or fit.get("dropped"):
+                        logger.info("Context fit: shrank %d tool result(s), dropped %d old round(s), "
+                                    "~%d -> ~%d tokens (budget %d)", fit["trimmed"], fit.get("dropped", 0),
+                                    fit["before"], fit["after"], fit["budget"])
                 ctx_overflow = None
                 tool_calls_this_round: list[dict] = []
                 current_text = ""
