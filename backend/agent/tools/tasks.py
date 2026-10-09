@@ -445,7 +445,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         question = (tool_args.get("item_question") or "").strip()
         if not items or not isinstance(items, list) or not question:
             return ("create_task rejected: research_batch needs items (a list, e.g. the state names) and "
-                    "item_question (with {item} where each item goes).")
+                    "item_question (with {item} where each item goes). For one topic with no list of items, use "
+                    "job_type autonomous_task.")
         if "{item}" not in question:
             question += " ({item})"
         try:
