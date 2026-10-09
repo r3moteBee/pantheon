@@ -374,6 +374,17 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
                     "recurring. For a single background run use 'now'; for one run later use 'delay:N' (N minutes "
                     "from now). Call create_task again with that schedule.")
 
+    # A delay nobody asked for: told to research something "in the background", the agent picked
+    # delay:60 and told the user "in ~60 seconds" - it runs in 60 MINUTES (2026-10-08).
+    delay_note = ""
+    if interactive and ctx.user_message and re.fullmatch(r"delay:\s*\d+", sched):
+        from agent.task_intent import future_timing
+        if not future_timing(ctx.user_message):
+            delay_note = (f"  (schedule {sched!r} was changed to 'now': the user did not ask for a later "
+                          "time.)\n")
+            sched = "now"
+            tool_args = {**tool_args, "schedule": "now"}
+
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
     # A job type given as a skill ("research_batch") is the job type: told the skill was not
@@ -485,7 +496,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"Task scheduled (the user asked for it in this chat, so it runs without the review step).\n"
             f"  schedule_id: {task_id}  (SCHEDULE id, not a job run id)\n"
             f"  name: {tool_args.get('name')}\n"
-            f"  schedule: {tool_args.get('schedule')}\n\n"
+            f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
             f"Tell the user in one line what you queued and when it runs. Do NOT also do the task's "
             f"work now in this chat - the task does it."
         )
@@ -496,7 +507,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"  schedule_id: {task_id}  (SCHEDULE id, not a "
             f"job run id)\n"
             f"  name: {tool_args.get('name')}\n"
-            f"  schedule: {tool_args.get('schedule')}\n\n"
+            f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
             f"To check whether the schedule actually fired, "
             f"call list_recent_jobs() or "
             f"get_job_status(job_id={task_id!r}) — that "
@@ -510,7 +521,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"  schedule_id: {task_id}  (this is the SCHEDULE id, "
         f"not a job run id)\n"
         f"  name: {tool_args.get('name')}\n"
-        f"  schedule: {tool_args.get('schedule')}\n\n"
+        f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
         f"NOTE: Each time the schedule fires it produces a "
         f"separate JOB with its own UUID. To check whether it "
         f"actually ran, call list_recent_jobs() or "
@@ -519,6 +530,22 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         + PROPOSED_NEXT_STEP
     )
 
+
+
+def _runs_when(schedule: str | None) -> str:
+    """The schedule in words, so the reply to the user gets the time right (delay:N is minutes, not seconds)."""
+    from datetime import datetime, timedelta, timezone
+    s = (schedule or "now").strip()
+    m = re.fullmatch(r"delay:\s*(\d+)", s)
+    if m:
+        at = datetime.now(timezone.utc) + timedelta(minutes=int(m.group(1)))
+        return f"runs once in {int(m.group(1))} minutes (about {at:%H:%M} UTC)"
+    m = re.fullmatch(r"interval:\s*(\d+)", s)
+    if m:
+        return f"runs every {int(m.group(1))} minutes until cancelled"
+    if s == "now":
+        return "runs now"
+    return f"runs on the cron schedule {s!r} until cancelled"
 
 
 @tool('send_telegram')
