@@ -6,52 +6,52 @@
 
 | Tool | What it does | Parameters | Module |
 | --- | --- | --- | --- |
-| `analyze_company_financials` | Perform a vertical common size analysis, calculate key financial ratios, or analyze Year-over-Year (YoY) growth patterns for a company using direct SEC/EDGAR XBRL data. | `ticker`, `analysis_type`, `years`? | finance |
-| `analyze_earnings_call` | Extract key business themes, revenue guidance, product updates, and executive sentiment from an earnings call transcript file in the workspace using the LLM. | `file_path`, `extract_guidance`? | finance |
-| `batch_convert_documents` | Batch-convert multiple files matching wildcards, folder names, or specific paths in the workspace into another format. | `paths`, `target_format`, `out_dir`?, `save_as_artifact`? | files |
-| `batch_ingest_sources` | Run ingest_source over a list of items with per-item failure isolation. | `items` | sources |
-| `code_execute` *(host exec)* | Execute a code snippet in an isolated sandbox and return its stdout, stderr, and exit code. | `language`, `code`, `filename`?, `timeout_seconds`? | code |
-| `compare_company_strategy_and_risks` | Extract, summarize, and compare corporate strategy, R&D patterns, and risk factors from company annual reports (10-K filings) using the LLM. | `tickers`, `focus_areas`?, `year`? | finance |
-| `consolidate_memory` | Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. | — | memory |
-| `create_graph_node` | Create a node in the associative graph memory to represent a concept, person, project, or fact. | `node_type`, `label`, `metadata`? | memory |
-| `create_skill` | Create a reusable SKILL (invoked with /skill-name in chat) — not a scheduled task (create_task). | `name`, `description`, `triggers`?, `tags`?, `instructions` | skills |
-| `create_task` | Schedule an autonomous background task. | `name`, `description`, `schedule`, `timeout_seconds`?, `max_iterations`?, `skill_name`?, `plan`, `skip_review`?, `job_type`?, `coding_context`?, `branch_name`?, `base_branch`?, `items`?, `item_question`?, `lookups_per_item`?, `max_turns`?, `execute_instruction`?, `review_instruction`?, `branch_strategy`? | tasks |
-| `download_file` | Download a file from a URL and save it to the workspace. | `url`, `path`, `filename`? | files |
-| `extract_topics` | Run topic extraction on an existing artifact (or raw text) and return the structured topics / speakers / claims without writing them anywhere. | `artifact_id`?, `text`?, `strategy`?, `max_topics`? | sources |
-| `generate_image` | Generate image(s) with the configured image model, or edit an existing image. | `prompt`, `source_image`?, `size`?, `n`?, `quality`?, `path`?, `name`? | images |
-| `get_job_status` | Get the current state of a background job. | `job_id` | tasks |
-| `get_self_documentation` | Retrieve the system self-documentation. | — | skills |
-| `git_commit` *(host exec)* | Stage files and commit them on the CURRENT branch of the local repo checkout. | `message`, `files`? | git |
-| `git_create_branch` *(host exec)* | Create and switch to a new local git branch. | `branch_name` | git |
-| `git_merge` *(host exec)* | Merge a branch into the CURRENT branch of the local repo checkout. | `branch`?, `message`?, `abort`? | git |
-| `git_push_pr` *(host exec)* | Push the current git branch to the remote GitHub repository and create a Pull Request. | `title`, `body`?, `base`? | git |
-| `git_status` *(host exec)* | Show the local git working tree status (runs git status --porcelain). | — | git |
-| `git_sync_repo` *(host exec)* | Clone the project's bound GitHub repo into the local workspace (or fetch + fast-forward it if already cloned) and return the checkout path. | `branch`?, `fresh`? | git |
-| `github` | GitHub API on the repo bound to this project (no local checkout needed). | `action`, `path`?, `ref`?, `name_prefix`?, `state`?, `head`?, `base`?, `new_branch`?, `base_branch`?, `branch`?, `message`?, `files`?, `title`?, `body`?, `draft`?, `pr_number`?, `merge_method`? | github |
-| `index` | Index content into semantic memory and the graph so recall finds it. | `target`, `id`?, `path_prefix`?, `path`?, `force`? | memory |
-| `ingest_source` | Ingest one item through a source adapter: fetch server-side, extract topics, save as an artifact (re-ingesting the same item updates it), embed and link the graph. | `source_type`, `identifier`, `extras`? | sources |
-| `link_concepts` | Create a relationship edge between two nodes in the associative graph memory. | `node_a_label`, `node_b_label`, `relationship` | memory |
-| `link_topic_similarity` | Backfill the cross-artifact similarity pipeline for already-indexed artifacts. | `path_prefix`?, `link_threshold`?, `merge_threshold`? | sources |
-| `list_artifacts` | List artifacts in the active project. | `tag`?, `content_type`?, `path_prefix`?, `search`?, `limit`? | artifacts |
-| `list_recent_jobs` | List recent background jobs for the active project. | `status`?, `include_system`?, `limit`? | tasks |
-| `list_source_adapters` | List the source adapters registered in the project. | — | sources |
-| `list_workspace_files` | List scratch files in the project workspace. | `path`? | files |
-| `merge_topics` | Review and apply merges of duplicate topic nodes in the graph. | `action`, `status`?, `limit`?, `proposal_id`?, `canonical_label`?, `label_a`?, `label_b`? | sources |
-| `read_artifact` | Read an artifact by id or by path. | `id`?, `path`? | artifacts |
-| `read_file` | Read a scratch file from the project workspace (sandbox runs, raw uploads). | `path` | files |
-| `recall` | Search the project's memory across episodic (past chats), semantic (indexed artifacts and workspace files), and graph (linked concepts) tiers. | `query`, `tiers`? | memory |
-| `remember` | Store information in memory for future recall: 'episodic' for a dated note about this conversation, 'semantic' for a key insight or fact to find by meaning later, 'graph' to extract the entities and relationships in the text into the kno… | `content`, `tier`, `metadata`? | memory |
-| `rerun_job` | Re-run a finished job (completed / failed / stalled / cancelled) with the exact same payload, title, schedule_id, and timeout. | `job_id` | tasks |
-| `run_command` *(host exec)* | Run a shell (bash) command inside the project's local repo checkout (created by git_sync_repo), or the project workspace if no checkout exists. | `command`, `workdir`?, `timeout_seconds`? | code |
-| `save_last_response` | Save recent conversation as an artifact. | `path`, `history_count`?, `mode`?, `custom_prompt`?, `title`?, `tags`?, `prepend_header`? | artifacts |
-| `save_to_artifact` | Save content into the user's Pantheon artifact store. | `path`, `content`, `content_type`?, `title`?, `tags`? | artifacts |
-| `send_telegram` | Send a message to the operator via Telegram. | `message` | tasks |
-| `show_file` | Display a file inline in the chat UI. | `path`, `caption`? | files |
-| `start_autoresearch` *(host exec)* | Start the autoresearch loop as a background job: an LLM mutates one workspace file, runs the benchmark command after each change, keeps a change only if the metric improves, and saves a report artifact. | `target_file`, `eval_cmd`, `metric`, `direction`, `iterations`?, `instructions`? | tasks |
-| `update_artifact` | Replace the content of an existing artifact, creating a new version. | `id`, `content`, `edit_summary`? | artifacts |
-| `web_fetch` | Read a web page (article text as markdown) without saving it. | `url`, `max_chars`? | web |
-| `web_search` | Search the web for current information. | `query` | web |
-| `write_file` | Write a scratch file to the project workspace. | `path`, `content` | files |
+| `analyze_company_financials` | Common-size analysis, key ratios or YoY growth for a company from SEC/EDGAR XBRL data. | `ticker`, `analysis_type`, `years`? | finance |
+| `analyze_earnings_call` | Themes, guidance, product updates and sentiment from an earnings-call transcript in the workspace. | `file_path`, `extract_guidance`? | finance |
+| `batch_convert_documents` | Convert workspace files (paths, folders or wildcards) to another format. | `paths`, `target_format`, `out_dir`?, `save_as_artifact`? | files |
+| `batch_ingest_sources` | ingest_source over a list of items; one failure doesn't stop the rest. | `items` | sources |
+| `code_execute` *(host exec)* | Run a Python, Node or Bash snippet in the sandbox; returns stdout, stderr and exit code. | `language`, `code`, `filename`?, `timeout_seconds`? | code |
+| `compare_company_strategy_and_risks` | Summarise and compare strategy, R&D and risk factors from companies' 10-K filings. | `tickers`, `focus_areas`?, `year`? | finance |
+| `consolidate_memory` | Summarise this session and store its facts and relations in memory. | — | memory |
+| `create_graph_node` | Add a node (concept, person, project, event, fact) to the graph. | `node_type`, `label`, `metadata`? | memory |
+| `create_skill` | Create a reusable skill the user runs with /name - not a scheduled task. | `name`, `description`, `triggers`?, `tags`?, `instructions` | skills |
+| `create_task` | Run work in the background: later, on a schedule, or too big for one reply. | `name`, `description`, `schedule`, `timeout_seconds`?, `max_iterations`?, `skill_name`?, `plan`, `skip_review`?, `job_type`?, `coding_context`?, `branch_name`?, `base_branch`?, `items`?, `item_question`?, `lookups_per_item`?, `max_turns`?, `execute_instruction`?, `review_instruction`?, `branch_strategy`? | tasks |
+| `download_file` | Download a file from a URL into the workspace. | `url`, `path`, `filename`? | files |
+| `extract_topics` | Preview topic extraction for an artifact or raw text without saving anything. | `artifact_id`?, `text`?, `strategy`?, `max_topics`? | sources |
+| `generate_image` | Generate or edit an image; it is saved as an artifact and shown in the chat (no show_file needed). | `prompt`, `source_image`?, `size`?, `n`?, `quality`?, `path`?, `name`? | images |
+| `get_job_status` | Status of a background job, by job id or the 8-char schedule id from create_task (latest run). | `job_id` | tasks |
+| `get_self_documentation` | Pantheon's own documentation: skills, configuration, architecture, deployment status. | — | skills |
+| `git_commit` *(host exec)* | Stage and commit on the current branch of the local checkout; refuses unresolved conflict markers. | `message`, `files`? | git |
+| `git_create_branch` *(host exec)* | Create or switch to a local branch. | `branch_name` | git |
+| `git_merge` *(host exec)* | Merge a branch into the current branch of the local checkout - the only correct way to merge. | `branch`?, `message`?, `abort`? | git |
+| `git_push_pr` *(host exec)* | Push the current branch and open a pull request. | `title`, `body`?, `base`? | git |
+| `git_status` *(host exec)* | git status of the local checkout. | — | git |
+| `git_sync_repo` *(host exec)* | Clone or update the project's bound repo locally and return the checkout path. | `branch`?, `fresh`? | git |
+| `github` | GitHub API on the project's bound repo. | `action`, `path`?, `ref`?, `name_prefix`?, `state`?, `head`?, `base`?, `new_branch`?, `base_branch`?, `branch`?, `message`?, `files`?, `title`?, `body`?, `draft`?, `pr_number`?, `merge_method`? | github |
+| `index` | Index content so recall finds it. | `target`, `id`?, `path_prefix`?, `path`?, `force`? | memory |
+| `ingest_source` | Ingest one item through a source adapter: fetched server-side, topics extracted, saved as an artifact (re-ingest updates it), indexed and linked in the graph. | `source_type`, `identifier`, `extras`? | sources |
+| `link_concepts` | Add a relation between two graph nodes. | `node_a_label`, `node_b_label`, `relationship` | memory |
+| `link_topic_similarity` | Backfill similarity links between already-indexed topics (and queue merge proposals for near-duplicates; apply them with merge_topics). | `path_prefix`?, `link_threshold`?, `merge_threshold`? | sources |
+| `list_artifacts` | List the project's artifacts. | `tag`?, `content_type`?, `path_prefix`?, `search`?, `limit`? | artifacts |
+| `list_recent_jobs` | Recent background jobs in this project ('what are you working on', 'did that finish'). | `status`?, `include_system`?, `limit`? | tasks |
+| `list_source_adapters` | Source adapters you can ingest with (source_type, required MCP tools). | — | sources |
+| `list_workspace_files` | List scratch workspace files (artifacts: list_artifacts). | `path`? | files |
+| `merge_topics` | Duplicate topic nodes in the graph. | `action`, `status`?, `limit`?, `proposal_id`?, `canonical_label`?, `label_a`?, `label_b`? | sources |
+| `read_artifact` | Read an artifact by id or path. | `id`?, `path`? | artifacts |
+| `read_file` | Read a scratch workspace file (saved notes are artifacts: read_artifact). | `path` | files |
+| `recall` | Search the project's memory: past chats, indexed artifacts and files, and the graph. | `query`, `tiers`? | memory |
+| `remember` | Store something in memory: 'episodic' for a dated note, 'semantic' for a fact to find by meaning, 'graph' to extract entities and relations. | `content`, `tier`, `metadata`? | memory |
+| `rerun_job` | Re-run a finished job with the same payload; the original stays as history. | `job_id` | tasks |
+| `run_command` *(host exec)* | Run a bash command in the project's repo checkout (git_sync_repo) or workspace: installs, tests, linters, builds. | `command`, `workdir`?, `timeout_seconds`? | code |
+| `save_last_response` | Save your previous reply (or recent messages) as an artifact - for 'save this'. | `path`, `history_count`?, `mode`?, `custom_prompt`?, `title`?, `tags`?, `prepend_header`? | artifacts |
+| `save_to_artifact` | Save content to the project's artifact store - the only save that list_artifacts, read_artifact and recall can see (MCP save tools are not equivalents). | `path`, `content`, `content_type`?, `title`?, `tags`? | artifacts |
+| `send_telegram` | Send the operator a Telegram message. | `message` | tasks |
+| `show_file` | Show a workspace file (image, PDF, HTML, markdown, text) in the chat. | `path`, `caption`? | files |
+| `start_autoresearch` *(host exec)* | Background loop that mutates one workspace file, runs a benchmark after each change, keeps changes that improve the metric and saves a report. | `target_file`, `eval_cmd`, `metric`, `direction`, `iterations`?, `instructions`? | tasks |
+| `update_artifact` | Replace an artifact's content (new version). | `id`, `content`, `edit_summary`? | artifacts |
+| `web_fetch` | Read a web page as markdown without saving it (ingest_source keeps it). | `url`, `max_chars`? | web |
+| `web_search` | Web search: titles, URLs and snippets. | `query` | web |
+| `write_file` | Write a scratch workspace file (not indexed; keep things with save_to_artifact). | `path`, `content` | files |
 
 ## Retired names
 
@@ -85,9 +85,9 @@ Offered only when Playwright browser tools are enabled (`agent/browser_tools.py`
 
 | Tool | What it does | Parameters | Module |
 | --- | --- | --- | --- |
-| `browser_click` | Click an element in the current page by CSS selector. | `selector` | web |
-| `browser_close` | Close the current project's browser session and free resources. | — | web |
-| `browser_open` | Open a URL in a persistent headless browser session. | `url` | web |
-| `browser_read` | Get the visible text of the currently loaded page from the browser session. | `max_chars`? | web |
-| `browser_screenshot` | Save a full-page screenshot of the current browser page into the project workspace. | `rel_path`? | web |
-| `browser_type` | Type text into an input/textarea by CSS selector. | `selector`, `text`, `submit`? | web |
+| `browser_click` | Click an element by CSS selector. | `selector` | web |
+| `browser_close` | Close the browser session. | — | web |
+| `browser_open` | Open a URL in a headless browser (JavaScript, cookies kept). | `url` | web |
+| `browser_read` | Visible text of the current browser page. | `max_chars`? | web |
+| `browser_screenshot` | Save a screenshot of the page to the workspace. | `rel_path`? | web |
+| `browser_type` | Type into an input by CSS selector; submit presses Enter. | `selector`, `text`, `submit`? | web |

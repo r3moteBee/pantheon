@@ -17,7 +17,7 @@ from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
-from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
+from agent.tools import HOST_EXEC_TOOLS, REPO_TOOLS, execute_tool, get_all_tool_schemas, repo_bound
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import context_fit, tool_results
 from config import get_settings
@@ -119,28 +119,19 @@ def _build_available_skills_block(project_id: str) -> str:
     lines = [
         "## Available skills (installed in this project)",
         "",
-        "When the user's request matches one of the trigger phrases "
-        "below, INVOKE THE SKILL. The skill\'s instructions will run "
-        "as part of your normal turn — you do NOT need create_task "
-        "or start_coding_task. Either:",
-        "  • follow the skill\'s instructions inline this turn, OR",
-        "  • tell the user you\'re running the skill and proceed with "
-        "    the steps it lays out, citing the skill name in your reply.",
-        "",
-        "Skills are NOT scheduled tasks and are NOT coding tasks. They "
-        "are reusable recipes the user has already approved.",
+        "When a request matches a skill, run it this turn by following its steps (no create_task needed). "
+        "Skills are recipes the user already approved.",
         "",
     ]
     for sk in skills[:30]:
         try:
             name = sk.name
-            desc = (sk.manifest.description or "").strip().splitlines()[0][:160]
-            triggers = ", ".join(f"\"{t}\"" for t in (sk.triggers or [])[:6])
+            desc = (sk.manifest.description or "").strip().splitlines()[0]
+            desc = desc.split(". Use when")[0].split(". Use this")[0].rstrip(".")[:110]
+            triggers = ", ".join(f"\"{t}\"" for t in (sk.triggers or [])[:2])
         except Exception:
             continue
-        lines.append(f"- **/{name}** — {desc}")
-        if triggers:
-            lines.append(f"    triggers: {triggers}")
+        lines.append(f"- /{name}: {desc}" + (f" ({triggers})" if triggers else ""))
     if len(skills) > 30:
         lines.append(f"\n_... and {len(skills) - 30} more skills_")
     return "\n".join(lines)
@@ -736,6 +727,8 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
+            if not repo_bound(self.project_id):
+                all_tools = [t for t in all_tools if t.get("function", {}).get("name") not in REPO_TOOLS]
             if self.only_tools is not None:
                 all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 

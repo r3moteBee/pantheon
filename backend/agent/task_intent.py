@@ -74,9 +74,13 @@ def wants_image(text: str | None) -> bool:
     return bool(_IMAGE_RE.search(t))
 
 
-IMAGE_NOTE = ("[Pantheon note] This asks for an image. Call generate_image with a prompt that describes it - for an "
-              "infographic or poster, the layout plus the exact title and each short line of text in quotes (the "
-              "image model renders quoted text). Keep it to a title and at most five short facts, taken from this "
+# The prompt-writing advice lives here rather than in the generate_image schema, so it costs tokens only on
+# turns that ask for a picture.
+IMAGE_NOTE = ("[Pantheon note] This asks for an image. Call generate_image with a prompt that describes it: start "
+              "with the main subject and what it is or does, name each object once (the image model draws every "
+              "noun, and 'no X' tends to add an X), then setting, composition, style and lighting. For an "
+              "infographic or poster, give the layout plus the exact title and each short line of text in quotes "
+              "(the image model renders quoted text), at most a title and five short facts from this "
               "conversation. Do not write plotting code or describe the image instead of generating it.\n\n")
 
 
