@@ -15,7 +15,7 @@
 | `consolidate_memory` | Summarise this session and store its facts and relations in memory. | — | memory |
 | `create_graph_node` | Add a node (concept, person, project, event, fact) to the graph. | `node_type`, `label`, `metadata`? | memory |
 | `create_skill` | Create a reusable skill the user runs with /name - not a scheduled task. | `name`, `description`, `triggers`?, `tags`?, `instructions` | skills |
-| `create_task` | Run work in the background: later, on a schedule, or too big for one reply. | `name`, `description`, `schedule`, `timeout_seconds`?, `max_iterations`?, `skill_name`?, `plan`, `skip_review`?, `job_type`?, `coding_context`?, `branch_name`?, `base_branch`?, `items`?, `item_question`?, `lookups_per_item`?, `max_turns`?, `execute_instruction`?, `review_instruction`?, `branch_strategy`? | tasks |
+| `create_task` | Run work in the background: anything for later ('in 15 minutes', 'tomorrow at 9', 'next week', 'remind me ...'), on a schedule ('every morning'), or too big for one reply. | `name`, `description`, `schedule`, `timeout_seconds`?, `max_iterations`?, `skill_name`?, `plan`, `skip_review`?, `job_type`?, `coding_context`?, `branch_name`?, `base_branch`?, `items`?, `item_question`?, `lookups_per_item`?, `max_turns`?, `execute_instruction`?, `review_instruction`?, `branch_strategy`? | tasks |
 | `download_file` | Download a file from a URL into the workspace. | `url`, `path`, `filename`? | files |
 | `extract_topics` | Preview topic extraction for an artifact or raw text without saving anything. | `artifact_id`?, `text`?, `strategy`?, `max_topics`? | sources |
 | `generate_image` | Generate or edit an image; it is saved as an artifact and shown in the chat (no show_file needed). | `prompt`, `source_image`?, `size`?, `n`?, `quality`?, `path`?, `name`? | images |
@@ -40,7 +40,7 @@
 | `read_artifact` | Read an artifact by id or path. | `id`?, `path`? | artifacts |
 | `read_file` | Read a scratch workspace file (saved notes are artifacts: read_artifact). | `path` | files |
 | `recall` | Search the project's memory: past chats, indexed artifacts and files, and the graph. | `query`, `tiers`? | memory |
-| `remember` | Store something in memory: 'episodic' for a dated note, 'semantic' for a fact to find by meaning, 'graph' to extract entities and relations. | `content`, `tier`, `metadata`? | memory |
+| `remember` | Store something in memory - call it whenever the user says 'remember', 'note' or 'keep in mind': 'episodic' for a dated note, 'semantic' for a fact to find by meaning, 'graph' to extract entities and relations. | `content`, `tier`, `metadata`? | memory |
 | `rerun_job` | Re-run a finished job with the same payload; the original stays as history. | `job_id` | tasks |
 | `run_command` *(host exec)* | Run a bash command in the project's repo checkout (git_sync_repo) or workspace: installs, tests, linters, builds. | `command`, `workdir`?, `timeout_seconds`? | code |
 | `save_last_response` | Save your previous reply (or recent messages) as an artifact - for 'save this'. | `path`, `history_count`?, `mode`?, `custom_prompt`?, `title`?, `tags`?, `prepend_header`? | artifacts |

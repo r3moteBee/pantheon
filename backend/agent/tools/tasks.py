@@ -18,10 +18,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "create_task",
             "description": (
-                "Run work in the background: later, on a schedule, or too big for one reply. Starts right away "
-                "when the user asked for it in this chat; otherwise, or when the plan deletes, overwrites, "
-                "merges or pushes, it waits for the user's approval in the Tasks tab. Work you can do now (one "
-                "image, one lookup) is not a task - do it."
+                "Run work in the background: anything for later ('in 15 minutes', 'tomorrow at 9', 'next "
+                "week', 'remind me ...'), on a schedule ('every morning'), or too big for one reply. Call it in "
+                "the same turn the user asks; it starts right away when they asked for it in this chat. Tasks you "
+                "decide on yourself, or whose plan deletes, overwrites, merges or pushes, wait for the user's "
+                "approval in the Tasks tab. Work you can do now (one image, one lookup) is not a task - do it."
             ),
             "parameters": {
                 "type": "object",
@@ -167,7 +168,7 @@ SCHEMAS: list[dict[str, Any]] = [
             "name": "get_job_status",
             "description": (
                 "Status of a background job, by job id or the 8-char schedule id from create_task (latest run). "
-                "Check it before saying a job did or didn't run."
+                "Use it when the user asks about a task, before saying it did or didn't run - not to wait for one."
             ),
             "parameters": {
                 "type": "object",
@@ -497,8 +498,9 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"  schedule_id: {task_id}  (SCHEDULE id, not a job run id)\n"
             f"  name: {tool_args.get('name')}\n"
             f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
-            f"Tell the user in one line what you queued and when it runs. Do NOT also do the task's "
-            f"work now in this chat - the task does it."
+            f"Tell the user in one line what you queued and when it runs, then end your reply. Do NOT also do "
+            f"the task's work now in this chat, and do not wait for it or poll get_job_status - it runs on its "
+            f"own and the user will ask for the result."
         )
     if skip_review:
         return (
@@ -612,6 +614,11 @@ async def _tool_get_job_status(ctx: ToolContext, tool_name: str, tool_args: dict
         summary = (j["result"] or {}).get("summary") if isinstance(j["result"], dict) else None
         if summary:
             lines.append(f"summary: {summary[:500]}")
+    # Right after create_task the agent polled this 36 times and wrote the job's summary itself, holding
+    # the chat turn for six minutes (2026-10-09). A job runs on its own; the turn should end.
+    if j["status"] in ("queued", "running"):
+        lines.append("\nThe job is still working in the background. Do not wait for it or check again in this "
+                     "reply - tell the user it is running and end your turn; they can ask for the result later.")
     return "\n".join(lines)
 
 

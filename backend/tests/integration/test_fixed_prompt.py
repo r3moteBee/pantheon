@@ -29,7 +29,7 @@ def test_prompt_matches_the_task_approval_rules():
     from agent.prompts import build_system_prompt
     text = build_system_prompt(project_id="default", project_name="Default")
     assert "ABSOLUTE RULE" not in text and "DO NOT call `create_task` immediately" not in text
-    assert "call create_task in this turn" in text
+    assert "call create_task for the later part in the same\n  turn" in text
 
 
 TOOLS = [{"type": "function", "function": {"name": n, "parameters": {}}}

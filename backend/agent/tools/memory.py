@@ -13,8 +13,9 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "remember",
             "description": (
-                "Store something in memory: 'episodic' for a dated note, 'semantic' for a fact to find by "
-                "meaning, 'graph' to extract entities and relations. Documents go to save_to_artifact."
+                "Store something in memory - call it whenever the user says 'remember', 'note' or 'keep in mind': "
+                "'episodic' for a dated note, 'semantic' for a fact to find by meaning, 'graph' to extract "
+                "entities and relations. Documents go to save_to_artifact."
             ),
             "parameters": {
                 "type": "object",
