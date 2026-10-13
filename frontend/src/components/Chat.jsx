@@ -43,14 +43,20 @@ export default function Chat() {
   // so text being read doesn't move while the reply streams in below it.
   // It jumps to the end only when a chat is opened or the user sends a
   // message; otherwise the down-arrow button (or scrolling) goes there.
+  // Pressing the button while a reply streams keeps the end in view until
+  // the user scrolls back up.
   const [atBottom, setAtBottom] = useState(true)
   const scrollAfterSendRef = useRef(false)
   const prevMessagesRef = useRef(messages)
+  const followRef = useRef(false)
+  const lastScrollTopRef = useRef(0)
 
   const updateAtBottom = useCallback(() => {
     const el = scrollRef.current
     if (!el) return
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+    if (el.scrollTop < lastScrollTopRef.current - 2) followRef.current = false
+    lastScrollTopRef.current = el.scrollTop
+    setAtBottom(followRef.current || el.scrollHeight - el.scrollTop - el.clientHeight < 40)
   }, [])
 
   const scrollToBottom = useCallback((behavior = 'smooth') => {
@@ -74,7 +80,18 @@ export default function Chat() {
   }, [messages, scrollToBottom, updateAtBottom])
 
   // Output growing below the fold changes whether we are at the end.
-  useEffect(() => { updateAtBottom() }, [streamingContent, currentToolCalls, updateAtBottom])
+  useLayoutEffect(() => {
+    if (followRef.current) scrollToBottom('auto')
+    updateAtBottom()
+  }, [streamingContent, currentToolCalls, scrollToBottom, updateAtBottom])
+
+  useEffect(() => { if (!isStreaming) followRef.current = false }, [isStreaming])
+
+  const jumpToEnd = () => {
+    followRef.current = isStreaming
+    scrollToBottom(isStreaming ? 'auto' : 'smooth')
+    updateAtBottom()
+  }
 
   // ── Send message ───────────────────────────────────────────────────
 
@@ -184,7 +201,7 @@ export default function Chat() {
       {!atBottom && messages.length > 0 && (
         <button
           type="button"
-          onClick={() => scrollToBottom()}
+          onClick={jumpToEnd}
           aria-label="Scroll to the end"
           title="Scroll to the end"
           className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full border border-gray-700 bg-gray-900/90 px-3 py-1.5 text-xs text-gray-300 shadow-lg hover:bg-gray-800 hover:text-white"
