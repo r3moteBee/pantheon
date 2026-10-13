@@ -6,12 +6,14 @@ import { createPortal } from 'react-dom'
  * overflow:hidden / overflow-x-auto / transform ancestor clipping.
  *
  * Uses fixed positioning anchored to the trigger's bounding rect,
- * recomputed when the tooltip becomes visible.
+ * recomputed when the tooltip becomes visible. Long labels wrap, and the
+ * tooltip is kept inside the browser window near the edges.
  */
 export default function Tooltip({ children, label, placement = 'bottom', delay = 200 }) {
   const [visible, setVisible] = useState(false)
-  const [coords, setCoords] = useState({ left: 0, top: 0 })
+  const [coords, setCoords] = useState({ left: 0, top: 0, ready: false })
   const triggerRef = useRef(null)
+  const tipRef = useRef(null)
   const timerRef = useRef(null)
 
   const show = () => {
@@ -21,41 +23,49 @@ export default function Tooltip({ children, label, placement = 'bottom', delay =
   const hide = () => {
     clearTimeout(timerRef.current)
     setVisible(false)
+    setCoords((c) => ({ ...c, ready: false }))
   }
 
+  // Position after the tooltip has rendered (hidden) so its real size is
+  // known: flip to the opposite side when the preferred one has no room,
+  // then clamp into the viewport so it never runs off the window edge.
   useLayoutEffect(() => {
-    if (!visible || !triggerRef.current) return
+    if (!visible || !triggerRef.current || !tipRef.current) return
     const r = triggerRef.current.getBoundingClientRect()
+    const t = tipRef.current.getBoundingClientRect()
+    const vw = window.innerWidth
+    const vh = window.innerHeight
     const gap = 6
+    const margin = 8
+    let side = placement
+    if (side === 'top' && r.top - gap - t.height < margin) side = 'bottom'
+    else if (side === 'bottom' && r.bottom + gap + t.height > vh - margin) side = 'top'
+    else if (side === 'left' && r.left - gap - t.width < margin) side = 'right'
+    else if (side === 'right' && r.right + gap + t.width > vw - margin) side = 'left'
     let left, top
-    switch (placement) {
+    switch (side) {
       case 'top':
-        left = r.left + r.width / 2
-        top = r.top - gap
+        left = r.left + r.width / 2 - t.width / 2
+        top = r.top - gap - t.height
         break
       case 'left':
-        left = r.left - gap
-        top = r.top + r.height / 2
+        left = r.left - gap - t.width
+        top = r.top + r.height / 2 - t.height / 2
         break
       case 'right':
         left = r.right + gap
-        top = r.top + r.height / 2
+        top = r.top + r.height / 2 - t.height / 2
         break
       case 'bottom':
       default:
-        left = r.left + r.width / 2
+        left = r.left + r.width / 2 - t.width / 2
         top = r.bottom + gap
         break
     }
-    setCoords({ left, top })
-  }, [visible, placement])
-
-  const transformByPlacement = {
-    top: 'translate(-50%, -100%)',
-    bottom: 'translate(-50%, 0)',
-    left: 'translate(-100%, -50%)',
-    right: 'translate(0, -50%)',
-  }[placement] || 'translate(-50%, 0)'
+    left = Math.max(margin, Math.min(left, vw - margin - t.width))
+    top = Math.max(margin, Math.min(top, vh - margin - t.height))
+    setCoords({ left, top, ready: true })
+  }, [visible, placement, label])
 
   return (
     <>
@@ -71,13 +81,16 @@ export default function Tooltip({ children, label, placement = 'bottom', delay =
       </span>
       {visible && label && createPortal(
         <span
-          className="pointer-events-none whitespace-nowrap rounded bg-gray-950 border border-gray-700 px-2 py-1 text-[11px] text-gray-200 shadow-lg"
+          ref={tipRef}
+          className="pointer-events-none rounded bg-gray-950 border border-gray-700 px-2 py-1 text-[11px] text-gray-200 shadow-lg"
           role="tooltip"
           style={{
             position: 'fixed',
             left: coords.left,
             top: coords.top,
-            transform: transformByPlacement,
+            width: 'max-content',
+            maxWidth: 'min(20rem, calc(100vw - 16px))',
+            visibility: coords.ready ? 'visible' : 'hidden',
             zIndex: 9999,
           }}
         >

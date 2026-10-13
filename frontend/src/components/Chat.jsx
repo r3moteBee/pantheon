@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react'
-import { Brain } from 'lucide-react'
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { Brain, ArrowDown } from 'lucide-react'
 import { useStore } from '../store'
 import Message, { StreamingMessage } from './chat/Message'
 import SkillSuggestionCard from './chat/SkillSuggestionCard'
@@ -15,7 +15,7 @@ import useChatAttachments from './chat/useChatAttachments'
 // useChatAttachments, rendering in ./chat/*.
 export default function Chat() {
   const [input, setInput] = useState('')
-  const messagesEndRef = useRef(null)
+  const scrollRef = useRef(null)
 
   const messages = useStore((s) => s.messages)
   const addMessage = useStore((s) => s.addMessage)
@@ -39,9 +39,59 @@ export default function Chat() {
     setSaveModal({ content, defaultPath: defaultSavePath(content, activeProject?.name) })
   }, [activeProject])
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, streamingContent])
+  // Scrolling: the transcript never follows the agent's output on its own,
+  // so text being read doesn't move while the reply streams in below it.
+  // It jumps to the end only when a chat is opened or the user sends a
+  // message; otherwise the down-arrow button (or scrolling) goes there.
+  // Pressing the button while a reply streams keeps the end in view until
+  // the user scrolls back up.
+  const [atBottom, setAtBottom] = useState(true)
+  const scrollAfterSendRef = useRef(false)
+  const prevMessagesRef = useRef(messages)
+  const followRef = useRef(false)
+  const lastScrollTopRef = useRef(0)
+
+  const updateAtBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (el.scrollTop < lastScrollTopRef.current - 2) followRef.current = false
+    lastScrollTopRef.current = el.scrollTop
+    setAtBottom(followRef.current || el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+  }, [])
+
+  const scrollToBottom = useCallback((behavior = 'smooth') => {
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior })
+  }, [])
+
+  useLayoutEffect(() => {
+    const prev = prevMessagesRef.current
+    prevMessagesRef.current = messages
+    // A single message appended to the same chat is a turn in progress;
+    // anything else (history opened, chat cleared) is a different chat.
+    const appended = messages.length === prev.length + 1 && messages[0] === (prev[0] ?? messages[0])
+    if (!appended) {
+      scrollToBottom('auto')
+    } else if (scrollAfterSendRef.current) {
+      scrollAfterSendRef.current = false
+      scrollToBottom()
+    }
+    updateAtBottom()
+  }, [messages, scrollToBottom, updateAtBottom])
+
+  // Output growing below the fold changes whether we are at the end.
+  useLayoutEffect(() => {
+    if (followRef.current) scrollToBottom('auto')
+    updateAtBottom()
+  }, [streamingContent, currentToolCalls, scrollToBottom, updateAtBottom])
+
+  useEffect(() => { if (!isStreaming) followRef.current = false }, [isStreaming])
+
+  const jumpToEnd = () => {
+    followRef.current = isStreaming
+    scrollToBottom(isStreaming ? 'auto' : 'smooth')
+    updateAtBottom()
+  }
 
   // ── Send message ───────────────────────────────────────────────────
 
@@ -71,6 +121,7 @@ export default function Chat() {
       fullMessage = msg ? msg + note : `Please review the attached files:\n${lines}`
     }
 
+    scrollAfterSendRef.current = true
     addMessage({
       role: 'user',
       content: msg || 'Attached files for review',
@@ -111,7 +162,8 @@ export default function Chat() {
       {files.isDragging && <DropOverlay />}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+      <div className="relative flex-1 min-h-0 flex flex-col">
+      <div ref={scrollRef} onScroll={updateAtBottom} className="flex-1 overflow-y-auto p-4 scrollbar-thin">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Brain className="w-12 h-12 text-gray-700 mb-4" />
@@ -145,7 +197,19 @@ export default function Chat() {
           />
         )}
 
-        <div ref={messagesEndRef} />
+      </div>
+      {!atBottom && messages.length > 0 && (
+        <button
+          type="button"
+          onClick={jumpToEnd}
+          aria-label="Scroll to the end"
+          title="Scroll to the end"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 rounded-full border border-gray-700 bg-gray-900/90 px-3 py-1.5 text-xs text-gray-300 shadow-lg hover:bg-gray-800 hover:text-white"
+        >
+          <ArrowDown className={`w-4 h-4 ${isStreaming ? 'animate-bounce' : ''}`} />
+          {isStreaming ? 'New output below' : 'Jump to end'}
+        </button>
+      )}
       </div>
 
       <ChatComposer
