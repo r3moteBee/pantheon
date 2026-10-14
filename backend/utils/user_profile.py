@@ -545,6 +545,34 @@ def resolve_voice(name: str | None) -> tuple[dict[str, Any] | None, str]:
                   "use (or call again with name=...).")
 
 
+# "write / draft a post, email, letter ..." - a request for something that goes
+# out under the user's name. Told in the prompt to read the voice first, the
+# 9B model did so 2 times in 3; the turn that skipped it wrote generic prose.
+_DRAFT_RE = re.compile(
+    r"\b(?:write|draft|compose|pen|prepare|put together|ghostwrite|rewrite)\b[^.?!\n]{0,80}?"
+    r"\b(?:post|blog|e-?mail|letter|article|newsletter|bio|biography|speech|essay|announcement|"
+    r"op-?ed|column|toast|eulogy|tweet|thread|linkedin|substack|reply to|response to|note to|message to)\b",
+    re.I,
+)
+
+
+def drafting_voice_args(message: str) -> dict[str, Any] | None:
+    """writing_voice arguments to read before round 1 when ``message`` asks for
+    writing in the user's name and they have voices; None otherwise. A voice
+    named in the message ("in my Blog voice") is passed as ``name``."""
+    if not message or not _DRAFT_RE.search(message):
+        return None
+    voices = list_voices()
+    if not voices:
+        return None
+    low = message.lower()
+    named = [v["name"] for v in voices if re.search(r"(?<!\w)" + re.escape(v["name"].lower()) + r"(?!\w)", low)]
+    args: dict[str, Any] = {"action": "get"}
+    if len(named) == 1:
+        args["name"] = named[0]
+    return args
+
+
 VOICE_GUIDANCE = (
     "How to write in this voice:\n"
     "- Imitate HOW the user writes — sentence length and rhythm, vocabulary, structure, openings and endings, "

@@ -800,6 +800,32 @@ class AgentCore:
                     "id": sd["id"], "type": "function", "function": {"name": "get_self_documentation", "arguments": "{}"}}]})
                 messages.append({"role": "tool", "tool_call_id": sd["id"],
                                  "content": tool_results.for_model("get_self_documentation", result)})
+            # "Write a post / email / letter ...": read the user's writing voice before
+            # round 1 (utils/user_profile.drafting_voice_args) - left to the model it
+            # was read 2 times in 3, and the third draft was generic prose.
+            try:
+                from utils.user_profile import drafting_voice_args
+                voice_args = drafting_voice_args(user_message) if "writing_voice" in tool_names else None
+            except Exception:
+                logger.debug("writing voice pre-read unavailable", exc_info=True)
+                voice_args = None
+            if voice_args:
+                wv = {"type": "tool_call", "id": f"auto-voice-{uuid.uuid4().hex[:8]}",
+                      "name": "writing_voice", "args": voice_args}
+                logger.info("Writing request - reading the user's writing voice first: %s", voice_args)
+                yield wv
+                result = await execute_tool(
+                    tool_name="writing_voice", tool_args=voice_args, memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                yield {"type": "tool_result", "name": "writing_voice", "result": result,
+                       "tool_id": wv["id"], "is_error": tool_results.is_error(result)}
+                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": wv["id"], "type": "function",
+                    "function": {"name": "writing_voice", "arguments": json.dumps(voice_args)}}]})
+                messages.append({"role": "tool", "tool_call_id": wv["id"],
+                                 "content": tool_results.for_model("writing_voice", result)})
             # A URL in the user's message is read before round 1 (AGENT_PREFETCH_URLS):
             # asked "<url> - what's this about?" the agent searched memory and artifacts
             # instead of opening it (0/3), and once summarized a page from its own

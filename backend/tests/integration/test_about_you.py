@@ -304,6 +304,48 @@ async def test_writing_voice_tool(profile_db):
     assert "Ask the user" in await execute_tool("writing_voice", {"name": "Speech"}, None)
 
 
+def test_drafting_requests_read_the_voice_first(profile_db):
+    up = profile_db
+    msg = "Write a short post about moving my DNS to Pi-hole."
+    assert up.drafting_voice_args(msg) is None                    # no voices: nothing to read
+    up.create_voice("Blog", is_default=True)
+    up.create_voice("Work email")
+    assert up.drafting_voice_args(msg) == {"action": "get"}       # the default voice
+    # a voice named in the request is the one to use ("blog post" names the Blog voice)
+    assert up.drafting_voice_args("Write a blog post about Pi-hole") == {"action": "get", "name": "Blog"}
+    assert up.drafting_voice_args("Draft an email to Sam in my work email voice") == \
+        {"action": "get", "name": "Work email"}
+    assert up.drafting_voice_args("Can you put together a LinkedIn announcement for the launch?")
+    for not_drafting in ("What is a VLAN?", "Summarize this blog post", "Who wrote the letter to the editor?",
+                         "write_file failed again", ""):
+        assert up.drafting_voice_args(not_drafting) is None, not_drafting
+
+
+@pytest.mark.asyncio
+async def test_agent_reads_the_voice_before_round_one(profile_db):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from agent.core import AgentCore
+    v = profile_db.create_voice("Blog", "Dry humour.", is_default=True)
+    profile_db.add_sample(v["id"], "Post", "It worked. It was boring.")
+    seen = []
+
+    class Prov:
+        model = "m"
+        async def chat(self, messages, tools=None, stream=True, **kw):
+            seen.append(messages)
+            yield {"type": "text_delta", "content": "Here it is."}
+            yield {"type": "done"}
+
+    agent = AgentCore(provider=Prov(), memory_manager=SimpleNamespace(recall=AsyncMock(return_value=[])),
+                      project_id="p", session_id="s", channel="web")
+    events = [e async for e in agent.chat("Write a short post about my new NAS", stream=True)]
+    calls = [e for e in events if e["type"] == "tool_call" and e["name"] == "writing_voice"]
+    assert len(calls) == 1 and calls[0]["args"] == {"action": "get"}
+    tool_msgs = [m for m in seen[0] if m.get("role") == "tool"]
+    assert any("# Writing voice: Blog" in m["content"] and "It worked." in m["content"] for m in tool_msgs)
+
+
 def test_writing_voice_tool_is_offered():
     from agent.tools import TOOL_SCHEMAS
     assert "writing_voice" in {t["function"]["name"] for t in TOOL_SCHEMAS}
