@@ -138,6 +138,7 @@ class SlackAdapter(BaseMessagingAdapter):
             )
             agent = AgentCore(
                 host_exec=host_exec_allowed("background"),
+                channel="slack",
                 provider=provider,
                 memory_manager=memory,
                 project_id=project,

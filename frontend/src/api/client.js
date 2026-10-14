@@ -401,6 +401,20 @@ export const personalityApi = {
   reset: (projectId) => api.post('/api/personality/reset', null, { params: { project_id: projectId } }),
 }
 
+// About you API (profile, reply style, writing voices)
+export const aboutYouApi = {
+  get: () => api.get('/api/about-you'),
+  update: (changes) => api.put('/api/about-you', changes),
+  listVoices: () => api.get('/api/writing-voices'),
+  createVoice: (body) => api.post('/api/writing-voices', body),
+  getVoice: (id) => api.get(`/api/writing-voices/${id}`),
+  updateVoice: (id, changes) => api.patch(`/api/writing-voices/${id}`, changes),
+  deleteVoice: (id) => api.delete(`/api/writing-voices/${id}`),
+  addSample: (id, body) => api.post(`/api/writing-voices/${id}/samples`, body),
+  getSample: (id, sampleId) => api.get(`/api/writing-voices/${id}/samples/${sampleId}`),
+  deleteSample: (id, sampleId) => api.delete(`/api/writing-voices/${id}/samples/${sampleId}`),
+}
+
 // Projects API
 export const projectsApi = {
   list: () => api.get('/api/projects'),

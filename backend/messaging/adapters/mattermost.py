@@ -152,6 +152,7 @@ class MattermostAdapter(BaseMessagingAdapter):
             )
             agent = AgentCore(
                 host_exec=host_exec_allowed("background"),
+                channel="mattermost",
                 provider=provider,
                 memory_manager=memory,
                 project_id=project,

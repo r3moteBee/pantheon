@@ -35,6 +35,14 @@ The agent's identity is `soul.md` and its working rules are `agent.md`, both edi
 
 New projects follow the global personality unless you pick a preset when creating them.
 
+### About you, reply style and writing voices
+
+**Settings → About you** is about *you*, where Personality is about the agent. It applies to every project.
+
+- **About you:** a few lines on who you are, what you work on and what you already know. It goes into every conversation (up to 4,000 characters), so the agent can pitch its answers.
+- **Reply style:** reply length (Short, Normal, Detailed) and formatting (Automatic, Plain text, Markdown), with optional per-app settings for the web chat and each messaging bot. Automatic means plain text in Telegram, Slack and Matrix, which show the bot's replies without rendering Markdown, and Markdown elsewhere. Background tasks ignore the reply style; drafts and documents you ask for keep their full length.
+- **Writing voices:** your own writing styles, each with notes (including words or phrases to avoid) and pasted samples of your writing. When you ask for a post, email, letter or article, the agent calls `writing_voice` and imitates the voice you name (or your default voice): it reads excerpts of the three newest samples and can open a whole one. Three to five samples of 200+ words, on different topics, work best.
+
 ## 3. Talking to the agent effectively
 
 ### Be specific about anaphora

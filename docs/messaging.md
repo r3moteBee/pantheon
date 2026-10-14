@@ -45,7 +45,7 @@ Every adapter builds the same pipeline for a plain message:
 
 1. It resolves the project through `ChannelStore.resolve(platform, channel_id)`.
 2. It checks for skills: an explicit `/skill-name`, then auto-discovery using the project's `skill_discovery_<project>` vault mode. `suggest` shows accept/decline buttons on platforms that support them.
-3. It creates `create_memory_manager(project_id, session_id)` and `AgentCore(host_exec=host_exec_allowed("background"), …)`, then `await agent.run_autonomous(message)`.
+3. It creates `create_memory_manager(project_id, session_id)` and `AgentCore(host_exec=host_exec_allowed("background"), channel="<platform>", …)`, then `await agent.run_autonomous(message)`. The `channel` selects the user's reply style from Settings → About you: replies on Telegram, Slack and Matrix are asked for plain text by default, because those adapters send text the app does not render as Markdown.
 4. It sends the reply back in chunks (4000 characters on Telegram).
 
 Session ids are stable per channel (`telegram-<chat>`, `slack:<channel>`, `discord-<channel>`, `matrix:<room>`, `mattermost:<channel>`), so episodic memory builds up per conversation.

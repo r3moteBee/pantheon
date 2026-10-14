@@ -133,6 +133,7 @@ class MatrixAdapter(BaseMessagingAdapter):
             )
             agent = AgentCore(
                 host_exec=host_exec_allowed("background"),
+                channel="matrix",
                 provider=provider,
                 memory_manager=memory,
                 project_id=project,

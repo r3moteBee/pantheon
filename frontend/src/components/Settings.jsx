@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon } from 'lucide-react'
+import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon, UserRound } from 'lucide-react'
 import MessagingSettings from './MessagingSettings'
 import LlmSettings from './settings/LlmSettings'
 import RagSettings from './settings/RagSettings'
 import ChannelsHelp from './settings/ChannelsHelp'
 import PersonalitySettings from './settings/PersonalitySettings'
+import AboutYouSettings from './settings/AboutYouSettings'
 import SkillHubsSettings from './settings/SkillHubsSettings'
 import TasksSettings from './settings/TasksSettings'
 import SecuritySettings from './settings/SecuritySettings'
@@ -21,6 +22,7 @@ export default function Settings() {
     { id: 'llms', label: 'LLMs', icon: Cpu },
     { id: 'rag', label: 'RAG Settings', icon: Server },
     { id: 'channels', label: 'Channels', icon: MessageCircle },
+    { id: 'about', label: 'About you', icon: UserRound },
     { id: 'personality', label: 'Personality', icon: UserIcon },
     { id: 'skills', label: 'Skills', icon: Library },
     { id: 'tasks', label: 'Tasks', icon: Clock },
@@ -84,6 +86,13 @@ export default function Settings() {
           <div className="h-full overflow-y-auto scrollbar-thin">
             <div className="max-w-3xl mx-auto p-6 space-y-8">
               <TasksSettings />
+            </div>
+          </div>
+        )}
+        {tab === 'about' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-3xl mx-auto p-6">
+              <AboutYouSettings />
             </div>
           </div>
         )}

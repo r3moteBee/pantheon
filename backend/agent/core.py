@@ -262,8 +262,13 @@ class AgentCore:
         interactive: bool = False,
         only_tools: set[str] | None = None,
         web_budget: int | None = None,
+        channel: str | None = None,
     ):
         self.provider = provider
+        # Where replies are shown: "web" (chat UI) or a messaging adapter's
+        # name; None for background jobs. Picks the user's reply style
+        # (Settings → About you, utils/user_profile).
+        self.channel = channel
         # Restrict the tools this agent is offered (None = all it may use).
         # research_batch gives each per-item turn only web_search/web_fetch.
         self.only_tools = only_tools
@@ -299,6 +304,7 @@ class AgentCore:
         message_limit: int = 200,
         host_exec: bool = False,
         interactive: bool = False,
+        channel: str | None = None,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -320,6 +326,7 @@ class AgentCore:
             active_skill_name=active_skill_name,
             host_exec=host_exec,
             interactive=interactive,
+            channel=channel,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -658,6 +665,7 @@ class AgentCore:
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
                 host_exec=self.host_exec,
+                channel=self.channel,
             )
 
             # Phase H.5 — append a "recent background jobs" block so the
