@@ -332,6 +332,7 @@ class TelegramAdapter(BaseMessagingAdapter):
                 )
                 agent = AgentCore(
                     host_exec=host_exec_allowed("background"),
+                    channel="telegram",
                     provider=provider,
                     memory_manager=memory,
                     project_id=project,

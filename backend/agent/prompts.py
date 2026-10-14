@@ -114,11 +114,15 @@ def build_system_prompt(
     extra_context: str | None = None,
     personality_weight: str | None = None,
     host_exec: bool = True,
+    channel: str | None = None,
 ) -> str:
     """Assemble the full system prompt from all sources.
 
     ``host_exec`` must match AgentCore.host_exec: without it the git_* and
-    run_command tools are hidden, so the local repo protocol isn't shown."""
+    run_command tools are hidden, so the local repo protocol isn't shown.
+
+    ``channel`` is where the reply is shown ("web", "telegram", ...; None for
+    background jobs). It selects the user's reply style (utils/user_profile)."""
     personality = get_full_personality(project_id)
     soul = personality["soul"]
     agent_config = personality["agent"]
@@ -223,11 +227,25 @@ def build_system_prompt(
 
     extra_section = f"\n\n## Additional Context\n{extra_context}" if extra_context else ""
 
+    # Settings → About you. Both parts change only when the user edits them,
+    # so the prompt stays a stable prefix. The reply style goes last: it is
+    # the instruction most often lost in a long prompt.
+    profile_section = reply_style_section = ""
+    try:
+        from utils import user_profile
+        profile = user_profile.get_profile()
+        about = user_profile.render_profile_section(profile)
+        profile_section = f"\n\n{about}" if about else ""
+        style = user_profile.render_reply_style(channel, profile)
+        reply_style_section = f"\n\n{style}" if style else ""
+    except Exception:
+        logger.warning("About you settings unavailable - prompt built without them", exc_info=True)
+
     return f"""{soul}
 
 ---
 
-{agent_config}{project_section}{repo_section}{memory_section}{extra_section}
+{agent_config}{profile_section}{project_section}{repo_section}{memory_section}{extra_section}
 
 ---
 
@@ -343,4 +361,4 @@ Only valid skip-the-propose-step exceptions:
   • The user explicitly says "just schedule it" / "no need to review" / "skip the review"
   • A trivial single-step ask with no tool ambiguity (e.g. "remind me at 9am" → `send_telegram` step is obvious)
 
-When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high."""
+When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high.{reply_style_section}"""

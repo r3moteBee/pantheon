@@ -262,8 +262,13 @@ class AgentCore:
         interactive: bool = False,
         only_tools: set[str] | None = None,
         web_budget: int | None = None,
+        channel: str | None = None,
     ):
         self.provider = provider
+        # Where replies are shown: "web" (chat UI) or a messaging adapter's
+        # name; None for background jobs. Picks the user's reply style
+        # (Settings → About you, utils/user_profile).
+        self.channel = channel
         # Restrict the tools this agent is offered (None = all it may use).
         # research_batch gives each per-item turn only web_search/web_fetch.
         self.only_tools = only_tools
@@ -299,6 +304,7 @@ class AgentCore:
         message_limit: int = 200,
         host_exec: bool = False,
         interactive: bool = False,
+        channel: str | None = None,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -320,6 +326,7 @@ class AgentCore:
             active_skill_name=active_skill_name,
             host_exec=host_exec,
             interactive=interactive,
+            channel=channel,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -658,6 +665,7 @@ class AgentCore:
                 extra_context=self.skill_context,
                 personality_weight=_personality_weight,
                 host_exec=self.host_exec,
+                channel=self.channel,
             )
 
             # Phase H.5 — append a "recent background jobs" block so the
@@ -696,6 +704,14 @@ class AgentCore:
             # turn gets an explicit note (agent/tools/tasks.py: research_batch).
             if self.interactive and is_survey_request(user_message):
                 turn_context = turn_context + SURVEY_NOTE
+            # The reply style is in the system prompt too; this repeats it next
+            # to the question, where a small model actually follows it.
+            if self.channel:
+                try:
+                    from utils.user_profile import reply_style_note
+                    turn_context = turn_context + reply_style_note(self.channel)
+                except Exception:
+                    logger.debug("reply style note unavailable", exc_info=True)
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:
@@ -784,6 +800,32 @@ class AgentCore:
                     "id": sd["id"], "type": "function", "function": {"name": "get_self_documentation", "arguments": "{}"}}]})
                 messages.append({"role": "tool", "tool_call_id": sd["id"],
                                  "content": tool_results.for_model("get_self_documentation", result)})
+            # "Write a post / email / letter ...": read the user's writing voice before
+            # round 1 (utils/user_profile.drafting_voice_args) - left to the model it
+            # was read 2 times in 3, and the third draft was generic prose.
+            try:
+                from utils.user_profile import drafting_voice_args
+                voice_args = drafting_voice_args(user_message) if "writing_voice" in tool_names else None
+            except Exception:
+                logger.debug("writing voice pre-read unavailable", exc_info=True)
+                voice_args = None
+            if voice_args:
+                wv = {"type": "tool_call", "id": f"auto-voice-{uuid.uuid4().hex[:8]}",
+                      "name": "writing_voice", "args": voice_args}
+                logger.info("Writing request - reading the user's writing voice first: %s", voice_args)
+                yield wv
+                result = await execute_tool(
+                    tool_name="writing_voice", tool_args=voice_args, memory_manager=self.memory_manager,
+                    project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
+                    interactive=self.interactive, host_exec=self.host_exec,
+                )
+                yield {"type": "tool_result", "name": "writing_voice", "result": result,
+                       "tool_id": wv["id"], "is_error": tool_results.is_error(result)}
+                messages.append({"role": "assistant", "content": "", "tool_calls": [{
+                    "id": wv["id"], "type": "function",
+                    "function": {"name": "writing_voice", "arguments": json.dumps(voice_args)}}]})
+                messages.append({"role": "tool", "tool_call_id": wv["id"],
+                                 "content": tool_results.for_model("writing_voice", result)})
             # A URL in the user's message is read before round 1 (AGENT_PREFETCH_URLS):
             # asked "<url> - what's this about?" the agent searched memory and artifacts
             # instead of opening it (0/3), and once summarized a page from its own
@@ -1275,4 +1317,15 @@ class AgentCore:
                 error = event.get("message") or "unknown agent error"
         if error and not got_done:
             raise RuntimeError(f"Agent error: {error}")
+        # Chat apps that show raw symbols get plain text even when the model
+        # wrote Markdown anyway (it mostly does; see utils/plain_text).
+        if self.channel and full_response:
+            try:
+                from utils.user_profile import reply_style
+                style = reply_style(self.channel)
+                if style and style["plain"]:
+                    from utils.plain_text import markdown_to_plain
+                    full_response = markdown_to_plain(full_response)
+            except Exception:
+                logger.warning("plain-text conversion failed - sending the reply as written", exc_info=True)
         return full_response

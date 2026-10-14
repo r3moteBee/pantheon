@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon } from 'lucide-react'
+import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon, UserRound } from 'lucide-react'
 import MessagingSettings from './MessagingSettings'
 import LlmSettings from './settings/LlmSettings'
 import RagSettings from './settings/RagSettings'
 import ChannelsHelp from './settings/ChannelsHelp'
 import PersonalitySettings from './settings/PersonalitySettings'
+import AboutYouSettings from './settings/AboutYouSettings'
 import SkillHubsSettings from './settings/SkillHubsSettings'
 import TasksSettings from './settings/TasksSettings'
 import SecuritySettings from './settings/SecuritySettings'
@@ -21,6 +22,7 @@ export default function Settings() {
     { id: 'llms', label: 'LLMs', icon: Cpu },
     { id: 'rag', label: 'RAG Settings', icon: Server },
     { id: 'channels', label: 'Channels', icon: MessageCircle },
+    { id: 'about', label: 'About you', icon: UserRound },
     { id: 'personality', label: 'Personality', icon: UserIcon },
     { id: 'skills', label: 'Skills', icon: Library },
     { id: 'tasks', label: 'Tasks', icon: Clock },
@@ -31,14 +33,14 @@ export default function Settings() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center border-b border-gray-800 px-6 pt-4">
+      <div className="flex items-center border-b border-gray-800 px-6 pt-4 overflow-x-auto scrollbar-thin">
         {tabs.map((t) => {
           const Icon = t.icon
           return (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
                 tab === t.id
                   ? 'border-brand-400 text-brand-300'
                   : 'border-transparent text-gray-500 hover:text-gray-300'
@@ -84,6 +86,13 @@ export default function Settings() {
           <div className="h-full overflow-y-auto scrollbar-thin">
             <div className="max-w-3xl mx-auto p-6 space-y-8">
               <TasksSettings />
+            </div>
+          </div>
+        )}
+        {tab === 'about' && (
+          <div className="h-full overflow-y-auto scrollbar-thin">
+            <div className="max-w-3xl mx-auto p-6">
+              <AboutYouSettings />
             </div>
           </div>
         )}

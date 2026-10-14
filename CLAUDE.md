@@ -23,14 +23,14 @@ Directories only — read the code for files. `docs/tools.md` lists every agent 
 ```
 ~/pantheon/
 ├── backend/
-│   ├── main.py            FastAPI app; mounts 19 routers; version from frontend/package.json
+│   ├── main.py            FastAPI app; mounts 20 routers; version from frontend/package.json
 │   ├── config.py          Settings (Pydantic); settings.db_dir is canonical
 │   ├── db_utils.py        apply_sqlite_pragmas — every SQLite store uses it
 │   ├── security_log.py    Security audit log
 │   ├── agent/             AgentCore loop (core.py), built-in tools (tools/: registry + domain modules), system prompt
 │   │                      (prompts.py), history budget, freshness/search guards, output filter, text tool-call
 │   │                      recovery, browser tools
-│   ├── api/               FastAPI routers (auth, chat, files, memory, personality, projects +
+│   ├── api/               FastAPI routers (about_you, auth, chat, files, memory, personality, projects +
 │   │                      export/import, settings, mcp, mcp_oauth, skills, tasks, personas, system,
 │   │                      connections, artifacts, conversations, jobs, llm_endpoints, messaging)
 │   ├── artifacts/         Artifact store (SQLite + blobs), previews, conversions, embedder
@@ -195,7 +195,7 @@ Pantheon's LLM configuration is **named endpoints + task-class routes + model pr
 
 **Tool dispatch is a registry.** `agent/tools/__init__.py::execute_tool` applies the host-exec gate, routes `mcp_*` to the MCP manager, then calls `registry.resolve(name)` (exact names first, then the `browser_`/`github_`/`git_` prefixes) with a `ToolContext`. An unknown name returns `Unknown tool: …`, and any exception returns `Error executing …`. Workspace and git helpers live in `agent/tools/workspace.py`, and handlers call them as `_ws.<name>`, so tests patch `agent.tools.workspace.<name>` (not `agent.tools.<name>`). A test asserts every schema has a handler and vice versa.
 
-**Consolidated tools; old names are hidden aliases.** The model sees 46 built-in tools (`_ORDER`), plus browser tools when enabled and MCP tools. These replace old ones:
+**Consolidated tools; old names are hidden aliases.** The model sees 47 built-in tools (`_ORDER`), plus browser tools when enabled and MCP tools. These replace old ones:
 - `github(action=…)` replaces the ten `github_*` tools.
 - `merge_topics(action=list|approve|reject|force)` replaces the four merge tools.
 - `index(target=artifact|workspace)` replaces `index_artifact` and `index_workspace`.
@@ -316,6 +316,8 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 **Outbound HTTP to LLM/embedding/rerank/MCP endpoints uses `utils.http.pooled_client(timeout=…)`** (one keep-alive pool per event loop, closed on shutdown). Don't reintroduce `async with httpx.AsyncClient()` per request on hot paths.
 
 **Chat settings: one read path.** `utils/chat_settings.py` — `tone_weight` (minimal|balanced|strong; global vault key `personality_weight`), `context_focus` (broad|balanced|focused), `memory_recall` (bool; global `memory_recall_enabled`) — per-project override in phase_g.db `project_settings` (NULL = inherit; the db's other old tables were never used and are dropped when empty) over the global vault values Settings writes; `skill_discovery` (off|suggest|auto) stays in vault `skill_discovery_<project>` (what chat and the bots read). `AgentCore.chat` reads `effective(project_id)`; the chat-header toggles and Project Settings write `PUT /api/projects/{id}/settings` (`null` clears an override). The frontend never keeps its own copy — it loads `effective` on project switch.
+
+**About you: one read/write path (`utils/user_profile.py`, `data/db/user_profile.db`).** The user's own profile, global (one instance per person, so no user scoping): `about_you` text, `reply_length` (short|default|detailed) and `formatting` (auto|markdown|plain), each `{"global", "channels"}` per channel (`CHANNELS`: web + the five adapters), plus writing voices (notes + samples). `build_system_prompt(channel=…)` places `render_profile_section` (About the user + the list of voices) right after agent.md and `render_reply_style(channel)` as the LAST section; both change only when the user edits Settings, so the prompt prefix stays cacheable. `AgentCore(channel=…)`: chat passes `"web"`, each adapter its platform name; jobs pass nothing, so no reply style applies to them (a test checks every entry point names its channel). `formatting` applies to the messaging apps only (the web chat always renders Markdown); `auto` means plain text where the adapter's text isn't rendered as Markdown (`RENDERS_MARKDOWN`: Telegram, Slack, Matrix). Asking was not enough - with the rule in the system prompt and the turn note, the 9B model still wrote headings and tables 4/4 times - so `run_autonomous` (the bots' path) converts plain-text replies with `utils/plain_text.markdown_to_plain`. Non-default styles are also repeated next to the question (`reply_style_note`, in the turn context): from the system prompt alone, "short" replies were ~200 words; the 9B model now gives about a third of its normal length, not the 80 words asked. Voices are read only through the `writing_voice` tool (newest 3 samples, 1,500-character excerpts, plus imitation rules), never pasted into the prompt. UI: Settings → About you (`components/settings/AboutYouSettings.jsx`); API `/api/about-you`, `/api/writing-voices` (`api/about_you.py`). Ported from tuatha's Profile page (without its accent colour, identity block and memory half-life; Pantheon's `context_focus` covers decay).
 
 **Personality presets (was "personas").** A preset is only a `soul.md` voice (JSON in `backend/data/personas/` or `data/personas/`; API `/api/personas`). `POST /personas/{id}/apply/{project}` writes `personality.with_commitments(soul)`, which appends the global soul's Key Commitments. `POST /personality/reset?project_id=` drops a project's override so it follows global again (without `project_id` it restores the bundled files).
 - Projects follow global by default. Pan (identical to the global soul) is no longer a preset.

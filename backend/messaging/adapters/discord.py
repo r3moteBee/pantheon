@@ -142,6 +142,7 @@ class DiscordAdapter(BaseMessagingAdapter):
             )
             agent = AgentCore(
                 host_exec=host_exec_allowed("background"),
+                channel="discord",
                 provider=provider,
                 memory_manager=memory,
                 project_id=project,
