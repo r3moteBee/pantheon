@@ -248,10 +248,10 @@ def reply_style(channel: str | None, profile: dict[str, Any] | None = None) -> d
 
 REPLY_LENGTH_TEXT = {
     "short": (
-        "The user prefers SHORT replies. Answer in at most 3-4 sentences: no preamble, no restating "
-        "the question, no recap at the end. Use a list only when the answer really is a list. If a "
-        "complete answer needs more, give the short version and offer to go into detail. (This is "
-        "about chat replies: documents, artifacts and drafts the user asks for keep their full length.)"
+        "The user prefers SHORT replies: about 80 words at most - two to four plain sentences, no headings, "
+        "no preamble, no restating the question, no recap at the end. Use a list only when the answer really "
+        "is a list. If a complete answer needs more, give the short version and offer to go into detail. "
+        "(This is about chat replies: documents, artifacts and drafts the user asks for keep their full length.)"
     ),
     "detailed": (
         "The user prefers DETAILED replies. Explain your reasoning, include the relevant context, "
@@ -282,7 +282,7 @@ def render_reply_style(channel: str | None, profile: dict[str, Any] | None = Non
 
 
 _NOTE_PARTS = {
-    "short": "SHORT - at most 3-4 sentences, no headings, no preamble or recap",
+    "short": "SHORT - about 80 words at most, 2-4 plain sentences, no headings or lists",
     "detailed": "DETAILED - explain fully, with context and examples",
 }
 
