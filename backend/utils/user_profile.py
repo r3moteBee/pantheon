@@ -3,8 +3,10 @@
 Pantheon runs one instance per person, so this is global (not per project):
   about_you      — free text the user writes about themselves (system prompt)
   reply_length   — short|default|detailed, with per-channel overrides
-  formatting     — auto|markdown|plain, with per-channel overrides
-                   (auto = Markdown where the channel renders it)
+  formatting     — auto|markdown|plain for the messaging apps, with per-channel
+                   overrides (auto = Markdown where the app renders it; the web
+                   chat always gets Markdown). Plain-text bot replies are also
+                   converted in code (utils/plain_text, AgentCore.run_autonomous).
   writing voices — named writing styles: notes + pasted samples, read by the
                    ``writing_voice`` tool when the agent drafts for the user
 
@@ -45,11 +47,16 @@ RENDERS_MARKDOWN = {
     "slack": False, "telegram": False, "matrix": False,
 }
 
+# The web chat always renders Markdown, so its formatting isn't a setting:
+# the model wrote Markdown there even when told not to, and nothing is
+# gained by asking. Formatting applies to the messaging apps only.
+FORMATTING_CHANNELS = tuple(c for c in CHANNELS if c != "web")
+
 REPLY_LENGTHS = ("short", "default", "detailed")
 FORMATTINGS = ("auto", "markdown", "plain")
 CHANNEL_SETTINGS = {
-    "reply_length": {"default": "default", "choices": REPLY_LENGTHS},
-    "formatting": {"default": "auto", "choices": FORMATTINGS},
+    "reply_length": {"default": "default", "choices": REPLY_LENGTHS, "channels": CHANNELS},
+    "formatting": {"default": "auto", "choices": FORMATTINGS, "channels": FORMATTING_CHANNELS},
 }
 
 ABOUT_MAX_CHARS = 4000
@@ -162,7 +169,7 @@ def _channel_setting(stored: Any, key: str) -> dict[str, Any]:
     channels = stored.get("channels") if isinstance(stored.get("channels"), dict) else {}
     return {
         "global": g if g in spec["choices"] else spec["default"],
-        "channels": {c: v for c, v in channels.items() if c in CHANNELS and v in spec["choices"]},
+        "channels": {c: v for c, v in channels.items() if c in spec["channels"] and v in spec["choices"]},
     }
 
 
@@ -191,8 +198,8 @@ def _validate_channel_setting(key: str, value: Any) -> dict[str, Any]:
         raise ProfileError(f"{key}.channels must be an object")
     clean = {}
     for c, v in channels.items():
-        if c not in CHANNELS:
-            raise ProfileError(f"{key}: unknown channel '{c}'")
+        if c not in spec["channels"]:
+            raise ProfileError(f"{key}: '{c}' is not a channel this setting applies to")
         if v is None or v == "":
             continue  # "same as default"
         if v not in spec["choices"]:
@@ -237,7 +244,9 @@ def reply_style(channel: str | None, profile: dict[str, Any] | None = None) -> d
     p = profile or get_profile()
     length = p["reply_length"]["channels"].get(channel, p["reply_length"]["global"])
     fmt = p["formatting"]["channels"].get(channel, p["formatting"]["global"])
-    if fmt == "auto":
+    if channel not in FORMATTING_CHANNELS:
+        plain = False
+    elif fmt == "auto":
         plain = not RENDERS_MARKDOWN.get(channel, True)
     else:
         plain = fmt == "plain"
@@ -259,8 +268,8 @@ REPLY_LENGTH_TEXT = {
     ),
 }
 PLAIN_TEXT_RULE = (
-    "Replies here are shown as PLAIN TEXT ({label}): Markdown is not rendered, so the symbols would "
-    "appear as-is. Do not use Markdown — no # headers, no **bold** or *italics*, no tables, no "
+    "Replies here are shown as PLAIN TEXT ({label}): Markdown is not rendered and is stripped from your "
+    "reply, so a table or nested structure would arrive flattened. Do not use Markdown — no # headers, no **bold** or *italics*, no tables, no "
     "[text](url) links (write the URL itself). Use short paragraphs and line breaks; for a list, "
     "put each item on its own line starting with \"- \" or \"1.\". Code blocks only when the user asks for code."
 )

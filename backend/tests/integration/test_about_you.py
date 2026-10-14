@@ -67,7 +67,9 @@ def test_channel_overrides_win_over_global(profile_db):
     assert up.reply_style("telegram") == {"length": "short", "plain": True}
     assert up.reply_style("slack") == {"length": "detailed", "plain": True}
     assert up.reply_style("discord") == {"length": "detailed", "plain": False}
-    assert up.reply_style("web") == {"length": "detailed", "plain": True}
+    # the web chat always renders Markdown: formatting doesn't apply there
+    assert up.reply_style("web") == {"length": "detailed", "plain": False}
+    assert "PLAIN TEXT" not in up.render_reply_style("web")
     tg = up.render_reply_style("telegram")
     assert "SHORT" in tg and "PLAIN TEXT" in tg
     assert "DETAILED" in up.render_reply_style("discord")
@@ -85,6 +87,7 @@ def test_formatting_markdown_overrides_a_plain_text_channel(profile_db):
     {"reply_length": {"global": "huge"}},
     {"formatting": {"global": "auto", "channels": {"email": "plain"}}},
     {"formatting": {"global": "auto", "channels": {"telegram": "bold"}}},
+    {"formatting": {"global": "auto", "channels": {"web": "plain"}}},
     {"about_you": "x" * 4001},
     {"about_you": 5},
     {"favourite_colour": "blue"},
@@ -175,6 +178,56 @@ def test_every_agent_entry_point_names_its_channel():
     for name in ("telegram", "discord", "slack", "matrix", "mattermost"):
         src = (root / "messaging" / "adapters" / f"{name}.py").read_text()
         assert f'channel="{name}"' in src, name
+
+
+# ── Plain text for chat apps that show raw Markdown ──────────────────────────
+
+def test_markdown_to_plain():
+    from utils.plain_text import markdown_to_plain
+    md = (
+        "# ZFS vs Btrfs\n\n"
+        "| Feature | ZFS | Btrfs |\n|---|---|---|\n| **Integrity** | every block | metadata |\n\n"
+        "---\n"
+        "**ZFS** is *great*, see [the docs](https://openzfs.org) or https://x.y/a_b_c.\n"
+        "* item with snake_case_name\n"
+        "```bash\nzpool create tank   # **kept**\n```\n"
+        "> quoted _text_"
+    )
+    out = markdown_to_plain(md)
+    assert out.startswith("ZFS vs Btrfs:")
+    assert "- Integrity — ZFS: every block; Btrfs: metadata" in out
+    assert "ZFS is great, see the docs (https://openzfs.org) or https://x.y/a_b_c." in out
+    assert "- item with snake_case_name" in out
+    assert "zpool create tank   # **kept**" in out and "```" not in out
+    assert "quoted text" in out
+    assert "|" not in out.replace("# **kept**", "") and "#" not in out.replace("# **kept**", "")
+    assert markdown_to_plain("") == ""
+
+
+@pytest.mark.asyncio
+async def test_bot_replies_are_converted_to_plain_text(profile_db):
+    from agent.core import AgentCore
+
+    async def fake_chat(self, message, stream=True):
+        yield {"type": "done", "full_response": "## Answer\n**Yes** - use [ZFS](https://openzfs.org)."}
+
+    with patch.object(AgentCore, "chat", fake_chat):
+        tg = await AgentCore(provider=None, channel="telegram").run_autonomous("q")
+        dc = await AgentCore(provider=None, channel="discord").run_autonomous("q")
+        job = await AgentCore(provider=None).run_autonomous("q")
+        profile_db.update_profile({"formatting": {"global": "auto", "channels": {"telegram": "markdown"}}})
+        tg_md = await AgentCore(provider=None, channel="telegram").run_autonomous("q")
+    assert tg == "Answer:\nYes - use ZFS (https://openzfs.org)."
+    assert dc.startswith("## Answer") and job.startswith("## Answer") and tg_md.startswith("## Answer")
+
+
+def test_reply_style_note(profile_db):
+    up = profile_db
+    assert up.reply_style_note("web") == "" and up.reply_style_note(None) == ""
+    assert "PLAIN TEXT" in up.reply_style_note("telegram")
+    up.update_profile({"reply_length": "short"})
+    note = up.reply_style_note("web")
+    assert note.startswith("[Pantheon note]") and "SHORT" in note and "PLAIN" not in note
 
 
 # ── Writing voices ───────────────────────────────────────────────────────────

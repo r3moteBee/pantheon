@@ -1291,4 +1291,15 @@ class AgentCore:
                 error = event.get("message") or "unknown agent error"
         if error and not got_done:
             raise RuntimeError(f"Agent error: {error}")
+        # Chat apps that show raw symbols get plain text even when the model
+        # wrote Markdown anyway (it mostly does; see utils/plain_text).
+        if self.channel and full_response:
+            try:
+                from utils.user_profile import reply_style
+                style = reply_style(self.channel)
+                if style and style["plain"]:
+                    from utils.plain_text import markdown_to_plain
+                    full_response = markdown_to_plain(full_response)
+            except Exception:
+                logger.warning("plain-text conversion failed - sending the reply as written", exc_info=True)
         return full_response

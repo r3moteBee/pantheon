@@ -30,7 +30,8 @@ async def get_about_you() -> dict[str, Any]:
     return {
         **up.get_profile(),
         "channels": [
-            {"id": c, "label": up.CHANNEL_LABELS[c], "renders_markdown": up.RENDERS_MARKDOWN[c]}
+            {"id": c, "label": up.CHANNEL_LABELS[c], "renders_markdown": up.RENDERS_MARKDOWN[c],
+             "formatting": c in up.FORMATTING_CHANNELS}
             for c in up.CHANNELS
         ],
         "limits": {

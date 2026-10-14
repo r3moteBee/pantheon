@@ -17,7 +17,7 @@ const LENGTHS = [
   { id: 'detailed', label: 'Detailed', hint: 'Reasoning, context and examples' },
 ]
 const FORMATS = [
-  { id: 'auto', label: 'Automatic', hint: 'Markdown where the app shows it, plain text elsewhere' },
+  { id: 'auto', label: 'Automatic', hint: 'Plain text for Telegram, Slack and Matrix; Markdown for Discord and Mattermost' },
   { id: 'plain', label: 'Plain text', hint: 'Never use Markdown' },
   { id: 'markdown', label: 'Markdown', hint: 'Always use Markdown' },
 ]
@@ -137,6 +137,7 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
 
   const label = (opts, id) => opts.find((o) => o.id === id)?.label
   const formatResult = (channel, fmt) => {
+    if (!channel.formatting) return 'Markdown'
     if (fmt === 'auto') return channel.renders_markdown ? 'Markdown' : 'plain text'
     return fmt === 'plain' ? 'plain text' : 'Markdown'
   }
@@ -144,8 +145,8 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
   return (
     <section className="space-y-3">
       <SectionHeading icon={MessageSquareText} title="Reply style">
-        How long the agent's chat replies are and whether they use Markdown. Documents and drafts you ask for keep
-        their full length. Background tasks are not affected.
+        How long the agent's chat replies are, and whether the messaging apps get Markdown or plain text. Documents
+        and drafts you ask for keep their full length. Background tasks are not affected.
       </SectionHeading>
       <div className={cardClass}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -157,8 +158,8 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1 flex items-center gap-1">
-              Formatting
-              <InfoTooltip text="Telegram, Slack and Matrix show the agent's replies as plain text, so Markdown symbols (#, **, tables) appear as-is there. Automatic asks for plain text in those apps and Markdown in the web chat, Discord and Mattermost." />
+              Formatting in messaging apps
+              <InfoTooltip text="Telegram, Slack and Matrix show the bot's replies as plain text, so Markdown symbols (#, **, tables) would appear as-is. Automatic gives those apps plain text (Markdown is removed from the reply) and Discord and Mattermost Markdown. The web chat always shows Markdown." />
             </label>
             <OptionSelect ariaLabel="Formatting" value={format.global} options={FORMATS}
               onChange={(v) => setFormat((c) => ({ ...c, global: v }))} />
@@ -200,9 +201,13 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
                             onChange={(v) => setChannel(setLength)(ch.id, v)} />
                         </td>
                         <td className="py-2 pr-3 min-w-[9rem]">
-                          <OptionSelect ariaLabel={`${ch.label} formatting`} value={format.channels[ch.id]}
-                            options={FORMATS} inheritLabel={`Default (${label(FORMATS, format.global)})`}
-                            onChange={(v) => setChannel(setFormat)(ch.id, v)} />
+                          {ch.formatting ? (
+                            <OptionSelect ariaLabel={`${ch.label} formatting`} value={format.channels[ch.id]}
+                              options={FORMATS} inheritLabel={`Default (${label(FORMATS, format.global)})`}
+                              onChange={(v) => setChannel(setFormat)(ch.id, v)} />
+                          ) : (
+                            <span className="text-gray-500 px-1">Markdown (always)</span>
+                          )}
                         </td>
                         <td className="py-2 text-gray-500 whitespace-nowrap">
                           {label(LENGTHS, l).toLowerCase()}, {formatResult(ch, f)}
