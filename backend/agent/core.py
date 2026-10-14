@@ -704,6 +704,14 @@ class AgentCore:
             # turn gets an explicit note (agent/tools/tasks.py: research_batch).
             if self.interactive and is_survey_request(user_message):
                 turn_context = turn_context + SURVEY_NOTE
+            # The reply style is in the system prompt too; this repeats it next
+            # to the question, where a small model actually follows it.
+            if self.channel:
+                try:
+                    from utils.user_profile import reply_style_note
+                    turn_context = turn_context + reply_style_note(self.channel)
+                except Exception:
+                    logger.debug("reply style note unavailable", exc_info=True)
             if isinstance(user_content, list):
                 user_content = [{"type": "text", "text": turn_context}] + user_content
             else:

@@ -33,14 +33,14 @@ export default function Settings() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center border-b border-gray-800 px-6 pt-4">
+      <div className="flex items-center border-b border-gray-800 px-6 pt-4 overflow-x-auto scrollbar-thin">
         {tabs.map((t) => {
           const Icon = t.icon
           return (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
+              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
                 tab === t.id
                   ? 'border-brand-400 text-brand-300'
                   : 'border-transparent text-gray-500 hover:text-gray-300'

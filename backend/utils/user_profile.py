@@ -281,6 +281,31 @@ def render_reply_style(channel: str | None, profile: dict[str, Any] | None = Non
     return "## Reply style\n" + "\n\n".join(parts)
 
 
+_NOTE_PARTS = {
+    "short": "SHORT - at most 3-4 sentences, no headings, no preamble or recap",
+    "detailed": "DETAILED - explain fully, with context and examples",
+}
+
+
+def reply_style_note(channel: str | None, profile: dict[str, Any] | None = None) -> str:
+    """A one-line reminder of the reply style for the turn's <context> block
+    ("" when the style is the default). The full rule is in the system prompt;
+    a 9B model followed "short" there only loosely (~200 words instead of 3-4
+    sentences) until it was repeated next to the question."""
+    style = reply_style(channel, profile)
+    if not style:
+        return ""
+    parts = []
+    if style["length"] in _NOTE_PARTS:
+        parts.append(_NOTE_PARTS[style["length"]])
+    if style["plain"]:
+        parts.append("PLAIN TEXT - no Markdown")
+    if not parts:
+        return ""
+    return ("[Pantheon note] The user's reply style: " + "; ".join(parts)
+            + " (documents and drafts they ask for keep their full length).\n\n")
+
+
 def render_profile_section(profile: dict[str, Any] | None = None) -> str:
     """The "## About the user" / "## Writing voices" sections ("" when both are empty)."""
     p = profile or get_profile()
