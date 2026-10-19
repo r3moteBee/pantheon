@@ -11,7 +11,7 @@ apscheduler==3.10.4
 cryptography==42.0.7
 python-telegram-bot==21.2
 discord.py>=2.3
-aiofiles==23.2.1
+aiofiles==24.1.0
 pyyaml>=6.0
 pdfplumber>=0.10.0
 pypdf>=4.0.0
