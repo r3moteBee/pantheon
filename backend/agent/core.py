@@ -216,6 +216,18 @@ WEB_BUDGET_NOTE = ("[Pantheon notice] That was {n} web lookups for this message 
                    "and name the page where the user can find it.")
 CUT_OFF_NOTE = ("\n\n*(This reply reached the length limit and was cut off here. "
                 "Ask for a smaller part - one state, one section - to get the rest.)*")
+# A round that ended with nothing - no text, no tool call - because the reply ran
+# into the output cap (or the gateway dropped it): the model gets one nudge to go on.
+EMPTY_REPLY_NOTICE = ("[Pantheon harness notice] Your last reply came back empty - it was most likely "
+                      "cut off at the output limit before anything usable was written. Continue the work "
+                      "in smaller pieces: split a large file into several smaller files, one per call.")
+EMPTY_REPLY_NOTE = ("*(The model's reply came back empty - it most likely ran into the output limit "
+                    "before writing anything. Ask for a smaller part, or send \"continue\".)*")
+CUT_OFF_ARGS_ERROR = ("Error: {name} was not run - your reply hit the output limit ({cap} tokens) while "
+                      "writing its arguments, so they were cut off. Make the call smaller and call it "
+                      "again: split a large file into several smaller files, one call each.")
+STEP_LIMIT_NOTE = ("\n\n*(Stopped after {n} steps - the limit for one message - with work still in "
+                   "progress. Send \"continue\" to pick up where it left off.)*")
 _VERSION_Q = re.compile(r"\b(versions?|releases?|released|out yet|update[sd]?|lts|eol)\b", re.I)
 
 
@@ -899,6 +911,7 @@ class AgentCore:
             # re-fitted with the server's own token count and retried once.
             ctx_window = context_fit.context_window(self.provider)
             ctx_calibration, ctx_retried = 1.0, False
+            empty_nudged = False
             while iterations < iteration_limit:
                 iterations += 1
                 round_kw = extra_kw
@@ -1064,6 +1077,20 @@ class AgentCore:
                 if current_text:
                     full_response = current_text
 
+                if (not tool_calls_this_round and not current_text.strip()
+                        and round_finish in ("length", "empty")):
+                    # Gemini via RouteLLM ended the stream with nothing at all when a
+                    # file ran past max_tokens; the run then stopped without a word
+                    # (iOS bake-off, 2026-10-18).
+                    if not empty_nudged and iterations > 1 and iterations < iteration_limit:
+                        empty_nudged = True
+                        logger.info("Empty reply (finish=%s) mid-task - nudging the model once", round_finish)
+                        messages.append({"role": "user", "content": EMPTY_REPLY_NOTICE})
+                        continue
+                    yield {"type": "text_delta", "content": EMPTY_REPLY_NOTE}
+                    current_text = full_response = EMPTY_REPLY_NOTE
+                    break
+
                 if not tool_calls_this_round:
                     # No tool calls, we're done. A reply that ran into max_tokens
                     # says so instead of ending mid-table: the House breakdown hit
@@ -1107,7 +1134,12 @@ class AgentCore:
                         if _m.get("role") == "assistant" and _m.get("content"):
                             last_assistant_text = _m["content"]
                             break
-                    if tc.get("args_error"):
+                    if tc.get("args_error") and round_finish == "length":
+                        # The cap cut the arguments mid-JSON. "Not valid JSON" made models
+                        # resend the same oversized call (iOS bake-off, 2026-10-18).
+                        result = CUT_OFF_ARGS_ERROR.format(
+                            name=tool_name, cap=get_settings().llm_max_tokens)
+                    elif tc.get("args_error"):
                         result = (
                             f"Error: {tool_name} was not run — its {tc['args_error']}. "
                             "Call it again with the arguments as a single JSON object."
@@ -1208,13 +1240,10 @@ class AgentCore:
                     full_response += tail
                     yield {"type": "text_delta", "content": tail}
 
-            # Save assistant response
-            if full_response:
-                self._add_working_message("assistant", full_response)
-
             # Distinguish natural completion (model stopped calling tools)
             # from hitting the iteration cap mid-work — callers must not
-            # present a truncated run as a finished one.
+            # present a truncated run as a finished one, and neither may the
+            # chat: the run used to end on the last mid-work narration line.
             truncated = (iterations >= iteration_limit
                          and bool(tool_calls_this_round))
             if truncated:
@@ -1222,6 +1251,13 @@ class AgentCore:
                     "Agent loop truncated at iteration cap (%d) with tool "
                     "calls still pending — work is incomplete.", iteration_limit,
                 )
+                note = STEP_LIMIT_NOTE.format(n=iterations)
+                yield {"type": "text_delta", "content": note}
+                full_response += note
+
+            # Save assistant response
+            if full_response:
+                self._add_working_message("assistant", full_response)
             yield {"type": "done", "full_response": full_response,
                    "iterations": iterations, "truncated": truncated}
 

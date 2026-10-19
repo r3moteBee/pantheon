@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time as _time
 import uuid
 from typing import Any, AsyncGenerator
 
@@ -304,21 +305,25 @@ class ModelProvider:
             "model": self.model,
             "messages": messages,
             "stream": True,
-            "max_tokens": 4096,
+            "max_tokens": get_settings().llm_max_tokens,
         }
+        if get_settings().llm_stream_usage:
+            payload["stream_options"] = {"include_usage": True}
         if tools:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
         _apply_request_extras(payload, extra_body)
+        max_tokens = payload.get("max_tokens")
 
         # Accumulate tool call chunks
         tool_call_accum: dict[int, dict[str, Any]] = {}
         current_text = ""
         current_reasoning = ""   # reasoning_content deltas (thinking models); not shown to the user
         finish_reason: str | None = None
+        usage: dict[str, Any] | None = None
 
         try:
-            async with pooled_client(timeout=120.0) as client:
+            async with pooled_client(timeout=get_settings().llm_stream_timeout) as client:
                 async with client.stream(
                     "POST",
                     url,
@@ -350,10 +355,14 @@ class ModelProvider:
                         except json.JSONDecodeError:
                             continue
 
+                        # With include_usage the totals arrive in a final
+                        # chunk whose choices list is empty.
+                        if data.get("usage"):
+                            usage = data["usage"]
                         choices = data.get("choices", [])
                         if not choices:
                             continue
-                        delta = choices[0].get("delta", {})
+                        delta = choices[0].get("delta") or {}
                         # Track finish_reason but don't break early — wait for
                         # [DONE]. Some providers (Gemini, RouteLLM) send
                         # finish_reason in the same chunk as the last content
@@ -398,8 +407,17 @@ class ModelProvider:
                     event["args_error"] = args_error
                 yield event
 
-            yield {"type": "done", "content": current_text, "reasoning": current_reasoning,
-                   "finish_reason": finish_reason}
+            finish_reason = _effective_finish(finish_reason, usage, max_tokens,
+                                              current_text, current_reasoning, tool_call_accum)
+            if finish_reason in ("length", "empty"):
+                logger.warning("%s: reply %s (max_tokens=%s, usage=%s, tool calls=%d)", self.model,
+                               "hit the output cap" if finish_reason == "length" else "was empty",
+                               max_tokens, usage, len(tool_call_accum))
+            done: dict[str, Any] = {"type": "done", "content": current_text,
+                                    "reasoning": current_reasoning, "finish_reason": finish_reason}
+            if usage:
+                done["usage"] = usage
+            yield done
 
         except httpx.HTTPStatusError as e:
             # Defensive fallback — the inline status check above handles the
@@ -800,7 +818,7 @@ class RoutedProvider:
                 first = False
                 if event.get("type") == "done":
                     self._log(endpoint=ep, model=prov.model, op="stream", attempt=i,
-                              ok=True, started=started)
+                              ok=True, started=started, usage=event.get("usage"))
                     _note_served(ep, prov.model)
                 yield event
             if not failed_early:
@@ -831,6 +849,30 @@ class RoutedProvider:
 
 # Cache per task class. Cleared by reset_provider().
 _role_cache: dict[str, Any] = {}
+# task class -> (signature of the stored route it was built from, last check)
+_route_sig: dict[str, tuple[Any, float]] = {}
+
+
+def _route_signature(task_class: str) -> Any:
+    from llm_config.store import resolve_route
+    try:
+        return tuple((r.endpoint_name, r.base_url, r.model, r.api_key) for r in resolve_route(task_class))
+    except Exception:
+        return None
+
+
+def _route_changed(task_class: str) -> bool:
+    """True when the stored route no longer matches the cached provider.
+    reset_provider() covers changes made through the API; this catches the
+    rest (another process writing the vault, a restore) - the cache used to
+    keep serving the old model while the router reported the new one."""
+    every = get_settings().llm_route_recheck_seconds
+    sig, checked = _route_sig.get(task_class, (None, 0.0))
+    if every <= 0 or _time.monotonic() - checked < every:
+        return False
+    current = _route_signature(task_class)
+    _route_sig[task_class] = (sig, _time.monotonic())
+    return current != sig
 
 
 def _build_route(task_class: str) -> RoutedProvider | None:
@@ -843,6 +885,25 @@ def _build_route(task_class: str) -> RoutedProvider | None:
                        model=rr.model, embedding_model=rr.model), rr.endpoint_name)
         for rr in chain
     ])
+
+
+def _effective_finish(finish: str | None, usage: dict | None, max_tokens: Any,
+                      text: str, reasoning: str, tool_calls: dict) -> str | None:
+    """The finish reason to report for a finished stream.
+
+    Some gateways mislabel a reply that ran into max_tokens: it arrives as
+    "tool_calls" (or "stop") with the last call's arguments cut mid-JSON, and
+    the only tell is completion_tokens == max_tokens. Others end the stream
+    with nothing at all - no text, no tool call, no finish reason. Report
+    the first as "length" and the second as "empty" so the agent loop can
+    say what happened instead of failing silently."""
+    used = (usage or {}).get("completion_tokens")
+    if (isinstance(used, int) and isinstance(max_tokens, int) and max_tokens > 0
+            and used >= max_tokens):
+        return "length"
+    if finish is None and not text and not reasoning and not tool_calls:
+        return "empty"
+    return finish
 
 
 def parse_tool_args(raw: Any) -> tuple[dict, str | None]:
@@ -887,7 +948,7 @@ def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
     - embed: the single configured ModelProvider (no fallback — mixing
       embedding models would corrupt stored vectors), else settings.
     """
-    if task_class in _role_cache:
+    if task_class in _role_cache and not _route_changed(task_class):
         return _role_cache[task_class]
     routed = _build_route(task_class)
     if task_class in ("embed", "rerank"):
@@ -897,6 +958,7 @@ def get_provider_for(task_class: str) -> RoutedProvider | ModelProvider | None:
     else:
         prov = routed or ModelProvider()
     _role_cache[task_class] = prov
+    _route_sig[task_class] = (_route_signature(task_class), _time.monotonic())
     return prov
 
 
@@ -931,3 +993,4 @@ def reset_provider() -> None:
     """Clear all cached providers. Called whenever endpoints, routes or
     profiles change so the next lookup rebuilds."""
     _role_cache.clear()
+    _route_sig.clear()

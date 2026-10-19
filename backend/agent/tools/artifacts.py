@@ -79,14 +79,15 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "save_to_artifact",
             "description": (
-                "Save content into the user's Pantheon artifact store. THIS IS THE ONLY tool that persists anything into `list_artifacts` / `read_artifact` / project-scoped recall. MCP `save_*` / `*_save_to_library` / `*_upload_file` tools are NOT equivalents — they save to external services that Pantheon cannot see. Always use `save_to_artifact` when a skill says \"save as artifact\" or when the user asks you to save something for later use in this project. Pass a bare path like 'youtube-transcripts/foo.md' — the project slug is prepended automatically. UNIQUE-path collisions are auto-resolved by suffixing -1, -2, etc. Returns the saved artifact id."
+                "Save content into the user's Pantheon artifact store. THIS IS THE ONLY tool that persists anything into `list_artifacts` / `read_artifact` / project-scoped recall. MCP `save_*` / `*_save_to_library` / `*_upload_file` tools are NOT equivalents — they save to external services that Pantheon cannot see. Always use `save_to_artifact` when a skill says \"save as artifact\" or when the user asks you to save something for later use in this project. Pass a bare path like 'youtube-transcripts/foo.md' — the project slug is prepended automatically. If the path already exists, a NEW copy is saved as foo-1.md, foo-2.md, … unless overwrite=true, which replaces the existing file (a new version). To change an existing file, prefer update_artifact or pass overwrite=true. Returns the saved artifact id."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Logical path inside the project artifact tree."},
                     "content": {"type": "string", "description": "Full content body."},
-                    "content_type": {"type": "string", "description": "Mime-ish type. Defaults to text/markdown.", "default": "text/markdown"},
+                    "content_type": {"type": "string", "description": "Mime-ish type. Leave it out to pick one from the file extension (e.g. .swift -> text/x-swift); text/markdown when the extension says nothing."},
+                    "overwrite": {"type": "boolean", "description": "If the path already exists, replace that file (saved as a new version) instead of creating a -1 copy.", "default": False},
                     "title": {"type": "string", "description": "Optional human title."},
                     "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags."}
                 },
@@ -119,6 +120,21 @@ SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
+                    "path": {"type": "string", "description": "Logical path; alternative to id."}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_artifact",
+            "description": "Delete an artifact in the active project, by id or by path (e.g. a stray duplicate or a file that is no longer needed). It goes to the trash and can be restored from the Artifacts page.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "Artifact id."},
                     "path": {"type": "string", "description": "Logical path; alternative to id."}
                 },
                 "required": []
@@ -426,7 +442,42 @@ async def _tool_save_transcript_artifact(ctx: ToolContext, tool_name: str, tool_
 
 
 
-@tool('save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts')
+# Extension -> content type for saves that do not name one. Everything here
+# is a text type (artifacts.store.is_text_type), so read_artifact returns it.
+_EXT_TYPES = {
+    ".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain",
+    ".csv": "text/csv", ".html": "text/html", ".htm": "text/html", ".css": "text/css",
+    ".json": "application/json", ".yaml": "application/yaml", ".yml": "application/yaml",
+    ".xml": "application/xml", ".plist": "application/xml", ".svg": "image/svg+xml",
+    ".js": "text/javascript", ".mjs": "text/javascript", ".jsx": "text/javascript",
+    ".ts": "text/x-typescript", ".tsx": "text/x-typescript", ".py": "text/x-python",
+    ".swift": "text/x-swift", ".kt": "text/x-kotlin", ".java": "text/x-java",
+    ".c": "text/x-c", ".h": "text/x-c", ".m": "text/x-objectivec", ".cpp": "text/x-c++",
+    ".cc": "text/x-c++", ".hpp": "text/x-c++", ".cs": "text/x-csharp", ".go": "text/x-go",
+    ".rs": "text/x-rust", ".rb": "text/x-ruby", ".php": "text/x-php", ".sh": "text/x-shellscript",
+    ".sql": "text/x-sql", ".toml": "text/x-toml", ".ini": "text/plain", ".pbxproj": "text/plain",
+    ".xcscheme": "application/xml", ".entitlements": "application/xml", ".gradle": "text/plain",
+}
+# Source code: kept out of graph-memory extraction, which pulled "facts" out of
+# every Swift file of the iOS bake-off on the local model (2026-10-18).
+_CODE_EXTS = {".js", ".mjs", ".jsx", ".ts", ".tsx", ".py", ".swift", ".kt", ".java", ".c", ".h",
+              ".m", ".cpp", ".cc", ".hpp", ".cs", ".go", ".rs", ".rb", ".php", ".sh", ".sql",
+              ".css", ".pbxproj", ".xcscheme", ".plist", ".entitlements", ".gradle"}
+
+
+def _content_type_for(path: str, given: str | None) -> str:
+    """The model's content_type, unless it is missing or the old schema
+    default (text/markdown) on a file whose extension says otherwise."""
+    if given and given != "text/markdown":
+        return given
+    return _EXT_TYPES.get(Path(path).suffix.lower(), given or "text/markdown")
+
+
+def _is_code(path: str) -> bool:
+    return Path(path).suffix.lower() in _CODE_EXTS
+
+
+@tool('save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'delete_artifact')
 async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     memory_manager = ctx.memory_manager
     session_id = ctx.session_id
@@ -452,6 +503,15 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
         if norm == proj or norm.startswith(f"{proj}/"):
             return norm
         return f"{proj}/{norm}"
+
+    async def _index(a: dict) -> None:
+        # Auto-index into graph memory so cross-artifact concept
+        # queries work without an explicit indexer call. Not source code.
+        try:
+            if memory_manager and is_text_type(a["content_type"]) and not _is_code(a["path"]):
+                await memory_manager.index_artifact(a["id"])
+        except Exception as _ie:
+            logger.debug("graph index for %s failed: %s", a["id"], _ie)
 
     if tool_name == "save_to_artifact":
         import sqlite3 as _sqlite3
@@ -479,6 +539,21 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
                 and "task-ledger" not in _tags):
             _tags.append("task-ledger")
 
+        content_type = _content_type_for(norm, tool_args.get("content_type"))
+        if tool_args.get("overwrite"):
+            existing = store.get_by_path(effective_project, norm)
+            if existing:
+                a = store.update(
+                    existing["id"],
+                    content=tool_args["content"],
+                    edit_summary="Agent overwrite",
+                    edited_by=session_id or "agent",
+                )
+                _emb.schedule_embed(a["id"], effective_project)
+                await _index(a)
+                return (f"Overwrote artifact {a['path']} (id={a['id']}, "
+                        f"now v{len(store.list_versions(a['id']))})")
+
         final_path = norm
         a = None
         for n in range(50):
@@ -488,7 +563,7 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
                     project_id=effective_project,
                     path=cand,
                     content=tool_args["content"],
-                    content_type=tool_args.get("content_type") or "text/markdown",
+                    content_type=content_type,
                     title=tool_args.get("title"),
                     tags=_tags or None,
                     source={"kind": "agent", "session_id": session_id or ""},
@@ -507,16 +582,19 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
                 f"path or delete the existing artifact first."
             )
         _emb.schedule_embed(a["id"], effective_project)
-        # Auto-index into graph memory so cross-artifact concept
-        # queries work without an explicit indexer call.
-        try:
-            if memory_manager and is_text_type(a["content_type"]):
-                await memory_manager.index_artifact(a["id"])
-        except Exception as _ie:
-            logger.debug("graph index for %s failed: %s", a["id"], _ie)
+        await _index(a)
         suffix_note = ""
         if final_path != norm:
-            suffix_note = f" (path {norm!r} was taken; auto-suffixed)"
+            # Said plainly: models took "auto-suffixed" for success and left
+            # stale originals next to -1 copies (iOS bake-off, 2026-10-18).
+            existing = store.get_by_path(effective_project, norm)
+            suffix_note = (
+                f". NOTE: {norm!r} already exists"
+                + (f" (id={existing['id']})" if existing else "")
+                + f", so this was saved as a SEPARATE copy at {final_path!r}. To change the "
+                "existing file instead, call update_artifact with its id or save_to_artifact "
+                "with overwrite=true; delete the copy with delete_artifact if it is not wanted."
+            )
         return f"Saved artifact {a['path']} (id={a['id']}, v{1}){suffix_note}"
     if tool_name == "update_artifact":
         aid = tool_args["id"]
@@ -530,11 +608,7 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
         except KeyError:
             return f"Artifact {aid} not found."
         _emb.schedule_embed(a["id"], effective_project)
-        try:
-            if memory_manager and is_text_type(a["content_type"]):
-                await memory_manager.index_artifact(a["id"])
-        except Exception as _ie:
-            logger.debug("graph index for %s failed: %s", a["id"], _ie)
+        await _index(a)
         versions = store.list_versions(aid)
         return f"Updated artifact {a['path']} (now v{len(versions)})"
     if tool_name == "read_artifact":
@@ -578,5 +652,24 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
             for i in items
         ]
         return "\n".join(lines)
+    if tool_name == "delete_artifact":
+        aid, path = tool_args.get("id"), tool_args.get("path")
+        a = store.get(aid) if aid else (store.get_by_path(effective_project, _normalize_artifact_path(path))
+                                         if path else None)
+        if aid and a and a["project_id"] != effective_project:
+            a = None   # only this project's artifacts
+        if not a:
+            return f"Artifact not found: id={aid} path={path}"
+        store.soft_delete(a["id"])
+        try:
+            await _emb.drop_for_artifact(a["id"], a["project_id"])
+        except Exception:
+            logger.debug("drop semantic vectors failed", exc_info=True)
+        try:
+            from artifacts import preview as _preview
+            _preview.invalidate_for_artifact(a["id"])
+        except Exception:
+            logger.debug("preview invalidation failed", exc_info=True)
+        return f"Deleted artifact {a['path']} (id={a['id']}). It can be restored from the Artifacts page."
     return f"Unknown artifact tool: {tool_name}"
 
