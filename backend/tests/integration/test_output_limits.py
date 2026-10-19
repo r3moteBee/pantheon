@@ -271,3 +271,19 @@ async def test_delete_artifact_by_path_and_id(tools):
     assert (await run("delete_artifact", id=keep["id"])).startswith("Deleted")
     # the path is free again for a plain save
     assert "SEPARATE" not in await run("save_to_artifact", path="App/Game.swift", content="v3")
+
+
+@pytest.mark.asyncio
+async def test_update_without_content_says_so_instead_of_not_found(tools):
+    # Gemma updated its task ledger with only id + edit_summary; the KeyError
+    # for "content" came back as "Artifact <id> not found" and the model
+    # re-saved the ledger as -1, -2 copies (2026-10-19).
+    run, store, _, _ = tools
+    await run("save_to_artifact", path="task-ledger/plan.md", content="- [pending] a")
+    a = store.get_by_path("ios", "ios/task-ledger/plan.md")
+    out = await run("update_artifact", id=a["id"], edit_summary="Marked step 1 done")
+    assert "needs `content`" in out and "not found" not in out
+    assert store.get(a["id"])["content"] == "- [pending] a"
+    assert (await run("update_artifact", id=a["id"], content="- [done] a")).startswith("Updated artifact")
+    assert (await run("update_artifact", id="nope", content="x")) == "Artifact nope not found."
+    assert "needs the artifact's id" in await run("update_artifact", content="x")

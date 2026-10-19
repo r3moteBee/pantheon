@@ -104,7 +104,7 @@ SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "id": {"type": "string", "description": "Artifact id."},
-                    "content": {"type": "string"},
+                    "content": {"type": "string", "description": "The complete new content. It replaces the whole file - pass all of it, not just the changed part."},
                     "edit_summary": {"type": "string", "description": "Optional commit-message-style note."}
                 },
                 "required": ["id", "content"]
@@ -597,7 +597,16 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
             )
         return f"Saved artifact {a['path']} (id={a['id']}, v{1}){suffix_note}"
     if tool_name == "update_artifact":
-        aid = tool_args["id"]
+        aid = tool_args.get("id")
+        if not aid:
+            return "Error: update_artifact needs the artifact's id (list_artifacts or read_artifact shows it)."
+        # A call without content used to raise KeyError inside the try below
+        # and came back as "Artifact <id> not found" for an artifact that
+        # exists; the model then re-saved it as -1, -2 copies (2026-10-19).
+        if not isinstance(tool_args.get("content"), str):
+            return (f"Error: update_artifact was not run - it needs `content`, the complete new text of "
+                    f"artifact {aid}. It replaces the whole file, so pass all of it (read_artifact shows "
+                    "the current text); an edit_summary alone changes nothing.")
         try:
             a = store.update(
                 aid,
