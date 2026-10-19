@@ -16,6 +16,19 @@ class Settings(BaseSettings):
     # Separate embedding endpoint for that fallback (the installer asks for it)
     embedding_base_url: str = ""
     embedding_api_key: str = ""
+    # Output cap per streamed model call (max_tokens). Big enough for a whole
+    # source file in one save_to_artifact call; a reply that hits it is
+    # reported as cut off (finish_reason "length") instead of failing silently.
+    llm_max_tokens: int = 16384
+    # Seconds to wait for the next chunk of a streamed reply.
+    llm_stream_timeout: float = 300.0
+    # Ask streaming endpoints for token usage (stream_options.include_usage)
+    # so streamed calls are metered like non-streamed ones.
+    llm_stream_usage: bool = True
+    # How often (seconds) a cached route is checked against the stored
+    # routes, so changes made outside the API (another process, a restore)
+    # take effect without a restart. 0 = only on reset_provider().
+    llm_route_recheck_seconds: float = 10.0
 
     # Security
     vault_master_key: str = "dev-key-change-in-production-32x"
