@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import logging
 import mimetypes
+import zipfile
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import quote
@@ -299,6 +300,36 @@ async def bulk_move(req: BulkMoveRequest) -> dict[str, Any]:
     return {"results": results}
 
 
+# Declared before /artifacts/{artifact_id}, which would otherwise take "export-all" as an id.
+@router.get("/artifacts/export-all")
+async def export_all(project_id: str = Query("default"),
+                     path_prefix: str | None = Query(None)) -> StreamingResponse:
+    """The whole project as a zip, or with path_prefix one folder: its files
+    under the folder's own name ('p/App/' -> App/...), ready to open locally
+    (run_build links here when a build passes)."""
+    if not path_prefix:
+        items = get_store().list(project_id=project_id, limit=10_000)
+        blob = get_store().bulk_export([a["id"] for a in items])
+        filename = f"{project_id}-artifacts.zip"
+    else:
+        prefix = path_prefix.rstrip("/") + "/"
+        top = PurePosixPath(prefix).name or project_id
+        files = get_store().files_under(project_id, prefix)
+        if not files:
+            raise HTTPException(status_code=404, detail=f"no artifacts under {prefix!r}")
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for rel, data in files.items():
+                zf.writestr(f"{top}/{rel}", data)
+        blob = buf.getvalue()
+        filename = f"{top}.zip"
+    return StreamingResponse(
+        io.BytesIO(blob),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={quote(filename)}"},
+    )
+
+
 @router.get("/artifacts/{artifact_id}")
 async def get_artifact(artifact_id: str) -> dict[str, Any]:
     a = get_store().get(artifact_id)
@@ -531,12 +562,3 @@ async def bulk_export(req: BulkIdsRequest) -> StreamingResponse:
     )
 
 
-@router.get("/artifacts/export-all")
-async def export_all(project_id: str = Query("default")) -> StreamingResponse:
-    items = get_store().list(project_id=project_id, limit=10_000)
-    blob = get_store().bulk_export([a["id"] for a in items])
-    return StreamingResponse(
-        io.BytesIO(blob),
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={project_id}-artifacts.zip"},
-    )

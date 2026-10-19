@@ -1,0 +1,91 @@
+# Namespace for Pantheon's build pods (PANTHEON_BUILDER=kubernetes, docs/builds.md).
+#
+#   kubectl apply -f deploy/kubernetes/builder.yaml
+#
+# Edit the RoleBinding subject to the service account your Pantheon pod runs
+# as (default below: "pantheon" in namespace "pantheon"), and make sure that
+# pod mounts its token (automountServiceAccountToken is not false).
+#
+# Whatever runs in the Pantheon pod can use this token, including commands the
+# agent runs there (run_command / code_execute in subprocess mode). So the
+# namespace is locked down on its own terms, not only by the pods Pantheon
+# creates: the "restricted" Pod Security Standard is enforced (no privileged,
+# root or host-path pods), every pod is denied all network traffic, and a
+# quota caps how much it can use. The Role cannot change any of that.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pantheon-builds
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# No traffic in or out for any pod in the namespace (the builder refuses to
+# run without a policy like this unless BUILDER_ALLOW_NETWORK=true). Needs a
+# CNI that enforces NetworkPolicy (k3s's default does).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: pantheon-builds
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: builds
+  namespace: pantheon-builds
+spec:
+  hard:
+    pods: "4"
+    configmaps: "64"
+    limits.cpu: "8"
+    limits.memory: 16Gi
+    limits.ephemeral-storage: 32Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: builds
+  namespace: pantheon-builds
+spec:
+  limits:
+    - type: Container
+      max: {cpu: "4", memory: 8Gi, ephemeral-storage: 16Gi}
+      default: {cpu: "2", memory: 4Gi, ephemeral-storage: 4Gi}
+      defaultRequest: {cpu: 250m, memory: 256Mi}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pantheon-builder
+  namespace: pantheon-builds
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, delete]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create, get, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pantheon-builder
+  namespace: pantheon-builds
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pantheon-builder
+subjects:
+  - kind: ServiceAccount
+    name: pantheon
+    namespace: pantheon

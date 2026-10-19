@@ -189,6 +189,9 @@ export const artifactsApi = {
   diff: (id, a, b) => api.get(`/api/artifacts/${id}/diff`, { params: { a, b } }),
   restoreVersion: (id, n) => api.post(`/api/artifacts/${id}/versions/${n}/restore`),
   bulkDelete: (ids) => api.post('/api/artifacts/bulk/delete', { ids }),
+  folderZipUrl: (projectId, folder) =>
+    `${BASE_URL}/api/artifacts/export-all?project_id=${encodeURIComponent(projectId)}` +
+    `&path_prefix=${encodeURIComponent(folder.replace(/\/+$/, '') + '/')}`,
   bulkExport: (ids) =>
     api.post('/api/artifacts/bulk/export', { ids }, { responseType: 'blob' }),
 }

@@ -495,6 +495,27 @@ class ArtifactStore:
             n += 1
         return n
 
+    def files_under(self, project_id: str, prefix: str) -> dict[str, bytes]:
+        """Every artifact whose path starts with prefix, keyed by the path
+        relative to prefix (a folder as files on disk)."""
+        out: dict[str, bytes] = {}
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM artifacts WHERE project_id = ? AND deleted_at IS NULL "
+                "AND substr(path, 1, ?) = ? ORDER BY path",
+                (project_id, len(prefix), prefix),
+            ).fetchall()
+        for r in rows:
+            a = self._hydrate_artifact(r)
+            rel = a["path"][len(prefix):]
+            if not rel:
+                continue
+            if a.get("content") is not None:
+                out[rel] = a["content"].encode("utf-8")
+            elif a.get("blob_path"):
+                out[rel] = self._load_blob(a["blob_path"])
+        return out
+
     def bulk_export(self, ids: Iterable[str]) -> bytes:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

@@ -43,6 +43,7 @@ Directories only — read the code for files. `docs/tools.md` lists every agent 
 │   ├── messaging/         Gateway + Telegram/Slack/Discord/Matrix/Mattermost adapters
 │   ├── models/            ModelProvider / RoutedProvider, model discovery
 │   ├── sandbox/           code_execute sandbox (subprocess or Firecracker; PANTHEON_SANDBOX)
+│   ├── builder/           run_build: builds/tests in throwaway pods (PANTHEON_BUILDER=kubernetes)
 │   ├── secrets/           Encrypted vault (data/db/vault.db)
 │   ├── skills/            Skill registry, resolver, editor, importer/exporter, scanner, publisher
 │   ├── sources/           Source-adapter registry, extractors, similarity — SOURCE_ADAPTERS.md
@@ -195,7 +196,7 @@ Pantheon's LLM configuration is **named endpoints + task-class routes + model pr
 
 **Tool dispatch is a registry.** `agent/tools/__init__.py::execute_tool` applies the host-exec gate, routes `mcp_*` to the MCP manager, then calls `registry.resolve(name)` (exact names first, then the `browser_`/`github_`/`git_` prefixes) with a `ToolContext`. An unknown name returns `Unknown tool: …`, and any exception returns `Error executing …`. Workspace and git helpers live in `agent/tools/workspace.py`, and handlers call them as `_ws.<name>`, so tests patch `agent.tools.workspace.<name>` (not `agent.tools.<name>`). A test asserts every schema has a handler and vice versa.
 
-**Consolidated tools; old names are hidden aliases.** The model sees 48 built-in tools (`_ORDER`), plus browser tools when enabled and MCP tools. These replace old ones:
+**Consolidated tools; old names are hidden aliases.** The model sees 49 built-in tools (`_ORDER`), plus browser tools when enabled and MCP tools. These replace old ones:
 - `github(action=…)` replaces the ten `github_*` tools.
 - `merge_topics(action=list|approve|reject|force)` replaces the four merge tools.
 - `index(target=artifact|workspace)` replaces `index_artifact` and `index_workspace`.
@@ -341,6 +342,8 @@ Per-connection config gains `auth_type` and an `oauth` block (issuer, token_endp
 These are deliberate architectural calls. If a code review recommends reversing one, the burden is on the recommendation, not the code.
 
 **Memory recall is not pattern-gated.** Every chat turn runs `mgr.recall` across episodic/semantic/graph unless the user turned `memory_recall` off for the project; what comes back is filtered by relevance, not by phrasing. Reviewers sometimes suggest gating it on phrases like "what did we discuss" to save latency — don't. The whole product premise is implicit continuity: the user should be able to refer to last week's work without saying the magic words. Pattern-gating silently breaks the exact cases that matter most. If recall latency is the actual concern, lower `limit_per_tier` or the timeouts (`PRE_RECALL_TIMEOUT_SECONDS`, `RERANK_TIMEOUT_SECONDS`) — don't gate on phrasing.
+
+**Builds run outside Pantheon (`builder/`, `agent/tools/build.py`, docs/builds.md).** iOS bake-off (2026-10-18): models wrote whole Swift apps with no way to compile them (Opus's first command was `which swift`) and shipped type errors the review round had to find. `run_build(path, toolchain, command?, workdir?)` builds a folder of artifacts in a throwaway container with no network and returns PASSED/FAILED, the error lines and a head+tail log excerpt; a passing build links the folder zip (`/api/artifacts/export-all?path_prefix=`, files under the folder's own name). The only backend is Kubernetes: ConfigMaps carry the gzipped tar (700 KB parts, owned by the pod), the pod passes the `restricted` Pod Security Standard and has no token, and a build is refused unless a NetworkPolicy in `BUILDER_NAMESPACE` selects every pod and allows no egress. Because Pantheon's own pod then holds a token anything in it (run_command) can use, `deploy/kubernetes/builder.yaml` locks the namespace down on its own (PSA restricted, deny-all, quota, a Role that cannot change them). The tool is hidden unless `PANTHEON_BUILDER` is set; `get_all_tool_schemas` swaps in the schema listing `BUILDER_TOOLCHAINS`. Swift is Swift-on-Linux: no SwiftUI/UIKit, so an Apple app keeps its logic in a package with tests (the tool description says so). Tests: `test_builder.py` (fake API).
 
 **Skills are markdown recipes, not executable code.** A "skill" is `skill.json` + `instructions.md` that the agent reads as prompt context. There is no skill executor and skills never run in a subprocess. Recommendations to add WASM/process isolation for skills are confusing skills with arbitrary user code. (`backend/sandbox/` exists, but it isolates the `code_execute` tool, not skills.) Imported skills go through `skills/scanner.py` because their text becomes prompt. See `backend/skills/` and `docs/skills.md`.
 

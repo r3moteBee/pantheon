@@ -406,6 +406,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <option value="title_asc">Title</option>
               <option value="size_desc">Size</option>
             </select>
+            {filterFolder && (
+              <a
+                href={artifactsApi.folderZipUrl(projectId, filterFolder)}
+                download
+                className="text-gray-400 hover:text-gray-200"
+                title={`Download ${filterFolder.split('/').pop()} as a zip`}
+              >
+                <Download className="w-3 h-3" />
+              </a>
+            )}
             <button onClick={refresh} className="text-gray-400 hover:text-gray-200">
               <RefreshCw className="w-3 h-3" />
             </button>
