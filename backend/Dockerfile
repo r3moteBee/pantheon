@@ -9,10 +9,15 @@ ARG INSTALL_BROWSER=false
 # Install system dependencies
 # gcc/g++: compile native Python extensions (chromadb, etc.)
 # poppler-utils: PDF page rendering for scanned PDF OCR (pdf2image fallback)
+# git/openssh-client/ca-certificates: the git_* tools, git_sync_repo and
+#   autoresearch shell out to git (HTTPS and SSH remotes)
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     poppler-utils \
+    git \
+    openssh-client \
+    ca-certificates \
     && if [ "$INSTALL_OFFICE" = "true" ]; then \
         apt-get install -y --no-install-recommends libreoffice; \
     fi \
