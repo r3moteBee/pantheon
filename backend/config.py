@@ -81,6 +81,25 @@ class Settings(BaseSettings):
     #   always      — also autonomous/scheduled jobs and messaging bots
     #   never       — disabled everywhere
     agent_host_exec: str = "interactive"
+    # Builds (builder/, the run_build tool): a project folder's build and
+    # tests run in a throwaway container with no network. "" = off (run_build
+    # is hidden); "kubernetes" = a pod per build in builder_namespace, through
+    # the in-cluster API (deploy/kubernetes/builder.yaml, docs/builds.md).
+    pantheon_builder: str = ""
+    builder_namespace: str = "pantheon-builds"
+    # JSON merged over builder.backend.DEFAULT_TOOLCHAINS, e.g.
+    # {"swift": {"image": "registry.local/swift:6.4"}, "zig": {"image": "...", "command": "zig build test"}}
+    builder_toolchains: str = ""
+    builder_cpu: str = "2"
+    builder_memory: str = "4Gi"
+    builder_disk: str = "4Gi"
+    builder_timeout_seconds: int = 900
+    # Time allowed for the pod to start (the first pull of an image, ~1.3 GB for Swift).
+    builder_pull_timeout_seconds: int = 900
+    builder_max_concurrent: int = 2
+    builder_max_source_mb: int = 8
+    # Builds are refused unless the namespace has a deny-all-egress NetworkPolicy.
+    builder_allow_network: bool = False
     # Ask the AGENT-class model to reason before acting (sends chat_template_kwargs
     # {"enable_thinking": true}; only for backends that accept it, e.g. llama.cpp /
     # vLLM serving Qwen-family models). Measured on a 9B model: tool use for

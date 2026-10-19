@@ -19,6 +19,21 @@ async def sandbox_health() -> dict[str, Any]:
     return info
 
 
+@router.get("/system/builder")
+async def builder_health() -> dict[str, Any]:
+    """Builder (run_build) status: configured, reachable, network locked down."""
+    from builder import builder_enabled, get_builder
+    from builder.backend import toolchains
+    if not builder_enabled():
+        return {"enabled": False}
+    try:
+        info = await get_builder().health()
+    except Exception as e:
+        info = {"ok": False, "error": str(e)}
+    info.update(enabled=True, toolchains={t.name: t.image for t in toolchains().values()})
+    return info
+
+
 @router.get("/system/update/check")
 async def check_update() -> dict[str, Any]:
     """Check for new commits in the upstream git repository."""

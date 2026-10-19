@@ -59,6 +59,10 @@ Limits:
 
 `GET /api/system/sandbox` reports the backend's health.
 
+## Builds (`backend/builder/`)
+
+`run_build` never compiles inside Pantheon. With `PANTHEON_BUILDER=kubernetes` each build is a pod in `BUILDER_NAMESPACE`: no service-account token, non-root, every capability dropped, read-only root filesystem, CPU/memory/disk limits, source delivered in ConfigMaps. A build is refused unless a NetworkPolicy in the namespace denies all egress (`BUILDER_ALLOW_NETWORK=true` overrides). Pantheon's own pod needs a service-account token for this, and anything running in that pod - including `run_command` - can use it, so `deploy/kubernetes/builder.yaml` locks the namespace down independently of the pods Pantheon creates: the `restricted` Pod Security Standard is enforced, every pod is denied network, a ResourceQuota caps usage, and the Role (pods, pods/log, configmaps, networkpolicies `list`) cannot change any of that. See [builds.md](builds.md). `GET /api/system/builder` reports its status.
+
 ## Paths and rendering
 
 - **Untrusted names become paths only through `utils.paths`:** `is_within`, `check_project_id` (raises `InvalidProjectId`, returned as 400) and `safe_filename`. Document conversion formats go through `document_converter.validate_format`.
