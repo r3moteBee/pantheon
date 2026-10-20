@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 import httpx
@@ -35,9 +36,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "write_file",
             "description": (
-                "Write a scratch file to the project workspace. Not indexed and "
-                "may be cleaned up — anything worth keeping goes to "
-                "save_to_artifact."
+                "Write a file to the project workspace on disk: scratch data, or files that "
+                "run_command / code_execute need. Code, documents and project files the user "
+                "asked for are deliverables: save them with save_to_artifact under one project "
+                "folder. (A code or document file written here outside tmp/, build/ and similar "
+                "folders is also saved as an artifact at the same path.)"
             ),
             "parameters": {
                 "type": "object",
@@ -450,13 +453,65 @@ async def _tool_read_file(ctx: ToolContext, tool_name: str, tool_args: dict[str,
 
 
 
+# Folders whose files stay scratch: temp output, build products, tool caches,
+# and repos/ (coding tasks' git checkouts - the repo is their deliverable).
+_SCRATCH_DIR = re.compile(r"(^|/)(tmp|temp|scratch|cache|\.[^/]*|__pycache__|node_modules|build|dist|"
+                          r"DerivedData|repos|venv|env)(/|$)", re.I)
+_MIRROR_MAX = 1024 * 1024
+
+
+def _mirror_to_artifact(ctx: ToolContext, safe_path: Path, content: str) -> str | None:
+    """Save a deliverable written with write_file as an artifact as well.
+
+    Models write the code they were asked for with write_file however the
+    prompt reads: a local model's iOS game went to the workspace in every
+    test run, before and after the prompt and plan fixes (2026-10-20). The workspace
+    copy stays for run_command / code_execute; the artifact is what the user
+    can download, build and push. Returns the artifact path, or None."""
+    from agent.tools.artifacts import _EXT_TYPES
+    from artifacts import embedder
+    from artifacts.store import get_store, project_slug
+    rel = safe_path.relative_to(_ws._get_workspace_base(ctx.project_id)).as_posix()
+    while rel.startswith("workspace/"):           # models often prefix the workspace's own name
+        rel = rel[len("workspace/"):]
+    ext = safe_path.suffix.lower()
+    if (len(content) > _MIRROR_MAX or _SCRATCH_DIR.search(rel.rsplit("/", 1)[0] if "/" in rel else "")
+            or not (ext in _EXT_TYPES or safe_path.stem.upper() in ("README", "LICENSE", "MAKEFILE", "DOCKERFILE"))):
+        return None
+    project = ctx.effective_project
+    store, apath = get_store(), f"{project_slug(project)}/{rel}"
+    existing = store.get_by_path(project, apath)
+    if existing:
+        if existing.get("content") == content:
+            return apath
+        a = store.update(existing["id"], content=content, edit_summary="Updated by write_file",
+                         edited_by=ctx.session_id or "agent")
+    else:
+        a = store.create(project_id=project, path=apath, content=content,
+                         content_type=_EXT_TYPES.get(ext, "text/plain"),
+                         source={"kind": "agent", "via": "write_file", "session_id": ctx.session_id or ""},
+                         edited_by=ctx.session_id or "agent")
+    embedder.schedule_embed(a["id"], project)
+    return a["path"]
+
+
 @tool('write_file')
 async def _tool_write_file(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     project_id = ctx.project_id
     safe_path = _ws._safe_workspace_path(tool_args["path"], project_id)
     safe_path.parent.mkdir(parents=True, exist_ok=True)
     safe_path.write_text(tool_args["content"], encoding="utf-8")
-    return f"File written: {tool_args['path']} ({len(tool_args['content'])} bytes)"
+    msg = f"File written: {tool_args['path']} ({len(tool_args['content'])} bytes)"
+    try:
+        apath = _mirror_to_artifact(ctx, safe_path, tool_args["content"])
+    except Exception as e:                          # the workspace write already succeeded
+        apath = None
+        import logging
+        logging.getLogger(__name__).warning("write_file artifact mirror failed for %s: %s", safe_path, e)
+    if apath:
+        msg += (f"\nAlso saved as artifact {apath}, so the user can download, build and push it. "
+                "Next time save deliverables with save_to_artifact directly.")
+    return msg
 
 
 

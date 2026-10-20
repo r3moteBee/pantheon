@@ -342,6 +342,28 @@ PROPOSED_NEXT_STEP = (
 )
 
 
+# A plan step that writes a deliverable (code, docs, project files) with
+# write_file puts it in the workspace, where the user can't download, build or
+# push it. A marble-maze iOS task planned every Swift file that way and the
+# run produced no artifacts (2026-10-19). Such steps are switched to
+# save_to_artifact before the task is scheduled, and the model is told.
+_DELIVERABLE = re.compile(
+    r"(\bREADME\b|\b[\w./-]+\.(swift|py|js|jsx|mjs|ts|tsx|java|kt|kts|go|rs|c|cc|cpp|h|hpp|m|mm|cs|rb|php|"
+    r"html|css|scss|json|ya?ml|toml|md|sql|sh|gradle|plist|xml|xcconfig|storyboard|txt)\b)", re.I)
+
+
+def fix_deliverable_steps(plan: str) -> tuple[str, list[str]]:
+    """(plan, numbers of the steps that were changed)."""
+    out, changed = [], []
+    for line in plan.splitlines():
+        if re.search(r"\bwrite_file\b", line) and _DELIVERABLE.search(line):
+            line = re.sub(r"`?\bwrite_file\b`?", "`save_to_artifact`", line)
+            m = re.match(r"\s*(\d+)[.)]", line)
+            changed.append(m.group(1) if m else line.strip()[:40])
+        out.append(line)
+    return "\n".join(out), changed
+
+
 @tool('create_task')
 async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     session_id = ctx.session_id
@@ -385,8 +407,30 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             "context, memory recall, or similar past requests."
         )
 
+    plan_note = ""
+    plan_text, fixed_steps = fix_deliverable_steps(plan_text)
+    if fixed_steps:
+        plan_note = (
+            f"\n\nPLAN ADJUSTED: step(s) {', '.join(fixed_steps)} wrote deliverables with write_file, "
+            "which only makes scratch files in the workspace (the user can't download, build or push "
+            "them). They now use save_to_artifact - keep every file of the project under one artifact "
+            "folder. Tell the user about this change when you describe the plan."
+        )
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
+    if not skill_name:
+        # "1. Invoke the `/ios-app` skill ..." in the plan, skill_name unset: the
+        # task ran without the skill's instructions and tried to create_skill an
+        # ios-app of its own (2026-10-20). A /slug of a registered skill attaches it.
+        from skills.registry import get_skill_registry
+        _reg = get_skill_registry()
+        for slug in re.findall(r"(?<![\w/.])/([a-z0-9][a-z0-9_-]{1,63})\b",
+                               f"{plan_text}\n{tool_args.get('description') or ''}".lower()):
+            if _reg.get(slug):
+                skill_name = slug
+                plan_note += (f"\n\nSKILL ATTACHED: the plan names /{slug}, so the task runs with that "
+                              f"skill's instructions (skill_name={slug!r}).")
+                break
     # Validate the skill exists at scheduling time so the user
     # gets immediate feedback instead of a runtime failure.
     if skill_name:
@@ -496,6 +540,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"run.\n\n"
             f"If the user did NOT explicitly approve, immediately "
             f"acknowledge that and ask them to confirm or cancel."
+            + plan_note
         )
     return (
         f"Task PROPOSED — paused, awaiting your approval.\n"
@@ -508,7 +553,7 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"actually ran, call list_recent_jobs() or "
         f"get_job_status(job_id={task_id!r}) — the latter "
         f"will resolve the schedule to its most recent run.\n\n"
-        + PROPOSED_NEXT_STEP
+        + PROPOSED_NEXT_STEP + plan_note
     )
 
 

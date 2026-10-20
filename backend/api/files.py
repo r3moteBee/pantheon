@@ -355,6 +355,63 @@ async def delete_file(
     return {"status": "deleted", "path": path}
 
 
+@router.post("/files/to-artifacts")
+async def workspace_to_artifacts(
+    project_id: str = Body("default"),
+    path: str = Body(...),
+) -> dict[str, Any]:
+    """Copy a workspace file or folder into the project's artifacts, under its
+    own name at the project root ('x/MarbleMaze' -> '<slug>/MarbleMaze/...').
+    For runs that wrote their deliverables with write_file: the workspace
+    can't be downloaded as a folder, built or pushed; artifacts can. An
+    artifact already at the target path gets a new version."""
+    import mimetypes
+    from agent.tools.artifacts import _EXT_TYPES
+    from artifacts import embedder
+    from artifacts.store import get_store, is_text_type, project_slug
+    _check_project_id(project_id)
+    src = _safe_path(path, project_id)
+    if not path.strip("/") or not src.exists():
+        raise HTTPException(status_code=404, detail="no such workspace file or folder")
+    files = [src] if src.is_file() else sorted(p for p in src.rglob("*") if p.is_file())
+    files = [p for p in files if not any(part.startswith(".") for part in p.relative_to(src.parent).parts)]
+    if len(files) > 500:
+        raise HTTPException(status_code=400, detail=f"{len(files)} files; copy at most 500 at a time")
+    store, slug = get_store(), project_slug(project_id)
+    out = []
+    for f in files:
+        if f.stat().st_size > 20 * 1024 * 1024:
+            out.append({"path": str(f.relative_to(src.parent)), "skipped": "over 20 MB"})
+            continue
+        rel = str(f.relative_to(src.parent))
+        apath = f"{slug}/{rel}"
+        data = f.read_bytes()
+        ctype = _EXT_TYPES.get(f.suffix.lower()) or mimetypes.guess_type(f.name)[0] or "text/plain"
+        if is_text_type(ctype):
+            try:
+                content: str | bytes = data.decode("utf-8")
+            except UnicodeDecodeError:
+                content, ctype = data, "application/octet-stream"
+        else:
+            content = data
+        existing = store.get_by_path(project_id, apath)
+        if existing and isinstance(content, str) and is_text_type(existing["content_type"]):
+            a = store.update(existing["id"], content=content, edit_summary=f"Copied from workspace {rel}",
+                             edited_by="workspace")
+            action = "updated"
+        elif existing:
+            out.append({"path": apath, "skipped": "already an artifact (binary files are not replaced)"})
+            continue
+        else:
+            a = store.create(project_id=project_id, path=apath, content=content, content_type=ctype,
+                             source={"kind": "workspace", "path": rel}, edited_by="workspace")
+            action = "created"
+        embedder.schedule_embed(a["id"], project_id)
+        out.append({"path": a["path"], "id": a["id"], "action": action})
+    folder = f"{slug}/{src.name}" if src.is_dir() else None
+    return {"copied": sum(1 for o in out if o.get("id")), "items": out, "folder": folder}
+
+
 @router.post("/files/mkdir")
 async def create_directory(
     path: str = Query(...),

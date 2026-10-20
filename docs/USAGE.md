@@ -135,6 +135,14 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
 > (The detailed architectural breakdown is written here verbatim)
 > ```
 
+### Code and apps are artifacts
+
+When you ask for an app, a script, a package or a project, the agent saves its files as artifacts under one folder named for the project, so you can download the folder as a zip, build it (`run_build`, see [builds.md](builds.md)) and push it to GitHub. If a `create_task` plan writes such files with `write_file` (the workspace, which you can't download, build or push), the plan is switched to `save_to_artifact` before you approve it, and the agent tells you. A code or document file the agent writes to the workspace anyway (outside `tmp/`, `build/` and similar folders) is also saved as an artifact at the same path.
+
+Files that already ended up in the workspace can be copied over: on the Artifacts page, the workspace button next to **Upload** opens the project workspace; **Copy to Artifacts** on a folder copies it, under its own name, into the project's artifacts. Copying again updates those artifacts with a new version.
+
+**iPhone/iPad apps:** the bundled `/ios-app` skill builds an app as an Xcode-ready folder: the logic in a Swift package with tests (checked with `run_build` when a builder is configured), the SwiftUI app, and an [XcodeGen](https://github.com/yonaskolb/XcodeGen) `project.yml` instead of a hand-written `.xcodeproj`. After downloading: `xcodegen generate` in the folder, then open the generated project. The README the skill writes also explains how to open it without XcodeGen. Use it with `/ios-app …` in chat, or ask for a background task and the agent can attach the skill to it.
+
 ### Pushing artifacts to GitHub
 
 A folder of artifacts (or a set of selected files) can be committed to a GitHub repository in one go. It needs a GitHub connection: a personal access token with write access to the repo, added in Settings → Connections. To create repositories from Pantheon, the token also needs the `repo` scope (classic) or Administration write (fine-grained).

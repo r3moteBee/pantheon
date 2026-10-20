@@ -205,6 +205,10 @@ export const artifactsApi = {
 
 // Files API
 export const filesApi = {
+  list: (projectId, path = '') =>
+    api.get('/api/files', { params: { project_id: projectId, path } }),
+  toArtifacts: (projectId, path) =>
+    api.post('/api/files/to-artifacts', { project_id: projectId, path }),
   read: (path, projectId) =>
     api.get('/api/files/read', { params: { path, project_id: projectId } }),
   viewUrl: (path, projectId) => {

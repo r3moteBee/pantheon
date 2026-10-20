@@ -16,6 +16,8 @@ Skills are different from **scheduled tasks**. A task is a one-shot or recurring
 
 A user skill with the same name as a bundled skill is refused at load time and logged as `skill.name_collision_blocked`.
 
+Bundled skills: `autoresearch`, `code-review`, `daily-digest`, `draft-message`, `explain-code`, `ios-app` (an iPhone/iPad app as an Xcode-ready artifact folder: Swift package + tests, SwiftUI app, XcodeGen `project.yml`), `knowledge-capture`, `summarize-conversation`, `task-breakdown`, `weather`, `web-research`.
+
 ## `skill.json`
 
 `SkillManifest` (`skills/models.py`) accepts unknown fields (`extra="allow"`), so manifests from external hubs load unchanged.

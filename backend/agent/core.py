@@ -197,6 +197,23 @@ SAVED_SHOWN_MAX = 8000
 _SAVED_NOTE_RE = re.compile(r"\b(saved|stored|written|created)\b", re.I)
 
 
+_CODE_FILE = re.compile(r"\.(swift|py|js|jsx|mjs|ts|tsx|java|kt|go|rs|c|cc|cpp|h|hpp|m|cs|rb|php|css|sh|sql|"
+                        r"json|ya?ml|toml|xml|plist|pbxproj|gradle)$", re.I)
+
+
+def _echo_saved(tool_name: str, args: dict) -> bool:
+    """Whether a save is a document worth showing when the reply only says
+    "saved": not the harness's task ledger (it was pasted four times into a
+    reply, 2026-10-19), not workspace scratch, not source files."""
+    if tool_name == "write_file":
+        return False
+    text = (args.get("content") or "").lstrip()
+    if text.startswith("---") and "type: task-ledger" in text[:200]:
+        return False
+    path = args.get("path") or ""
+    return "task-ledger/" not in path and not _CODE_FILE.search(path)
+
+
 def _only_saved_note(text: str) -> bool:
     """A reply that only reports saving something, e.g. "Done. The briefing has been saved as `x.md`." """
     t = (text or "").strip()
@@ -1159,7 +1176,7 @@ class AgentCore:
                     if tool_name in ("web_search", "web_fetch"):
                         web_evidence.update(evidence_from(tool_name, tool_args, result))
                     if tool_name in _SAVE_TOOLS and isinstance(tool_args.get("content"), str) \
-                            and not tool_results.is_error(result):
+                            and not tool_results.is_error(result) and _echo_saved(tool_name, tool_args):
                         saved_contents.append(tool_args["content"])
                     if tool_name == "create_task" and not tool_results.is_error(result) \
                             and str(result).startswith(("Task PROPOSED", "Task scheduled")):

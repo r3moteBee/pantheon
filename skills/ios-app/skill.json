@@ -1,0 +1,38 @@
+{
+  "name": "ios-app",
+  "version": "2026-10-20",
+  "description": "Build an iPhone/iPad (SwiftUI) app as an Xcode-ready artifact folder: the logic in a Swift package with tests (checked with run_build when a builder is configured), the app UI, and an XcodeGen project.yml so Xcode opens it without a hand-written .xcodeproj. Use when the user wants an iOS, iPhone or iPad app, or a project to open in Xcode.",
+  "author": "pantheon",
+  "license": "MIT",
+  "triggers": [
+    "ios app",
+    "iphone app",
+    "ipad app",
+    "iphone/ipad",
+    "swiftui app",
+    "import into xcode",
+    "open in xcode",
+    "xcode project"
+  ],
+  "parameters": [
+    { "name": "app_name", "type": "string", "required": false, "description": "App name in UpperCamelCase, e.g. MarbleMaze" }
+  ],
+  "capabilities_required": [],
+  "dependencies": {},
+  "tags": ["ios", "iphone", "ipad", "swift", "swiftui", "xcode", "app"],
+  "source_hub": null,
+  "security_scan": null,
+  "pantheon": {
+    "memory": { "reads": ["semantic"], "writes": [], "auto_store": false },
+    "project_aware": true,
+    "schedulable": { "enabled": true },
+    "permissions": {
+      "network_domains": [],
+      "file_paths": [],
+      "vault_secrets": [],
+      "memory_tiers": { "semantic": "r", "episodic": "none", "graph": "none" }
+    },
+    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
+    "evolution": { "enabled": false, "locked": false }
+  }
+}

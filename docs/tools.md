@@ -53,7 +53,7 @@
 | `update_artifact` | Replace the content of an existing artifact, creating a new version. | `id`, `content`, `edit_summary`? | artifacts |
 | `web_fetch` | Read a web page (article text as markdown) without saving it. | `url`, `max_chars`? | web |
 | `web_search` | Search the web for current information. | `query` | web |
-| `write_file` | Write a scratch file to the project workspace. | `path`, `content` | files |
+| `write_file` | Write a file to the project workspace on disk: scratch data, or files that run_command / code_execute need. | `path`, `content` | files |
 | `writing_voice` | Read one of the user's saved writing voices (their own style: notes plus samples of their writing) before drafting anything that goes out under their name - a post, email, letter, article, bio or speech. | `action`?, `name`?, `sample`? | writing |
 
 ## Retired names
