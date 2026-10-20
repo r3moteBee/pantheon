@@ -135,6 +135,15 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
 > (The detailed architectural breakdown is written here verbatim)
 > ```
 
+### Pushing artifacts to GitHub
+
+A folder of artifacts (or a set of selected files) can be committed to a GitHub repository in one go. It needs a GitHub connection: a personal access token with write access to the repo, added in Settings → Connections. To create repositories from Pantheon, the token also needs the `repo` scope (classic) or Administration write (fine-grained).
+
+- **From the Artifacts page.** Select a folder and press the GitHub button next to the download button, or select files and choose **Push to GitHub**. Pick the project's repo, another repo on the connection, or **Create a new repository** (private by default, with a README so it has a first commit). By default the files go to a new branch (`pantheon/<folder>-<date>`) and a pull request is opened. **Push straight to `main`** commits to the default branch instead, with no pull request. **Folder in the repository** puts the files under a subfolder. **Delete files in that repository folder that aren't in this push** makes the repo folder match exactly; it needs a subfolder, so it never touches the rest of the repo.
+- **From chat.** *"Push the SpiderKit folder to GitHub"* runs `github(action="push_artifacts", folder="SpiderKit/")` on the project's bound repo. The agent always pushes to a new branch and opens a pull request. It never pushes to the default branch or deletes files, and it only does this in a chat you are driving, never in a background task.
+
+Each push is one commit made through GitHub's API (no clone). Files that already match the branch aren't uploaded again, and pushing the same folder twice reuses the open pull request. Pantheon remembers what was pushed where, and the dialog shows how many files changed since the last push. Files that look like credentials (`.env`, private keys, `id_rsa`, tokens in the text) need an extra confirmation on the Artifacts page, and the agent refuses to push them. Limits per push: 1,000 files, 50 MB.
+
 ## 6. Web search and the browser
 
 ### Search provider chain

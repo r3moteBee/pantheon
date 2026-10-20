@@ -37,6 +37,7 @@ from api.jobs import router as jobs_router
 from api.llm_endpoints import router as llm_endpoints_router
 from api.messaging import router as messaging_router
 from api.about_you import router as about_you_router
+from api.github_push import router as github_push_router
 
 settings = get_settings()
 
@@ -317,6 +318,7 @@ app.include_router(jobs_router, prefix="/api", tags=["jobs"])
 app.include_router(llm_endpoints_router, prefix="/api", tags=["llm"])
 app.include_router(messaging_router,   prefix="/api", tags=["messaging"])
 app.include_router(about_you_router,   prefix="/api", tags=["about-you"])
+app.include_router(github_push_router, prefix="/api", tags=["github-push"])
 
 # ── WebSocket — registered directly at /ws/chat (no /api prefix) ─────────────
 # The frontend derives the WS URL from window.location.host, so it always

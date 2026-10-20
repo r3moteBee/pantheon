@@ -177,6 +177,13 @@ class GitHubClient:
     ) -> list[dict[str, Any]]:
         return await self._paginate("/user/repos", params={"affiliation": affiliation, "sort": sort})
 
+    async def create_repo(self, name: str, *, private: bool = True, description: str = "") -> dict[str, Any]:
+        """New repo under the token's user, with a first commit (README) so
+        branches can be made from it right away."""
+        resp = await self._request("POST", "/user/repos", json={
+            "name": name, "private": private, "description": description, "auto_init": True})
+        return resp.json()
+
     async def get_repo(self, owner: str, repo: str) -> dict[str, Any]:
         return (await self._request("GET", f"/repos/{owner}/{repo}")).json()
 

@@ -125,6 +125,13 @@ export const connectionsApi = {
     api.get(`/api/connections/github/${id}/branches`, { params: { owner, repo } }),
 }
 
+export const githubPushApi = {
+  push: (projectId, body) => api.post(`/api/projects/${projectId}/github/push`, body),
+  pushes: (projectId, pathPrefix) =>
+    api.get(`/api/projects/${projectId}/github/pushes`, { params: { path_prefix: pathPrefix } }),
+  createRepo: (connectionId, body) => api.post(`/api/connections/github/${connectionId}/create-repo`, body),
+}
+
 export const projectRepoApi = {
   get: (projectId) => api.get(`/api/projects/${projectId}/repo`),
   bind: (projectId, body) => api.post(`/api/projects/${projectId}/repo`, body),
