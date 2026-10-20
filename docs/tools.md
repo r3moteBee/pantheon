@@ -28,7 +28,7 @@
 | `git_push_pr` *(host exec)* | Push the current git branch to the remote GitHub repository and create a Pull Request. | `title`, `body`?, `base`? | git |
 | `git_status` *(host exec)* | Show the local git working tree status (runs git status --porcelain). | — | git |
 | `git_sync_repo` *(host exec)* | Clone the project's bound GitHub repo into the local workspace (or fetch + fast-forward it if already cloned) and return the checkout path. | `branch`?, `fresh`? | git |
-| `github` | GitHub API on the repo bound to this project (no local checkout needed). | `action`, `path`?, `ref`?, `name_prefix`?, `state`?, `head`?, `base`?, `new_branch`?, `base_branch`?, `branch`?, `message`?, `files`?, `title`?, `body`?, `draft`?, `pr_number`?, `merge_method`? | github |
+| `github` | GitHub API on the repo bound to this project (no local checkout needed). | `action`, `path`?, `folder`?, `ref`?, `name_prefix`?, `state`?, `head`?, `base`?, `new_branch`?, `base_branch`?, `branch`?, `message`?, `files`?, `title`?, `body`?, `draft`?, `pr_number`?, `merge_method`? | github |
 | `index` | Index content into semantic memory and the graph so recall finds it. | `target`, `id`?, `path_prefix`?, `path`?, `force`? | memory |
 | `ingest_source` | Ingest one item through a source adapter: fetch server-side, extract topics, save as an artifact (re-ingesting the same item updates it), embed and link the graph. | `source_type`, `identifier`, `extras`? | sources |
 | `link_concepts` | Create a relationship edge between two nodes in the associative graph memory. | `node_a_label`, `node_b_label`, `relationship` | memory |

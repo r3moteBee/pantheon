@@ -3,7 +3,7 @@ import {
   FolderOpen, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
   Save, Download, X, Tag, Edit3, Eye, History, FileCode,
-  PanelLeftClose, PanelLeftOpen, Move, Copy,
+  PanelLeftClose, PanelLeftOpen, Move, Copy, Github,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import DOMPurify from 'dompurify'
@@ -14,6 +14,7 @@ import { javascript } from '@codemirror/lang-javascript'
 import { artifactsApi, projectsApi } from '../api/client'
 import FolderTree from '../components/FolderTree'
 import MoveModal from '../components/MoveModal'
+import PushToGitHubModal from '../components/PushToGitHubModal'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
 import Markdown from '../components/Markdown'
@@ -91,6 +92,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const [crossProjectMove, setCrossProjectMove] = useState(null)
   // crossProjectMove shape: { id, source, dest: { project_id, folder }, mode: 'move'|'duplicate' }
   const [moveModal, setMoveModal] = useState(null)
+  const [pushModal, setPushModal] = useState(null)   // { pathPrefix?, artifactIds?, label }
   // moveModal shape: { ids: string[], mode: 'move' | 'duplicate' }
   const [toast, setToast] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -416,6 +418,15 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
                 <Download className="w-3 h-3" />
               </a>
             )}
+            {filterFolder && projectId !== 'all' && (
+              <button
+                onClick={() => setPushModal({ pathPrefix: filterFolder + '/', label: filterFolder })}
+                className="text-gray-400 hover:text-gray-200"
+                title={`Push ${filterFolder.split('/').pop()} to GitHub`}
+              >
+                <Github className="w-3 h-3" />
+              </button>
+            )}
             <button onClick={refresh} className="text-gray-400 hover:text-gray-200">
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -426,6 +437,14 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <button onClick={handleBulkExport} className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1">
                 <Download className="w-3 h-3" /> Download zip
               </button>
+              {projectId !== 'all' && (
+                <button
+                  onClick={() => setPushModal({ artifactIds: Array.from(selected), label: `${selected.size} files` })}
+                  className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
+                >
+                  <Github className="w-3 h-3" /> Push to GitHub
+                </button>
+              )}
               <button
                 onClick={() => setMoveModal({ ids: Array.from(selected), mode: 'move' })}
                 className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1"
@@ -559,6 +578,15 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             )
             setCrossProjectMove(null)
           }}
+        />
+      )}
+      {pushModal && (
+        <PushToGitHubModal
+          projectId={projectId}
+          pathPrefix={pushModal.pathPrefix}
+          artifactIds={pushModal.artifactIds}
+          label={pushModal.label}
+          onClose={() => setPushModal(null)}
         />
       )}
       {moveModal && (

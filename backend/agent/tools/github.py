@@ -216,6 +216,8 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
         return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Connections."
     client = GitHubClient(token)
     try:
+        if tool_name == "github_push_artifacts":
+            return await _push_artifacts(ctx, conn_row, spec, tool_args)
         if tool_name == "github_read_file":
             res = await client.read_file(owner, repo, tool_args["path"], ref=tool_args.get("ref"))
             mark_used(conn_row["id"])
@@ -317,13 +319,53 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
 
 
 
+async def _push_artifacts(ctx: ToolContext, conn_row: dict, spec: dict, tool_args: dict[str, Any]) -> str:
+    """github(action="push_artifacts"): the agent's side of api/github_push.
+    Only in chats a person is driving, only the project's bound repo, always
+    a new branch + PR, never mirroring, never files that look like secrets."""
+    import time
+    from api.github_push import collect, resolve_repo, run_push
+    from artifacts.store import project_slug
+    from integrations.github_push import PushError, sensitive_files
+    if not ctx.interactive:
+        return ("push_artifacts only runs in a chat the user is driving; background tasks can't publish "
+                "code. Tell the user the folder is ready to push (Artifacts page → Push to GitHub).")
+    slug = project_slug(ctx.effective_project)
+    folder = (tool_args.get("folder") or "").strip().strip("/")
+    if folder.startswith(slug + "/"):
+        folder = folder[len(slug) + 1:]
+    if not folder or folder == slug:
+        return "push_artifacts needs `folder`, the artifact folder to push (e.g. 'SpiderKit/')."
+    files, meta, _ = collect(ctx.effective_project, path_prefix=f"{slug}/{folder}/")
+    if not files:
+        return f"push_artifacts: no artifacts under {slug}/{folder}/ (list_artifacts shows the folders)."
+    flagged = sensitive_files(files)
+    if flagged:
+        return ("push_artifacts refused: these files look like they hold credentials: "
+                + ", ".join(flagged[:10]) + ". Remove them from the folder, or let the user push it from "
+                "the Artifacts page, which asks before pushing such files.")
+    name = folder.rsplit("/", 1)[-1]
+    branch = (tool_args.get("branch") or "").strip() or f"pantheon/{name.lower()}-{time.strftime('%Y%m%d-%H%M')}"
+    message = (tool_args.get("message") or "").strip() or f"Add {name} from Pantheon"
+    try:
+        conn, owner, repo = resolve_repo(ctx.effective_project, conn_row["id"], spec["owner"], spec["repo"])
+        res = await run_push(ctx.effective_project, files, meta, conn=conn, owner=owner, repo=repo,
+                             branch=branch, message=message, dest_dir=tool_args.get("path") or "",
+                             base_branch=tool_args.get("base"), mirror=False, open_pr=True,
+                             pr_title=tool_args.get("title"), pr_body=tool_args.get("body") or "",
+                             allow_default_branch=False)
+    except PushError as e:
+        return f"push_artifacts: {e}"
+    return res["summary"]
+
+
 # ── Consolidated entry point ─────────────────────────────────────────────────
 # One schema for the GitHub API instead of ten. Each action runs the
 # github_<action> handler above; those names stay callable (hidden) so
 # skills written against them keep working.
 
 GITHUB_ACTIONS = ("list_connections", "read_file", "list_directory", "list_branches", "list_pulls",
-                  "create_branch", "delete_branch", "write_files", "create_pr", "merge_pr")
+                  "create_branch", "delete_branch", "write_files", "push_artifacts", "create_pr", "merge_pr")
 
 SCHEMAS.append({
     "type": "function",
@@ -334,7 +376,10 @@ SCHEMAS.append({
             "read_file(path, ref?) · list_directory(path?, ref?) · list_branches(name_prefix?) · "
             "list_pulls(state?, head?, base?) · create_branch(new_branch, base_branch?) · "
             "delete_branch(branch) — never the default branch · write_files(branch, message, files=[{path, content}]) "
-            "— one atomic commit, after create_branch · create_pr(title, head, base?, body?, draft?) · "
+            "— one atomic commit, after create_branch · push_artifacts(folder, branch?, message?, path?, title?, body?, base?) "
+            "— commits an artifact folder as it is stored (no need to resend the files) to a NEW branch and "
+            "opens a pull request; path = folder inside the repo; never the default branch · "
+            "create_pr(title, head, base?, body?, draft?) · "
             "merge_pr(pr_number, merge_method?) — only when the user approved merging · "
             "list_connections() — diagnostic only."
         ),
@@ -343,6 +388,7 @@ SCHEMAS.append({
             "properties": {
                 "action": {"type": "string", "enum": list(GITHUB_ACTIONS)},
                 "path": {"type": "string", "description": "File or directory path in the repo ('' = root)."},
+                "folder": {"type": "string", "description": "push_artifacts: artifact folder to push, bare like list_artifacts' path_prefix, e.g. 'SpiderKit/'."},
                 "ref": {"type": "string", "description": "Branch or commit sha; default branch if omitted."},
                 "name_prefix": {"type": "string"},
                 "state": {"type": "string", "enum": ["open", "closed", "all"]},
