@@ -259,9 +259,17 @@ When the user says "this", "that", "the above", "that observation", "your last r
   want to keep — notes, reports, transcripts, exports, task output — goes
   here. Paths are virtual folders ('NBJ/2026-05-02-foo.md'); list one with
   list_artifacts(path_prefix='NBJ/'), not list_workspace_files.
+- CODE AND PROJECT FILES the user asks for (an app, a package, a script, a
+  website, an Xcode/Gradle/npm project, its README) are deliverables, so they
+  are artifacts too: save each file with save_to_artifact under ONE folder
+  named for the project ('MarbleMaze/App/ContentView.swift',
+  'MarbleMaze/README.md'). The user can then download that folder as a zip,
+  build it (run_build) and push it to GitHub. Plan them that way in
+  create_task too - never with write_file.
 - WORKSPACE files are scratch on disk (the project's workspace folder):
   read_file / write_file / list_workspace_files. For sandbox temp files and
-  raw uploads only; not indexed, not shown on the Artifacts page.
+  raw uploads only; not indexed, not shown on the Artifacts page, and the
+  user can't download, build or push them.
 - MCP "save" / "library" / "upload" tools (mcp_*_save_*, …) write to that
   external service, which Pantheon cannot see. When the user says "save",
   use save_to_artifact unless they named the other service; never report

@@ -3,7 +3,7 @@ import {
   FolderOpen, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
   Save, Download, X, Tag, Edit3, Eye, History, FileCode,
-  PanelLeftClose, PanelLeftOpen, Move, Copy, Github,
+  PanelLeftClose, PanelLeftOpen, Move, Copy, Github, HardDriveDownload,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import DOMPurify from 'dompurify'
@@ -15,6 +15,7 @@ import { artifactsApi, projectsApi } from '../api/client'
 import FolderTree from '../components/FolderTree'
 import MoveModal from '../components/MoveModal'
 import PushToGitHubModal from '../components/PushToGitHubModal'
+import WorkspaceImportModal from '../components/WorkspaceImportModal'
 import { useStore } from '../store'
 import HelpDrawer from '../components/help/HelpDrawer'
 import Markdown from '../components/Markdown'
@@ -93,6 +94,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   // crossProjectMove shape: { id, source, dest: { project_id, folder }, mode: 'move'|'duplicate' }
   const [moveModal, setMoveModal] = useState(null)
   const [pushModal, setPushModal] = useState(null)   // { pathPrefix?, artifactIds?, label }
+  const [showWorkspaceImport, setShowWorkspaceImport] = useState(false)
   // moveModal shape: { ids: string[], mode: 'move' | 'duplicate' }
   const [toast, setToast] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -387,6 +389,15 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             >
               <Upload className="w-3.5 h-3.5" /> Upload
             </button>
+            {projectId !== 'all' && (
+              <button
+                onClick={() => setShowWorkspaceImport(true)}
+                title="Copy files the agent wrote to the project workspace into artifacts"
+                className="py-1.5 px-2 bg-gray-850 hover:bg-gray-800 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <HardDriveDownload className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Search className="w-3 h-3 text-gray-500" />
@@ -577,6 +588,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               crossProjectMove.source
             )
             setCrossProjectMove(null)
+          }}
+        />
+      )}
+      {showWorkspaceImport && (
+        <WorkspaceImportModal
+          projectId={projectId}
+          onClose={() => setShowWorkspaceImport(false)}
+          onDone={async (r) => {
+            await refresh()
+            setToast(`Copied ${r.copied} file${r.copied === 1 ? '' : 's'} from the workspace` + (r.folder ? ` to ${r.folder}` : ''))
           }}
         />
       )}
