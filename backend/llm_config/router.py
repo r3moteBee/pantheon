@@ -77,7 +77,7 @@ _NEEDS_AGENT_RE = re.compile(
     # time-sensitive / current facts -> needs a search
     r"\b(latest|newest|current(ly)?|today|tonight|tomorrow|yesterday|this (week|month|year)|last (night|week)"
     r"|right now|news|price[sd]?|how much (is|are|does|do)|stock|exchange rate|weather|forecast|release[sd]?|out yet"
-    r"|launch\w*|announce\w*|won|winning|leading|trending|outages?|open for)\b"
+    r"|launch\w*|announce\w*|won(?!['\u2019]t)|winning|leading|trending|outages?|open for)\b"
     # actions
     # ("book a table", not "that book"; "remind me to ...", not "remind me what we decided")
     r"|\b(e-?mail|send|text|message|book (a|an|me|us)|remind (me|us) (to|at|in|on|tomorrow|tonight)"

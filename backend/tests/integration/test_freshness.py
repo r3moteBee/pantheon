@@ -594,3 +594,68 @@ async def test_survey_turn_that_only_describes_the_task_gets_it_filed():
     assert "x.test/races" in prov.spec_prompt
     done = [e for e in events if e["type"] == "done"][0]["full_response"]
     assert "**Research task proposed:** *2026 Senate* - 2 items" in done
+
+
+# ── Precision: coding / explanations / writing / the user's own things don't force a web search ──
+# (review M3, 2026-10-21: "won't" matched "won", bare "still", "price", "score", "news" fired on coding turns and
+# "Can you use Python ..." / "Explain Rust lifetimes" counted as unknown names)
+
+@pytest.mark.parametrize("msg", [
+    "That won't compile, fix the loop", "Refactor this so the parser is still fast",
+    "Write a function that returns the price", "What is the score function in sklearn?",
+    "Write a SQL query to get the latest order per customer", "My tests still fail after the change",
+    "Add a news feed component to the React app", "Why won't my Docker container start?",
+    "Explain how an interest rate swap works", "How do elections work in a parliamentary system?",
+    "If the price of an apple is $2 and I buy 7, how much do I pay?", "A team won 18 of 30 games. What's their win percentage?",
+    "Write a poem about the news of a baby's birth", "Draft an email telling my team we won the contract",
+    "What did I tell you yesterday about my knee?", "Remind me what we decided last week about the offsite",
+    "We won our pub quiz last night!", "I'm tired today", "Good morning! How's it going today?",
+    "What's on my calendar tomorrow?", "Can you help me plan my 2026 budget?",
+])
+def test_coding_writing_and_personal_turns_are_not_time_sensitive(msg):
+    assert not needs_fresh_facts(msg)
+
+
+@pytest.mark.parametrize("msg", [
+    "Can you use Python to parse this CSV?", "Explain Rust lifetimes", "Install Redis on Ubuntu",
+    "Use Pandas to group these rows by month", "How does React's useEffect work?", "What is Kubernetes?",
+    "Tell me about Docker volumes", "Explain Big O notation", "Who was Alan Turing?", "Is Lisbon a good place to live?",
+])
+def test_well_known_names_are_not_unknown(msg):
+    assert unknown_entities(msg) == []
+
+
+@pytest.mark.parametrize("msg", [
+    # recall must not regress: versions, offices, values, and phrasings that used to be missed
+    "What's the latest stable version of Python?", "What's the latest version of FastAPI? I want to pin it in requirements",
+    "Is Biden still president?", "Is Elon Musk still the CEO of Tesla?", "Who won the Super Bowl this year?",
+    "Is Tailscale 1.102 out yet?", "Has Ubuntu 26.10 been released?", "Is the new Zelda game out?",
+    "When is the next SpaceX launch?", "Who's leading the Premier League?", "What did the Fed decide on rates?",
+    "How much is a Raspberry Pi 5 these days?", "How much does a Steam Deck cost now?",
+    "What are the most competitive governor races in " + __import__("time").strftime("%Y") + "?",
+    "Please compare the current prices of Bitcoin and Ethereum and save the comparison to an artifact for my notes.",
+    "What's the price of a first class ticket to Tokyo right now?", "What's the current repo rate in India?",
+    "Explain the latest Fed decision", "Write a summary of today's news",
+])
+def test_time_sensitive_recall(msg):
+    assert needs_fresh_facts(msg)
+
+
+@pytest.mark.parametrize("msg,name", [
+    ("What operating system does a Googlebook run?", "Googlebook"),
+    ("Is Fugu Ultra v2.0 a single large language model?", "Fugu Ultra v2.0"),
+    ("Explain what Pydantic AI 2 is", "Pydantic AI 2"),
+    ("Upgrade to Python 3.15", "Python 3.15"),          # a version of a well-known name is still looked up
+])
+def test_names_as_the_subject_of_a_question_are_looked_up(msg, name):
+    assert unknown_entities(msg) == [name]
+
+
+@pytest.mark.parametrize("first,msg", [
+    ("Write a SQL query to get the latest order per customer", "now add the customer name"),
+    ("That won't compile, fix the loop", "still the same error"),
+    ("We won our pub quiz last night!", "what should we call our team next time?"),
+])
+def test_a_coding_or_personal_turn_does_not_make_the_follow_up_current(first, msg):
+    from agent.freshness import followup_needs_fresh
+    assert not followup_needs_fresh(msg, _hist(("user", first), ("assistant", "...")))
