@@ -67,8 +67,14 @@ async def _embed(artifact: dict[str, Any], project_id: str) -> None:
     # of the whole collection, which also missed anything past 10k docs).
     await semantic.delete_where({"artifact_id": artifact["id"]})
 
-    # Chunk the new content
-    chunks = _chunk(artifact.get("content") or "")
+    # save_to_artifact / update_artifact also run MemoryManager.index_artifact
+    # (immediately; this pass is debounced). When its chunks of THIS content
+    # exist, a second copy only duplicated every recall hit.
+    if await _indexed_by_index_artifact(semantic, artifact):
+        logger.info("artifact %s already indexed by index_artifact; not re-chunking", artifact["id"])
+        chunks = []
+    else:
+        chunks = _chunk(artifact.get("content") or "")
     await semantic.store_many([
         (chunk, {
             "source": "artifact",
@@ -102,6 +108,15 @@ async def _embed(artifact: dict[str, Any], project_id: str) -> None:
         )
     except Exception:
         logger.exception("graph extraction on artifact %s failed", artifact.get("id"))
+
+
+async def _indexed_by_index_artifact(semantic, artifact: dict[str, Any]) -> bool:
+    from memory.file_indexer import _content_hash
+    try:
+        metas = await semantic.get_where({"fm_artifact_id": artifact["id"]}, limit=1)
+    except Exception:
+        return False
+    return bool(metas) and metas[0].get("content_hash") == _content_hash(artifact.get("content") or "")
 
 
 def _chunk(text: str, chunk_chars: int = 2000, overlap: int = 200) -> list[str]:

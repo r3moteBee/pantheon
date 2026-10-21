@@ -48,6 +48,22 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _document_title(frontmatter: dict[str, Any], body: str, fallback: str) -> str:
+    t = str(frontmatter.get("title") or frontmatter.get("document_title") or frontmatter.get("video_title") or "")
+    if not t:
+        m = re.search(r"^#\s+(.+)$", body or "", re.MULTILINE)
+        t = m.group(1) if m else fallback
+    return " ".join(t.split())[:200]
+
+
+def _with_header(content: str, title: str, heading: str) -> str:
+    """Chunk text prefixed with "<title> › <heading>" (whichever it lacks)."""
+    parts = [p for p in (title, heading) if p and p.lower() not in content[:300].lower()]
+    if heading and title and heading.strip().lower() == title.strip().lower():
+        parts = parts[:1]
+    return (" › ".join(parts) + "\n\n" + content) if parts else content
+
+
 def _content_hash(content: str) -> str:
     """SHA-256 hash of content for dedup/change detection."""
     return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
@@ -556,6 +572,7 @@ class FileIndexer:
         # path first, otherwise every re-index adds a full stale copy.
         if chunks:
             await self.memory_manager.semantic.delete_where({"source_path": rel_path})
+        title = _document_title(frontmatter, body, display_name)
         items = []
         for chunk in chunks:
             chunk_meta = {
@@ -573,7 +590,11 @@ class FileIndexer:
                     chunk_meta[f"fm_{k}"] = str(v)
                 elif isinstance(v, list):
                     chunk_meta[f"fm_{k}"] = ",".join(str(x) for x in v)
-            items.append((chunk["content"], chunk_meta))
+            # The chunker strips headings into metadata: without the
+            # document title + section heading a chunk like "Current
+            # release: 2.4.1" no longer says what it belongs to, and the
+            # embedder and reranker rank it low.
+            items.append((_with_header(chunk["content"], title, chunk.get("heading", "")), chunk_meta))
         stats["chunks_stored"] += await self._store_chunks(items, display_name)
 
         if frontmatter:
