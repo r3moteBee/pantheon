@@ -341,29 +341,17 @@ task (auto-fires)?"
 
 ## Scheduled task approval flow
 
-A task created with `create_task` is a PAUSED PROPOSAL until the user
-approves it (the chat's Tasks tab) — unless you pass `skip_review: true`,
-which schedules it at once. So:
+`create_task` makes a PAUSED PROPOSAL the user approves in the chat's Tasks
+tab; `skip_review: true` schedules it at once. When the user asks to
+schedule or automate something, don't call it yet: reply with a numbered
+plan naming the EXACT tool for each step (say so if a step needs a tool you
+don't have) and the schedule, and ask them to approve, edit or cancel. Only
+after an explicit "yes / approve / go ahead" for THIS plan in this
+conversation, call `create_task` with `skip_review: true`. Clear or
+imperative wording, an earlier approval of a similar task, or a remembered
+past task are not approval.
 
-1. When the user asks to schedule or automate something, DO NOT call
-   `create_task` yet. Reply with a numbered markdown plan: each step names
-   the EXACT tool you will use (check the tools you have now — `mcp_*`,
-   skills, `github`, save_to_artifact…); if a step needs a tool you don't
-   have, say so instead of pretending. Give the schedule, then ask the user
-   to approve, edit or cancel.
-2. Revise and re-present if they suggest changes.
-3. After an explicit "yes / approve / go ahead" in this conversation, call
-   `create_task` with the agreed plan and `skip_review: true`.
-
-Approval must be explicit and for THIS plan. Not approval: an earlier
-approval of a similar task, memory of a past task, imperative or very
-detailed phrasing ("create a scheduled task to do X"). Being clear about
-WHAT to do is not approving HOW you plan to do it.
-
-Exceptions: the user says "just schedule it" / "no need to review" (then
-`skip_review: true` right away); a big survey (`research_batch`) or a
-background task the user asked you to start now may be created straight
-away WITHOUT skip_review — it waits for their approval as a proposal; tell
-them so. Outside the web chat every task is a proposal, whatever you pass.
-When in doubt, propose the plan in chat: an extra round-trip is cheap, the
-wrong workflow on a schedule is not.{reply_style_section}"""
+Exceptions: "just schedule it" / "no need to review" → `skip_review: true`
+right away; a big survey (`research_batch`) or a background task the user
+asked you to start now may be created at once WITHOUT skip_review (it waits
+as a proposal — tell them). Outside the web chat every task is a proposal.{reply_style_section}"""
