@@ -4,7 +4,7 @@
 **Status:** Draft
 **Audience:** Enterprise platform teams standing up an internal skill registry
 that Pantheon agents can browse and install from. Companion to
-`docs/mcp-registry-protocol.md` — same shape, different payload.
+`docs/archive/mcp-registry-protocol.md` (an unimplemented proposal) — same shape, different payload.
 
 > **What the current client implements.** `GenericSkillRegistryAdapter`
 > (`backend/skills/importer.py`) uses discovery, `search` (first page only,
@@ -36,7 +36,7 @@ optional bundled files. Pantheon never runs scripts bundled with a skill
 (there is no skill executor).
 MCP servers are long-running processes with their own transport. The two have
 separate registries on purpose. If you're publishing a long-running tool
-server, see `docs/mcp-registry-protocol.md` instead.
+server, see the (unimplemented) `docs/archive/mcp-registry-protocol.md` instead.
 
 **Non-goals.** This protocol does not cover publishing, skill execution, or
 authentication to whatever the skill itself may call out to. It is strictly a

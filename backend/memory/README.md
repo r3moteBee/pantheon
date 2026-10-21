@@ -13,7 +13,7 @@ SQLite stores live under `settings.db_dir` (`data/db/`) and go through
 | Semantic | `SemanticMemory` | ChromaDB, one collection per project (`proj-<id>`) at `data/chroma/<project>`; each vector tagged with its embedding model |
 | Graph | `GraphMemory` | `data/db/graph.db` (`graph_nodes`, `graph_edges`); `add_node` / `add_edge` idempotent |
 | File index | `FileIndex` / `FileIndexer` | `data/db/file_index.db` (`indexed_files`: content hash per path); chunks go to semantic, frontmatter topics to graph |
-| Archival | `ArchivalMemory` | Markdown under `<data_dir>/projects/<id>/notes/` plus `project_summary.md` |
+| Archival | `ArchivalMemory` | Markdown under `<data_dir>/projects/<id>/notes/` plus `project_summary.md`; managed in Memory → Archival, not searched by `recall` |
 | Topic embeddings | `topic_embeddings.py` | Semantic collection, `metadata.kind=topic_node`, deterministic id per `(project_id, topic_type, label)` |
 | Merge proposals | `merge_proposals.py` | `data/db/merge_proposals.db` (`topic_merge_proposals`); never auto-applied |
 
@@ -26,15 +26,21 @@ from old callers becomes a session-tagged episodic note.
 Build one with `create_memory_manager(project_id, session_id)`, which
 wires the `embed` route's `embed` / `embed_many`.
 
-- `recall(query, tiers=None, project_id=None, limit_per_tier=3, context_focus=None)`:
-  searches semantic, episodic and graph (the default tiers), sorts by score,
+- `recall(query, tiers=None, project_id=None, limit_per_tier=3, context_focus=None,
+  in_context=None, min_relevance=0.0, session_fallback=None, …)`:
+  searches semantic, episodic and graph (the default tiers; archival and
+  working are never searched), sorts by score,
   reranks when a `rerank` route exists, appends 1-hop graph context for
   entities named in the top hits, applies context-focus recency weighting,
-  then dedups and trims to the `ContextBudget` recall budget.
+  then dedups and trims to the `ContextBudget` recall budget. `in_context`
+  drops hits the prompt already carries, `min_relevance` drops reranked items
+  below the floor, and `session_fallback` adds similar earlier turns of that
+  chat (see "Memory, recall and history" in `/CLAUDE.md`).
 - `remember(content, tier="semantic", metadata=None, session_id=None)`:
   `semantic` stores a vector; `episodic` / `working` add an episodic note;
   `graph` runs the conversation extractor (`run_extraction`, `min_messages=1`)
-  on the text; `archival` appends a note file.
+  on the text; `archival` appends a note file. The agent's `remember` tool
+  only offers `episodic`, `semantic` and `graph`.
 - `consolidate_session(message_count=40)`: reads the session's recent
   messages from episodic, summarises them with the summarize-class model into
   a semantic `session_summary`, then runs extraction. Needs a real `session_id`.

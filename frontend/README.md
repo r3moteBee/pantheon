@@ -40,13 +40,13 @@ Pages are in `src/pages/`, routed in `src/App.jsx`:
 |---|---|
 | `/chat` | Streaming chat. Tabs (`ChatTabs.jsx`): Chat, Memory, Artifacts, Repository, Tasks, Project Settings (`components/chat-tabs/`) |
 | `/memory` | Browse/search episodic, semantic, graph and archival memory; force-graph view |
-| `/artifacts` | Artifact tree with previews, version history, export (`/files` redirects here) |
+| `/artifacts` | Artifact tree with previews, version history, upload, zip export, Push to GitHub, and the project workspace with Copy to Artifacts (`/files` redirects here) |
 | `/skills` | Skill library, security scan, editor, importer |
 | `/mcp` | Redirects to Connections → MCP servers |
 | `/connections` | MCP servers, GitHub, web-search providers (`/sources` redirects here) |
 | `/personas` | Redirects to Settings → Personality (presets) |
-| `/projects` | Project CRUD, import/export |
-| `/settings` | LLMs, RAG, Channels, Personality, Skills, Tasks, Security, Secrets, System Update (`/personality` and `/tasks` redirect here) |
+| `/projects` | Project CRUD, import/export, delete with a preview of what goes (`DeleteProjectModal`) |
+| `/settings` | LLMs, RAG Settings, Channels, About you, Personality, Skills, Tasks, Security, Secrets, System Update (`/personality` and `/tasks` redirect here) |
 
 ## Structure
 
@@ -56,18 +56,21 @@ src/
 ├── store/index.js        Zustand store
 ├── pages/                One file per route (lazy-loaded; LoginPage is eager)
 ├── components/
-│   ├── Chat.jsx, ChatTabs.jsx, Layout.jsx, Settings.jsx, MCPConnections.jsx, Skills.jsx, …
+│   ├── Chat.jsx, ChatTabs.jsx, Layout.jsx, Settings.jsx, MCPConnections.jsx, Skills.jsx,
+│   │                     PushToGitHubModal.jsx, WorkspaceImportModal.jsx, DeleteProjectModal.jsx, …
 │   ├── Markdown.jsx      The one markdown renderer (remark-gfm + mermaid); pass `components` to override
 │   ├── chat/             Chat.jsx's parts: useChatSocket, useChatAttachments, Message, ToolCallBlock,
 │   │                     ChatComposer, ChatHistoryDrawer, SaveToArtifactModal
-│   ├── settings/         One file per Settings tab (LLM endpoints/routing/tuning, RAG, skill hubs,
-│   │                     tasks + job runs, security, sandbox, secrets, system update)
+│   ├── settings/         One file per Settings tab (LLM endpoints/routing/tuning, RAG, About you, personality,
+│   │                     skill hubs, tasks + job runs, security, sandbox, secrets, system update)
 │   ├── chat-tabs/        ProjectTasksPanel, ProjectSettingsPanel, RepoBindingPanel
 │   ├── connections/      SearchProvidersTab
 │   ├── help/             Help drawer, tooltips, provider presets
 │   └── SandboxedHtml.jsx Untrusted HTML rendering (sandboxed iframe, no allow-same-origin)
 └── utils/svgExport.js    SVG → SVG/PNG/PDF export
 ```
+
+**Settings → About you** (`AboutYouSettings.jsx`) edits the user's profile, reply length and formatting per chat app, and writing voices with their samples (`/api/about-you`, `/api/writing-voices`).
 
 **Settings → LLMs** renders the `components/settings/` stack: endpoints (add, Probe for models), **Model routing** (ordered models per task class, capability badges, profile editor), **Chat router** (per-turn class selection), **Model usage**, and **Routing tuning**. All of it talks to `/api/llm/*` via `llmApi`. In chat, `/model <class|auto>` or the input's model picker pins a class for the session.
 

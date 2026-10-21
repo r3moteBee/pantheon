@@ -75,7 +75,7 @@ Enablement is per project. A skill is enabled unless its project is in `disabled
 | `registries_config.py` | Configured registries in `data/skill_registries.json`. Bearer tokens live in the vault as `skill_registry:<id>`. |
 | `models.py` | `SkillManifest`, `LoadedSkill`, `ScanResult`, `SkillDiscoveryMode` (`off/suggest/auto`), and related types |
 
-External registries implement the [skill registry protocol](skill-registry-protocol.md). MCP server registries are a separate system ([mcp-registry-protocol.md](mcp-registry-protocol.md)).
+External registries implement the [skill registry protocol](skill-registry-protocol.md). An MCP server registry protocol was proposed but never built ([archive/mcp-registry-protocol.md](archive/mcp-registry-protocol.md)).
 
 ## API (`backend/api/skills.py`, under `/api`)
 

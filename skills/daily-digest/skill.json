@@ -1,7 +1,7 @@
 {
   "name": "daily-digest",
   "version": "2026-04-05",
-  "description": "Generate a digest of recent project activity by reviewing episodic memory and workspace changes. Use when the user asks for a daily summary, status update, what happened recently, or wants a catch-up on project activity. Can also be scheduled to run automatically.",
+  "description": "Generate a digest of recent project activity from conversations, artifacts and background jobs, saved as an artifact. Use when the user asks for a daily summary, status update, what happened recently, or wants a catch-up on project activity. Can also be scheduled to run automatically.",
   "author": "pantheon",
   "license": "MIT",
   "triggers": [

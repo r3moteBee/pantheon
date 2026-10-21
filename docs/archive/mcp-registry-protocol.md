@@ -1,11 +1,11 @@
 # Pantheon MCP Registry Protocol
 
 **Version:** 1.0
-**Status:** Proposal (not implemented)
+**Status:** Archived proposal (never implemented)
 **Audience:** Enterprise platform teams standing up an internal MCP server registry
 that Pantheon agents can browse and install from.
 
-> ⚠️ **Proposal — not implemented.** Pantheon has no MCP-registry client or Settings → MCP → Registries UI; MCP servers are added one at a time under Connections → MCP servers. Only the *skill* registry protocol ([skill-registry-protocol.md](skill-registry-protocol.md)) is built.
+> ⚠️ **Archived proposal — not implemented.** Pantheon has no MCP-registry client, no `GenericRegistryAdapter` for MCP servers and no Settings → MCP → Registries UI; MCP servers are added one at a time under Connections → MCP servers. The rest of this document is written as if the client existed ("Pantheon will…"): read it as the intended contract, not as a description of current behaviour. Only the *skill* registry protocol ([skill-registry-protocol.md](../skill-registry-protocol.md)) is built.
 
 ---
 
@@ -301,7 +301,7 @@ available in the MCP browser.
 ## 11. Reference implementation
 
 A minimal FastAPI registry is provided at
-[`docs/examples/minimal-registry/`](examples/minimal-registry/). It returns
+[`docs/examples/minimal-registry/`](../examples/minimal-registry/). It returns
 two fake servers and is intended as a starting point for enterprise platform
 teams — clone it, point it at your internal catalog, and you have a
 conformant registry in under an hour.

@@ -2,6 +2,8 @@
 
 Write professional messages with appropriate tone and structure.
 
+**Voice first.** If the message goes out under the user's name, call `writing_voice` first (the voice they name, or the default one) and follow its notes and samples. If they have no voices, `writing_voice(action="list")` says so; carry on with the tone below.
+
 ## Procedure
 
 1. **Understand the context.** What kind of message? Who's the audience? What's the purpose — inform, request, follow up, escalate, celebrate? If the user didn't specify, infer from context or ask.
@@ -43,7 +45,7 @@ Write professional messages with appropriate tone and structure.
 
 ## Important
 
-- If semantic memory has context about the recipient or topic, use it to personalize.
+- If recalled memory has context about the recipient or topic, use it to personalize.
 - Never be sycophantic — "I hope this email finds you well" adds nothing.
-- Match the user's voice. If they write casually, don't draft something stiff.
+- Match the user's voice: their writing voice when they have one (`writing_voice`), otherwise how they write to you. If they write casually, don't draft something stiff.
 - For sensitive messages (bad news, escalations, performance feedback), err on the side of directness with empathy. Don't soften the message to the point where the recipient misses the point.

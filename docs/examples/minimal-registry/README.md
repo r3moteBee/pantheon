@@ -3,7 +3,7 @@
 > ⚠️ **Proposal — not implemented.** Pantheon has no MCP-registry client or Settings → MCP → Registries UI; MCP servers are added one at a time under Connections → MCP servers. Only the *skill* registry protocol ([skill-registry-protocol.md](../../skill-registry-protocol.md)) is built.
 
 A ~150-line FastAPI reference implementation of the
-[Pantheon MCP Registry Protocol](../../mcp-registry-protocol.md) v1.0.
+[Pantheon MCP Registry Protocol](../../archive/mcp-registry-protocol.md) v1.0.
 
 Returns two fake servers (Jira via `stdio`+npm, Snowflake via `remote`) so
 platform teams can see the exact shapes Pantheon expects before adapting
@@ -32,4 +32,4 @@ Then in Pantheon: **Settings → MCP → Registries → Add Registry** and enter
 ## Conformance
 
 See the checklist in
-[`../../mcp-registry-protocol.md`](../../mcp-registry-protocol.md) §9.
+[`../../archive/mcp-registry-protocol.md`](../../archive/mcp-registry-protocol.md) §9.

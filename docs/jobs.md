@@ -56,7 +56,7 @@ The `create_task` agent tool requires a `plan`. Unless `skip_review=true` **and*
 - `POST /api/tasks/{id}/approve`: set `approved` and resume. A one-shot whose time passed during review runs right away instead of being dropped as a misfire.
 - `POST /api/tasks/{id}/run-now`: enqueue immediately. A recurring schedule keeps its timing; a one-shot is removed.
 
-Background contexts (jobs, bots) can never skip review. `POST /api/tasks` creates approved tasks with no plan.
+Background contexts (jobs, bots) can never skip review. `POST /api/tasks` (and a bot's `/task <description>`) creates approved tasks with no plan. `create_task(job_type="coding_task")` bypasses this flow: it starts the coding job directly, so it is refused outside interactive web chat.
 
 ### Skill binding
 

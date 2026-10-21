@@ -1,14 +1,14 @@
 # Pantheon Backend
 
-FastAPI service for the Pantheon agent harness — multi-tier memory, source-adapter ingestion, async jobs, and a knowledge-graph substrate.
+FastAPI service for the Pantheon agent harness — persistent memory, source-adapter ingestion, async jobs, and a knowledge-graph substrate.
 
 For working conventions, gotchas, the deploy workflow and the "not done yet" list, see [`/CLAUDE.md`](../CLAUDE.md). This README covers backend layout only.
 
 ## Architecture (three layers)
 
-1. **Memory** — `memory/` orchestrates SQLite (episodic, graph, file index), ChromaDB (semantic) and JSON (project metadata). `MemoryManager.recall(query, tiers=[...])` queries across them.
+1. **Memory** — `memory/` orchestrates SQLite (episodic, graph, file index), ChromaDB (semantic), markdown notes (archival) and JSON (project metadata). `MemoryManager.recall(query, tiers=[...])` searches semantic, episodic and graph.
 2. **Source adapters** — `sources/` turns a URL or ID into a typed-topics-frontmatter markdown artifact + graph nodes/edges. 29 adapters across 10 mechanisms (`youtube`, `blog`, `pdf`, `web`, `forum`, `podcast`, `github`, `cfr`, `malegis`, `sec`), self-registered at import. See [`sources/SOURCE_ADAPTERS.md`](sources/SOURCE_ADAPTERS.md).
-3. **Jobs** — `jobs/` is the unified async job system. Job types: `autonomous_task`, `coding_task`, `image_extraction`, `iteration_loop` (`POST /api/jobs` accepts all but `image_extraction`). APScheduler fires → `JobStore` persists → `JobWorker` (asyncio task in the FastAPI process) dispatches to `jobs/handlers/`; a watchdog stalls idle jobs.
+3. **Jobs** — `jobs/` is the unified async job system. Job types: `autonomous_task`, `coding_task`, `iteration_loop`, `research_batch`, `autoresearch`, `image_extraction` (`POST /api/jobs` accepts only the first three; see [`docs/jobs.md`](../docs/jobs.md)). APScheduler fires → `JobStore` persists → `JobWorker` (asyncio task in the FastAPI process) dispatches to `jobs/handlers/`; a watchdog stalls idle jobs.
 
 ## Directory layout
 
@@ -21,7 +21,8 @@ backend/
 ├── agent/              AgentCore loop, tools/ (registry + one module per tool domain), prompts, browser tools, textual tool-call recovery
 ├── api/                FastAPI routers (see below)
 ├── artifacts/          Artifact store (SQLite + blobs), embedder, previews, conversions
-├── integrations/       GitHub API client
+├── builder/            run_build backends (Kubernetes pods; PANTHEON_BUILDER)
+├── integrations/       GitHub API client, server-side artifact push (github_push.py)
 ├── jobs/               JobStore, JobWorker, watchdog, orphan recovery, handlers/
 ├── llm_config/         Named endpoints, task-class routes, model profiles, probe, chat router, usage log, tuning
 ├── mcp_client/         MCP client (protocol 2025-11-25), connection manager, OAuth 2.1
@@ -33,7 +34,7 @@ backend/
 ├── skills/             Skill registry, resolver, editor, importer/exporter, scanner, versioning
 ├── sources/            Source-adapter registry, extractors, similarity + adapters/
 ├── tasks/              APScheduler integration
-├── utils/              Shared helpers (safe_http_get, paths, progress, background.spawn, self-doc, …)
+├── utils/              Shared helpers (safe_http_get, paths, progress, background.spawn, chat_settings, user_profile, self-doc, …)
 ├── data/               BUNDLED defaults (soul presets in personas/, personality, migrations) — tracked in git
 ├── tests/integration/  Pytest integration tests
 └── requirements.txt
@@ -43,11 +44,11 @@ Runtime data (databases, projects, user skills, Chroma collections) lives under 
 
 ## API surface
 
-19 routers mounted under `/api` in `main.py`:
+Routers mounted under `/api` in `main.py` (the `include_router` calls are the authoritative list):
 
-`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `mcp_oauth` · `skills` · `tasks` · `personas` · `system` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints` · `messaging`
+`auth` · `chat` · `files` · `memory` · `personality` · `projects` · `settings` · `mcp` · `mcp_oauth` · `skills` · `tasks` · `personas` · `system` · `connections` · `artifacts` · `conversations` · `jobs` · `llm_endpoints` · `messaging` · `about_you` · `github_push`
 
-`project_export` / `project_import` are helpers called from the `projects` router, not mounted separately.
+`project_export`, `project_import` and `project_purge` are helpers called from the `projects` router, not mounted separately.
 
 Notable endpoints:
 - `GET /api/health` — version string (drives deploy verification)
@@ -55,7 +56,10 @@ Notable endpoints:
 - `GET /api/artifacts/feed` — agent-shaped cursor-paged feed; see [`docs/api/artifacts-feed.md`](../docs/api/artifacts-feed.md)
 - `/api/llm/endpoints`, `/api/llm/probe`, `/api/llm/task-classes`, `/api/llm/routes`, `/api/llm/profile(s)`, `/api/llm/usage` — LLM endpoints, routing and usage
 - `/api/llm/router`, `/api/llm/router/{decisions,feedback,tuning,simulate,apply}` — per-turn chat router + tuning
-- `POST /api/chat/attach` — uploads to ArtifactStore + enqueues `image_extraction` for images
+- `POST /api/chat/attach` — uploads to the artifact store + enqueues `image_extraction` for images
+- `GET /api/projects/{id}/delete-preview`, `DELETE /api/projects/{id}` — counts, then purge of every per-project store
+- `POST /api/projects/{id}/github/push` — commit artifacts to GitHub server-side
+- `/api/about-you`, `/api/writing-voices` — the user's profile, reply style and writing voices
 
 WebSocket endpoints bypass the HTTP middleware and call `api.auth.authorize_websocket()` themselves.
 
@@ -73,7 +77,7 @@ To add a task class: add it to `TASK_CLASSES` + the `TaskClass` literal, handle 
 | Episodic  | SQLite              | Chat history + task logs                      |
 | Semantic  | ChromaDB            | Embedded chunks + topic-label embeddings      |
 | Graph     | SQLite              | Typed nodes + edges, idempotent inserts       |
-| Archival  | Markdown files      | Notes + project summary under `<data_dir>/projects/<id>/notes` |
+| Archival  | Markdown files      | Notes + project summary under `<data_dir>/projects/<id>/notes` (Memory UI only; not searched by recall) |
 
 ## Install + run
 
@@ -100,7 +104,7 @@ For hot reload during development: `cd backend && ../.venv/bin/uvicorn main:app 
 cd ~/pantheon/backend && ~/pantheon/.venv/bin/python -m pytest tests/integration/ -v
 ```
 
-`tests/integration/conftest.py` lowers the vault KDF iteration count for speed. `tests/integration/test_autonomous_skill_resolution.py` is the canary for the autonomous job path.
+About 700 test functions. `tests/integration/conftest.py` lowers the vault KDF iteration count for speed. `tests/integration/test_autonomous_skill_resolution.py` is the canary for the autonomous job path.
 
 ## Versioning
 

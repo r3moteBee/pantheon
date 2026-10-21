@@ -33,7 +33,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 
 ## Agent tool gating
 
-- **Host exec:** `HOST_EXEC_TOOLS` = `run_command`, `code_execute`, `git_sync_repo`, `git_status`, `git_create_branch`, `git_merge`, `git_commit`, `git_push_pr`. These tools are hidden and refused unless `AgentCore(host_exec=True)`. `AGENT_HOST_EXEC` controls this:
+- **Host exec:** `HOST_EXEC_TOOLS` = `run_command`, `code_execute`, `git_sync_repo`, `git_status`, `git_create_branch`, `git_merge`, `git_commit`, `git_push_pr` and `start_autoresearch` (it queues a job that runs a benchmark command on the host). These tools are hidden and refused unless `AgentCore(host_exec=True)`. `AGENT_HOST_EXEC` controls this:
   - `interactive` (default): web chat, and coding tasks started from it.
   - `always`: every context.
   - `never`: no context.
@@ -44,7 +44,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 
 ## Code sandbox (`backend/sandbox/`)
 
-`code_execute` and `run_command` run through `sandbox.get_sandbox()`. It is **not** used by skills (there is no skill executor) or by the `git_*` tools, which call git directly.
+`code_execute` and `run_command` run through `sandbox.get_sandbox()`. It is **not** used by skills (there is no skill executor), by the `git_*` tools, which call git directly, or by the autoresearch benchmark, which runs as a plain shell subprocess in the project workspace (`utils/autoresearch.py`).
 
 | `PANTHEON_SANDBOX` | Backend | Isolation |
 |---|---|---|
