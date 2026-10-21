@@ -35,9 +35,8 @@ SCHEMAS: list[dict[str, Any]] = [
                     "schedule": {
                         "type": "string",
                         "description": (
-                            "One-shot: 'now' or 'delay:N' (N minutes from now). Recurring: 'interval:N' "
-                            "(every N minutes) or a cron expression ('0 9 * * *' = daily 9am). "
-                            "'in 2 minutes' is delay:2, not interval:2."
+                            "One-shot: 'now' or 'delay:N' (minutes). Recurring: 'interval:N' (minutes) or cron "
+                            "('0 9 * * *' = daily 9am). 'in 2 minutes' is delay:2."
                         )
                     },
                     "timeout_seconds": {
@@ -50,18 +49,11 @@ SCHEMAS: list[dict[str, Any]] = [
                     },
                     "skill_name": {
                         "type": "string",
-                        "description": (
-                            "Skill slug to drive the task (its instructions are loaded, like /<slug> in chat). "
-                            "Use this instead of writing '/slug' in the description. Required MCP connectors are checked at start."
-                        )
+                        "description": "Skill slug whose instructions drive the task (like /<slug> in chat)."
                     },
                     "plan": {
                         "type": "string",
-                        "description": (
-                            "Required. Numbered markdown steps, each naming its tool, e.g. "
-                            "'1. List the channel's latest videos with `mcp_<server>_get_channel_latest_videos`. "
-                            "2. Ingest each with `ingest_source`.'"
-                        )
+                        "description": "Numbered markdown steps, each naming its tool ('1. ... with `ingest_source`')."
                     },
                     "skip_review": {
                         "type": "boolean",
@@ -74,16 +66,12 @@ SCHEMAS: list[dict[str, Any]] = [
                         "enum": ["autonomous_task", "iteration_loop", "coding_task", "research_batch"],
                         "default": "autonomous_task",
                         "description": (
-                            "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
-                            "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
-                            "each turn is saved as artifact iteration/<job id, 8 chars>/turn-01.md, turn-02.md... 'coding_task': a background "
-                            "coding agent edits the bound GitHub repo and opens a PR — ONLY for authoring code "
-                            "(fix, feature, refactor), never for ingest or research; web chat only, starts now. "
-                            "Put the stack and file layout in coding_context (read them with the github tool first). "
-                            "'research_batch': research a LIST of items one at a time (states, companies, products) - "
-                            "each item gets its own lookups and a sourced note saved as an artifact, then a summary is "
-                            "written from the notes. Use it whenever a request needs more lookups than one chat turn "
-                            "allows (more than ~5 items); give items and item_question."
+                            "autonomous_task (default): run the plan once per firing. iteration_loop: execute/review "
+                            "turns ('loop', 'iterate N times'), each saved as artifact iteration/<job id, 8 chars>/turn-01.md... "
+                            "coding_task: a coding agent edits the bound GitHub repo and opens a PR - only for authoring "
+                            "code, web chat only, starts at once; put stack and layout in coding_context. research_batch: "
+                            "one sourced note per item of a LIST (states, companies) then a summary - for more than ~5 "
+                            "items; give items and item_question."
                         )
                     },
                     "coding_context": {
@@ -128,10 +116,7 @@ SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "enum": ["single_feature", "main", "branch_per_turn"],
                         "default": "single_feature",
-                        "description": (
-                            "iteration_loop with a bound repo: 'single_feature' (default) commits every turn to "
-                            "iteration/<job_id>; 'main' commits to main; 'branch_per_turn' makes a branch per turn."
-                        )
+                        "description": "iteration_loop with a bound repo: where turns commit (branch iteration/<id>, main, or one per turn)."
                     }
                 },
                 "required": ["name", "description", "schedule", "plan"]
