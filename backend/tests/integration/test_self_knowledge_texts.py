@@ -127,3 +127,25 @@ def test_send_telegram_reports_when_not_configured(monkeypatch):
     monkeypatch.setattr(telegram, "_application", None)
     out = asyncio.run(tools.execute_tool("send_telegram", {"message": "hi"}, None))
     assert out.startswith("Telegram send failed") and "not set up" in out
+
+
+# ── questions about Pantheon read the self-doc first ─────────────────────────
+
+def test_capability_questions_read_the_self_doc():
+    from agent.freshness import wants_self_description
+    for q in ("Can you compile Swift code?", "Where do files I upload in the chat go?",
+              "What's the most tool steps you can take in one turn?", "Which model is answering me right now?",
+              "Can you message me when a background job finishes?", "How long can a single reply of yours be?",
+              "If I ask you to schedule a daily digest, what happens?"):
+        assert wants_self_description(q), q
+
+
+def test_ordinary_requests_and_world_questions_do_not():
+    from agent.freshness import wants_self_description, needs_fresh_facts
+    for q in ("Can you write me a poem about cats?", "Can you run this script for me?",
+              "Where do penguins go in winter?", "What happens if I mix bleach and vinegar?",
+              "How many moons does Jupiter have?",
+              "Can you summarize this article: " + "x" * 300):
+        assert not wants_self_description(q), q
+    # the web-search guards are unchanged by it
+    assert needs_fresh_facts("Can you search the web for the latest Rust release?")
