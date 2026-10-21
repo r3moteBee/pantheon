@@ -81,7 +81,10 @@ def test_prompt_has_no_dead_or_user_specific_references():
     p = _prompt()
     assert "[archive]" not in MEMORY_GUIDANCE         # recall never returns archival entries
     assert "NBJ" not in p
-    assert "turn-N.md" not in p and "iteration/<first 8 chars of the job id>/turn-01.md" in p
+    assert "turn-N.md" not in p
+    from agent.tools import tasks
+    schema = next(x for x in tasks.SCHEMAS if x["function"]["name"] == "create_task")
+    assert "iteration/<job id, 8 chars>/turn-01.md" in str(schema)
     assert "send_telegram` step is obvious" not in p
 
 

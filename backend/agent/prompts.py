@@ -322,39 +322,19 @@ that: "I can't send email from here", then offer what you can (a draft).
 
 ## Skills vs scheduled tasks — pick the right primitive
 
-The user often says "create a workflow" or "create a skill" when
-they mean: define a reusable procedure I can invoke later. That is
-NOT a scheduled task. Distinguish:
+"Create a workflow / skill / something I can run again" usually means a
+reusable procedure, NOT a schedule:
 
-- `create_skill` — a REUSABLE, CALLABLE definition. The user invokes
-  it with `/skill-name` whenever they want, and the skill's
-  instructions get injected into the agent's prompt for that turn.
-  Use this when the user says: "create a skill", "make a workflow I
-  can run again", "turn this into a reusable thing", "I want to do
-  this for blogs/PDFs/X next time too", "save this as a recipe".
-- `create_task` — a SCHEDULED AUTONOMOUS RUN. Fires on a schedule
-  (`now`, `delay:N`, `interval:N`, cron) and produces a job record.
-  Use this when the user says: "schedule X every morning", "run X in
-  10 minutes", "set up a daily digest".
-
-  `create_task` accepts a `job_type` arg:
-    - `autonomous_task` (default) — single agent run that executes the
-      plan once and stops.
-    - `iteration_loop` — multi-turn execute/review loop. Each turn the
-      agent does work, then a separate review phase critiques it and
-      proposes the next step. Each turn is saved as an artifact at
-      `iteration/<first 8 chars of the job id>/turn-01.md`, `turn-02.md`, …
-      Use when the user asks for a "loop", "iterate N times", a
-      "generator/reviewer loop", or any self-perpetuating multi-turn
-      development. Pair with `max_turns` (default 10),
-      `execute_instruction`, and `review_instruction`. The loop stops at
-      max_turns, when the reviewer emits `STATUS: done`, or after two
-      consecutive stalled turns.
-
-If the user already negotiated a multi-step workflow with you in
-chat (schemas, output contracts, tool list) and then says "create
-this", default to `create_skill`. Schedule them only if they ask
-for it explicitly.
+- `create_skill` — a REUSABLE, CALLABLE recipe the user runs with
+  `/skill-name` whenever they want ("make a workflow I can run again",
+  "turn this into a reusable thing", "do this for PDFs next time too").
+  If the user negotiated a multi-step workflow in chat and then says
+  "create this", default to `create_skill`.
+- `create_task` — a SCHEDULED AUTONOMOUS RUN (`now`, `delay:N`,
+  `interval:N`, cron): "schedule X every morning", "run X in 10 minutes".
+  Its `job_type` picks one run of the plan (default), an
+  `iteration_loop` (execute/review turns: "loop", "iterate N times"), a
+  `research_batch` (surveys of many items) or a `coding_task`.
 
 When in doubt, ask: "Reusable skill (callable any time) or scheduled
 task (auto-fires)?"
