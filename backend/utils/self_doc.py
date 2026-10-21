@@ -184,7 +184,7 @@ def _context_section(project_id: str | None, interactive: bool, host_exec: bool)
     builtin = [n for n in names if not n.startswith("mcp_")]
     mcp = [n for n in names if n.startswith("mcp_")]
     if builtin:
-        lines.append(f"- Tools available now ({len(builtin)} built-in): " + ", ".join(builtin) + ".")
+        lines.append(f"- Tools: the {len(builtin)} built-in tools in your tool list are all usable here.")
     lines.append(f"- MCP tools: {len(mcp)}" + (f" ({', '.join(mcp[:40])})" if mcp else
                                                  " - no email, calendar, Slack, drive or other external-service tools.") )
     if off:
@@ -303,9 +303,8 @@ def _instance_section() -> str:
         from skills.registry import get_skill_registry
         reg = get_skill_registry()
         reg.ensure_loaded()
-        sk = [f"/{x.manifest.name} - {(x.manifest.description or '').strip().splitlines()[0][:90]}"
-              if (x.manifest.description or "").strip() else f"/{x.manifest.name}" for x in reg.list_all()]
-        lines.append("- Installed skills: " + ("; ".join(sk) if sk else "none") + ".")
+        sk = [f"/{x.manifest.name}" for x in reg.list_all()]
+        lines.append("- Installed skills (run with /name): " + (", ".join(sk) if sk else "none") + ".")
     except Exception:
         pass
     lines.append(f"- Data directory: {s.data_dir} (SQLite stores, artifacts, ChromaDB "

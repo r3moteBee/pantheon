@@ -79,7 +79,8 @@ def test_context_section_follows_the_caller(clean_settings):
     assert "web chat driven by the user" in web
     assert "not interactive" in bg
     assert "code_execute, run_command, git_*" in bg.split("Not available here:")[1]
-    assert "code_execute" in web.split("Tools available now")[1].split("\n")[0]
+    web_off = web.split("Not available here:")[1].split("\n")[0] if "Not available here:" in web else ""
+    assert "code_execute" not in web_off
 
 
 def test_self_doc_tool_runs_off_the_event_loop(clean_settings, monkeypatch):
