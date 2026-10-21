@@ -29,7 +29,7 @@ If you ask the agent in `fitness-coach` for a workout plan, it will not recall a
 
 ## 2. Personality and presets
 
-The agent's identity is `soul.md` and its working rules are `agent.md`, both edited in **Settings → Personality**. Every project follows the **global** personality, including your later edits to it, until you give the project its own.
+The agent's identity is `soul.md` and its working rules are `agent.md`, both edited in **Settings → Personality**. An `agent.md` you never edited follows Pantheon's bundled version on updates; once you edit it, your version is kept. Every project follows the **global** personality, including your later edits to it, until you give the project its own.
 
 - **Presets** (Hermes, Athena, Mnemosyne, …) are ready-made `soul.md` voices. Applying one to a project is a one-time copy. The global **Key Commitments** (never fabricate, flag uncertainty, …) are always appended.
 - **Where to apply:** in Settings → Personality with the project as the scope, in the project's **Settings** tab (Personality), or on its card in Projects.
