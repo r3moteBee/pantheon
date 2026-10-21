@@ -14,10 +14,10 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "get_self_documentation",
             "description": (
-                "Retrieve the system self-documentation. Use this tool "
-                "when the user asks questions about the agent's prompt skills, "
-                "active configuration state, architecture/storage tiers, or "
-                "the current local deployment status."
+                "How Pantheon works and how this instance is set up: memory, artifacts vs workspace, "
+                "uploads, tasks/approval/jobs, limits, models and routing, the tools available in "
+                "this context, connections, skills, version. Read it before answering what you can "
+                "or can't do, where things are saved, or which model or limits apply."
             ),
             "parameters": {
                 "type": "object",
@@ -85,8 +85,10 @@ SCHEMAS: list[dict[str, Any]] = [
 @tool('get_self_documentation')
 async def _tool_get_self_documentation(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     try:
+        import asyncio
         from utils.self_doc import generate_self_doc
-        return generate_self_doc()
+        return await asyncio.to_thread(generate_self_doc, ctx.effective_project,
+                                       ctx.interactive, ctx.host_exec)
     except Exception as e:
         return f"get_self_documentation failed: {e}"
 

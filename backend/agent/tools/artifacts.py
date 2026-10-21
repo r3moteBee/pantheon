@@ -146,7 +146,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "list_artifacts",
             "description": (
-                "List artifacts in the active project. To find files in a folder use path_prefix with a BARE folder name like 'NBJ/' — do NOT include the project slug yourself; the tool prepends it for you (so 'NBJ/' and 'default-project/NBJ/' both work). To find a single file use read_artifact with id or path."
+                "List artifacts in the active project. To find files in a folder use path_prefix with a BARE folder name like 'research/' — do NOT include the project slug yourself; the tool prepends it for you (so 'research/' and 'default-project/research/' both work). To find a single file use read_artifact with id or path."
             ),
             "parameters": {
                 "type": "object",
@@ -193,7 +193,7 @@ async def _tool_save_last_response(ctx: ToolContext, tool_name: str, tool_args: 
     if not source_msgs:
         return (
             "No prior messages found in the current session. "
-            "Ask the user for the content they want saved and then call write_file directly."
+            "Ask the user for the content they want saved, then save it with save_to_artifact."
         )
 
     # ── Build source text block ─────────────────────────────────
@@ -490,8 +490,8 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
         """Make path/path_prefix consistent with how save stores them.
 
         Saves auto-prepend '<project_slug>/' if missing. Apply the
-        same rule to lookups so agents can save 'NBJ/x.md' and
-        find it again with either 'NBJ/' or 'default-project/NBJ/'.
+        same rule to lookups so agents can save 'research/x.md' and
+        find it again with either 'research/' or 'default-project/research/'.
         Idempotent: never double-prefixes.
         """
         if p is None:

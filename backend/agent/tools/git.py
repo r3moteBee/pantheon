@@ -168,8 +168,8 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
         spec = get_project_repo_for_tools(effective_project)
         if not spec:
             return (f"No repo bound to project {effective_project}. Bind one "
-                    f"in Settings → Connections (add a PAT) then in the "
-                    f"Projects page pick a repo for this project.")
+                    f"on the Connections page (GitHub tab: add a token), then "
+                    f"pick a repo in the chat's Repository tab.")
         token = get_token(spec["connection_id"])  # None is fine for public repos
         owner, repo = spec["owner"], spec["repo"]
         branch = tool_args.get("branch") or spec["default_branch"] or "main"
@@ -385,15 +385,15 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
         if not spec:
             return (
                 f"No repo bound to project {effective_project}. Bind one "
-                f"in Settings → Connections (add a PAT) then in the "
-                f"Projects page pick a repo for this project."
+                f"on the Connections page (GitHub tab: add a token), then "
+                f"pick a repo in the chat's Repository tab."
             )
         conn_row = get_connection(spec["connection_id"])
         if not conn_row:
-            return "Connection not found. Re-add the GitHub PAT in Settings → Connections."
+            return "Connection not found. Re-add the GitHub token on the Connections page (GitHub tab)."
         token = get_token(conn_row["id"])
         if not token:
-            return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Connections."
+            return f"Connection {conn_row['id']} has no stored token. Re-add it on the Connections page (GitHub tab)."
 
         owner = spec["owner"]
         repo = spec["repo"]

@@ -46,10 +46,15 @@ frontend/dist/
 
 # Data (persisted volumes — don't commit runtime data)
 data/*
-# data/personality/*.md is tracked: it is the live global personality on
-# installs where DATA_DIR is ./data (don't untrack — a pull would delete it)
+# data/personality/soul.md is tracked: it is the live global personality on
+# installs where DATA_DIR is ./data (don't untrack — a pull would delete it).
+# agent.md is NOT tracked: startup copies the bundled default
+# (backend/data/personality/agent.md) and refreshes it on updates unless the
+# user edited it (agent/personality.refresh_default_agent_md); a tracked copy
+# went stale and installs read an old guide.
 !data/personality/
-!data/personality/*.md
+data/personality/*
+!data/personality/soul.md
 
 # Manual local backups (e.g. data.backup-YYYYMMDD-HHMM/ from migrations)
 *.backup-*/

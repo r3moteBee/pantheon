@@ -135,9 +135,14 @@ async def lifespan(app: FastAPI):
     if _needs_init(soul_path) and (default_dir / "soul.md").exists():
         shutil.copy(default_dir / "soul.md", soul_path)
         logger.info("Initialised soul.md from bundled template → %s", soul_path)
-    if _needs_init(agent_path) and (default_dir / "agent.md").exists():
-        shutil.copy(default_dir / "agent.md", agent_path)
-        logger.info("Initialised agent.md from bundled template → %s", agent_path)
+    # agent.md is Pantheon's own guide: follow the bundled version on updates
+    # unless the user edited it (agent/personality.refresh_default_agent_md).
+    from agent.personality import refresh_default_agent_md
+    _agent_md = refresh_default_agent_md(settings.personality_dir, default_dir / "agent.md")
+    if _agent_md in ("copied", "refreshed"):
+        logger.info("agent.md %s from the bundled default → %s", _agent_md, agent_path)
+    elif _agent_md == "kept-edited":
+        logger.info("agent.md has user edits - kept; the bundled default is at %s", default_dir / "agent.md")
 
     # Start the task scheduler
     from tasks.scheduler import get_scheduler

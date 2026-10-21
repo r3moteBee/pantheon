@@ -185,6 +185,7 @@ async def execute_update(payload: dict[str, Any]) -> dict[str, Any]:
 @router.get("/system/self-doc")
 async def system_self_doc() -> dict[str, Any]:
     """Retrieve self-documentation information."""
+    import asyncio
     from utils.self_doc import generate_self_doc
-    return {"documentation": generate_self_doc()}
+    return {"documentation": await asyncio.to_thread(generate_self_doc)}
 

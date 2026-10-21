@@ -100,7 +100,7 @@ def _build_recent_jobs_block(project_id: str | None) -> str:
 def _build_available_skills_block(project_id: str) -> str:
     """Render an 'Available skills' block listing installed skills
     with their trigger phrases. Helps the agent prefer /skill-name
-    invocation over create_task or start_coding_task when a user
+    invocation over create_task or a coding task when a user
     request matches a registered trigger."""
     try:
         from skills.registry import get_skill_registry
@@ -119,7 +119,7 @@ def _build_available_skills_block(project_id: str) -> str:
         "When the user's request matches one of the trigger phrases "
         "below, INVOKE THE SKILL. The skill\'s instructions will run "
         "as part of your normal turn — you do NOT need create_task "
-        "or start_coding_task. Either:",
+        "or a coding task. Either:",
         "  • follow the skill\'s instructions inline this turn, OR",
         "  • tell the user you\'re running the skill and proceed with "
         "    the steps it lays out, citing the skill name in your reply.",

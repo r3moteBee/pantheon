@@ -14,7 +14,9 @@ SCHEMAS: list[dict[str, Any]] = [
             "name": "create_task",
             "description": (
                 "Schedule an autonomous background task. Unless skip_review=true it is created "
-                "PAUSED with a proposed plan; it runs only after the user approves it in the Tasks tab. "
+                "PAUSED as a proposal; it runs only after the user approves it in the chat's Tasks tab. "
+                "For a schedule the user asked for, show them the plan in chat first and call this with "
+                "skip_review=true once they approve. "
                 "In the plan, name the exact tools each step uses (look at the tools you actually have — "
                 "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
                 "say so in the plan rather than pretending."
@@ -64,7 +66,8 @@ SCHEMAS: list[dict[str, Any]] = [
                     "skip_review": {
                         "type": "boolean",
                         "default": False,
-                        "description": "True only when the user explicitly said not to review the plan."
+                        "description": ("True only when the user approved this exact plan in this chat, or said "
+                                        "to skip the review. Ignored outside the web chat (tasks stay proposals).")
                     },
                     "job_type": {
                         "type": "string",
@@ -73,7 +76,7 @@ SCHEMAS: list[dict[str, Any]] = [
                         "description": (
                             "'autonomous_task' (default): run the plan once. 'iteration_loop': repeated "
                             "execute→review turns (for 'loop', 'iterate N times', generator/reviewer work); "
-                            "each turn is saved as iteration/<job_id>/turn-N.md. 'coding_task': a background "
+                            "each turn is saved as artifact iteration/<job id, 8 chars>/turn-01.md, turn-02.md... 'coding_task': a background "
                             "coding agent edits the bound GitHub repo and opens a PR — ONLY for authoring code "
                             "(fix, feature, refactor), never for ingest or research; web chat only, starts now. "
                             "Put the stack and file layout in coding_context (read them with the github tool first). "
@@ -139,7 +142,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "send_telegram",
-            "description": "Send a message to the operator via Telegram. Use for important updates, task completions, or when you need human input on a long-running task.",
+            "description": "Send a message to the user via Telegram (only works when Telegram is set up in Settings -> Channels). Use for important updates, task completions, or when you need human input on a long-running task.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -391,11 +394,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
     if skip_review and not interactive:
         skip_review = False
 
-    # SERVER-SIDE GUARDRAIL: reject create_task without a plan, and
-    # reject skip_review=true unless the user explicitly approved
-    # the plan in the current conversation. The agent's system
-    # prompt should already enforce this, but the model
-    # sometimes ignores it — refusal here is the backstop.
+    # SERVER-SIDE GUARDRAIL: reject create_task without a plan. Whether
+    # the user approved a skip_review=true call can't be checked here;
+    # the system prompt asks for an explicit approval in chat, and outside
+    # the web chat skip_review is ignored (above).
     if not plan_text:
         return (
             "create_task rejected: a plan is required. "
@@ -561,8 +563,13 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
 @tool('send_telegram')
 async def _tool_send_telegram(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     try:
-        from messaging.adapters.telegram import send_message_to_all
-        await send_message_to_all(tool_args["message"])
+        from messaging.adapters import telegram as _tg
+        if not _tg.TelegramAdapter._get_allowed_ids() or _tg._application is None:
+            # send_message_to_all returns silently then; "sent" made the agent
+            # promise phone notifications that never arrived.
+            return ("Telegram send failed: Telegram is not set up (Settings -> Channels needs a bot token and "
+                    "an allowed chat id, and the bot must be running). Nothing was sent.")
+        await _tg.send_message_to_all(tool_args["message"])
         return "Telegram message sent."
     except Exception as e:
         return f"Telegram send failed: {e}"
