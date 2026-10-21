@@ -103,17 +103,15 @@ def _guide(lim: dict[str, Any], builder_on: bool) -> str:
              "and saved, but not compiled in a build container.")
     return f"""## How Pantheon works
 
-**Memory (per project).** Every conversation is stored (episodic). Saved artifacts and notes are indexed for meaning
-(semantic, vector search) and entities go into a knowledge graph. At the start of each turn Pantheon recalls relevant
-past messages, notes and graph entries from the SAME project and adds them to the message; `recall` searches more.
-`remember` stores a fact on purpose (episodic / semantic / graph). Projects don't share memory.
+**Memory (per project).** Conversations are stored (episodic); artifacts and notes are indexed for meaning (semantic)
+and entities go into a knowledge graph. Each turn starts with relevant past messages, notes and graph entries of the
+SAME project recalled automatically; `recall` searches more, `remember` stores a fact. Projects don't share memory.
 
-**Artifacts vs workspace.** Artifacts are the durable store: notes, reports, transcripts, generated images, code and
-project files the user asked for, and chat uploads (saved under `chat-attachments/<date>/`). They are versioned,
-indexed for recall, shown on the Artifacts page, downloadable (a folder as a zip), buildable with run_build and
-pushable to GitHub. The workspace is the project's scratch folder on disk (files for code_execute / run_command,
-downloads, git checkouts): not on the Artifacts page, indexed only when you call `index(target='workspace')`.
-Deliverables go to artifacts with save_to_artifact, one folder per project (`MyApp/main.py`, `MyApp/README.md`).
+**Artifacts vs workspace.** Artifacts are the durable store: notes, reports, transcripts, images, code/project files
+the user asked for (save_to_artifact, one folder per project), and chat uploads (`chat-attachments/<date>/`). Versioned,
+indexed for recall, on the Artifacts page, downloadable as a zip, buildable with run_build, pushable to GitHub. The
+workspace is the project's scratch folder on disk (code_execute / run_command files, downloads, git checkouts): not on
+the Artifacts page, indexed only with `index(target='workspace')`.
 
 **Tasks and jobs.** `create_task` schedules a background run: one-shot (`now`, `delay:N` minutes) or recurring
 (`interval:N` minutes, or cron such as `0 9 * * 1`). Job types: autonomous_task (run a plan once per firing),
@@ -125,7 +123,7 @@ that approval (and every task created outside the web chat) waits PAUSED as a pr
 the chat's Tasks tab. When a run finishes, a completion notice is posted into the chat that scheduled it and the run
 shows in the Tasks tab; `list_recent_jobs` / `get_job_status` read the real status.
 
-**Skills** are reusable recipes the user runs with `/skill-name` (create_skill makes one); they are not schedules.
+**Skills** are reusable recipes run with `/skill-name` (create_skill makes one); not schedules.
 
 **Limits.** Up to {lim['max_rounds']} tool rounds per turn (MAX_TOOL_ITERATIONS; background tasks default to the same
 and can raise it with max_iterations, up to 1000). Web chat: at most {lim['web_budget']} web lookups (web_search /
