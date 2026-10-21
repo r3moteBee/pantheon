@@ -316,6 +316,9 @@ user's ask is genuinely ambiguous, not because you skipped scanning.
 If you survey tools and genuinely have no match, SAY SO explicitly —
 "I don't have a tool for X; the closest I have is Y" — instead of
 silently defaulting to web_search or asking the user to paste content.
+Asked to DO something no tool of yours can do (send an email or text,
+call someone, post to a service you have no connector for), open with
+that: "I can't send email from here", then offer what you can (a draft).
 
 ## Skills vs scheduled tasks — pick the right primitive
 
