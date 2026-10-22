@@ -4,6 +4,20 @@ import { llmApi } from '../../api/client'
 import SkillPicker from '../SkillPicker'
 import { AttachmentPill } from './Attachments'
 
+// Below the sm breakpoint the long placeholder hint gets cut off mid-word.
+function useNarrow() {
+  const q = '(max-width: 639px)'
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(q).matches)
+  useEffect(() => {
+    const m = window.matchMedia?.(q)
+    if (!m) return
+    const on = () => setNarrow(m.matches)
+    m.addEventListener?.('change', on)
+    return () => m.removeEventListener?.('change', on)
+  }, [])
+  return narrow
+}
+
 // Attachment tray + input row: model picker, attach button, skill picker,
 // textarea and send/stop.
 export default function ChatComposer({
@@ -16,14 +30,25 @@ export default function ChatComposer({
   const [skillQuery, setSkillQuery] = useState('')
   // Chat router: the classes that can take a turn besides agent.
   const [routeOptions, setRouteOptions] = useState([])
+  const [routesLoaded, setRoutesLoaded] = useState(false)
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
+  const narrow = useNarrow()
 
   useEffect(() => {
     llmApi.getRouter()
       .then((v) => setRouteOptions((v.classes || []).filter((c) => c.usable && c.name !== 'agent')))
       .catch(() => setRouteOptions([]))
+      .finally(() => setRoutesLoaded(true))
   }, [])
+
+  // A mode restored from an earlier visit (per project, see useChatSocket)
+  // may no longer be offered by the router: fall back to Auto rather than
+  // sending a class the backend rejects.
+  useEffect(() => {
+    if (!routesLoaded || modelClass === 'auto' || modelClass === 'agent') return
+    if (!routeOptions.some((c) => c.name === modelClass)) setModelClass('auto')
+  }, [routesLoaded, routeOptions, modelClass, setModelClass])
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || [])
@@ -62,8 +87,9 @@ export default function ChatComposer({
               value={modelClass}
               onChange={(e) => setModelClass(e.target.value)}
               disabled={isStreaming}
-              title="Model for this conversation. Auto lets the chat router pick per turn; /model <class> works too."
-              className="flex-shrink-0 h-12 bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-300 focus:outline-none focus:border-brand-500 disabled:opacity-40"
+              title="Chat mode (remembered per project). Auto lets the chat router pick per turn; /model <class> works too."
+              aria-label="Chat mode"
+              className="flex-shrink-0 h-12 max-w-[5.5rem] sm:max-w-none bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-200 focus:border-brand-500 disabled:opacity-40"
             >
               <option value="auto">Auto</option>
               <option value="agent">Agent</option>
@@ -74,17 +100,21 @@ export default function ChatComposer({
           )}
           {/* Attach button */}
           <button
+            type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={isStreaming || uploading}
-            title="Attach file (uploaded to workspace and indexed into memory)"
+            title="Attach files (uploaded to the workspace and indexed into memory)"
+            aria-label="Attach files"
             className="flex-shrink-0 w-10 h-12 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 rounded-xl flex items-center justify-center transition-colors"
           >
-            <Paperclip className="w-4 h-4" />
+            <Paperclip className="w-4 h-4" aria-hidden="true" />
           </button>
           <input
             ref={fileInputRef}
             type="file"
             multiple
+            tabIndex={-1}
+            aria-hidden="true"
             onChange={handleFileSelect}
             className="hidden"
             accept="*/*"
@@ -135,10 +165,11 @@ export default function ChatComposer({
                 handleKeyDown(e)
               }}
               onPaste={onPaste}
-              placeholder={uploading ? 'Uploading files...' : 'Message the agent... (Enter to send, Shift+Enter for newline)'}
+              placeholder={uploading ? 'Uploading files…' : narrow ? 'Message the agent…' : 'Message the agent… (Enter to send, Shift+Enter for newline)'}
+              aria-label="Message the agent (Enter to send, Shift+Enter for a new line)"
               rows={1}
               disabled={isStreaming || uploading}
-              className="w-full resize-none bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
+              className="w-full resize-none bg-gray-800 border border-gray-700 rounded-xl px-3 sm:px-4 py-3 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
               style={{
                 minHeight: '48px',
                 maxHeight: '200px',
@@ -152,18 +183,24 @@ export default function ChatComposer({
           </div>
           {isStreaming ? (
             <button
+              type="button"
               onClick={onStop}
+              aria-label="Stop the reply"
+              title="Stop the reply"
               className="flex-shrink-0 w-10 h-12 bg-red-600 hover:bg-red-700 text-white rounded-xl flex items-center justify-center transition-colors"
             >
-              <Square className="w-4 h-4" />
+              <Square className="w-4 h-4" aria-hidden="true" />
             </button>
           ) : (
             <button
+              type="button"
               onClick={onSend}
               disabled={(!input.trim() && attachments.length === 0) || uploading}
+              aria-label="Send message"
+              title="Send (Enter)"
               className="flex-shrink-0 w-10 h-12 bg-brand-600 hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl flex items-center justify-center transition-colors"
             >
-              <Send className="w-4 h-4" />
+              <Send className="w-4 h-4" aria-hidden="true" />
             </button>
           )}
         </div>

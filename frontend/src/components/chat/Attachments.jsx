@@ -16,8 +16,14 @@ export function AttachmentPill({ file, onRemove }) {
       <AttachmentIcon filename={file.name} />
       <span className="truncate">{file.name}</span>
       {onRemove && (
-        <button onClick={onRemove} className="ml-auto flex-shrink-0 hover:text-red-400 transition-colors">
-          <X className="w-3 h-3" />
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${file.name}`}
+          title={`Remove ${file.name}`}
+          className="ml-auto flex-shrink-0 p-0.5 rounded hover:text-red-400 transition-colors"
+        >
+          <X className="w-4 h-4" />
         </button>
       )}
     </div>

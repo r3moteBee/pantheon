@@ -331,7 +331,10 @@ class EpisodicMemory:
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT c.id, c.session_id, c.title, c.created_at, c.updated_at, c.metadata,
-                       COUNT(m.id) as message_count
+                       COUNT(m.id) as message_count,
+                       (SELECT substr(fm.content, 1, 200) FROM messages fm
+                         WHERE fm.session_id = c.session_id AND fm.role = 'user'
+                         ORDER BY fm.timestamp LIMIT 1) AS first_user_message
                 FROM conversations c
                 LEFT JOIN messages m ON m.session_id = c.session_id
                 WHERE c.project_id = ?
@@ -348,6 +351,8 @@ class EpisodicMemory:
                 "updated_at": r["updated_at"],
                 "metadata": json.loads(r["metadata"] or "{}"),
                 "message_count": r["message_count"],
+                # The history drawer titles untitled chats with this.
+                "first_user_message": r["first_user_message"],
             }
             for r in rows
         ]
