@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     # Extra public hostnames (comma-separated) this server may be reached by
     # when AUTH_PASSWORD is empty, e.g. a Caddy domain. Guards DNS rebinding.
     allowed_hosts: str = ""
+    # Peers (comma-separated IPs/CIDRs) whose X-Forwarded-For / -Proto /
+    # -Host / -Port headers are believed: the client IP for the password
+    # throttle and the request origin for the CSRF/WebSocket Origin check
+    # (api/auth.py). Default: loopback (a reverse proxy on the same host).
+    trusted_proxies: str = "127.0.0.1,::1"
+    # Public URL the browser uses to reach Pantheon, e.g.
+    # https://pantheon.example.com:8443. Used for the MCP OAuth redirect_uri.
+    # Empty = taken from the request that starts the OAuth flow.
+    public_base_url: str = ""
 
     # Telegram
     telegram_bot_token: str = ""

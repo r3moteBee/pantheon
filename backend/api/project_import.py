@@ -95,6 +95,65 @@ _MAX_ARCHIVE_SIZE = 500 * 1024 * 1024  # 500 MB
 _MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 _MAX_JSON_RECORDS = 500_000  # Max rows per table
 _MAX_FILE_COUNT = 10_000
+# Zip-bomb guard (checked from the central directory before anything is
+# decompressed, also when the scan is skipped). zipfile never yields more
+# than a member's declared file_size, so declared sizes are a hard cap.
+_MAX_TOTAL_UNCOMPRESSED = 2 * 1024 * 1024 * 1024  # 2 GB
+_MAX_COMPRESSION_RATIO = 200        # per member, above _RATIO_MIN_SIZE
+_RATIO_MIN_SIZE = 1024 * 1024
+
+
+class ArchiveRejected(ValueError):
+    """The archive's structure is unsafe to extract."""
+
+
+def check_archive_limits(zf: zipfile.ZipFile) -> None:
+    """Refuse archives that would expand too far or extract outside the
+    target: total/per-member uncompressed size, member count, per-member
+    compression ratio, absolute or ``..`` paths."""
+    infos = zf.infolist()
+    if len(infos) > _MAX_FILE_COUNT:
+        raise ArchiveRejected(f"too many members ({len(infos)} > {_MAX_FILE_COUNT})")
+    total = 0
+    for info in infos:
+        name = info.filename
+        if _unsafe_member_name(name):
+            raise ArchiveRejected(f"unsafe member path: {name!r}")
+        if info.file_size > _MAX_SINGLE_FILE_SIZE:
+            raise ArchiveRejected(f"member too large: {name} ({info.file_size} bytes)")
+        if (info.file_size > _RATIO_MIN_SIZE
+                and info.file_size > _MAX_COMPRESSION_RATIO * max(info.compress_size, 1)):
+            raise ArchiveRejected(
+                f"suspicious compression ratio for {name} "
+                f"({info.file_size} / {info.compress_size} bytes)")
+        total += info.file_size
+        if total > _MAX_TOTAL_UNCOMPRESSED:
+            raise ArchiveRejected(
+                f"archive expands to more than {_MAX_TOTAL_UNCOMPRESSED} bytes")
+
+
+def _unsafe_member_name(name: str) -> bool:
+    n = name.replace("\\", "/")
+    if n.startswith("/") or (len(n) > 1 and n[1] == ":") or "\x00" in n:
+        return True
+    return any(part == ".." for part in n.split("/"))
+
+
+def _skipped_file_member(relative: str) -> str | None:
+    """Why a files/ member is never restored, or None to restore it.
+
+    - VCS control dirs (.git, .hg, ...) anywhere: a restored .git/config or
+      hook (core.fsmonitor, core.hooksPath, hooks/*) runs on the next git
+      command in that checkout.
+    - workspace/repos/: repo checkouts are re-cloned by git_sync_repo; a
+      leftover working tree without .git would block that clone.
+    """
+    from api.project_export import is_vcs_path
+    if is_vcs_path(relative):
+        return "vcs"
+    if relative.replace("\\", "/").startswith("workspace/repos/"):
+        return "repo"
+    return None
 
 
 def _hash_bytes(data: bytes) -> str:
@@ -140,6 +199,17 @@ def scan_archive(archive_bytes: bytes) -> ScanResult:
             severity=ScanSeverity.critical,
             category="size",
             message=f"Archive contains too many files ({len(members)} > {_MAX_FILE_COUNT})",
+        ))
+        zf.close()
+        return ScanResult(passed=False, findings=findings, stats=stats)
+
+    try:
+        check_archive_limits(zf)
+    except ArchiveRejected as e:
+        findings.append(ScanFinding(
+            severity=ScanSeverity.critical,
+            category="size" if "unsafe" not in str(e) else "path_traversal",
+            message=f"Archive rejected: {e}",
         ))
         zf.close()
         return ScanResult(passed=False, findings=findings, stats=stats)
@@ -402,6 +472,12 @@ def import_project(
 
     # ── Step 2: Extract manifest ─────────────────────────────────────
     zf = zipfile.ZipFile(io.BytesIO(archive_bytes), "r")
+    try:
+        # Structural limits apply even with skip_scan.
+        check_archive_limits(zf)
+    except ArchiveRejected as e:
+        zf.close()
+        return ImportResult(success=False, message=f"Archive rejected: {e}", scan=scan)
     manifest = json.loads(zf.read("manifest.json"))
     source_project_id = manifest.get("project_id", "imported")
     source_project_name = manifest.get("project_name", source_project_id)
@@ -419,13 +495,11 @@ def import_project(
         components = [c for c in components if c in available_components]
 
     # ── Step 3: Check for conflicts ──────────────────────────────────
+    from utils.jsonfile import read_json, update_json
     meta_path = settings.db_dir / "projects.json"
-    projects = {}
-    if meta_path.exists():
-        try:
-            projects = json.loads(meta_path.read_text())
-        except Exception:
-            pass
+    # An unreadable projects.json raises here instead of being replaced by
+    # a file holding only the imported project.
+    projects = read_json(meta_path, {}) or {}
 
     if project_id in projects and not overwrite:
         base_id = project_id
@@ -447,9 +521,8 @@ def import_project(
             meta["imported_at"] = datetime.now(timezone.utc).isoformat()
             meta["imported_from"] = source_project_id
 
-            projects[project_id] = meta
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.write_text(json.dumps(projects, indent=2))
+            with update_json(meta_path, dict) as current:
+                current[project_id] = meta
 
             project_dir = settings.projects_dir / project_id
             for subdir in ("workspace", "personality", "notes"):
@@ -461,16 +534,15 @@ def import_project(
             warnings.append(f"metadata: {e}")
 
     elif "metadata" in components:
-        projects[project_id] = {
-            "id": project_id,
-            "name": project_name,
-            "description": f"Imported from {source_project_id}",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "imported_at": datetime.now(timezone.utc).isoformat(),
-            "active": True,
-        }
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
-        meta_path.write_text(json.dumps(projects, indent=2))
+        with update_json(meta_path, dict) as current:
+            current[project_id] = {
+                "id": project_id,
+                "name": project_name,
+                "description": f"Imported from {source_project_id}",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "imported_at": datetime.now(timezone.utc).isoformat(),
+                "active": True,
+            }
 
         project_dir = settings.projects_dir / project_id
         for subdir in ("workspace", "personality", "notes"):
@@ -509,7 +581,7 @@ def import_project(
     # ── Step 6: Import files ─────────────────────────────────────────
     if "files" in components:
         try:
-            count = _import_files(zf, project_id)
+            count = _import_files(zf, project_id, warnings)
             import_stats["files_restored"] = count
             imported_components.append("files")
         except Exception as e:
@@ -962,13 +1034,16 @@ def _import_tasks(
     logger.info("Task import done: %d created, %d skipped", created, skipped)
 
 
-def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
-    """Restore workspace, personality, and notes files."""
+def _import_files(zf: zipfile.ZipFile, project_id: str,
+                  warnings: list[str] | None = None) -> int:
+    """Restore workspace, personality, and notes files (never VCS control
+    dirs or repo checkouts — see _skipped_file_member)."""
     from api.project_export import workspace_dir
     project_dir = settings.projects_dir / project_id
     project_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
+    skipped: dict[str, int] = {}
 
     for name in zf.namelist():
         if not name.startswith("files/") or name.endswith("/"):
@@ -976,6 +1051,10 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
 
         relative = name[len("files/"):]
         if not relative:
+            continue
+        why = _skipped_file_member(relative)
+        if why:
+            skipped[why] = skipped.get(why, 0) + 1
             continue
 
         # the default project's workspace lives at data/workspace, not projects/default/workspace
@@ -995,6 +1074,16 @@ def _import_files(zf: zipfile.ZipFile, project_id: str) -> int:
             target.write_bytes(src.read())
         count += 1
 
+    if skipped:
+        msg = []
+        if skipped.get("vcs"):
+            msg.append(f"{skipped['vcs']} VCS control file(s) (.git etc.) not restored")
+        if skipped.get("repo"):
+            msg.append(f"{skipped['repo']} repo checkout file(s) under workspace/repos/ not "
+                       "restored - run git_sync_repo to clone the repo again")
+        logger.info("File import for %s: %s", project_id, "; ".join(msg))
+        if warnings is not None:
+            warnings.extend(msg)
     return count
 
 

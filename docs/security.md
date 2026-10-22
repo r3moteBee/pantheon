@@ -7,8 +7,10 @@ Pantheon is a single-user app that usually runs on localhost. The controls below
 - **Password:** `AUTH_PASSWORD`. If it is empty, auth is **off** and the DNS-rebinding guard below takes over. `password_matches()` (HMAC compare) is the only password check.
 - **Sessions:** `POST /api/auth/login` issues a random 32-byte token. Only its SHA-256 is stored, in `data/db/auth_sessions.db`, and it expires after `AUTH_SESSION_DAYS` (30). Each session is tagged with a fingerprint of `AUTH_PASSWORD`+`SECRET_KEY`, so changing either one logs everything out.
 - **Transport:** the `pantheon_session` cookie (`HttpOnly; SameSite=Strict`, `Secure` over HTTPS or `X-Forwarded-Proto: https`), or `Authorization: Bearer <token>` for scripts. **Tokens are never accepted in the query string.**
-- **Login throttle:** 10 failures per IP per 5 min, then 429.
-- **CSRF:** requests other than GET/HEAD/OPTIONS with a foreign `Origin` (not same-host and not in `CORS_ORIGINS`) get 403.
+- **Password throttle:** 10 failures per client IP per 5 min, then 429. It covers `POST /api/auth/login` and every other password check (`POST /api/system/update/execute`). The client IP is `api.auth.client_ip`: the TCP peer, or, when the peer is in `TRUSTED_PROXIES`, the right-most `X-Forwarded-For` entry that isn't itself a trusted proxy.
+- **CSRF:** requests other than GET/HEAD/OPTIONS with a foreign `Origin` get 403. Origins compare as **scheme + host + port** (`origin_is_allowed`): an Origin is allowed when it is listed in `CORS_ORIGINS` or equals the request's own origin (`request_origin`). Another service on the same hostname at another port (Nextcloud at `:8443`, Jellyfin at `:8096`, …) is a different origin.
+- **Trusted proxy headers** (`TRUSTED_PROXIES`, IPs/CIDRs, default `127.0.0.1,::1`): only when the TCP peer is in that list are `X-Forwarded-For` (client IP), `X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Forwarded-Port` (request origin) used. From any other peer the origin is the `Host` header with the URL scheme, and a `Host` without a port means the scheme's default port. A proxy that drops the port from `Host` (nginx `proxy_set_header Host $host`) therefore needs the public origin in `CORS_ORIGINS`, or `X-Forwarded-Port` plus `TRUSTED_PROXIES`. `ALLOWED_HOSTS` is only the DNS-rebinding list; it never allows an Origin.
+- **CORS is the outermost middleware**, so preflight `OPTIONS` requests are answered without a session and 401/403/421 responses still carry CORS headers for listed origins.
 - **WebSockets** skip the HTTP middleware, so every WS endpoint calls `authorize_websocket(ws)` before `accept()`. It checks the insecure-default lock, `Origin`, the host guard and the session.
 - **Auth off:** requests whose `Host` is a public dotted name not listed in `ALLOWED_HOSTS` get 421. IP literals, `localhost` and `.local`/`.lan`/`.internal`/… names are allowed.
 - **Public paths:** `/`, `/health`, `/api/health`, `/docs`, `/redoc`, `/openapi.json`, `/api/auth/{login,config,logout}` and `/api/mcp/oauth/callback`. When the frontend is built, any path outside `/api/` and `/ws/` (the static UI shell) is public too.
@@ -22,7 +24,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 ## Secrets vault (`backend/secrets/vault.py`)
 
 - Fernet encryption in `data/db/vault.db`.
-- **KDF v2:** PBKDF2-SHA256 with 600k iterations over the full `VAULT_MASTER_KEY` and a random per-vault salt stored in `vault_meta`. Older v1 vaults (truncated key, fixed salt, 100k iterations) are re-encrypted on first open.
+- **KDF v2:** PBKDF2-SHA256 with 600k iterations over the full `VAULT_MASTER_KEY` and a random per-vault salt stored in `vault_meta`. Older v1 vaults (truncated key, fixed salt, 100k iterations) are re-encrypted on first open. If any secret can't be decrypted with the current key the migration is aborted (error logged, vault left v1 and unchanged) and retried on the next start.
 - `GET /api/secrets` lists key names only, never values.
 - **Secrets never follow user-set URLs by name.** A search provider may only reference `search_key__*` or `*_api_key` vault keys (`agent.search_providers.is_search_key_name`). LLM keys are excluded. This is checked on save and on use.
 
@@ -76,13 +78,23 @@ Limits:
 - **Legacy `uploads/…png` references** in chat messages are inlined only when they resolve inside the workspace's `uploads/`.
 - **Workspace HTML** renders in `SandboxedHtml`: `srcDoc` with `sandbox="allow-scripts"`, no same-origin. Any HTML set via `innerHTML` goes through DOMPurify; Mermaid SVG relies on mermaid's `securityLevel: 'strict'` instead.
 
+## Project import / export
+
+- **No VCS control dirs.** Export skips `.git`, `.hg`, `.svn`, `.bzr`, `_darcs` and `.jj` directories and symlinks. Import never restores a path with such a component (a `.git/config` or hook would run on the next git command, e.g. `core.fsmonitor`), and never restores `workspace/repos/` (repo checkouts are re-cloned by `git_sync_repo`).
+- **Zip-bomb guard** (`check_archive_limits`, also when the scan is skipped): at most 10,000 members, 100 MB per member, 2 GB uncompressed in total, a compression ratio of at most 200:1 for members over 1 MB, and no absolute, drive-letter or `..` member paths. Checked from the central directory before anything is decompressed.
+- **projects.json** is written only through `utils/jsonfile.py`: one process-wide lock per file for every read-modify-write, an atomic replace (temp file + `os.replace`) and the previous good copy in `projects.json.bak`. A file that doesn't parse is an error (HTTP 500), never replaced by a default.
+
 ## Messaging bots
 
-Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Bots are a background context, so they get no host exec unless `AGENT_HOST_EXEC=always`. See [messaging.md](messaging.md).
+Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Every adapter re-reads its allowlist for each message (and each Telegram button press), so edits apply without a restart. Bots are a background context, so they get no host exec unless `AGENT_HOST_EXEC=always`. See [messaging.md](messaging.md).
 
 ## MCP OAuth
 
 MCP servers can use OAuth 2.1: discovery through Protected Resource Metadata, dynamic client registration and PKCE S256 with a `resource` indicator. Pending `state` expires after 10 min. Tokens are stored in the vault as `mcp_oauth_tokens__<name>`, plus `mcp_oauth_client_secret__<name>` when the server requires a confidential client.
+
+The `redirect_uri` is `PUBLIC_BASE_URL` + `/api/mcp/oauth/callback` when set; otherwise the request that starts the flow decides: its `Origin` if that passes the origin check, else its own origin (above), else `http://localhost:8000`. It is stored with the pending state, so the code exchange sends the same value.
+
+Connection listings and `GET /api/mcp/debug/{name}` mask secrets: every custom header value is `***`, and URLs lose their userinfo and every query-string value (`?tavilyApiKey=***`). A masked URL sent back on update gets its real values restored (`restore_masked_url`).
 
 Refreshes are serialized per connection (`_REFRESH_LOCKS`). If the authorization server rejects a refresh, the connection shows `needs_auth`. The callback is a public path; its protection is the PKCE verifier plus `state`.
 

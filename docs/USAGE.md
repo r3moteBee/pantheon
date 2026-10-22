@@ -290,6 +290,8 @@ If you place a PDF named `HBM3_Specification.pdf` into your workspace folder (`~
 - **Run `consolidate_memory` at the end of a productive session.** It distills the conversation into semantic and graph memory so future sessions pick up where you left off.
 - **Keep `soul.md` short and specific.** Long, generic personalities bleed into analytical answers. Use the *minimal* personality weight (chat header or Project Settings) for research projects.
 - **Watch the cost of long context.** Automatic recall adds up to about 4,000 tokens of memories per turn. If they crowd out current work, set the project's context focus to *focused* or turn memory recall off for that project (Project Settings).
+- **Behind a reverse proxy.** Pantheon accepts browser requests only from its own origin (scheme, host **and port**) or one listed in `CORS_ORIGINS`. If the proxy drops the port from `Host` (nginx `$host`) or serves Pantheon on another port than it listens on, put the address you open in the browser in `CORS_ORIGINS` (e.g. `https://pantheon.example.com:8443`). Set `TRUSTED_PROXIES` to the proxy's address if you want its `X-Forwarded-*` headers used (login throttle per real client IP). MCP OAuth sends the browser back to the address you started the flow from; set `PUBLIC_BASE_URL` to force one.
+- **Project exports carry no `.git` folders**, and an import doesn't restore repo checkouts (`workspace/repos/`); ask the agent to sync the repo again.
 - **Back up `~/pantheon/data/`** — it contains all your memory, projects, and workspace files.
 
 ## 11. Uninstall / reinstall
