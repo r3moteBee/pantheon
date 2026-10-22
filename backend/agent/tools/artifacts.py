@@ -533,7 +533,11 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
 
     if tool_name == "save_to_artifact":
         import sqlite3 as _sqlite3
+        from artifacts.normalize import canonical_tags, clean_title, resolve_agent_path
         norm = _normalize_artifact_path(tool_args["path"])
+        # Keep the project's layout: no invented duplicate folders / forked copies.
+        norm, path_note = resolve_agent_path(norm, store.paths(effective_project))
+        title = clean_title(tool_args.get("title"))
         # Auto-resolve UNIQUE path collisions by suffixing -1, -2, ...
         # before the final extension. We retry up to 50 times before
         # surfacing the error.
@@ -551,26 +555,27 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
         # task-ledger/ folder always carries the 'task-ledger' tag,
         # so ledgers stay tag-searchable regardless of whether the
         # model remembered to pass tags.
-        _tags = list(tool_args.get("tags") or [])
+        _tags = canonical_tags(tool_args.get("tags") or [], store.tag_counts(effective_project))
         _proj_prefix = f"{_ps(effective_project)}/"
         if (norm.startswith(_proj_prefix + "task-ledger/")
                 and "task-ledger" not in _tags):
             _tags.append("task-ledger")
 
         content_type = _content_type_for(norm, tool_args.get("content_type"))
-        if tool_args.get("overwrite"):
+        if tool_args.get("overwrite") or path_note:
             existing = store.get_by_path(effective_project, norm)
             if existing:
                 a = store.update(
                     existing["id"],
                     content=tool_args["content"],
-                    edit_summary="Agent overwrite",
+                    edit_summary=("Agent update (path normalized)" if path_note else "Agent overwrite"),
                     edited_by=session_id or "agent",
                 )
                 _emb.schedule_embed(a["id"], effective_project)
                 await _index(a)
-                return (f"Overwrote artifact {a['path']} (id={a['id']}, "
-                        f"now v{len(store.list_versions(a['id']))})")
+                return (f"{'Updated' if path_note else 'Overwrote'} artifact {a['path']} (id={a['id']}, "
+                        f"now v{len(store.list_versions(a['id']))})"
+                        + (f". NOTE: {path_note}." if path_note else ""))
 
         final_path = norm
         a = None
@@ -582,7 +587,7 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
                     path=cand,
                     content=tool_args["content"],
                     content_type=content_type,
-                    title=tool_args.get("title"),
+                    title=title,
                     tags=_tags or None,
                     source={"kind": "agent", "session_id": session_id or ""},
                     edited_by=session_id or "agent",
@@ -613,6 +618,8 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
                 "existing file instead, call update_artifact with its id or save_to_artifact "
                 "with overwrite=true; delete the copy with delete_artifact if it is not wanted."
             )
+        if path_note:
+            suffix_note += f". NOTE: {path_note}"
         return f"Saved artifact {a['path']} (id={a['id']}, v{1}){suffix_note}"
     if tool_name == "update_artifact":
         aid = tool_args.get("id")

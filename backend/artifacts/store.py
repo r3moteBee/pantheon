@@ -588,6 +588,15 @@ class ArtifactStore:
                 folders.add("/".join(parts[:i]))
         return sorted(p for p in folders if p)
 
+    def paths(self, project_id: str = "default") -> list[str]:
+        """Every live artifact path in the project (no content)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT path FROM artifacts WHERE project_id = ? AND deleted_at IS NULL",
+                (project_id,),
+            ).fetchall()
+        return [r["path"] for r in rows if r["path"]]
+
     def folder_tree(self, project_id: str = "default") -> list[str]:
         with self._connect() as conn:
             rows = conn.execute(
