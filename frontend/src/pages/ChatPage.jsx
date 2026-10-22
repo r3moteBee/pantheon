@@ -1,2 +1,3 @@
 import ChatTabs from '../components/ChatTabs'
+// The project workspace (sidebar "Workspace"): all project tabs, /chat?tab=…
 export default function ChatPage() { return <ChatTabs /> }

@@ -4,6 +4,9 @@ import { connectionsApi } from '../api/client'
 import MCPConnections from '../components/MCPConnections'
 import HelpDrawer from '../components/help/HelpDrawer'
 import SearchProvidersTab from '../components/connections/SearchProvidersTab'
+import Time from '../components/Time'
+import { useUrlParam } from '../hooks/useUrlState'
+import usePageTitle from '../hooks/usePageTitle'
 
 const TABS = [
   { id: 'mcp',    label: 'MCP servers', icon: Plug },
@@ -12,24 +15,32 @@ const TABS = [
 ]
 
 export default function ConnectionsPage() {
-  const [tab, setTab] = useState('mcp')
+  const [tab, setTab] = useUrlParam('section', 'mcp', { allowed: TABS.map((t) => t.id) })
+  usePageTitle(TABS.find((t) => t.id === tab)?.label, 'Connections')
 
   return (
     <div className="h-full flex flex-col">
-      <div className="border-b border-gray-800 px-6 pt-4 flex items-center gap-1">
+      <div
+        role="tablist"
+        aria-label="Connection types"
+        className="border-b border-gray-800 px-2 sm:px-6 pt-4 flex items-center gap-1 overflow-x-auto scrollbar-thin"
+      >
         {TABS.map((t) => {
           const Icon = t.icon
+          const active = tab === t.id
           return (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={active}
               onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-medium border-b-2 transition-colors ${
-                tab === t.id
+              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+                active
                   ? 'border-brand-400 text-brand-300'
-                  : 'border-transparent text-gray-500 hover:text-gray-300'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
               {t.label}
             </button>
           )
@@ -86,28 +97,28 @@ function GitHubAccountsTab() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-3xl mx-auto">
-      <div className="flex items-center justify-between mb-2">
+    <div className="h-full overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <h2 className="text-xl font-semibold flex items-center gap-2">
-          <Github className="w-5 h-5" /> GitHub accounts
+          <Github className="w-5 h-5" aria-hidden="true" /> GitHub accounts
         </h2>
         <div className="flex gap-2">
-          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
-            <RefreshCw className="w-3 h-3" /> Refresh
+          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 whitespace-nowrap">
+            <RefreshCw className="w-3 h-3" aria-hidden="true" /> Refresh
           </button>
           {!showAdd && (
             <button
               onClick={() => setShowAdd(true)}
-              className="text-xs px-3 py-1.5 rounded-md bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1"
+              className="text-xs px-3 py-1.5 rounded-md bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 whitespace-nowrap"
             >
               <Plus className="w-3 h-3" /> Add account
             </button>
           )}
         </div>
       </div>
-      <p className="text-xs text-gray-500 mb-4">
-        System-wide PATs. Bind a specific repo to a project on the chat
-        <span className="text-gray-300"> Repository </span>tab.
+      <p className="text-xs text-gray-400 mb-4">
+        System-wide PATs. Bind a specific repo to a project on its
+        <span className="text-gray-300"> Workspace → Repository </span>tab.
       </p>
 
       <div className='mb-4'>
@@ -118,7 +129,7 @@ function GitHubAccountsTab() {
             below — fine-grained is preferred but classic works too.
           </p>
           <table className='w-full text-xs mb-3'>
-            <thead className='text-gray-500'>
+            <thead className='text-gray-400'>
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Type</th>
                 <th className='text-left font-normal pb-1 pr-3'>Required scope</th>
@@ -127,7 +138,7 @@ function GitHubAccountsTab() {
             </thead>
             <tbody className='text-gray-300'>
               <tr className='border-t border-amber-900/30'>
-                <td className='py-1.5 pr-3 align-top'>Fine-grained <span className='text-gray-500'>(recommended)</span></td>
+                <td className='py-1.5 pr-3 align-top'>Fine-grained <span className='text-gray-400'>(recommended)</span></td>
                 <td className='py-1.5 pr-3 align-top'>
                   Contents: read &amp; write<br/>
                   Pull requests: read &amp; write
@@ -186,8 +197,10 @@ function GitHubAccountsTab() {
             />
             <button
               onClick={() => setShowToken(!showToken)}
-              className="px-2 text-gray-500 hover:text-gray-300"
+              className="px-2 text-gray-400 hover:text-gray-200"
               type="button"
+              aria-label={showToken ? 'Hide token' : 'Show token'}
+              title={showToken ? 'Hide token' : 'Show token'}
             >
               {showToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -195,14 +208,14 @@ function GitHubAccountsTab() {
           <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={() => { setShowAdd(false); setToken('') }}
-              className="px-3 py-1.5 text-xs rounded-md text-gray-400 hover:text-gray-200"
+              className="px-3 py-1.5 text-xs rounded-md text-gray-400 hover:text-gray-200 whitespace-nowrap"
             >
               Cancel
             </button>
             <button
               onClick={addConnection}
               disabled={!token.trim() || adding}
-              className="px-3 py-1.5 text-xs rounded-md bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+              className="px-3 py-1.5 text-xs rounded-md bg-brand-700 hover:bg-brand-600 text-white disabled:opacity-50 whitespace-nowrap"
             >
               {adding ? 'Verifying…' : 'Add account'}
             </button>
@@ -210,9 +223,9 @@ function GitHubAccountsTab() {
         </div>
       )}
 
-      {loading && <div className="text-xs text-gray-500">Loading…</div>}
+      {loading && <div className="text-xs text-gray-400">Loading…</div>}
       {!loading && items.length === 0 && !showAdd && (
-        <div className="text-sm text-gray-500 italic">
+        <div className="text-sm text-gray-400 italic">
           No GitHub accounts connected. Add one to enable repo binding on projects.
         </div>
       )}
@@ -220,17 +233,17 @@ function GitHubAccountsTab() {
       {!loading && items.length > 0 && (
         <div className="space-y-2">
           {items.map((c) => (
-            <div key={c.id} className="p-3 rounded-md border border-gray-700 bg-gray-900 flex items-center justify-between">
-              <div className="text-sm">
+            <div key={c.id} className="p-3 rounded-md border border-gray-700 bg-gray-900 flex items-center justify-between gap-3">
+              <div className="text-sm min-w-0">
                 <div className="font-medium text-gray-200 flex items-center gap-2">
                   <Github className="w-4 h-4 text-brand-400" />
                   {c.account_login ? `@${c.account_login}` : 'GitHub'}
-                  {c.full_name && <span className="text-gray-500">· default repo: {c.full_name}</span>}
+                  {c.full_name && <span className="text-gray-400">· default repo: {c.full_name}</span>}
                   {c.status === 'error' && <AlertTriangle className="w-4 h-4 text-amber-400" />}
                 </div>
-                <div className="text-xs text-gray-500">
-                  added {c.created_at?.slice(0, 10)}
-                  {c.last_used_at && ` · last used ${c.last_used_at.slice(0, 10)}`}
+                <div className="text-xs text-gray-400">
+                  added <Time value={c.created_at} />
+                  {c.last_used_at && <> · last used <Time value={c.last_used_at} /></>}
                   {c.project_id && ` · legacy per-project (${c.project_id})`}
                 </div>
                 {c.status === 'error' && c.error_message && (
@@ -239,8 +252,9 @@ function GitHubAccountsTab() {
               </div>
               <button
                 onClick={() => remove(c.id)}
-                className="text-gray-500 hover:text-red-400"
-                title="Remove"
+                className="flex-shrink-0 text-gray-400 hover:text-red-400"
+                title="Remove account"
+                aria-label={`Remove GitHub account ${c.account_login || ''}`.trim()}
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -254,18 +268,10 @@ function GitHubAccountsTab() {
 
 
 function MCPTab() {
-  return (
-    <div className="h-full overflow-y-auto p-6">
-      <div className="max-w-4xl mx-auto">
-        <h2 className="text-xl font-semibold flex items-center gap-2 mb-4">
-          <Plug className="w-5 h-5" /> MCP servers
-        </h2>
-        <p className="text-xs text-gray-500 mb-4">
-          System-wide MCP server registrations. Toggle which servers a project
-          uses on the chat <span className="text-gray-300">Project Settings</span> tab.
-        </p>
-        <MCPConnections />
-      </div>
-    </div>
-  )
+  // MCPConnections brings its own scroll area, heading and description. The
+  // frame used to add a second, differently indented "MCP servers" header
+  // whose note pointed at per-project toggles on Project Settings that no
+  // longer exist (per-project MCP enablement was retired: every enabled
+  // server is available to every project).
+  return <MCPConnections />
 }
