@@ -194,7 +194,10 @@ async def auth_config():
     return {"auth_required": bool(settings.auth_password)}
 
 
-# Failed-login throttle: at most _MAX_FAILURES per client IP per window.
+# Failed-password throttle: at most _MAX_FAILURES per client IP per window.
+# Shared by login and every other endpoint that checks AUTH_PASSWORD
+# (e.g. POST /api/system/update/execute). The IP is client_ip(): the peer
+# address, or the forwarded client when the peer is a TRUSTED_PROXIES entry.
 _MAX_FAILURES = 10
 _FAILURE_WINDOW_S = 300.0
 _failures: dict[str, deque] = defaultdict(deque)
@@ -205,23 +208,37 @@ def _recent_failures(ip: str) -> deque:
     cutoff = time.monotonic() - _FAILURE_WINDOW_S
     while q and q[0] < cutoff:
         q.popleft()
+    if not q:
+        _failures.pop(ip, None)   # don't keep a key per IP forever
+        return deque()
     return q
+
+
+def check_password_throttle(conn, reason: str = "rate_limited") -> str:
+    """Raise 429 when the caller's IP has too many recent password
+    failures. Returns that IP for record_password_failure()."""
+    ip = client_ip(conn)
+    if len(_recent_failures(ip)) >= _MAX_FAILURES:
+        sec_log.auth_login_failure(ip=ip, reason=reason)
+        raise HTTPException(status_code=429, detail="Too many failed attempts; try again later")
+    return ip
+
+
+def record_password_failure(ip: str) -> None:
+    _failures[ip].append(time.monotonic())
 
 
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest, request: Request, response: Response) -> LoginResponse:
     settings = get_settings()
-    ip = request.client.host if request.client else "unknown"
-    if len(_recent_failures(ip)) >= _MAX_FAILURES:
-        sec_log.auth_login_failure(ip=ip, reason="rate_limited")
-        raise HTTPException(status_code=429, detail="Too many failed attempts; try again later")
+    ip = check_password_throttle(request)
 
     # Auth disabled — any (or no) password works
     if not settings.auth_password:
         return LoginResponse(token="no-auth")
 
     if not password_matches(req.password):
-        _failures[ip].append(time.monotonic())
+        record_password_failure(ip)
         sec_log.auth_login_failure(ip=ip, reason="bad_password")
         raise HTTPException(status_code=401, detail="Invalid password")
 
@@ -256,26 +273,145 @@ def token_is_valid(token: str) -> bool:
     return _session_valid(token)
 
 
-def origin_is_allowed(origin: str | None, host: str | None) -> bool:
-    """Cross-site WebSocket guard.
+# ── Proxy trust + request origin ─────────────────────────────────────────────
+# X-Forwarded-* headers are honoured only when the direct peer (the TCP
+# client) is listed in TRUSTED_PROXIES (IPs/CIDRs, default loopback, like
+# uvicorn's --forwarded-allow-ips). Otherwise anyone could pick their own
+# client IP for the login throttle. Trusted: X-Forwarded-For (client IP:
+# the right-most address that is not itself a trusted proxy),
+# X-Forwarded-Proto, X-Forwarded-Host and X-Forwarded-Port (origin).
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _trusted_networks() -> list:
+    import ipaddress
+    raw = getattr(get_settings(), "trusted_proxies", "127.0.0.1,::1")
+    nets = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            logger.warning("TRUSTED_PROXIES: ignoring invalid entry %r", part)
+    return nets
+
+
+def _ip_in(ip: str | None, nets: list) -> bool:
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address((ip or "").strip().strip("[]"))
+    except ValueError:
+        return False
+    if getattr(addr, "ipv4_mapped", None):
+        addr = addr.ipv4_mapped
+    return any(addr.version == n.version and addr in n for n in nets)
+
+
+def peer_is_trusted_proxy(conn) -> bool:
+    """True when the direct peer of ``conn`` (Request/WebSocket) may set
+    X-Forwarded-* headers."""
+    peer = conn.client.host if getattr(conn, "client", None) else None
+    return _ip_in(peer, _trusted_networks())
+
+
+def client_ip(conn) -> str:
+    """The client's IP: the peer address, or — when the peer is a trusted
+    proxy — the right-most X-Forwarded-For entry that isn't a trusted proxy."""
+    peer = conn.client.host if getattr(conn, "client", None) else None
+    if not peer:
+        return "unknown"
+    nets = _trusted_networks()
+    if not _ip_in(peer, nets):
+        return peer
+    chain = [h.strip() for v in conn.headers.getlist("x-forwarded-for")
+             for h in v.split(",") if h.strip()]
+    for hop in reversed(chain):
+        if not _ip_in(hop, nets):
+            return hop
+    return chain[0] if chain else peer
+
+
+def _first(value: str | None) -> str:
+    return (value or "").split(",")[0].strip()
+
+
+def _origin_tuple(url: str | None) -> tuple[str, str, int] | None:
+    """(scheme, host, port) of an origin/URL, default port filled in;
+    None for "null", opaque or malformed origins."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit((url or "").strip())
+        scheme = {"ws": "http", "wss": "https"}.get(parts.scheme.lower(), parts.scheme.lower())
+        host = (parts.hostname or "").lower()
+        port = parts.port or _DEFAULT_PORTS.get(scheme)
+    except ValueError:
+        return None
+    if scheme not in _DEFAULT_PORTS or not host or not port:
+        return None
+    return scheme, host, port
+
+
+def _host_origin(scheme: str, host_header: str | None, port_hint: str | None = None
+                 ) -> tuple[str, str, int] | None:
+    """Origin tuple for a Host header value. A Host without a port means
+    the scheme's default port unless ``port_hint`` (X-Forwarded-Port) says
+    otherwise."""
+    from urllib.parse import urlsplit
+    scheme = {"ws": "http", "wss": "https"}.get((scheme or "http").lower(), (scheme or "http").lower())
+    if scheme not in _DEFAULT_PORTS or not host_header:
+        return None
+    try:
+        parts = urlsplit(f"//{host_header.strip()}")
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    if port is None and port_hint and port_hint.isdigit():
+        port = int(port_hint)
+    return scheme, host, port or _DEFAULT_PORTS[scheme]
+
+
+def request_origin(conn) -> tuple[str, str, int] | None:
+    """The origin (scheme, host, port) this request was addressed to: the
+    Host header and URL scheme, or X-Forwarded-Host/-Proto/-Port when the
+    peer is a trusted proxy."""
+    headers = conn.headers
+    scheme = conn.url.scheme
+    host = headers.get("host")
+    port_hint = None
+    if peer_is_trusted_proxy(conn):
+        scheme = _first(headers.get("x-forwarded-proto")) or scheme
+        host = _first(headers.get("x-forwarded-host")) or host
+        port_hint = _first(headers.get("x-forwarded-port")) or None
+    return _host_origin(scheme, host, port_hint)
+
+
+def origin_is_allowed(origin: str | None, host: str | None = None, *, conn=None) -> bool:
+    """Cross-site guard for state-changing requests and WebSockets.
 
     Browsers always send ``Origin`` on WebSocket handshakes and CORS does not
-    apply to them, so a page on any site could otherwise open a socket to
-    localhost. Allow: no Origin (non-browser client), same-host origin, or an
-    origin listed in CORS_ORIGINS.
+    apply to them. Allow: no Origin (non-browser client), an origin listed in
+    CORS_ORIGINS, or the request's own origin. Origins compare as
+    (scheme, host, port): another service on the same hostname but a
+    different port (e.g. Nextcloud at :8443) is a different origin. With
+    ``conn`` the request's origin comes from request_origin(conn); the bare
+    ``host`` form assumes plain http.
     """
     if not origin:
         return True
-    from urllib.parse import urlparse
-    if origin in get_settings().cors_origins_list:
-        return True
-    if not host:
+    want = _origin_tuple(origin)
+    if want is None:
         return False
-    # Compare hostnames only: reverse proxies (nginx `$host`) drop the port
-    # from Host while the browser keeps it in Origin.
-    origin_host = (urlparse(origin).hostname or "").lower()
-    host_only = urlparse(f"//{host}").hostname or ""
-    return bool(origin_host) and origin_host == host_only.lower()
+    cfg_origins = get_settings().cors_origins_list
+    if origin in cfg_origins or want in {_origin_tuple(o) for o in cfg_origins}:
+        return True
+    own = request_origin(conn) if conn is not None else _host_origin("http", host)
+    return own is not None and want == own
 
 
 async def authorize_websocket(websocket) -> bool:
@@ -289,7 +425,7 @@ async def authorize_websocket(websocket) -> bool:
         await websocket.close(code=1008)
         return False
     origin = websocket.headers.get("origin")
-    if not origin_is_allowed(origin, websocket.headers.get("host")):
+    if not origin_is_allowed(origin, conn=websocket):
         sec_log.auth_login_failure(reason=f"ws_bad_origin:{origin}")
         await websocket.close(code=1008)
         return False

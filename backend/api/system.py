@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -36,7 +36,13 @@ async def builder_health() -> dict[str, Any]:
 
 @router.get("/system/update/check")
 async def check_update() -> dict[str, Any]:
-    """Check for new commits in the upstream git repository."""
+    """Check for new commits in the upstream git repository. The git calls
+    (a fetch can take 15 s) run in a worker thread, not on the event loop."""
+    import asyncio
+    return await asyncio.to_thread(_check_update_sync)
+
+
+def _check_update_sync() -> dict[str, Any]:
     import subprocess
     from pathlib import Path
     from config import get_settings
@@ -122,20 +128,24 @@ async def check_update() -> dict[str, Any]:
 
 
 @router.post("/system/update/execute")
-async def execute_update(payload: dict[str, Any]) -> dict[str, Any]:
+async def execute_update(payload: dict[str, Any], request: Request) -> dict[str, Any]:
     """Execute update by pulling git changes and rebuilding the app."""
     import os
     import subprocess
     from pathlib import Path
     from fastapi import HTTPException
     from config import get_settings
-    from api.auth import password_matches
+    from api.auth import check_password_throttle, password_matches, record_password_failure
+    from security_log import sec_log
 
     settings = get_settings()
 
-    # 1. Password/Confirmation Gate
+    # 1. Password/Confirmation Gate (same per-IP throttle as login)
     if settings.auth_password:
+        ip = check_password_throttle(request, reason="update_rate_limited")
         if not password_matches(payload.get("password", "")):
+            record_password_failure(ip)
+            sec_log.auth_login_failure(ip=ip, reason="update_bad_password")
             raise HTTPException(status_code=401, detail="Invalid password.")
     else:
         if not payload.get("confirm", False):
