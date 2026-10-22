@@ -68,6 +68,12 @@ class BulkTagsRequest(BaseModel):
     add: bool = True
 
 
+class RenameTagRequest(BaseModel):
+    project_id: str
+    old: str
+    new: str
+
+
 class BulkIdsRequest(BaseModel):
     ids: list[str]
 
@@ -544,6 +550,17 @@ async def bulk_tags(req: BulkTagsRequest) -> dict[str, int]:
     else:
         n = store.bulk_remove_tags(req.ids, req.tags)
     return {"updated": n}
+
+
+@router.post("/artifacts/bulk/rename-tag")
+async def rename_tag(req: RenameTagRequest) -> dict[str, int]:
+    """Rename (or, when the new name exists, merge) a tag across a project."""
+    if req.project_id == "all":
+        raise HTTPException(status_code=400, detail="rename tags one project at a time")
+    old, new = req.old.strip(), req.new.strip()
+    if not old or not new:
+        raise HTTPException(status_code=400, detail="old and new tag names are required")
+    return {"updated": get_store().rename_tag(req.project_id, old, new)}
 
 
 @router.post("/artifacts/bulk/delete")

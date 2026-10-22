@@ -5,65 +5,46 @@
  * Props:
  *   value       — string (controlled)
  *   onChange    — (nextValue: string) => void
- *   language    — optional explicit language id ('markdown' | 'json' | 'python' | 'javascript' | 'text')
+ *   language    — optional explicit language id ('markdown' | 'json' | 'python' | 'javascript' |
+ *                 'swift' | ... see artifacts/codeLanguages.js; 'text' = none)
  *   filename    — optional; language is auto-detected from the extension
+ *   contentType — optional MIME type, the fallback when the extension is unknown
  *   editable    — default true
  *   height      — default '100%'
  *   onSaveHotkey — optional callback for Cmd/Ctrl+S (prevents default)
  *   className   — wrapper class
  *   basicSetup  — override CodeMirror basicSetup props
  */
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo, useCallback, useEffect, useState } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView } from '@codemirror/view'
-import { markdown } from '@codemirror/lang-markdown'
-import { json as jsonLang } from '@codemirror/lang-json'
-import { python } from '@codemirror/lang-python'
-import { javascript } from '@codemirror/lang-javascript'
-
-// Filename extension → language id
-const EXT_TO_LANG = {
-  md: 'markdown', markdown: 'markdown',
-  json: 'json',
-  py: 'python', pyi: 'python',
-  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  jsx: 'javascript', ts: 'javascript', tsx: 'javascript',
-}
-
-function detectLanguage(filename) {
-  if (!filename) return 'text'
-  const dot = filename.lastIndexOf('.')
-  if (dot < 0) return 'text'
-  const ext = filename.slice(dot + 1).toLowerCase()
-  return EXT_TO_LANG[ext] || 'text'
-}
-
-function extensionsFor(lang) {
-  switch (lang) {
-    case 'markdown':  return [markdown()]
-    case 'json':      return [jsonLang()]
-    case 'python':    return [python()]
-    case 'javascript':return [javascript({ jsx: true, typescript: true })]
-    default:          return []
-  }
-}
+import { detectLanguage, loadLanguage } from './artifacts/codeLanguages'
 
 export default function CoreEditor({
   value,
   onChange,
   language,
   filename,
+  contentType,
   editable = true,
   height = '100%',
   onSaveHotkey,
   className,
   basicSetup,
 }) {
-  const resolvedLang = language || detectLanguage(filename)
+  const resolvedLang = language || detectLanguage(filename, contentType)
+
+  // Language support loads lazily (code-split per language); plain text until it arrives.
+  const [langExt, setLangExt] = useState({ lang: null, ext: [] })
+  useEffect(() => {
+    let live = true
+    loadLanguage(resolvedLang).then((ext) => { if (live) setLangExt({ lang: resolvedLang, ext }) })
+    return () => { live = false }
+  }, [resolvedLang])
 
   const extensions = useMemo(
-    () => [EditorView.lineWrapping, ...extensionsFor(resolvedLang)],
-    [resolvedLang],
+    () => [EditorView.lineWrapping, ...(langExt.lang === resolvedLang ? langExt.ext : [])],
+    [langExt, resolvedLang],
   )
   const handleChange = useCallback((val) => { onChange?.(val) }, [onChange])
 

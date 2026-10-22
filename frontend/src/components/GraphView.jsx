@@ -3,6 +3,8 @@ import { Network, Search, X, AlertCircle, RefreshCw, ChevronRight } from 'lucide
 import ForceGraph from './ForceGraph'
 import { memoryApi } from '../api/client'
 import { useStore } from '../store'
+import NodeDetailPanel from './memory/NodeDetailPanel'
+import { findLikelyDuplicates } from './memory/duplicates'
 
 /**
  * GraphView — wraps ForceGraph with a path-finder bar above the canvas
@@ -36,6 +38,10 @@ export default function GraphView() {
   const [edgeRel, setEdgeRel] = useState('')
   const [edgeStatus, setEdgeStatus] = useState(null)
 
+  // Node detail panel + likely-duplicate flags (#23)
+  const [selectedId, setSelectedId] = useState(null)
+  const [showDuplicates, setShowDuplicates] = useState(false)
+
   const refresh = async () => {
     setLoading(true); setError(null)
     try {
@@ -48,6 +54,18 @@ export default function GraphView() {
   }
 
   useEffect(() => { refresh() }, [projectId, typeFilter])
+  useEffect(() => { setSelectedId(null) }, [projectId])
+
+  const duplicates = useMemo(
+    () => findLikelyDuplicates(nodes.map((n) => ({ id: n.id, label: n.label }))),
+    [nodes],
+  )
+  const duplicateIds = useMemo(
+    () => (showDuplicates ? new Set(duplicates.keys()) : null),
+    [showDuplicates, duplicates],
+  )
+  const selectedRaw = nodes.find((n) => n.id === selectedId) || null
+  const selectedForGraph = useMemo(() => (selectedId ? { id: selectedId } : null), [selectedId])
 
   // Map to ForceGraph's expected props: entities/relationships
   const fgData = useMemo(() => {
@@ -148,14 +166,14 @@ export default function GraphView() {
     <div className="h-full flex flex-col">
       {/* Path-finder bar */}
       <div className="border-b border-gray-800 bg-gray-950 px-3 py-2 flex items-center gap-2 flex-wrap">
-        <Network className="w-4 h-4 text-brand-400" />
+        <Network className="w-4 h-4 text-brand-400" aria-hidden="true" />
         <span className="text-xs text-gray-300 font-medium">Find path:</span>
         <NodeAutocomplete
           value={fromInput} onChange={setFromInput}
           suggestions={fromSuggestions}
           placeholder="From"
         />
-        <ChevronRight className="w-3 h-3 text-gray-500" />
+        <ChevronRight className="w-3 h-3 text-gray-400" aria-hidden="true" />
         <NodeAutocomplete
           value={toInput} onChange={setToInput}
           suggestions={toSuggestions}
@@ -164,7 +182,7 @@ export default function GraphView() {
         <button
           onClick={findPath}
           disabled={pathing || !fromInput.trim() || !toInput.trim()}
-          className="px-3 py-1 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+          className="px-3 py-1 text-xs rounded bg-brand-700 hover:bg-brand-600 text-white disabled:opacity-50 whitespace-nowrap"
         >
           {pathing ? 'Searching…' : 'Find Path'}
         </button>
@@ -172,6 +190,7 @@ export default function GraphView() {
           value={pathK} onChange={(e) => setPathK(Number(e.target.value))}
           className="text-xs bg-gray-900 border border-gray-800 rounded px-1 py-1"
           title="Number of alternative paths to find"
+          aria-label="Number of alternative paths"
         >
           {[1,2,3,5].map((n) => <option key={n} value={n}>k={n}</option>)}
         </select>
@@ -185,24 +204,38 @@ export default function GraphView() {
           </button>
         )}
         <span className="ml-auto" />
+        {duplicates.size > 0 && (
+          <button
+            onClick={() => setShowDuplicates((v) => !v)}
+            aria-pressed={showDuplicates}
+            title="Entities whose names look like the same thing (e.g. 'Marble Maze' / 'MarbleMaze'). Click one to see its likely duplicates."
+            className={`text-xs px-2 py-1 rounded border whitespace-nowrap ${
+              showDuplicates ? 'bg-orange-950 border-orange-700 text-orange-200' : 'bg-gray-900 border-gray-800 text-gray-300 hover:text-gray-100'
+            }`}
+          >
+            Possible duplicates: {duplicates.size}
+          </button>
+        )}
         <button
           onClick={() => { setEdgeMode(!edgeMode); setEdgeA(null); setEdgeStatus(null) }}
           title="Click two nodes in the graph to create an edge between them"
           className={`text-xs px-2 py-1 rounded border ${
-            edgeMode ? 'bg-emerald-900 border-emerald-700 text-emerald-100' : 'bg-gray-900 border-gray-800 text-gray-400 hover:text-gray-200'
-          }`}
+            edgeMode ? 'bg-emerald-900 border-emerald-700 text-emerald-100' : 'bg-gray-900 border-gray-800 text-gray-300 hover:text-gray-100'
+          } whitespace-nowrap`}
         >
           {edgeMode ? 'Cancel edge' : '+ Edge'}
         </button>
         <div className="flex items-center gap-0.5 bg-gray-900 border border-gray-800 rounded p-0.5">
           <button
             onClick={() => setView('graph')}
+            aria-pressed={view === 'graph'}
             className={`text-xs px-2 py-0.5 rounded ${view === 'graph' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}
           >
             Graph
           </button>
           <button
             onClick={() => setView('list')}
+            aria-pressed={view === 'list'}
             className={`text-xs px-2 py-0.5 rounded ${view === 'list' ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}
           >
             List
@@ -211,6 +244,7 @@ export default function GraphView() {
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
+          aria-label="Filter by entity type"
           className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
         >
           <option value="">All types</option>
@@ -223,7 +257,7 @@ export default function GraphView() {
           <option value="technology">technology</option>
           <option value="product">product</option>
         </select>
-        <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
+        <button onClick={refresh} className="text-xs text-gray-300 hover:text-gray-100 flex items-center gap-1 whitespace-nowrap">
           <RefreshCw className="w-3 h-3" /> Refresh
         </button>
       </div>
@@ -237,7 +271,7 @@ export default function GraphView() {
       {/* Canvas (graph) or list */}
       <div className="flex-1 min-h-0 relative">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400">
             Loading graph…
           </div>
         )}
@@ -247,7 +281,7 @@ export default function GraphView() {
           </div>
         )}
         {!loading && !error && fgData.entities.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500 italic">
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-400 italic p-6 text-center">
             This project's graph is empty. Save artifacts or chat — entities are extracted automatically.
           </div>
         )}
@@ -256,8 +290,11 @@ export default function GraphView() {
             entities={fgData.entities}
             relationships={fgData.relationships}
             pathHighlight={pathHighlight}
+            selectedNode={selectedForGraph}
+            duplicateIds={duplicateIds}
             onSelectNode={(n) => {
-              if (!edgeMode || !n) return
+              if (!edgeMode) { setSelectedId(n?.id || null); return }
+              if (!n) return
               if (!edgeA) {
                 setEdgeA(n.id)
                 setEdgeStatus(`Selected source: ${n.name || n.label}. Pick the target node.`)
@@ -285,7 +322,7 @@ export default function GraphView() {
                     className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs"
                   />
                 </div>
-                <div className="text-gray-500 text-[10px]">Click another node to confirm. Edge will use this label as its relationship.</div>
+                <div className="text-gray-400 text-xs">Click another node to confirm. Edge will use this label as its relationship.</div>
               </div>
             )}
           </div>
@@ -296,6 +333,18 @@ export default function GraphView() {
             edges={edges}
             search={listSearch}
             setSearch={setListSearch}
+            onSelect={setSelectedId}
+            duplicates={duplicates}
+          />
+        )}
+        {selectedRaw && !edgeMode && (
+          <NodeDetailPanel
+            node={selectedRaw}
+            edges={edges}
+            nodes={nodes}
+            duplicates={duplicates.get(selectedRaw.id) || []}
+            onSelect={setSelectedId}
+            onClose={() => setSelectedId(null)}
           />
         )}
       </div>
@@ -307,12 +356,12 @@ export default function GraphView() {
             <span>Path: <span className="text-brand-300 font-medium">{activePath.hops}</span> hop(s)</span>
             {pathResult.paths.length > 1 && (
               <span className="flex items-center gap-1">
-                <span className="text-gray-500">Alternative:</span>
+                <span className="text-gray-400">Alternative:</span>
                 {pathResult.paths.map((_, i) => (
                   <button
                     key={i}
                     onClick={() => setActivePathIndex(i)}
-                    className={`px-1.5 py-0.5 rounded text-[10px] ${
+                    className={`px-1.5 py-0.5 rounded text-xs ${
                       i === activePathIndex
                         ? 'bg-brand-700 text-white'
                         : 'bg-gray-800 text-gray-400 hover:text-gray-200'
@@ -329,7 +378,7 @@ export default function GraphView() {
               <React.Fragment key={n.id + '-' + i}>
                 <span className="px-2 py-0.5 rounded bg-brand-900 text-brand-100">{n.label}</span>
                 {i < activePath.path.length - 1 && (
-                  <span className="text-gray-500">
+                  <span className="text-gray-400">
                     — <span className="italic">{(activePath.edges[i]?.relationship) || '(connected)'}</span> →
                   </span>
                 )}
@@ -359,7 +408,8 @@ function NodeAutocomplete({ value, onChange, suggestions, placeholder }) {
         onChange={(e) => { onChange(e.target.value); setOpen(true) }}
         onFocus={() => setOpen(true)}
         placeholder={placeholder}
-        className="px-2 py-1 text-xs rounded bg-gray-900 border border-gray-800 w-40"
+        aria-label={placeholder === 'From' ? 'Path start entity' : 'Path end entity'}
+        className="px-2 py-1 text-xs rounded bg-gray-900 border border-gray-800 w-32 sm:w-40"
       />
       {open && suggestions.length > 0 && (
         <div className="absolute z-50 mt-1 w-56 max-h-56 overflow-y-auto bg-gray-900 border border-gray-700 rounded shadow-lg">
@@ -370,7 +420,7 @@ function NodeAutocomplete({ value, onChange, suggestions, placeholder }) {
               className="w-full text-left text-xs px-2 py-1 hover:bg-gray-800 flex items-center gap-2"
             >
               <span className="text-gray-200">{s.label}</span>
-              <span className="ml-auto text-[10px] text-gray-500">{s.node_type}</span>
+              <span className="ml-auto text-xs text-gray-400">{s.node_type}</span>
             </button>
           ))}
         </div>
@@ -380,7 +430,7 @@ function NodeAutocomplete({ value, onChange, suggestions, placeholder }) {
 }
 
 
-function ListView({ nodes, edges, search, setSearch }) {
+function ListView({ nodes, edges, search, setSearch, onSelect, duplicates }) {
   const lower = (search || '').toLowerCase()
   const matchedNodes = nodes.filter((n) =>
     !lower
@@ -405,15 +455,16 @@ function ListView({ nodes, edges, search, setSearch }) {
   return (
     <div className="h-full overflow-y-auto p-4">
       <div className="mb-3 flex items-center gap-2">
-        <Search className="w-3 h-3 text-gray-500" />
+        <Search className="w-3 h-3 text-gray-400" aria-hidden="true" />
         <input
           type="text"
           placeholder="Filter nodes / edges by label or type"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="flex-1 max-w-md text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
+          aria-label="Filter nodes and edges"
+          className="flex-1 min-w-0 max-w-md text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
         />
-        <span className="text-[10px] text-gray-500">
+        <span className="text-xs text-gray-400 whitespace-nowrap">
           {matchedNodes.length} node{matchedNodes.length === 1 ? '' : 's'} ·
           {' '}{matchedEdges.length} edge{matchedEdges.length === 1 ? '' : 's'}
         </span>
@@ -423,23 +474,30 @@ function ListView({ nodes, edges, search, setSearch }) {
         {/* Nodes column */}
         <div>
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Nodes</h3>
-          {types.length === 0 && <div className="text-xs text-gray-500 italic">No nodes match.</div>}
+          {types.length === 0 && <div className="text-xs text-gray-400 italic">No nodes match.</div>}
           {types.map((t) => (
             <div key={t} className="mb-3">
-              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{t} ({byType[t].length})</div>
+              <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">{t} ({byType[t].length})</div>
               <div className="space-y-1">
                 {byType[t].map((n) => (
-                  <div
+                  <button
+                    type="button"
                     key={n.id}
-                    className="px-2 py-1 rounded border border-gray-800 bg-gray-900 text-xs flex items-center justify-between"
+                    onClick={() => onSelect(n.id)}
+                    className="w-full text-left px-2 py-1 rounded border border-gray-800 bg-gray-900 hover:border-gray-600 text-xs flex items-center justify-between min-w-0"
                   >
-                    <span className="text-gray-200 truncate">{n.label}</span>
+                    <span className="text-gray-200 truncate flex items-center gap-1 min-w-0">
+                      <span className="truncate">{n.label}</span>
+                      {duplicates?.has(n.id) && (
+                        <span className="text-orange-300 shrink-0" title="Possible duplicate">≈</span>
+                      )}
+                    </span>
                     {n.metadata?.description && (
-                      <span className="text-[10px] text-gray-500 truncate ml-2 max-w-xs">
+                      <span className="text-xs text-gray-400 truncate ml-2 max-w-xs">
                         {n.metadata.description}
                       </span>
                     )}
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -450,7 +508,7 @@ function ListView({ nodes, edges, search, setSearch }) {
         <div>
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">Edges</h3>
           {matchedEdges.length === 0 && (
-            <div className="text-xs text-gray-500 italic">
+            <div className="text-xs text-gray-400 italic">
               {edges.length === 0
                 ? 'No edges in this project graph yet. Edges form when extraction finds explicit relationships in your content.'
                 : 'No edges match the filter.'}

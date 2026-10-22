@@ -80,12 +80,14 @@ export default function FolderTree({
         onDragOver={handleDragOver({ project_id, folder: folderPath })}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop({ project_id, folder: folderPath })}
-        className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-1 ${
-          isSelected ? 'bg-brand-600 text-white' : hover ? 'bg-brand-600/30 text-white' : 'hover:bg-gray-900 text-gray-400'
+        title={folderPath}
+        aria-current={isSelected ? 'true' : undefined}
+        className={`w-full min-w-0 text-left text-xs px-2 py-1 rounded flex items-center gap-1 ${
+          isSelected ? 'bg-brand-700 text-white' : hover ? 'bg-brand-700/40 text-white' : 'hover:bg-gray-900 text-gray-300'
         }`}
       >
-        <Folder className="w-3 h-3" />
-        <span>{displayName}</span>
+        <Folder className="w-3 h-3 shrink-0" aria-hidden="true" />
+        <span className="truncate min-w-0">{displayName}</span>
       </button>
     )
   }
@@ -104,8 +106,9 @@ export default function FolderTree({
                 <button
                   type="button"
                   onClick={() => toggle(projKey)}
-                  className="p-0.5 text-gray-500 hover:text-gray-300"
+                  className="p-0.5 text-gray-400 hover:text-gray-200"
                   aria-label={projCollapsed ? 'Expand project' : 'Collapse project'}
+                  title={projCollapsed ? 'Expand project' : 'Collapse project'}
                 >
                   {projCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 </button>
@@ -115,19 +118,22 @@ export default function FolderTree({
                   onDragOver={handleDragOver({ project_id: node.project_id, folder: '' })}
                   onDragLeave={handleDragLeave}
                   onDrop={handleDrop({ project_id: node.project_id, folder: '' })}
-                  className={`flex-1 text-left text-xs px-1 py-1 rounded flex items-center gap-1 font-semibold ${
-                    projSelected ? 'bg-brand-600 text-white' : projHover ? 'bg-brand-600/30 text-white' : 'hover:bg-gray-900 text-gray-200'
+                  title={node.project_name}
+                  className={`flex-1 min-w-0 text-left text-xs px-1 py-1 rounded flex items-center gap-1 font-semibold ${
+                    projSelected ? 'bg-brand-700 text-white' : projHover ? 'bg-brand-700/40 text-white' : 'hover:bg-gray-900 text-gray-200'
                   }`}
                 >
-                  <Box className="w-3 h-3" />
-                  <span>{node.project_name}</span>
+                  <Box className="w-3 h-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate min-w-0">{node.project_name}</span>
                   {typeof node.artifact_count === 'number' && (
-                    <span className="ml-auto text-gray-500">{node.artifact_count}</span>
+                    <span className="ml-auto text-gray-400">{node.artifact_count}</span>
                   )}
                 </button>
               </div>
             )}
-            {!projCollapsed && (
+            {/* With the header hidden there's no toggle, so the project is always open
+                (it used to start collapsed and show no folders at all). */}
+            {(hideProjectHeader || !projCollapsed) && (
               <div>
                 {renderTreeRows(node.tree, node.project_id, collapsed, toggle, renderFolder, hideProjectHeader ? 0 : 1)}
               </div>
@@ -167,19 +173,20 @@ function renderTreeRows(treeNode, project_id, collapsed, toggle, renderFolder, b
       const isCollapsed = collapsed.has(key)
       const hasChildren = child.children.size > 0
       rows.push(
-        <div key={`row:${key}`} className="flex items-center">
+        <div key={`row:${key}`} className="flex items-center min-w-0">
           {hasChildren ? (
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); toggle(key) }}
-              className="p-0.5 text-gray-500 hover:text-gray-300"
+              className="p-0.5 text-gray-400 hover:text-gray-200 shrink-0"
               style={{ marginLeft: 4 + depth * 12 }}
-              aria-label={isCollapsed ? 'Expand folder' : 'Collapse folder'}
+              aria-label={isCollapsed ? `Expand ${child.name}` : `Collapse ${child.name}`}
+              title={isCollapsed ? 'Expand' : 'Collapse'}
             >
               {isCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           ) : (
-            <span style={{ marginLeft: 4 + depth * 12, width: 16 }} />
+            <span className="shrink-0" style={{ marginLeft: 4 + depth * 12, width: 16 }} />
           )}
           <div className="flex-1 min-w-0">
             {renderFolder(project_id, child.path, child.name)}
