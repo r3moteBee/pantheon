@@ -256,10 +256,13 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_open",
-            "description": "Open a URL in a persistent headless browser session. Runs JavaScript, handles SPAs, and preserves cookies across calls. Use when web_fetch fails or when a site requires interaction.",
+            "description": (
+                "Open a URL in a headless browser (JavaScript, cookies kept). Use when web_fetch fails or the "
+                "site needs interaction."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"url": {"type": "string", "description": "Absolute URL to open"}},
+                "properties": {"url": {"type": "string"}},
                 "required": ["url"],
             },
         },
@@ -268,11 +271,11 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_read",
-            "description": "Get the visible text of the currently loaded page from the browser session. Call after browser_open or after any interaction.",
+            "description": "Visible text of the current browser page.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "max_chars": {"type": "integer", "description": "Max chars to return (default 8000)", "default": 8000}
+                    "max_chars": {"type": "integer", "description": "Default 8000.", "default": 8000}
                 },
             },
         },
@@ -281,10 +284,10 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_click",
-            "description": "Click an element in the current page by CSS selector.",
+            "description": "Click an element by CSS selector.",
             "parameters": {
                 "type": "object",
-                "properties": {"selector": {"type": "string", "description": "CSS selector of the element to click"}},
+                "properties": {"selector": {"type": "string"}},
                 "required": ["selector"],
             },
         },
@@ -293,7 +296,7 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_type",
-            "description": "Type text into an input/textarea by CSS selector. Optionally press Enter to submit.",
+            "description": "Type into an input by CSS selector; submit presses Enter.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -309,11 +312,11 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_screenshot",
-            "description": "Save a full-page screenshot of the current browser page into the project workspace.",
+            "description": "Save a screenshot of the page to the workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "rel_path": {"type": "string", "description": "Workspace-relative path (default: screenshot.png)", "default": "screenshot.png"}
+                    "rel_path": {"type": "string", "description": "Default screenshot.png.", "default": "screenshot.png"}
                 },
             },
         },
@@ -322,7 +325,7 @@ BROWSER_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "browser_close",
-            "description": "Close the current project's browser session and free resources.",
+            "description": "Close the browser session.",
             "parameters": {"type": "object", "properties": {}},
         },
     },

@@ -193,22 +193,12 @@ def build_system_prompt(
                 f"(artifact path prefix: `{slug}/`).\n"
             )
         project_section += (
-            "All memories, files, and artifacts are scoped to this "
-            "project.\n\n"
-            "### Storage layout — when the user mentions a folder name\n"
-            f"- The user's **artifacts** for this project live under "
-            f"`{slug}/...`. When the user says \"research/\" or \"the "
-            f"transcripts folder\" with no project qualifier, that "
-            f"means `{slug}/research/` in the artifact store. Use "
-            f"`list_artifacts` / `read_artifact` / `index(target='artifact')` and "
-            f"pass the bare folder name (\"research/\") — the tool prepends "
-            f"the project slug for you. Files the user uploads in the chat are "
-            f"artifacts too, under `chat-attachments/<date>/`.\n"
-            "- The **workspace** is a separate scratch folder on disk "
-            "(sandbox files, downloads, code checkouts). Use "
-            "`list_workspace_files` / `index(target='workspace')` "
-            "ONLY when the user references a path on disk or a repo "
-            "checkout, or you've confirmed the file is there.\n"
+            "Memories, files and artifacts are scoped to this project. A folder the user names "
+            f"(\"research/\", \"the transcripts folder\") means `{slug}/research/` in the artifact store: "
+            "pass the bare folder name (\"research/\") to list_artifacts / read_artifact / "
+            "index(target='artifact'); the slug is added for you. Chat uploads are artifacts too, under "
+            "`chat-attachments/<date>/`. The workspace (list_workspace_files, index(target='workspace')) is "
+            "only for a path on disk or a repo checkout the user means.\n"
         )
 
     # Repo work protocol — only when the project actually has a bound repo,
@@ -301,85 +291,40 @@ def build_system_prompt(
 
 ---
 
-## Self-reference conventions
-When the user says "this", "that", "the above", "that observation", "your last response", "what you just said", or similar language in a request to save, record, note, or remember, interpret it as a reference to YOUR OWN most recent assistant message. Use the `save_last_response` tool to persist it — do NOT ask the user to paste or restate the content. Only ask for clarification if the destination path or filename is truly ambiguous.
-
-## Persistence — artifacts vs workspace vs MCP "save" tools
-
-- ARTIFACTS are the durable store: save_to_artifact / update_artifact /
-  read_artifact / list_artifacts / save_last_response. Anything the user may
-  want to keep — notes, reports, transcripts, exports, task output — goes
-  here, and so do the files they upload in the chat. Paths are virtual
-  folders ('research/2026-05-02-foo.md'); list one with
-  list_artifacts(path_prefix='research/'), not list_workspace_files.
-- CODE AND PROJECT FILES the user asks for (an app, a package, a script, a
-  website, an Xcode/Gradle/npm project, its README) are deliverables, so they
-  are artifacts too: save each file with save_to_artifact under ONE folder
-  named for the project ('MarbleMaze/App/ContentView.swift',
-  'MarbleMaze/README.md'). {deliverable_tail} Plan them that way in
+## Saving
+- "Save this / that / your last answer" (also "note", "record", "remember what you just said") means your own
+  previous reply: use `save_last_response`. Never ask the user to paste it again.
+- ARTIFACTS are the durable store (save_to_artifact, update_artifact, read_artifact, list_artifacts,
+  save_last_response): notes, reports, transcripts, exports, task output, and the files the user uploads in the
+  chat. Paths are virtual folders ('research/2026-05-02-foo.md'); list one with
+  list_artifacts(path_prefix='research/').
+- CODE AND PROJECT FILES the user asks for (an app, a package, a script, a website, an Xcode/Gradle/npm
+  project, its README) are deliverables, so artifacts too: save each file under ONE folder named for the project
+  ('MarbleMaze/App/ContentView.swift', 'MarbleMaze/README.md'). {deliverable_tail} Plan them that way in
   create_task too - never with write_file.
-- WORKSPACE files are scratch on disk (the project's workspace folder):
-  read_file / write_file / list_workspace_files. For sandbox temp files,
-  downloads and repo checkouts; not shown on the Artifacts page, indexed only
-  with index(target='workspace').
-- MCP "save" / "library" / "upload" tools (mcp_*_save_*, …) write to that
-  external service, which Pantheon cannot see. When the user says "save",
-  use save_to_artifact unless they named the other service; never report
-  an MCP save as a Pantheon save, and don't substitute one for a skill's
-  save_to_artifact step.
+- WORKSPACE files (read_file, write_file, list_workspace_files) are scratch on disk: sandbox files, downloads,
+  repo checkouts. Not on the Artifacts page; indexed only with index(target='workspace').
+- MCP "save" / "library" / "upload" tools write to that outside service, which Pantheon cannot see. "Save"
+  means save_to_artifact unless the user named the other service; never report an MCP save as a Pantheon save.
 
-## Tool selection — scan before you decline
+## Choosing tools
+Before saying you can't do something or asking which tool to use, check every tool you have, including the
+mcp_* tools (each description says which service it covers). The user rarely names the tool: "what did the
+speaker say about X" is `recall`, "get that video's transcript" is the YouTube MCP, "read this page" is
+`web_fetch`, "keep this source" is `ingest_source`, repos and PRs are `github`, "schedule a daily digest" is
+`create_task`. Ask only when the request itself is ambiguous. If no tool fits, say so ("I don't have a tool for
+X; the closest is Y"). Asked to DO something no tool of yours can do (send an email or text, call someone, post
+to a service you have no connector for), open with that - "I can't send email from here" - then offer what you
+can (a draft).
 
-Before telling the user you can't do something, or asking them to
-name a specific tool, scan ALL the tools available to you in this
-turn — especially the `mcp_*` tools. Each MCP tool description
-explains what domain it covers (YouTube, files, calendar, etc.).
-
-Match the user's intent to a tool family by NAME PATTERN, not just
-exact wording:
-  - YouTube / channels / transcripts → the YouTube MCP tools
-    (`mcp_*_search_youtube`, `mcp_*_fetch_transcript`, …)
-  - Read a web page now → `web_fetch`; find pages → `web_search`;
-    keep a source (indexed + graph) → `ingest_source`
-  - GitHub repos, PRs, issues → `github` (action=…)
-  - User's connected services (Slack, Gmail, Calendar, Linear, etc.) →
-    `mcp_<ServiceName>_*` — read the descriptions
-  - Project artifacts (transcripts, notes, reports) → `list_artifacts`,
-    `read_artifact`, `index`
-  - Memory recall across artifacts + episodic + graph → `recall`
-
-The user often will not name the tool. "What did the speaker say
-about X" is a recall query (against indexed transcripts). "Get the
-transcript for that video" is the YouTube MCP's fetch_transcript tool.
-"Schedule a daily digest" is `create_task`. Match intent → tool
-family → pick a specific tool. ONLY ask for clarification when the
-user's ask is genuinely ambiguous, not because you skipped scanning.
-
-If you survey tools and genuinely have no match, SAY SO explicitly —
-"I don't have a tool for X; the closest I have is Y" — instead of
-silently defaulting to web_search or asking the user to paste content.
-Asked to DO something no tool of yours can do (send an email or text,
-call someone, post to a service you have no connector for), open with
-that: "I can't send email from here", then offer what you can (a draft).
-
-## Skills vs scheduled tasks — pick the right primitive
-
-"Create a workflow / skill / something I can run again" usually means a
-reusable procedure, NOT a schedule:
-
-- `create_skill` — a REUSABLE, CALLABLE recipe the user runs with
-  `/skill-name` whenever they want ("make a workflow I can run again",
-  "turn this into a reusable thing", "do this for PDFs next time too").
-  If the user negotiated a multi-step workflow in chat and then says
-  "create this", default to `create_skill`.
-- `create_task` — a SCHEDULED AUTONOMOUS RUN (`now`, `delay:N`,
-  `interval:N`, cron): "schedule X every morning", "run X in 10 minutes".
-  Its `job_type` picks one run of the plan (default), an
-  `iteration_loop` (execute/review turns: "loop", "iterate N times"), a
-  `research_batch` (surveys of many items) or a `coding_task`.
-
-When in doubt, ask: "Reusable skill (callable any time) or scheduled
-task (auto-fires)?"
+## Skills vs scheduled tasks
+- `create_skill`: a REUSABLE recipe the user runs with `/skill-name` whenever they want ("make a workflow I can
+  run again", "do this for PDFs next time too"). When the user worked out a procedure with you and says "create
+  this", that is a skill.
+- `create_task`: a SCHEDULED background run (`now`, `delay:N`, `interval:N`, cron): "every morning", "in 10
+  minutes", "remind me tomorrow". When part of a request is for later, do the now part now and make the later
+  part a task. Its job_type picks one run, an iteration_loop, a research_batch (many items) or a coding_task.
+If unsure, ask: "Reusable skill (callable any time) or scheduled task (auto-fires)?"
 
 ## Scheduled task approval flow
 
@@ -396,4 +341,5 @@ past task are not approval.
 Exceptions: "just schedule it" / "no need to review" → `skip_review: true`
 right away; a big survey (`research_batch`) or a background task the user
 asked you to start now may be created at once WITHOUT skip_review (it waits
-as a proposal — tell them). Outside the web chat every task is a proposal.{reply_style_section}"""
+as a proposal — tell them). Outside the web chat every task is a proposal. Never say a task is queued,
+scheduled or saved unless the tool returned that in this turn.{reply_style_section}"""

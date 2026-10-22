@@ -216,3 +216,24 @@ async def test_the_reply_before_a_nudge_stays_in_the_saved_answer():
     events, _ = await _run(prov)
     done = [e for e in events if e["type"] == "done"][-1]["full_response"]
     assert "1. Fetch the notes." in done and "No fetch is needed" in done
+
+
+# ---- claims missed in the 2026-10-09 prompt-trim A/B ------------------------------------------------
+
+@pytest.mark.parametrize("text,msg,tool", [
+    ("## Reminders Set\n\nI've created reminders for you: tomorrow at 9:00.", "Remind me tomorrow at 9am to renew it.",
+     "create_task"),
+    ("**Queued:** A task to compare the blog page next week.\n\nHere is the page now.",
+     "Fetch the blog now, and next week compare it.", "create_task"),
+    ("Latest is 12.2. I've noted the version number for later.", "Find the latest Jellyfin and remember the version.",
+     "remember"),
+])
+def test_more_unbacked_claims(text, msg, tool):
+    from agent.follow_through import unbacked_claim
+    hit = unbacked_claim(text, msg, {"web_search"})
+    assert hit and hit[1] == tool
+
+
+def test_remember_claim_is_backed_by_remember():
+    from agent.follow_through import unbacked_claim
+    assert unbacked_claim("I've noted the version number.", "Remember the version.", {"remember"}) is None

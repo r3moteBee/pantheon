@@ -12,10 +12,14 @@ fit_messages() runs before every model round. When the estimated prompt is over
 budget it shrinks OLDER tool results first; the newest ones stay whole, because
 they are what the model is working on. It shrinks in stages: a head + tail
 excerpt, then a short stub that says what was dropped and how to get it back
-(the turn's notes and artifacts, or calling the tool again). It never removes a
-message, so every tool call keeps its tool result - providers reject orphaned
-calls. If a round still overflows, context_overflow() reads the server's own
-token counts so the caller can re-fit with a calibrated estimate and retry once.
+(the turn's notes and artifacts, or calling the tool again). When stubs are not
+enough - a background job of 80+ rounds overflowed 32K with 123 of 125 results
+already stubbed, because the calls themselves add up - whole old rounds go: an
+assistant tool-call message together with its tool results (never one without
+the other - providers reject orphaned calls), replaced by one note that counts
+what was removed. If a round still overflows, context_overflow() reads the
+server's own token counts so the caller can re-fit with a calibrated estimate
+and retry once.
 
 Messages are replaced, never edited in place: the same dicts can be shared with
 the UI events and the finalize round.
@@ -38,6 +42,8 @@ KEEP_RECENT = 2               # newest tool results left whole while older ones 
 EXCERPT_CHARS = (6000, 2000)  # the excerpt stages before a stub
 RECENT_FLOOR_CHARS = 1000     # the newest results never shrink below this
 STUB_MARK = "[earlier tool result"
+KEEP_ROUNDS = 4               # newest tool rounds never dropped whole
+DROPPED_MARK = "[Pantheon note] Earlier tool rounds were removed"
 
 _OVERFLOW_RE = re.compile(r"\((\d+) tokens\) exceeds the available context size \((\d+) tokens\)")
 
@@ -99,6 +105,46 @@ def _shrink(msg: dict[str, Any], limit: int) -> dict[str, Any]:
     return {**msg, "content": new}
 
 
+def _rounds(messages: list[dict[str, Any]]) -> list[tuple[int, int]]:
+    """(start, end) spans of tool rounds: an assistant message with tool_calls plus the tool messages after it."""
+    spans, i = [], 0
+    while i < len(messages):
+        m = messages[i]
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            j = i + 1
+            while j < len(messages) and messages[j].get("role") == "tool":
+                j += 1
+            spans.append((i, j))
+            i = j
+        else:
+            i += 1
+    return spans
+
+
+def _drop_round(messages: list[dict[str, Any]], counts: dict[str, int]) -> bool:
+    """Remove the oldest droppable tool round, folding it into the single DROPPED_MARK note (created in its
+    place the first time). False when only the newest KEEP_ROUNDS are left."""
+    spans = _rounds(messages)
+    if len(spans) <= KEEP_ROUNDS:
+        return False
+    a, b = spans[0]
+    for tc in messages[a].get("tool_calls") or []:
+        name = (tc.get("function") or {}).get("name") or "?"
+        counts[name] = counts.get(name, 0) + 1
+    note_at = next((i for i, m in enumerate(messages) if m.get("role") == "assistant"
+                    and _text(m.get("content")).startswith(DROPPED_MARK)), None)
+    del messages[a:b]
+    summary = ", ".join(f"{n} x{c}" for n, c in sorted(counts.items(), key=lambda kv: -kv[1]))
+    note = {"role": "assistant", "content": (
+        f"{DROPPED_MARK} to fit the context window ({sum(counts.values())} calls: {summary}). What they "
+        "found is in the notes and artifacts saved so far; check those instead of repeating the calls.")}
+    if note_at is None:
+        messages.insert(a, note)
+    else:
+        messages[note_at if note_at < a else note_at - (b - a)] = note
+    return True
+
+
 def fit_messages(messages: list[dict[str, Any]], window: int | None, tools: list[dict] | None = None,
                  reserve: int = REPLY_RESERVE, calibration: float = 1.0) -> dict[str, int]:
     """Shrink tool results in `messages` (in place, by replacing entries) until the estimated
@@ -122,7 +168,7 @@ def fit_messages(messages: list[dict[str, Any]], window: int | None, tools: list
     # Older results go through every stage (down to a stub) before the newest ones are
     # touched; within a stage the oldest go first. The newest results are only ever
     # excerpted - stubbing them would drop exactly what the model just asked for.
-    for group, stages in ((older, (*EXCERPT_CHARS, 0)), (recent, (*EXCERPT_CHARS, RECENT_FLOOR_CHARS))):
+    def shrink(group, stages) -> bool:
         for limit in stages:
             for i in group:
                 new = _shrink(messages[i], limit)
@@ -131,5 +177,23 @@ def fit_messages(messages: list[dict[str, Any]], window: int | None, tools: list
                     stats["trimmed"] += 1
                     stats["after"] = size()
                     if stats["after"] <= budget:
-                        return stats
+                        return True
+        return False
+
+    if shrink(older, (*EXCERPT_CHARS, 0)):
+        return stats
+    # Still over with every older result stubbed: drop whole old rounds before touching the newest results.
+    counts: dict[str, int] = {}
+    note = next((m for m in messages if m.get("role") == "assistant"
+                 and _text(m.get("content")).startswith(DROPPED_MARK)), None)
+    if note:   # rounds dropped by an earlier fit this turn: keep counting from there
+        for part in re.findall(r"(\w+) x(\d+)", _text(note["content"])):
+            counts[part[0]] = int(part[1])
+    while stats["after"] > budget and _drop_round(messages, counts):
+        stats["dropped"] = stats.get("dropped", 0) + 1
+        stats["after"] = size()
+    if stats["after"] <= budget:
+        return stats
+    tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    shrink(tool_idx[-KEEP_RECENT:], (*EXCERPT_CHARS, RECENT_FLOOR_CHARS))
     return stats

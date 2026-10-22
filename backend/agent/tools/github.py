@@ -395,32 +395,30 @@ SCHEMAS.append({
     "function": {
         "name": "github",
         "description": (
-            "GitHub API on the repo bound to this project (no local checkout needed). Actions and their args: "
-            "read_file(path, ref?) · list_directory(path?, ref?) · list_branches(name_prefix?) · "
-            "list_pulls(state?, head?, base?) · create_branch(new_branch, base_branch?) · "
-            "delete_branch(branch) — never the default branch; web chat only · write_files(branch, message, files=[{path, content}]) "
-            "— one atomic commit, after create_branch · push_artifacts(folder, branch?, message?, path?, title?, body?, base?) "
-            "— commits an artifact folder as it is stored (no need to resend the files) to a NEW branch and "
-            "opens a pull request; path = folder inside the repo; never the default branch · "
-            "create_pr(title, head, base?, body?, draft?) · "
-            "merge_pr(pr_number, merge_method?) — only when the user approved merging; web chat only · "
-            "list_connections() — diagnostic only."
+            "GitHub API on the project's bound repo. Actions: read_file(path, ref?) · list_directory(path?, "
+            "ref?) · list_branches(name_prefix?) · list_pulls(state?, head?, base?) · create_branch(new_branch, "
+            "base_branch?) · delete_branch(branch) - not the default branch; web chat only · write_files(branch, "
+            "message, files=[{path, content}]) - one commit, after create_branch · push_artifacts(folder, "
+            "branch?, message?, path?, title?, body?, base?) - commits an artifact folder as stored (no need to "
+            "resend files) to a NEW branch and opens a PR; path = folder in the repo · create_pr(title, head, "
+            "base?, body?, draft?) · merge_pr(pr_number, merge_method?) - only when the user approved merging; "
+            "web chat only · list_connections()."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "action": {"type": "string", "enum": list(GITHUB_ACTIONS)},
-                "path": {"type": "string", "description": "File or directory path in the repo ('' = root)."},
-                "folder": {"type": "string", "description": "push_artifacts: artifact folder to push, bare like list_artifacts' path_prefix, e.g. 'SpiderKit/'."},
-                "ref": {"type": "string", "description": "Branch or commit sha; default branch if omitted."},
+                "path": {"type": "string"},
+                "folder": {"type": "string", "description": "push_artifacts: artifact folder, e.g. 'SpiderKit/'."},
+                "ref": {"type": "string"},
                 "name_prefix": {"type": "string"},
                 "state": {"type": "string", "enum": ["open", "closed", "all"]},
-                "head": {"type": "string", "description": "Branch with the changes (create_pr) or head filter (list_pulls)."},
-                "base": {"type": "string", "description": "Target branch (create_pr) or base filter (list_pulls)."},
+                "head": {"type": "string"},
+                "base": {"type": "string"},
                 "new_branch": {"type": "string"},
                 "base_branch": {"type": "string"},
                 "branch": {"type": "string"},
-                "message": {"type": "string", "description": "Commit message."},
+                "message": {"type": "string"},
                 "files": {"type": "array", "items": {"type": "object"}, "description": "[{path, content}]"},
                 "title": {"type": "string"},
                 "body": {"type": "string"},

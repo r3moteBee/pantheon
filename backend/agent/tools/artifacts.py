@@ -49,26 +49,31 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "save_last_response",
             "description": (
-                "Save recent conversation as an artifact. Default: your previous reply verbatim; "
-                "history_count widens it, and mode can summarize, research or custom-transform it. "
-                "Use for 'save this', 'note the last few messages' — never ask the user to restate "
-                "what's already in the conversation."
+                "Save your previous reply (or recent messages) as an artifact - for 'save this'. Never ask the "
+                "user to restate it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Artifact path, e.g. 'ANALYSIS/2026-04-07-ai-maturity.md' (project prefix added automatically)"},
-                    "history_count": {"type": "integer", "description": "How many of the most recent messages (both user and assistant) to include as source material. 1 = just the last assistant reply (default). Use a larger number when the user references 'the last few messages' or 'the conversation so far'.", "default": 1},
+                    "path": {"type": "string", "description": "Artifact path, e.g. 'notes/2026-04-07-topic.md'."},
+                    "history_count": {"type": "integer", "description": (
+                        "Messages to include, default 1 (your last reply)."
+                    ), "default": 1},
                     "mode": {
                         "type": "string",
                         "enum": ["verbatim", "summarize", "research", "custom"],
-                        "description": "verbatim = save source material as-is (default for history_count=1). summarize = condense into key points. research = run web_search/recall to expand on the source material and produce a researched note. custom = apply the instructions in custom_prompt to the source material.",
+                        "description": (
+                            "verbatim (default), summarize, research (expand with web_search/recall) or custom "
+                            "(custom_prompt)."
+                        ),
                         "default": "verbatim"
                     },
-                    "custom_prompt": {"type": "string", "description": "Required when mode='custom'. Instructions for how to transform the source messages (e.g. 'extract action items', 'rewrite as a formal brief')."},
-                    "title": {"type": "string", "description": "Optional title for YAML frontmatter (markdown only)"},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional list of tags for YAML frontmatter"},
-                    "prepend_header": {"type": "boolean", "description": "If true, prepend a title+date header to the content (default true for .md files)", "default": True}
+                    "custom_prompt": {"type": "string", "description": "mode=custom: how to transform it."},
+                    "title": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}},
+                    "prepend_header": {"type": "boolean", "description": (
+                        "Title+date header (default true for .md)."
+                    ), "default": True}
                 },
                 "required": ["path"]
             }
@@ -79,17 +84,25 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "save_to_artifact",
             "description": (
-                "Save content into the user's Pantheon artifact store. THIS IS THE ONLY tool that persists anything into `list_artifacts` / `read_artifact` / project-scoped recall. MCP `save_*` / `*_save_to_library` / `*_upload_file` tools are NOT equivalents — they save to external services that Pantheon cannot see. Always use `save_to_artifact` when a skill says \"save as artifact\" or when the user asks you to save something for later use in this project. Pass a bare path like 'youtube-transcripts/foo.md' — the project slug is prepended automatically. If the path already exists, a NEW copy is saved as foo-1.md, foo-2.md, … unless overwrite=true, which replaces the existing file (a new version). To change an existing file, prefer update_artifact or pass overwrite=true. Returns the saved artifact id."
+                "Save content to the project's artifact store - the only save that list_artifacts, read_artifact "
+                "and recall can see (MCP save/upload tools are not equivalents). Use it when a skill or the user "
+                "says save. Bare paths like 'notes/foo.md' (the project slug is added). An existing path gets a "
+                "-1 copy unless overwrite=true; to change a file prefer update_artifact. Returns the artifact "
+                "id."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Logical path inside the project artifact tree."},
-                    "content": {"type": "string", "description": "Full content body."},
-                    "content_type": {"type": "string", "description": "Mime-ish type. Leave it out to pick one from the file extension (e.g. .swift -> text/x-swift); text/markdown when the extension says nothing."},
-                    "overwrite": {"type": "boolean", "description": "If the path already exists, replace that file (saved as a new version) instead of creating a -1 copy.", "default": False},
-                    "title": {"type": "string", "description": "Optional human title."},
-                    "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional tags."}
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "content_type": {"type": "string", "description": (
+                        "Default: from the file extension, else text/markdown."
+                    )},
+                    "overwrite": {"type": "boolean", "description": (
+                        "Replace the file at path (new version) instead of saving a -1 copy."
+                    ), "default": False},
+                    "title": {"type": "string"},
+                    "tags": {"type": "array", "items": {"type": "string"}}
                 },
                 "required": ["path", "content"]
             }
@@ -99,13 +112,15 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_artifact",
-            "description": "Replace the content of an existing artifact, creating a new version. Use when the user asks to revise an existing note/file.",
+            "description": "Replace an artifact's content (new version).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Artifact id."},
-                    "content": {"type": "string", "description": "The complete new content. It replaces the whole file - pass all of it, not just the changed part."},
-                    "edit_summary": {"type": "string", "description": "Optional commit-message-style note."}
+                    "id": {"type": "string"},
+                    "content": {"type": "string", "description": (
+                        "The complete new content - it replaces the whole file."
+                    )},
+                    "edit_summary": {"type": "string"}
                 },
                 "required": ["id", "content"]
             }
@@ -115,12 +130,12 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_artifact",
-            "description": "Read an artifact by id or by path. Use to surface previously saved content.",
+            "description": "Read an artifact by id or path.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "path": {"type": "string", "description": "Logical path; alternative to id."}
+                    "path": {"type": "string"}
                 },
                 "required": []
             }
@@ -130,12 +145,14 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_artifact",
-            "description": "Delete an artifact in the active project, by id or by path (e.g. a stray duplicate or a file that is no longer needed). It goes to the trash and can be restored from the Artifacts page.",
+            "description": (
+                "Delete an artifact by id or path; it goes to the trash (restorable from the Artifacts page)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "id": {"type": "string", "description": "Artifact id."},
-                    "path": {"type": "string", "description": "Logical path; alternative to id."}
+                    "id": {"type": "string"},
+                    "path": {"type": "string"}
                 },
                 "required": []
             }
@@ -146,7 +163,8 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "list_artifacts",
             "description": (
-                "List artifacts in the active project. To find files in a folder use path_prefix with a BARE folder name like 'research/' — do NOT include the project slug yourself; the tool prepends it for you (so 'research/' and 'default-project/research/' both work). To find a single file use read_artifact with id or path."
+                "List the project's artifacts. For a folder pass a bare path_prefix like 'research/' (the slug "
+                "is added); for one file use read_artifact."
             ),
             "parameters": {
                 "type": "object",
