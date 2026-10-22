@@ -550,7 +550,8 @@ class AgentCore:
                        "plan": "1. Research each item separately and save a sourced note per item.\n"
                                "2. Write the summary from the notes."},
             memory_manager=self.memory_manager, project_id=self.project_id, session_id=self.session_id,
-            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec)
+            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec,
+            channel=self.channel)
         if not str(result).startswith("Task PROPOSED"):
             logger.info("research_batch proposal not filed: %s", str(result)[:200])
             return ""
@@ -827,7 +828,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="get_self_documentation", tool_args={}, memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 yield {"type": "tool_result", "name": "get_self_documentation", "result": result,
                        "tool_id": sd["id"], "is_error": tool_results.is_error(result)}
@@ -852,7 +853,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="writing_voice", tool_args=voice_args, memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 yield {"type": "tool_result", "name": "writing_voice", "result": result,
                        "tool_id": wv["id"], "is_error": tool_results.is_error(result)}
@@ -873,7 +874,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="web_fetch", tool_args=pf["args"], memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 web_evidence.update(evidence_from("web_fetch", pf["args"], result))
                 yield {"type": "tool_result", "name": "web_fetch", "result": result, "tool_id": pf["id"],
@@ -903,7 +904,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 web_evidence.update(evidence_from("web_search", pre["args"], result))
                 yield {"type": "tool_result", "name": "web_search", "result": result, "tool_id": pre["id"],
@@ -1177,6 +1178,7 @@ class AgentCore:
                             last_assistant_text=last_assistant_text,
                             interactive=self.interactive,
                             host_exec=self.host_exec,
+                            channel=self.channel,
                         )
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):

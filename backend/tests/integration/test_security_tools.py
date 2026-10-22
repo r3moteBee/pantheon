@@ -193,6 +193,39 @@ async def test_github_reads_and_branch_writes_stay_open_to_jobs():
             p.stop()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["telegram", "slack", "discord", "matrix", "mattermost"])
+async def test_github_writes_refused_from_messaging_apps(channel):
+    """Bots relay chat-app users; repo writes stay with the web chat and approved jobs."""
+    ps = _github_patches()
+    for p in ps:
+        p.start()
+    try:
+        with patch("integrations.github.GitHubClient.write_files", new_callable=AsyncMock,
+                   return_value={"files": ["a"], "branch": "b", "commit_sha": "abcdef12"}) as w, \
+             patch("integrations.github.GitHubClient.list_branches", new_callable=AsyncMock, return_value=[]) as lb:
+            args = {"action": "write_files", "branch": "b", "message": "m", "files": [{"path": "a", "content": "x"}]}
+            out = await execute_tool("github", args, None, project_id="p", channel=channel)
+            assert f"isn't available from {channel}" in out
+            w.assert_not_called()
+            out = await execute_tool("github", {"action": "list_branches"}, None, project_id="p", channel=channel)
+            assert "branch(es)" in out
+            lb.assert_called_once()
+            out = await execute_tool("github", args, None, project_id="p", channel="web", interactive=True)
+            assert "Committed 1 file" in out
+    finally:
+        for p in ps:
+            p.stop()
+
+
+def test_agentcore_passes_channel_to_every_tool_call():
+    import inspect
+    from agent import core
+    src = inspect.getsource(core)
+    calls = src.count("await execute_tool(")
+    assert calls and src.count("channel=self.channel") >= calls
+
+
 # ── 3. sandbox script names ──────────────────────────────────────────────────
 
 @pytest.mark.parametrize("bad", ["../../x.py", "/tmp/x.py", "a/b.py", "..", ".", "", None, "a\\b.py",

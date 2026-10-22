@@ -215,6 +215,10 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
     if not token:
         return f"Connection {conn_row['id']} has no stored token. Re-add it on the Connections page (GitHub tab)."
     action = tool_name.removeprefix("github_")
+    if action in WRITE_ACTIONS and _from_messaging_app(ctx):
+        return (f"{action} isn't available from {ctx.channel}: changes to the GitHub repo are made "
+                "from the web chat or a background task the user approved. Tell the user what you "
+                "would change so they can do it from the web chat.")
     if action in INTERACTIVE_ONLY_ACTIONS and not ctx.interactive:
         return (f"{action} only runs in a chat the user is driving; background tasks can't "
                 f"{'merge pull requests' if action == 'merge_pr' else 'delete branches'}. "
@@ -374,6 +378,14 @@ async def _push_artifacts(ctx: ToolContext, conn_row: dict, spec: dict, tool_arg
 # open to background runs: iteration_loop and coding_task jobs (plans the
 # user approved) commit through them, and they only add a branch or a PR.
 INTERACTIVE_ONLY_ACTIONS = frozenset({"merge_pr", "delete_branch"})
+# Repo writes a messaging-app turn may not make: the bot relays messages from
+# chat-app users (allowlisted, but not the web UI's signed-in user), and
+# background jobs that commit (coding_task, iteration_loop) have channel None.
+WRITE_ACTIONS = frozenset({"create_branch", "delete_branch", "write_files", "push_artifacts", "create_pr", "merge_pr"})
+
+
+def _from_messaging_app(ctx) -> bool:
+    return bool(getattr(ctx, "channel", None)) and ctx.channel != "web"
 
 GITHUB_ACTIONS = ("list_connections", "read_file", "list_directory", "list_branches", "list_pulls",
                   "create_branch", "delete_branch", "write_files", "push_artifacts", "create_pr", "merge_pr")
