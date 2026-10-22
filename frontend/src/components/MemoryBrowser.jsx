@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
+import { toDate } from '../utils/time'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Search, Trash2, RefreshCw, ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useStore } from '../store'
@@ -173,8 +174,30 @@ function SemanticTab() {
 
   useLoadPerProject(activeProject?.id, loadDocs)
 
+  // Entries from one source (snapshots of a task ledger, chunks of one file)
+  // look alike until expanded (round 3 #3): number them oldest to newest
+  // (seq/seqTotal) and the card shows the exact time instead of "2 h ago".
+  const numbered = useMemo(() => {
+    const groups = new Map()
+    for (const d of docs) {
+      const s = semanticSummary(d)
+      const key = s.source_title || s.source_path || s.session_id
+      if (!key) continue
+      const k = `${s.kind}|${key}`
+      if (!groups.has(k)) groups.set(k, [])
+      groups.get(k).push(d)
+    }
+    const seq = new Map()
+    for (const list of groups.values()) {
+      if (list.length < 2) continue
+      const sorted = [...list].sort((a, b) => (toDate(semanticSummary(a).created_at) || 0) - (toDate(semanticSummary(b).created_at) || 0))
+      sorted.forEach((d, i) => seq.set(d.id, { seq: i + 1, seqTotal: sorted.length }))
+    }
+    return docs.map((d) => (seq.has(d.id) ? { ...d, ...seq.get(d.id) } : d))
+  }, [docs])
+
   const q = search.toLowerCase()
-  const filtered = docs.filter(d => {
+  const filtered = numbered.filter(d => {
     const s = semanticSummary(d)
     return [d.content, d.id, s.kind, s.source_path, s.source_title].some((v) => (v || '').toLowerCase().includes(q))
   })
