@@ -9,10 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-javascript": "^6.2.2",
     "@codemirror/lang-json": "^6.0.1",
     "@codemirror/lang-markdown": "^6.2.5",
     "@codemirror/lang-python": "^6.1.6",
+    "@codemirror/legacy-modes": "^6.5.4",
     "@codemirror/view": "^6.43.0",
     "@uiw/react-codemirror": "^4.21.25",
     "axios": "^1.7.2",

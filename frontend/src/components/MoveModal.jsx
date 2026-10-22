@@ -84,12 +84,12 @@ export default function MoveModal({
   return (
     <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center" onClick={onClose}>
       <div
-        className="bg-gray-950 border border-gray-800 rounded-lg w-[480px] max-h-[80vh] flex flex-col"
+        className="bg-gray-950 border border-gray-800 rounded-lg w-[480px] max-w-[calc(100vw-2rem)] max-h-[80vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between p-3 border-b border-gray-800">
           <div className="text-sm font-semibold text-gray-200">{title}</div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-200">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-200" aria-label="Close" title="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -102,9 +102,10 @@ export default function MoveModal({
             showProjects="always"
           />
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Or enter a new folder path (relative to project):</label>
+            <label htmlFor="move-new-folder" className="text-xs text-gray-400 mb-1 block">Or enter a new folder path (relative to project):</label>
             <input
               type="text"
+              id="move-new-folder"
               value={newFolder}
               onChange={(e) => setNewFolder(e.target.value)}
               placeholder="e.g. research/q2-2026"
@@ -130,16 +131,16 @@ export default function MoveModal({
         <div className="p-3 border-t border-gray-800 flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200"
+            className="px-3 py-1 text-xs text-gray-300 hover:text-gray-100"
           >
             Cancel
           </button>
           <button
             onClick={confirm}
             disabled={!canConfirm}
-            className={`px-3 py-1 text-xs rounded ${
+            className={`px-3 py-1 text-xs rounded whitespace-nowrap ${
               canConfirm
-                ? (crossProject ? 'bg-amber-700 hover:bg-amber-600 text-white' : 'bg-brand-600 hover:bg-brand-500 text-white')
+                ? (crossProject ? 'bg-amber-700 hover:bg-amber-600 text-white' : 'bg-brand-700 hover:bg-brand-600 text-white')
                 : 'bg-gray-800 text-gray-600 cursor-not-allowed'
             }`}
           >

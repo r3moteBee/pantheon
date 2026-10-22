@@ -45,6 +45,9 @@ export default function ExportMenu({ getSvgEl, basename = 'diagram', title = 'Ex
         disabled={busy}
         className="p-1.5 rounded bg-gray-900/80 hover:bg-gray-800 text-gray-300 border border-gray-700 shadow disabled:opacity-50"
         title={title}
+        aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <Download className="w-3.5 h-3.5" />
       </button>

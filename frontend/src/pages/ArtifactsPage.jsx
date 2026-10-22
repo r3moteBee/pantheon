@@ -3,21 +3,20 @@ import {
   FolderOpen, FileText, Code, Image as ImageIcon, FileSpreadsheet,
   Presentation, FileType, Star, Trash2, Plus, Upload, RefreshCw, Search,
   Save, Download, X, Tag, Edit3, Eye, History, FileCode,
-  PanelLeftClose, PanelLeftOpen, Move, Copy, Github, HardDriveDownload,
+  PanelLeftClose, PanelLeftOpen, Move, Copy, Github, HardDriveDownload, Pencil, Info,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import DOMPurify from 'dompurify'
-import CodeMirror from '@uiw/react-codemirror'
-import { markdown } from '@codemirror/lang-markdown'
-import { python } from '@codemirror/lang-python'
-import { javascript } from '@codemirror/lang-javascript'
-import { artifactsApi, projectsApi } from '../api/client'
+import { api, artifactsApi, projectsApi } from '../api/client'
+import CoreEditor from '../components/CoreEditor'
+import InfoBox from '../components/InfoBox'
+import Time from '../components/Time'
+import { findLikelyDuplicates } from '../components/memory/duplicates'
 import FolderTree from '../components/FolderTree'
 import MoveModal from '../components/MoveModal'
 import PushToGitHubModal from '../components/PushToGitHubModal'
 import WorkspaceImportModal from '../components/WorkspaceImportModal'
 import { useStore } from '../store'
-import HelpDrawer from '../components/help/HelpDrawer'
 import Markdown from '../components/Markdown'
 import Mermaid from '../components/Mermaid'
 import ExportMenu from '../components/ExportMenu'
@@ -44,11 +43,114 @@ function formatBytes(n) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-function langExtension(ct) {
-  if (ct === 'text/markdown') return [markdown()]
-  if (ct === 'text/x-python') return [python()]
-  if (ct === 'text/javascript' || ct === 'text/typescript') return [javascript({ jsx: true, typescript: ct === 'text/typescript' })]
-  return []
+// Agents tend to title re-saves "Foo.swift (Updated)"; every save is already a
+// version, so show the version number instead of the suffix (#27).
+const UPDATED_SUFFIX = /\s*[([]\s*(updated|revised|fixed|v\d+)\s*[)\]]\s*$/i
+function displayTitle(a) {
+  return String(a.title || a.path || '').replace(UPDATED_SUFFIX, '') || a.path
+}
+
+const RAIL_MIN = 180, RAIL_MAX = 480
+
+// "About artifacts": neutral help, collapsed by default (#13).
+function AboutArtifacts() {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem('help.artifacts') === 'true' } catch { return false }
+  })
+  const toggle = () => {
+    setOpen((v) => { try { localStorage.setItem('help.artifacts', String(!v)) } catch {} return !v })
+  }
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-xs text-sky-300 hover:text-sky-200 whitespace-nowrap"
+      >
+        <Info className="w-3.5 h-3.5" aria-hidden="true" /> {open ? 'Hide' : 'About artifacts'}
+      </button>
+      {open && (
+        <InfoBox className="mt-2 text-xs" title="About artifacts">
+          <p className="mb-2">
+            <strong>Artifacts</strong> are durable, indexed, searchable
+            storage, saved via <code className="text-sky-200">save_to_artifact</code>{' '}
+            in chat or by the source-adapter pipeline. They are distinct
+            from <strong>workspace files</strong> (scratch files on
+            disk, accessed via <code className="text-sky-200">read_file</code> /{' '}
+            <code className="text-sky-200">write_file</code>).
+          </p>
+          <ul className="list-disc pl-5 space-y-1">
+            <li><strong>Project scope</strong> (left rail): <em>Current</em> shows
+              only this project's artifacts; <em>All</em> shows every project.</li>
+            <li><strong>Tags + pins</strong>: tag to group, pin to keep
+              important items at the top of search. Rename a tag (pencil) to fix or merge it.</li>
+            <li><strong>Versions</strong>: every save creates a new version;
+              open the history pane (clock icon) to diff or restore.</li>
+            <li><strong>Bulk select</strong>: check rows to zip-export, move or delete in batch.</li>
+            <li>Saving to the same path <em>updates</em> the
+              existing artifact (a new version). Pass{' '}
+              <code className="text-sky-200">force_new=true</code>{' '}
+              when you want a separate row.</li>
+          </ul>
+        </InfoBox>
+      )}
+    </div>
+  )
+}
+
+function TagRow({ tag, count, active, canRename, duplicates, onSelect, onRename }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(tag)
+  const dupTitle = duplicates?.length
+    ? `Looks like a duplicate of ${duplicates.map((d) => `"${d.label}"`).join(', ')}. Rename one to the other to merge them.`
+    : ''
+  if (editing) {
+    const submit = async () => {
+      const next = draft.trim()
+      setEditing(false)
+      if (next && next !== tag) await onRename(tag, next)
+    }
+    return (
+      <form
+        onSubmit={(e) => { e.preventDefault(); submit() }}
+        className="flex items-center gap-1 px-1 py-0.5"
+      >
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') { setDraft(tag); setEditing(false) } }}
+          onBlur={() => { setDraft(tag); setEditing(false) }}
+          aria-label={`New name for tag ${tag}`}
+          className="flex-1 min-w-0 text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5"
+        />
+      </form>
+    )
+  }
+  return (
+    <div className={`group flex items-center rounded ${active ? 'bg-brand-700 text-white' : 'hover:bg-gray-900 text-gray-300'}`}>
+      <button
+        onClick={onSelect}
+        title={dupTitle || tag}
+        className="flex-1 min-w-0 text-left text-xs px-2 py-1 flex items-center gap-1"
+      >
+        <span className="truncate min-w-0">{tag}</span>
+        {dupTitle && <span className={`shrink-0 ${active ? 'text-white' : 'text-amber-300'}`} aria-label="possible duplicate">≈</span>}
+        <span className={`ml-auto shrink-0 ${active ? 'text-white' : 'text-gray-400'}`}>{count}</span>
+      </button>
+      {canRename && (
+        <button
+          onClick={() => { setDraft(tag); setEditing(true) }}
+          aria-label={`Rename or merge tag ${tag}`}
+          title="Rename / merge tag"
+          className={`p-1 rounded opacity-60 group-hover:opacity-100 focus-visible:opacity-100 ${active ? 'text-white' : 'text-gray-400 hover:text-gray-200'}`}
+        >
+          <Pencil className="w-3 h-3" />
+        </button>
+      )}
+    </div>
+  )
 }
 
 export default function ArtifactsPage({ lockedProjectId = null }) {
@@ -63,6 +165,22 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   React.useEffect(() => {
     try { localStorage.setItem('pan_artifacts_folders_collapsed', foldersCollapsed ? '1' : '0') } catch {}
   }, [foldersCollapsed])
+  const [railWidth, setRailWidth] = useState(() => {
+    try { const w = Number(localStorage.getItem('pan_artifacts_rail_width')); return w >= RAIL_MIN && w <= RAIL_MAX ? w : 240 }
+    catch { return 240 }
+  })
+  React.useEffect(() => {
+    try { localStorage.setItem('pan_artifacts_rail_width', String(railWidth)) } catch {}
+  }, [railWidth])
+  const [mobileRailOpen, setMobileRailOpen] = useState(false)
+  const startRailResize = (e) => {
+    e.preventDefault()
+    const startX = e.clientX, startW = railWidth
+    const move = (ev) => setRailWidth(Math.max(RAIL_MIN, Math.min(RAIL_MAX, startW + ev.clientX - startX)))
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up) }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   const projectId = lockedProjectId
     ? lockedProjectId
     : (projectScope === 'all' ? 'all' : (activeProject?.id || 'default'))
@@ -216,6 +334,25 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     await performMove(payload.id, project_id, folder || '', mode, payload)
   }
 
+  const tagDuplicates = React.useMemo(
+    () => findLikelyDuplicates(Object.keys(tagCounts).map((t) => ({ id: t, label: t }))),
+    [tagCounts],
+  )
+
+  const renameTag = async (oldTag, newTag) => {
+    const merging = Object.prototype.hasOwnProperty.call(tagCounts, newTag)
+    if (merging && !confirm(`Merge tag "${oldTag}" into "${newTag}"? Every artifact tagged "${oldTag}" gets "${newTag}" instead.`)) return
+    try {
+      const res = await api.post('/api/artifacts/bulk/rename-tag', { project_id: projectId, old: oldTag, new: newTag })
+      if (filterTag === oldTag) setFilterTag(newTag)
+      await refresh()
+      const n = res.data?.updated || 0
+      setToast(`${merging ? 'Merged' : 'Renamed'} "${oldTag}" → "${newTag}" on ${n} artifact${n === 1 ? '' : 's'}`)
+    } catch (e) {
+      notify('error', 'Tag rename failed: ' + e.message)
+    }
+  }
+
   const performMove = async (id, dest_project_id, dest_folder, mode, payload) => {
     try {
       const res = await artifactsApi.move(id, dest_folder, { dest_project_id, mode })
@@ -231,23 +368,41 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   }
 
   return (
-    <div className="h-full flex">
-      {/* Left rail: folders + tags (collapsible; hidden on mobile when an artifact is open) */}
-      <div className={
-        (foldersCollapsed ? "w-10 " : "w-56 ") +
-        "border-r border-gray-800 bg-gray-950 overflow-y-auto p-2 space-y-3 flex-shrink-0 " +
-        (activeId ? "hidden md:block " : "")
-      }>
-        <div className={"flex " + (foldersCollapsed ? "justify-center" : "justify-end")}>
+    <div className="h-full flex relative" data-area="artifacts">
+      {/* Left rail: folders + tags. md+: collapsible and resizable. Phones: a drawer
+          opened from the list header ("Folders"), so the list gets the full width. */}
+      {mobileRailOpen && (
+        <div className="md:hidden absolute inset-0 z-20 bg-black/50" onClick={() => setMobileRailOpen(false)} aria-hidden="true" />
+      )}
+      <div
+        style={{ '--rail-w': `${railWidth}px` }}
+        className={
+          (mobileRailOpen ? "absolute inset-y-0 left-0 z-30 w-72 max-w-[85vw] shadow-2xl block " : "hidden ") +
+          "md:static md:z-auto md:shadow-none md:max-w-none md:block " +
+          (foldersCollapsed ? "md:w-10 " : "md:w-[var(--rail-w)] ") +
+          "border-r border-gray-800 bg-gray-950 overflow-y-auto overflow-x-hidden p-2 space-y-3 flex-shrink-0 " +
+          ""
+        }
+      >
+        <div className={"flex " + (foldersCollapsed ? "md:justify-center justify-end" : "justify-end")}>
+          <button
+            onClick={() => setMobileRailOpen(false)}
+            aria-label="Close folders"
+            title="Close folders"
+            className="md:hidden text-gray-400 hover:text-gray-200 p-1 rounded"
+          >
+            <X className="w-4 h-4" />
+          </button>
           <button
             onClick={() => setFoldersCollapsed(v => !v)}
+            aria-label={foldersCollapsed ? "Expand folders" : "Collapse folders"}
             title={foldersCollapsed ? "Expand folders" : "Collapse folders"}
-            className="text-gray-500 hover:text-gray-200 p-1 rounded"
+            className="hidden md:block text-gray-400 hover:text-gray-200 p-1 rounded"
           >
             {foldersCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
         </div>
-        {!foldersCollapsed && (<>
+        {(!foldersCollapsed || mobileRailOpen) && (<div className={foldersCollapsed ? 'md:hidden space-y-3' : 'space-y-3'}>
         {!lockedProjectId && (
           <div>
             <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
@@ -256,14 +411,14 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             <div className="flex gap-1 mb-1 text-xs">
               <button
                 onClick={() => setProjectScope('current')}
-                className={`flex-1 px-2 py-1 rounded ${projectScope === 'current' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+                className={`flex-1 min-w-0 truncate px-2 py-1 rounded ${projectScope === 'current' ? 'bg-brand-700 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
                 title={activeProject?.name || 'default'}
               >
                 {activeProject?.name || 'Default'}
               </button>
               <button
                 onClick={() => setProjectScope('all')}
-                className={`flex-1 px-2 py-1 rounded ${projectScope === 'all' ? 'bg-brand-600 text-white' : 'bg-gray-900 text-gray-400 hover:bg-gray-800'}`}
+                className={`px-2 py-1 rounded whitespace-nowrap ${projectScope === 'all' ? 'bg-brand-700 text-white' : 'bg-gray-900 text-gray-300 hover:bg-gray-800'}`}
               >
                 All
               </button>
@@ -276,7 +431,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           </div>
           <button
             onClick={() => setFilterFolder('')}
-            className={`w-full text-left text-xs px-2 py-1 rounded ${!filterFolder ? 'bg-brand-600 text-white' : 'hover:bg-gray-900 text-gray-400'}`}
+            className={`w-full text-left text-xs px-2 py-1 rounded ${!filterFolder ? 'bg-brand-700 text-white' : 'hover:bg-gray-900 text-gray-300'}`}
           >
             All
           </button>
@@ -295,7 +450,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
                   }]
             }
             selected={{ project_id: projectId, folder: filterFolder }}
-            onSelect={({ folder }) => setFilterFolder(folder || '')}
+            onSelect={({ folder }) => { setFilterFolder(folder || ''); setMobileRailOpen(false) }}
             onDrop={handleArtifactDrop}
             collapsedKey="pan_artifacts_rail_collapsed"
             showProjects="multi-only"
@@ -308,20 +463,21 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           </div>
           <button
             onClick={() => setFilterTag(null)}
-            className={`w-full text-left text-xs px-2 py-1 rounded ${!filterTag ? 'bg-brand-600 text-white' : 'hover:bg-gray-900 text-gray-400'}`}
+            className={`w-full text-left text-xs px-2 py-1 rounded ${!filterTag ? 'bg-brand-700 text-white' : 'hover:bg-gray-900 text-gray-300'}`}
           >
             All
           </button>
           {Object.entries(tagCounts).map(([t, n]) => (
-            <button
+            <TagRow
               key={t}
-              onClick={() => setFilterTag(t)}
-              className={`w-full text-left text-xs px-2 py-1 rounded flex items-center justify-between ${
-                filterTag === t ? 'bg-brand-600 text-white' : 'hover:bg-gray-900 text-gray-400'
-              }`}
-            >
-              <span>{t}</span><span className="text-gray-600">{n}</span>
-            </button>
+              tag={t}
+              count={n}
+              active={filterTag === t}
+              canRename={projectId !== 'all'}
+              duplicates={tagDuplicates.get(t)}
+              onSelect={() => { setFilterTag(t); setMobileRailOpen(false) }}
+              onRename={renameTag}
+            />
           ))}
         </div>
 
@@ -329,14 +485,33 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           <button
             onClick={() => setFilterPinned(!filterPinned)}
             className={`w-full text-left text-xs px-2 py-1 rounded flex items-center gap-1 ${
-              filterPinned ? 'bg-brand-600 text-white' : 'hover:bg-gray-900 text-gray-400'
+              filterPinned ? 'bg-brand-700 text-white' : 'hover:bg-gray-900 text-gray-300'
             }`}
           >
             <Star className="w-3 h-3" /> Pinned only
           </button>
         </div>
-        </>)}
+        </div>)}
       </div>
+      {!foldersCollapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize folders pane"
+          aria-valuenow={railWidth}
+          aria-valuemin={RAIL_MIN}
+          aria-valuemax={RAIL_MAX}
+          tabIndex={0}
+          title="Drag to resize"
+          onPointerDown={startRailResize}
+          onDoubleClick={() => setRailWidth(240)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowLeft') setRailWidth((w) => Math.max(RAIL_MIN, w - 16))
+            if (e.key === 'ArrowRight') setRailWidth((w) => Math.min(RAIL_MAX, w + 16))
+          }}
+          className="hidden md:block w-1 -ml-1 cursor-col-resize hover:bg-brand-700/60 focus-visible:bg-brand-700/60 shrink-0 z-10"
+        />
+      )}
 
       {/* Middle: list */}
       <div className={
@@ -346,32 +521,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           : "flex-1 ")
       }>
         {!activeId && (
-          <div className="p-3 border-b border-gray-800">
-            <HelpDrawer title='About artifacts' storageKey='help.artifacts'>
-              <p className='text-xs text-gray-400 mb-2'>
-                <strong>Artifacts</strong> are durable, indexed, searchable
-                storage — saved via <code className='text-amber-200/80'>save_to_artifact</code>{' '}
-                in chat or by the source-adapter pipeline. They are distinct
-                from <strong>workspace files</strong> (ephemeral scratch on
-                disk, accessed via <code className='text-amber-200/80'>read_file</code> /{' '}
-                <code className='text-amber-200/80'>write_file</code>).
-              </p>
-              <ul className='text-xs text-gray-400 list-disc pl-5 space-y-1'>
-                <li><strong>Project scope</strong> (left rail) — <em>Current</em> shows
-                  only this project's artifacts; <em>All</em> shows across every
-                  project (useful for cross-project review).</li>
-                <li><strong>Tags + pins</strong> — tag to group, pin to keep
-                  important items at top of search.</li>
-                <li><strong>Versions</strong> — every save creates a new version;
-                  open the history pane (clock icon) to diff or restore.</li>
-                <li><strong>Bulk select</strong> — check rows to zip-export or
-                  delete in batch.</li>
-                <li>Saving to the same canonical path <em>updates</em> the
-                  existing artifact (creates a new version). Pass{' '}
-                  <code className='text-amber-200/80'>force_new=true</code>{' '}
-                  when you want a separate row.</li>
-              </ul>
-            </HelpDrawer>
+          <div className="px-3 py-2 border-b border-gray-800 flex items-start gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileRailOpen(true)}
+              className="md:hidden flex items-center gap-1 text-xs text-gray-300 hover:text-gray-100 whitespace-nowrap"
+            >
+              <FolderOpen className="w-3.5 h-3.5" aria-hidden="true" />
+              {filterFolder ? filterFolder.split('/').pop() : 'Folders & tags'}
+            </button>
+            <div className="flex-1 min-w-0"><AboutArtifacts /></div>
           </div>
         )}
         <div className="p-3 border-b border-gray-800 space-y-2">
@@ -379,13 +538,13 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           <div className="flex gap-2 mb-1.5">
             <button
               onClick={() => setShowCreate(true)}
-              className="flex-1 py-1.5 px-2 bg-brand-700 hover:bg-brand-600 text-white rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 py-1.5 px-2 bg-brand-700 hover:bg-brand-600 text-white rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
             >
               <Plus className="w-3.5 h-3.5" /> Create
             </button>
             <button
               onClick={() => setShowUpload(true)}
-              className="flex-1 py-1.5 px-2 bg-gray-850 hover:bg-gray-800 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 py-1.5 px-2 bg-gray-850 hover:bg-gray-800 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
             >
               <Upload className="w-3.5 h-3.5" /> Upload
             </button>
@@ -393,6 +552,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <button
                 onClick={() => setShowWorkspaceImport(true)}
                 title="Copy files the agent wrote to the project workspace into artifacts"
+                aria-label="Import workspace files into artifacts"
                 className="py-1.5 px-2 bg-gray-850 hover:bg-gray-800 text-gray-200 rounded text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
               >
                 <HardDriveDownload className="w-3.5 h-3.5" />
@@ -400,17 +560,19 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Search className="w-3 h-3 text-gray-500" />
+            <Search className="w-3 h-3 text-gray-400 shrink-0" aria-hidden="true" />
             <input
               type="text"
               placeholder="Search artifacts…"
+              aria-label="Search artifacts"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="flex-1 bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs"
+              className="flex-1 min-w-0 bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs"
             />
             <select
               value={sort}
               onChange={(e) => setSort(e.target.value)}
+              aria-label="Sort artifacts"
               className="bg-gray-900 border border-gray-800 rounded px-2 py-1 text-xs"
             >
               <option value="modified_desc">Modified ↓</option>
@@ -425,6 +587,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
                 download
                 className="text-gray-400 hover:text-gray-200"
                 title={`Download ${filterFolder.split('/').pop()} as a zip`}
+                aria-label={`Download ${filterFolder.split('/').pop()} as a zip`}
               >
                 <Download className="w-3 h-3" />
               </a>
@@ -434,16 +597,17 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
                 onClick={() => setPushModal({ pathPrefix: filterFolder + '/', label: filterFolder })}
                 className="text-gray-400 hover:text-gray-200"
                 title={`Push ${filterFolder.split('/').pop()} to GitHub`}
+                aria-label={`Push ${filterFolder.split('/').pop()} to GitHub`}
               >
                 <Github className="w-3 h-3" />
               </button>
             )}
-            <button onClick={refresh} className="text-gray-400 hover:text-gray-200">
-              <RefreshCw className="w-3 h-3" />
+            <button onClick={refresh} className="text-gray-400 hover:text-gray-200" aria-label="Reload artifacts" title="Reload">
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
           {selected.size > 0 && (
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs flex-wrap">
               <span className="text-gray-400">{selected.size} selected</span>
               <button onClick={handleBulkExport} className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 flex items-center gap-1">
                 <Download className="w-3 h-3" /> Download zip
@@ -471,15 +635,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
               <button onClick={handleBulkDelete} className="px-2 py-1 rounded bg-red-900 hover:bg-red-800 flex items-center gap-1">
                 <Trash2 className="w-3 h-3" /> Delete
               </button>
-              <button onClick={() => setSelected(new Set())} className="text-gray-500 hover:text-gray-300">Clear</button>
+              <button onClick={() => setSelected(new Set())} className="text-gray-400 hover:text-gray-200">Clear</button>
             </div>
           )}
         </div>
         {/* Select-all row */}
         {items.length > 0 && (
-          <div className="px-3 py-1.5 border-b border-gray-900 flex items-center gap-2 text-[10px] text-gray-400 bg-gray-950">
+          <div className="px-3 py-1.5 border-b border-gray-900 flex items-center gap-2 text-xs text-gray-400 bg-gray-950">
             <input
               type="checkbox"
+              aria-label="Select all"
               checked={selected.size > 0 && selected.size === items.length}
               ref={(el) => {
                 if (el) el.indeterminate = selected.size > 0 && selected.size < items.length
@@ -500,11 +665,11 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
           </div>
         )}
         <div className="flex-1 overflow-y-auto">
-          {loading && <div className="p-4 text-xs text-gray-500">Loading…</div>}
+          {loading && items.length === 0 && <div className="p-4 text-xs text-gray-400">Loading…</div>}
           {error && <div className="p-4 text-xs text-red-400">{error}</div>}
           {!loading && items.length === 0 && (
-            <div className="p-6 text-center text-xs text-gray-500">
-              No artifacts here. Save something to <code className="text-brand-300">save_to_artifact</code> in chat or create one below.
+            <div className="p-6 text-center text-xs text-gray-400">
+              No artifacts here. Ask the agent to save something (<code className="text-brand-300">save_to_artifact</code>) or use Create / Upload above.
             </div>
           )}
           {items.map((a) => {
@@ -527,28 +692,30 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
                 <div className="flex items-start gap-2">
                   <input
                     type="checkbox"
+                    aria-label={`Select ${displayTitle(a)}`}
                     checked={selected.has(a.id)}
                     onClick={(e) => e.stopPropagation()}
                     onChange={() => toggleSelect(a.id)}
                     className="mt-0.5"
                   />
-                  <Icon className="w-3.5 h-3.5 text-gray-500 mt-0.5" />
+                  <Icon className="w-3.5 h-3.5 text-gray-400 mt-0.5 shrink-0" aria-hidden="true" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-medium text-gray-200 truncate flex items-center gap-1">
-                      {a.pinned && <Star className="w-3 h-3 text-amber-400" fill="currentColor" />}
-                      {a.title || a.path}
+                    <div className="text-xs font-medium text-gray-200 flex items-center gap-1 min-w-0" title={a.title || a.path}>
+                      {a.pinned && <Star className="w-3 h-3 text-amber-400 shrink-0" fill="currentColor" />}
+                      <span className="truncate">{displayTitle(a)}</span>
                     </div>
-                    <div className="text-[10px] text-gray-500 truncate">{a.path}</div>
+                    <div className="text-xs text-gray-400 truncate" title={a.path}>{a.path}</div>
                     <div className="flex flex-wrap gap-1 mt-1 items-center">
                       {projectScope === 'all' && a.project_id && (
-                        <span className="text-[10px] px-1.5 bg-brand-900 rounded text-brand-300">
+                        <span className="text-xs px-1.5 bg-brand-900 rounded text-brand-200">
                           {(projects.find((p) => p.id === a.project_id)?.name) || a.project_id}
                         </span>
                       )}
                       {(a.tags || []).map((t) => (
-                        <span key={t} className="text-[10px] px-1 bg-gray-800 rounded text-gray-400">{t}</span>
+                        <span key={t} className="text-xs px-1 bg-gray-800 rounded text-gray-300">{t}</span>
                       ))}
-                      <span className="text-[10px] text-gray-600">{formatBytes(a.size_bytes)}</span>
+                      <span className="text-xs text-gray-400">{formatBytes(a.size_bytes)}</span>
+                      {a.updated_at && <Time value={a.updated_at} className="text-xs text-gray-400" />}
                     </div>
                   </div>
                 </div>
@@ -559,16 +726,22 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       </div>
 
       {/* Right: detail */}
-      <div className="flex-1 min-w-0 overflow-hidden">
+      <div className={"flex-1 min-w-0 overflow-hidden " + (activeId ? "" : "hidden md:block")}>
         {activeId ? (
           <ArtifactDetail
             id={activeId}
             onChanged={refresh}
             onClose={() => setActiveId(null)}
             onRequestMove={(mode) => setMoveModal({ ids: [activeId], mode })}
+            onMissing={(missingId, e) => {
+              setActiveId((cur) => (cur === missingId ? null : cur))
+              setToast(e?.status === 404 || /not found/i.test(e?.message || '')
+                ? 'That artifact was not found (deleted or moved). Showing the list.'
+                : `Could not open the artifact: ${e?.message || 'error'}`)
+            }}
           />
         ) : (
-          <div className="h-full flex items-center justify-center text-xs text-gray-500">
+          <div className="h-full flex items-center justify-center text-xs text-gray-400">
             Select an artifact to view or edit
           </div>
         )}
@@ -663,7 +836,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
 }
 
 
-function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
+function ArtifactDetail({ id, onChanged, onClose, onRequestMove, onMissing }) {
   const [artifact, setArtifact] = React.useState(null)
   const [preview, setPreview] = React.useState(null)
   const [versions, setVersions] = React.useState([])
@@ -678,13 +851,19 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
   const load = async () => {
     setLoading(true)
     try {
-      const a = await artifactsApi.get(id)
+      let a
+      try {
+        a = await artifactsApi.get(id)
+      } catch (e) {
+        // A stale/deleted id (e.g. a ?id= link): tell the parent, show the list.
+        onMissing?.(id, e)
+        return
+      }
       setArtifact(a.data)
       setDraft(a.data.content || '')
-      const p = await artifactsApi.preview(id)
-      setPreview(p.data)
-      const v = await artifactsApi.versions(id)
-      setVersions(v.data.versions || [])
+      const [p, v] = await Promise.allSettled([artifactsApi.preview(id), artifactsApi.versions(id)])
+      setPreview(p.status === 'fulfilled' ? p.value.data : { type: 'unsupported', reason: 'preview failed' })
+      setVersions(v.status === 'fulfilled' ? (v.value.data.versions || []) : [])
     } finally { setLoading(false) }
   }
 
@@ -694,7 +873,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  if (loading || !artifact) return <div className="p-4 text-xs text-gray-500">Loading…</div>
+  if (loading || !artifact) return <div className="p-4 text-xs text-gray-400">Loading…</div>
 
   const ct = artifact.content_type || ''
   const isText = !!ct.match(/^(text\/|application\/(json|yaml|xml)|chat-export)/)
@@ -702,6 +881,9 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
     || ct === 'text/markdown'   // markdown always supports rendered preview
   const Icon = iconForType(ct)
   const dirty = isText && draft !== (artifact.content || '')
+  const versionNumber = versions.find((v) => v.id === artifact.current_version_id)?.version_number
+    || Math.max(0, ...versions.map((v) => v.version_number || 0)) || versions.length
+  const iconBtn = 'p-1 rounded text-gray-400 hover:text-gray-200 hover:bg-gray-800 shrink-0'
 
   const save = async () => {
     setSaving(true)
@@ -736,46 +918,64 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="border-b border-gray-800 px-4 py-2 flex items-center gap-2">
-        <Icon className="w-4 h-4 text-gray-500" />
+      <div className="border-b border-gray-800 px-3 sm:px-4 py-2 flex items-center gap-1 sm:gap-1.5">
+        <Icon className="w-4 h-4 text-gray-400 shrink-0 mr-1" aria-hidden="true" />
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium truncate">{artifact.title || artifact.path}</div>
-          <div className="text-[10px] text-gray-500 truncate">
-            {artifact.path} · {ct} · {formatBytes(artifact.size_bytes)} · v{versions.length}
-            {dirty && <span className="text-amber-400 ml-2">· unsaved</span>}
+          <div className="text-sm font-medium flex items-center gap-2 min-w-0" title={artifact.title || artifact.path}>
+            <span className="truncate">{displayTitle(artifact)}</span>
+            {versionNumber > 0 && (
+              <button
+                onClick={() => setShowVersions(true)}
+                title={`Version ${versionNumber} of ${versions.length} — open history`}
+                className="shrink-0 text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 hover:bg-gray-700"
+              >
+                v{versionNumber}
+              </button>
+            )}
+          </div>
+          <div className="text-xs text-gray-400 truncate" title={artifact.path}>
+            {artifact.path} · {ct} · {formatBytes(artifact.size_bytes)}
+            {artifact.updated_at && <> · <Time value={artifact.updated_at} /></>}
+            {dirty && <span className="text-amber-300 ml-2">· unsaved</span>}
           </div>
         </div>
-        <button onClick={togglePin} className="text-gray-400 hover:text-amber-400" title="Pin">
+        <button onClick={togglePin} className={iconBtn + ' hover:text-amber-400'}
+                aria-label={artifact.pinned ? 'Unpin' : 'Pin'} aria-pressed={!!artifact.pinned}
+                title={artifact.pinned ? 'Unpin' : 'Pin (keeps it at the top of search)'}>
           <Star className={`w-4 h-4 ${artifact.pinned ? 'text-amber-400 fill-current' : ''}`} />
         </button>
-        <button onClick={() => setShowVersions(!showVersions)} className="text-gray-400 hover:text-gray-200" title="Version history">
+        <button onClick={() => setShowVersions(!showVersions)} className={iconBtn}
+                aria-label="Version history" aria-pressed={showVersions} title="Version history">
           <History className="w-4 h-4" />
         </button>
-        <a href={artifactsApi.rawUrl(id)} download className="text-gray-400 hover:text-gray-200" title="Download original">
+        <a href={artifactsApi.rawUrl(id)} download className={iconBtn}
+           aria-label="Download original" title="Download original">
           <Download className="w-4 h-4" />
         </a>
         {onRequestMove && (
           <>
             <button
               onClick={() => onRequestMove('move')}
-              className="text-gray-400 hover:text-gray-200"
+              className={iconBtn}
+              aria-label="Move"
               title="Move to another folder / project"
             >
               <Move className="w-4 h-4" />
             </button>
             <button
               onClick={() => onRequestMove('duplicate')}
-              className="text-gray-400 hover:text-gray-200"
+              className={iconBtn}
+              aria-label="Duplicate"
               title="Make an independent copy in another folder / project"
             >
               <Copy className="w-4 h-4" />
             </button>
           </>
         )}
-        <button onClick={remove} className="text-gray-400 hover:text-red-400" title="Delete">
+        <button onClick={remove} className={iconBtn + ' hover:text-red-400'} aria-label="Delete artifact" title="Delete">
           <Trash2 className="w-4 h-4" />
         </button>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-200" title="Close">
+        <button onClick={onClose} className={iconBtn} aria-label="Close" title="Close">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -783,18 +983,19 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
       {/* Tags row */}
       <div className="border-b border-gray-800 px-4 py-2 flex items-center gap-2 flex-wrap">
         {(artifact.tags || []).map((t) => (
-          <span key={t} className="text-[10px] px-2 py-0.5 bg-gray-800 rounded flex items-center gap-1 text-gray-300">
+          <span key={t} className="text-xs px-2 py-0.5 bg-gray-800 rounded flex items-center gap-1 text-gray-300">
             {t}
-            <button onClick={() => removeTag(t)} className="hover:text-red-400"><X className="w-3 h-3" /></button>
+            <button onClick={() => removeTag(t)} className="hover:text-red-400" aria-label={`Remove tag ${t}`} title="Remove tag"><X className="w-3 h-3" /></button>
           </span>
         ))}
         <input
           type="text"
           placeholder="add tag…"
+          aria-label="Add tag"
           value={tagDraft}
           onChange={(e) => setTagDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') addTag() }}
-          className="text-[10px] bg-gray-900 border border-gray-800 rounded px-2 py-0.5 w-24"
+          className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-0.5 w-28"
         />
       </div>
 
@@ -827,7 +1028,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
                 className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-0.5 w-44"
               />
               <button onClick={save} disabled={saving}
-                      className="px-2 py-0.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50">
+                      className="px-2 py-0.5 text-xs rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 disabled:opacity-50">
                 <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save'}
               </button>
               <button onClick={() => setDraft(artifact.content || '')}
@@ -846,12 +1047,12 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove }) {
             view === 'preview' && previewSupported ? (
               <PreviewBody artifact={artifact} preview={preview} />
             ) : (
-              <CodeMirror
+              <CoreEditor
                 value={draft}
-                height="100%"
-                extensions={langExtension(ct)}
-                onChange={(v) => setDraft(v)}
-                theme="dark"
+                onChange={setDraft}
+                filename={artifact.path}
+                contentType={ct}
+                onSaveHotkey={dirty ? save : undefined}
                 className="h-full"
               />
             )
@@ -926,7 +1127,7 @@ function SvgPreview({ svgContent, basename }) {
 function PreviewBody({ artifact, preview }) {
   const ct = artifact.content_type || ''
 
-  if (!preview) return <div className="p-4 text-xs text-gray-500">Loading preview…</div>
+  if (!preview) return <div className="p-4 text-xs text-gray-400">Loading preview…</div>
 
   if (preview.type === 'text') {
     if (ct === 'text/markdown') {
@@ -982,7 +1183,7 @@ function PreviewBody({ artifact, preview }) {
     )
   }
   return (
-    <div className="p-6 text-xs text-gray-500">
+    <div className="p-6 text-xs text-gray-400">
       Preview unavailable: {preview.reason || preview.type}.{' '}
       <a href={artifactsApi.rawUrl(artifact.id)} download className="text-brand-400 underline">Download original</a>
     </div>
@@ -1007,7 +1208,7 @@ function CrossProjectMoveConfirm({ info, projects, onCancel, onConfirm }) {
             : `This creates an independent copy in ${destName}. The original in ${sourceName} stays put.`}
         </div>
         <div className="flex justify-end gap-2">
-          <button onClick={onCancel} className="px-3 py-1 text-xs text-gray-400 hover:text-gray-200">Cancel</button>
+          <button onClick={onCancel} className="px-3 py-1 text-xs text-gray-300 hover:text-gray-100">Cancel</button>
           <button onClick={onConfirm} className="px-3 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 text-white">{verb}</button>
         </div>
       </div>
@@ -1025,7 +1226,7 @@ function VersionPanel({ artifactId, versions, onRestore, onDiff }) {
     catch (e) { notify('error', 'Diff failed: ' + e.message) }
   }
   return (
-    <div className="w-72 border-l border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-2 text-xs">
+    <div className="w-64 sm:w-72 shrink-0 border-l border-gray-800 bg-gray-950 overflow-y-auto p-3 space-y-2 text-xs">
       <div className="font-semibold text-gray-300 flex items-center gap-1">
         <History className="w-3 h-3" /> Version history
       </div>
@@ -1033,13 +1234,13 @@ function VersionPanel({ artifactId, versions, onRestore, onDiff }) {
         <div key={v.id} className="border border-gray-800 rounded p-2 space-y-1">
           <div className="flex items-center justify-between">
             <span className="font-medium">v{v.version_number}</span>
-            <span className="text-gray-500">{v.created_at?.slice(0, 16).replace('T', ' ')}</span>
+            <Time value={v.created_at} className="text-gray-400" />
           </div>
           <div className="text-gray-400 truncate" title={v.edit_summary}>{v.edit_summary || '—'}</div>
-          <div className="text-gray-500">{v.edited_by} · {formatBytes(v.size_bytes)}</div>
+          <div className="text-gray-400">{v.edited_by} · {formatBytes(v.size_bytes)}</div>
           <div className="flex gap-1 pt-1">
-            <button onClick={() => setDiffA(v.version_number)} className={`px-1 rounded ${diffA === v.version_number ? 'bg-brand-700 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}>A</button>
-            <button onClick={() => setDiffB(v.version_number)} className={`px-1 rounded ${diffB === v.version_number ? 'bg-brand-700 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}>B</button>
+            <button onClick={() => setDiffA(v.version_number)} title="Diff from this version" aria-label={`Diff from v${v.version_number}`} className={`px-1 rounded ${diffA === v.version_number ? 'bg-brand-700 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}>A</button>
+            <button onClick={() => setDiffB(v.version_number)} title="Diff to this version" aria-label={`Diff to v${v.version_number}`} className={`px-1 rounded ${diffB === v.version_number ? 'bg-brand-700 text-white' : 'bg-gray-800 hover:bg-gray-700'}`}>B</button>
             <button onClick={() => onRestore(v.version_number)} className="ml-auto px-2 rounded bg-amber-900 hover:bg-amber-800 text-amber-100">Restore</button>
           </div>
         </div>
@@ -1058,7 +1259,7 @@ function VersionPanel({ artifactId, versions, onRestore, onDiff }) {
             <span>Diff</span>
             <button onClick={() => setDiffText(null)} className="hover:text-gray-200">Close</button>
           </div>
-          <pre className="p-2 max-h-96 overflow-auto whitespace-pre font-mono text-[11px] text-gray-300">{diffText || '(no differences)'}</pre>
+          <pre className="p-2 max-h-96 overflow-auto whitespace-pre font-mono text-xs text-gray-300">{diffText || '(no differences)'}</pre>
         </div>
       )}
     </div>
@@ -1109,7 +1310,7 @@ function CreateArtifactModal({ projects, currentProjectId, currentFolder, onClos
           <h3 className="text-sm font-semibold text-gray-100 flex items-center gap-1.5">
             <Plus className="w-4 h-4 text-brand-400" /> Create New Artifact
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-200" aria-label="Close" title="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1197,7 +1398,7 @@ function CreateArtifactModal({ projects, currentProjectId, currentFolder, onClos
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-1.5 rounded bg-brand-600 hover:bg-brand-500 text-white font-semibold disabled:opacity-50"
+              className="px-4 py-1.5 rounded bg-brand-700 hover:bg-brand-600 text-white font-semibold disabled:opacity-50"
             >
               {submitting ? 'Creating...' : 'Create'}
             </button>
@@ -1257,7 +1458,7 @@ function UploadArtifactModal({ projects, currentProjectId, currentFolder, onClos
           <h3 className="text-sm font-semibold text-gray-100 flex items-center gap-1.5">
             <Upload className="w-4 h-4 text-brand-400" /> Upload Artifact
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-200" aria-label="Close" title="Close">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1327,7 +1528,7 @@ function UploadArtifactModal({ projects, currentProjectId, currentFolder, onClos
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-1.5 rounded bg-brand-600 hover:bg-brand-500 text-white font-semibold disabled:opacity-50"
+              className="px-4 py-1.5 rounded bg-brand-700 hover:bg-brand-600 text-white font-semibold disabled:opacity-50"
             >
               {submitting ? 'Uploading...' : 'Upload'}
             </button>
