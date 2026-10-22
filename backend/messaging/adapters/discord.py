@@ -105,7 +105,6 @@ class DiscordAdapter(BaseMessagingAdapter):
             return
 
         adapter = self
-        allowed_guilds = self._get_allowed_guild_ids()
         command_scope = self._get_command_scope()
 
         intents = discord.Intents.default()
@@ -118,7 +117,8 @@ class DiscordAdapter(BaseMessagingAdapter):
         # ── ACL helper ──────────────────────────────────────────────
         def _is_allowed_guild(guild_id: int | None) -> bool:
             # Deny by default — an empty allowlist is not "allow all".
-            if guild_id not in allowed_guilds:
+            # Re-read per message so allowlist edits apply without a restart.
+            if guild_id not in adapter._get_allowed_guild_ids():
                 logger.warning(
                     "Ignoring Discord guild %s — add it to discord_allowed_guild_ids to allow.",
                     guild_id,
@@ -344,6 +344,7 @@ class DiscordAdapter(BaseMessagingAdapter):
         async def on_ready() -> None:
             logger.info("Discord bot logged in as %s (ID: %s)", client.user, client.user.id)
             try:
+                allowed_guilds = adapter._get_allowed_guild_ids()
                 if command_scope == "guild" and allowed_guilds:
                     for gid in allowed_guilds:
                         guild = discord.Object(id=gid)
