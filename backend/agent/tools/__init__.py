@@ -142,6 +142,7 @@ async def execute_tool(
     interactive: bool = False,
     host_exec: bool = False,
     channel: str | None = None,
+    user_message: str = "",
 ) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -181,6 +182,7 @@ async def execute_tool(
             interactive=interactive,
             host_exec=host_exec,
             channel=channel,
+            user_message=user_message if interactive and not is_bot_channel(channel) else "",
         )
         return await handler(ctx, tool_name, tool_args)
     except Exception as e:

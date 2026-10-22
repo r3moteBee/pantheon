@@ -50,7 +50,7 @@ APScheduler defaults: `coalesce=True`, `max_instances=1`, `misfire_grace_time=30
 
 ### Plan review
 
-The `create_task` agent tool requires a `plan`. Unless `skip_review=true` **and** the turn is interactive (web chat), the schedule is created with `plan_status="proposed"` and **paused**. The user reviews it in the Tasks tab:
+The `create_task` agent tool requires a `plan`. Unless `skip_review=true` **and** the turn is interactive (web chat), the schedule is created with `plan_status="proposed"` and **paused**; a chat reply that doesn't mention it gets "Waiting for your approval" appended (AgentCore). A repeating schedule (`interval:` / cron) from the web chat is refused unless the user's recent messages ask for a repeat (`agent/task_intent.asks_to_repeat`). The user reviews it in the Tasks tab:
 
 - `PATCH /api/tasks/{id}/plan`: edit the plan.
 - `POST /api/tasks/{id}/approve`: set `approved` and resume. A one-shot whose time passed during review runs right away instead of being dropped as a misfire.

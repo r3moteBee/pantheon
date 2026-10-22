@@ -21,6 +21,11 @@ class ToolContext:
     last_assistant_text: str = ""
     # True only for turns a person is driving in the web UI.
     interactive: bool = False
+    # That person's recent messages in this chat, newest last (interactive web
+    # turns only, empty otherwise), for checks such as "did they ask for a
+    # repeat?". Recent, not just the current one: create_task usually runs on
+    # the turn that approves the plan ("yes, go ahead").
+    user_message: str = ""
     host_exec: bool = False
     # Where the turn came from: "web", a messaging app ("telegram", ...) or
     # None for background jobs. Bots relay messages from chat-app users, so
