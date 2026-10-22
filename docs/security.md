@@ -86,7 +86,7 @@ Limits:
 
 ## Messaging bots
 
-Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Every adapter re-reads its allowlist for each message (and each Telegram button press), so edits apply without a restart. Bots are a background context, so they get no host exec unless `AGENT_HOST_EXEC=always`. See [messaging.md](messaging.md).
+Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means nobody gets a reply. Every adapter re-reads its allowlist for each message (and each Telegram button press), so edits apply without a restart. Bots are a background context and are gated further (`agent.tools.BOT_BLOCKED_TOOLS`, `is_bot_channel`): a messaging-app turn never gets host exec (not even with `AGENT_HOST_EXEC=always`), and `delete_artifact`, `rerun_job`, `create_skill`, `merge_topics` changes (only `list`) and every GitHub repo write are hidden from the model and refused by `execute_tool`. The bot relays chat-app users, who are allowlisted but are not the web UI's signed-in user. See [messaging.md](messaging.md).
 
 ## MCP OAuth
 

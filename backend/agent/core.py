@@ -14,7 +14,7 @@ from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
-from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
+from agent.tools import BOT_BLOCKED_TOOLS, HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas, is_bot_channel
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import context_fit, tool_results
 from config import get_settings
@@ -306,8 +306,9 @@ class AgentCore:
         # True only for turns a person drives from the web UI.
         self.interactive = interactive
         # Host-exec tools (shell/code/git) are opt-in per construction site.
-        # Default False so any new caller is safe by default.
-        self.host_exec = host_exec
+        # Default False so any new caller is safe by default. Messaging-app
+        # turns never get them, even with AGENT_HOST_EXEC=always.
+        self.host_exec = host_exec and not is_bot_channel(channel)
         self.project_id = project_id
         self.project_name = project_name
         self.session_id = session_id or str(uuid.uuid4())
@@ -773,6 +774,9 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
+            if is_bot_channel(self.channel):
+                all_tools = [t for t in all_tools
+                             if t.get("function", {}).get("name") not in BOT_BLOCKED_TOOLS]
             if self.only_tools is not None:
                 all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 

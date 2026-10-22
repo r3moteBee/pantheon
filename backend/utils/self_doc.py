@@ -151,20 +151,27 @@ delivers when Telegram is configured. There is no email or phone push tool; emai
 need an MCP connector (Connections page -> MCP servers)."""
 
 
-def _context_section(project_id: str | None, interactive: bool, host_exec: bool) -> tuple[str, bool]:
+def _context_section(project_id: str | None, interactive: bool, host_exec: bool,
+                     channel: str | None = None) -> tuple[str, bool]:
     """The calling context: tools offered now, and why others aren't. Returns (text, builder_on)."""
     lines = ["## This conversation"]
+    if channel and channel != "web":
+        lines.append(f"- Messaging app: {channel}. From here you can't run code or shell commands, delete "
+                     "artifacts, rerun jobs, create skills, merge topics or change the GitHub repo - "
+                     "those only run from the web chat.")
     lines.append("- Context: " + ("web chat driven by the user (interactive)." if interactive else
                                   "a background task or a messaging-app chat (not interactive): tasks you create land as "
                                   "proposals the user must approve in the web UI, and coding tasks / push_artifacts are refused."))
     builder_on = False
     names: list[str] = []
     try:
-        from agent.tools import get_all_tool_schemas, HOST_EXEC_TOOLS
+        from agent.tools import BOT_BLOCKED_TOOLS, get_all_tool_schemas, HOST_EXEC_TOOLS, is_bot_channel
         from builder import builder_enabled
         builder_on = builder_enabled()
+        hidden = BOT_BLOCKED_TOOLS if is_bot_channel(channel) else frozenset()
         names = [t["function"]["name"] for t in get_all_tool_schemas()
-                 if host_exec or t["function"]["name"] not in HOST_EXEC_TOOLS]
+                 if (host_exec or t["function"]["name"] not in HOST_EXEC_TOOLS)
+                 and t["function"]["name"] not in hidden]
     except Exception as e:
         logger.debug("tool list unavailable: %s", e)
     off = []
@@ -316,10 +323,11 @@ def _instance_section() -> str:
     return "\n".join(lines)
 
 
-def generate_self_doc(project_id: str | None = None, interactive: bool = True, host_exec: bool = True) -> str:
+def generate_self_doc(project_id: str | None = None, interactive: bool = True, host_exec: bool = True,
+                      channel: str | None = None) -> str:
     """The self-documentation for a caller in the given context (sync - run it in a thread)."""
     lim = _limits()
-    ctx, builder_on = _context_section(project_id, interactive, host_exec)
+    ctx, builder_on = _context_section(project_id, interactive, host_exec, channel)
     parts = ["# Pantheon self-documentation",
              "Pantheon is a self-hosted, single-user agent harness: chat, per-project memory, artifacts, web research, "
              "scheduled background tasks and skills. Answer questions about yourself from this page.",

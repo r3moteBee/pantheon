@@ -575,3 +575,52 @@ async def test_download_file_refuses_oversize(tmp_path, monkeypatch):
         out = await execute_tool("download_file", {"url": "https://x.test/big.bin", "path": "dl"}, None)
     assert "Download refused" in out and "limit" in out
     assert not any(ws.rglob("big.bin"))
+
+
+# ── bot contexts ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool,args", [
+    ("delete_artifact", {"artifact_id": "x"}),
+    ("rerun_job", {"job_id": "x"}),
+    ("create_skill", {"name": "x", "instructions": "y"}),
+    ("merge_topics", {"action": "force", "a": "x", "b": "y"}),
+    ("merge_topics", {"action": "approve", "proposal_id": "x"}),
+    ("run_command", {"command": "id"}),
+    ("code_execute", {"code": "print(1)"}),
+    ("git_status", {}),
+    ("start_autoresearch", {}),
+    ("force_merge", {}),
+])
+async def test_bot_turns_refuse_destructive_tools(tool, args):
+    from agent.tools import resolve
+    handler = AsyncMock(return_value="ran")
+    with patch("agent.tools.resolve", return_value=handler):
+        out = await execute_tool(tool, args, None, project_id="p", channel="telegram", host_exec=True)
+    assert "isn't available from telegram" in out
+    handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_bot_gate_leaves_web_and_jobs_alone():
+    handler = AsyncMock(return_value="ran")
+    with patch("agent.tools.resolve", return_value=handler):
+        assert await execute_tool("delete_artifact", {"artifact_id": "x"}, None, project_id="p", channel="web") == "ran"
+        assert await execute_tool("delete_artifact", {"artifact_id": "x"}, None, project_id="p", channel=None) == "ran"
+        assert await execute_tool("merge_topics", {"action": "list"}, None, project_id="p", channel="slack") == "ran"
+
+
+def test_bot_agentcore_has_no_host_exec_even_with_always():
+    from agent.core import AgentCore
+    a = AgentCore(provider=MagicMock(), memory_manager=None, project_id="p", host_exec=True, channel="discord")
+    assert a.host_exec is False
+    b = AgentCore(provider=MagicMock(), memory_manager=None, project_id="p", host_exec=True, channel="web")
+    assert b.host_exec is True
+
+
+def test_self_doc_tells_bots_what_they_cannot_do():
+    from utils.self_doc import _context_section
+    text, _ = _context_section("p", False, False, "telegram")
+    assert "Messaging app: telegram" in text
+    text, _ = _context_section("p", True, True, "web")
+    assert "Messaging app" not in text
