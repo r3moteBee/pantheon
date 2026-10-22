@@ -58,7 +58,7 @@ SCHEMAS: list[dict[str, Any]] = [
             "name": "list_workspace_files",
             "description": (
                 "List scratch files in the project workspace. Saved artifacts "
-                "are not here — use list_artifacts(path_prefix='NBJ/') to "
+                "are not here — use list_artifacts(path_prefix='research/') to "
                 "browse or verify them."
             ),
             "parameters": {

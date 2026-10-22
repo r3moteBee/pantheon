@@ -200,20 +200,20 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
     if not spec:
         return (
             f"No repo bound to project {effective_project}. Bind one "
-            f"in Settings → Connections (add a PAT) then in the "
-            f"Projects page pick a repo for this project."
+            f"on the Connections page (GitHub tab: add a token), then "
+            f"pick a repo in the chat's Repository tab."
         )
     conn_row = get_connection(spec["connection_id"])
     owner = spec["owner"]
     repo = spec["repo"]
     if not conn_row:
         return (
-            "Connection not found. Re-add the GitHub PAT in "
-            "Settings → Connections."
+            "Connection not found. Re-add the GitHub token on the "
+            "Connections page (GitHub tab)."
         )
     token = get_token(conn_row["id"])
     if not token:
-        return f"Connection {conn_row['id']} has no stored token. Re-add it in Settings → Connections."
+        return f"Connection {conn_row['id']} has no stored token. Re-add it on the Connections page (GitHub tab)."
     client = GitHubClient(token)
     try:
         if tool_name == "github_push_artifacts":
@@ -309,7 +309,7 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
         return f"Unknown github tool: {tool_name}"
     except GitHubAuthError as e:
         mark_error(conn_row["id"], str(e))
-        return f"GitHub auth failed: {e}. Re-add the PAT in Settings → Sources."
+        return f"GitHub auth failed: {e}. Re-add the token on the Connections page (GitHub tab)."
     except GitHubNotFound as e:
         return f"GitHub: not found — {e}"
     except GitHubForbidden as e:

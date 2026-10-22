@@ -10,7 +10,7 @@
 | `analyze_earnings_call` | Extract key business themes, revenue guidance, product updates, and executive sentiment from an earnings call transcript file in the workspace using the LLM. | `file_path`, `extract_guidance`? | finance |
 | `batch_convert_documents` | Batch-convert multiple files matching wildcards, folder names, or specific paths in the workspace into another format. | `paths`, `target_format`, `out_dir`?, `save_as_artifact`? | files |
 | `batch_ingest_sources` | Run ingest_source over a list of items with per-item failure isolation. | `items` | sources |
-| `code_execute` *(host exec)* | Execute a code snippet in an isolated sandbox and return its stdout, stderr, and exit code. | `language`, `code`, `filename`?, `timeout_seconds`? | code |
+| `code_execute` *(host exec)* | Execute a Python, Node or Bash snippet and return its stdout, stderr and exit code. | `language`, `code`, `filename`?, `timeout_seconds`? | code |
 | `compare_company_strategy_and_risks` | Extract, summarize, and compare corporate strategy, R&D patterns, and risk factors from company annual reports (10-K filings) using the LLM. | `tickers`, `focus_areas`?, `year`? | finance |
 | `consolidate_memory` | Run memory consolidation: summarize the current session, extract entities/facts/relationships from recent conversation, and store them in semantic and graph memory. | — | memory |
 | `create_graph_node` | Create a node in the associative graph memory to represent a concept, person, project, or fact. | `node_type`, `label`, `metadata`? | memory |
@@ -21,7 +21,7 @@
 | `extract_topics` | Run topic extraction on an existing artifact (or raw text) and return the structured topics / speakers / claims without writing them anywhere. | `artifact_id`?, `text`?, `strategy`?, `max_topics`? | sources |
 | `generate_image` | Generate image(s) with the configured image model, or edit an existing image. | `prompt`, `source_image`?, `size`?, `n`?, `quality`?, `path`?, `name`? | images |
 | `get_job_status` | Get the current state of a background job. | `job_id` | tasks |
-| `get_self_documentation` | Retrieve the system self-documentation. | — | skills |
+| `get_self_documentation` | How Pantheon works and how this instance is set up: memory, artifacts vs workspace, uploads, tasks/approval/jobs, limits, models and routing, the tools available in this context, connections, skills, version. | — | skills |
 | `git_commit` *(host exec)* | Stage files and commit them on the CURRENT branch of the local repo checkout. | `message`, `files`? | git |
 | `git_create_branch` *(host exec)* | Create and switch to a new local git branch. | `branch_name` | git |
 | `git_merge` *(host exec)* | Merge a branch into the CURRENT branch of the local repo checkout. | `branch`?, `message`?, `abort`? | git |
@@ -47,7 +47,7 @@
 | `run_command` *(host exec)* | Run a shell (bash) command inside the project's local repo checkout (created by git_sync_repo), or the project workspace if no checkout exists. | `command`, `workdir`?, `timeout_seconds`? | code |
 | `save_last_response` | Save recent conversation as an artifact. | `path`, `history_count`?, `mode`?, `custom_prompt`?, `title`?, `tags`?, `prepend_header`? | artifacts |
 | `save_to_artifact` | Save content into the user's Pantheon artifact store. | `path`, `content`, `content_type`?, `overwrite`?, `title`?, `tags`? | artifacts |
-| `send_telegram` | Send a message to the operator via Telegram. | `message` | tasks |
+| `send_telegram` | Send a message to the user via Telegram (only works when Telegram is set up in Settings -> Channels). | `message` | tasks |
 | `show_file` | Display a file inline in the chat UI. | `path`, `caption`? | files |
 | `start_autoresearch` *(host exec)* | Start the autoresearch loop as a background job: an LLM mutates one workspace file, runs the benchmark command after each change, keeps a change only if the metric improves, and saves a report artifact. | `target_file`, `eval_cmd`, `metric`, `direction`, `iterations`?, `instructions`? | tasks |
 | `update_artifact` | Replace the content of an existing artifact, creating a new version. | `id`, `content`, `edit_summary`? | artifacts |

@@ -53,6 +53,39 @@ _SELF_RE = re.compile(
 )
 
 
+# Questions about what Pantheon can do / how it works ("Can you compile Swift?",
+# "Where do files I upload go?", "What's the most tool steps you can take?",
+# "Which model is answering me?"). Without the self-doc the agent answered them
+# from general LLM knowledge: "no hard-coded limit" (it is 100 rounds), uploads
+# "go to the workspace" (they are artifacts), "I'll message you on Telegram"
+# (not configured). Short questions only - a request with its own material
+# ("Can you summarize this: ...") is work, not a question about Pantheon.
+_CAPABILITY_RE = re.compile(
+    r"^\W*(?:can|could|do|does|are|will|would|is it possible for) you\b[^?]{0,90}\b(?:compile|build|run|execute|push|"
+    r"commit|message|notify|ping|email|text me|remember|schedule|browse|click|access|connect|upload|isolat\w*|sandbox\w*"
+    r"|send (?:me|you)|see my|read my|generate (?:images?|pictures?)|keep|store|save)\b"
+    r"(?!\s+(?:me\s+)?(?:a|an|some|this|these|that|those|it|the following)\b)"
+    r"|\b(?:how (?:long|much|many)|what'?s the (?:most|max\w*|limit|longest|biggest))\b[^?]{0,80}\b(?:you|your|yours)\b"
+    r"|\bwhere (?:do|does|did|will|are|is)\b(?=[^?]{0,60}\b(?:I|my|you|your|files?|uploads?|artifacts?|notes?|outputs?|results?)\b)"
+    r"[^?]{0,60}\b(?:go|end up|get (?:saved|stored)|saved|stored|kept)\b"
+    r"|\bwhat happens (?:if|when) I (?:ask|tell|want|have|let|give|upload|send) you\b"
+    r"|\bif I (?:ask|tell|want) you to\b[^?]{0,90}\bwhat (?:happens|do you do|would you do)\b"
+    r"|\bwhat (?:do|would|will) you do (?:if|when) I\b"
+    r"|\b(?:which|what) (?:model|llm|search engines?)\b[^?]{0,40}\b(?:you|answer\w*|is this|am I)\b"
+    r"|\b(?:which|what) (?:model|llm)s? (?:are|is) (?:you|answering|running)\b"
+    r"|\bswitch (?:which|the|your) model\b"
+    r"|\byour (?:workspace|artifacts?|memory|limits?|sandbox|skills)\b"
+    r"|\b(?:do|does|will) (?:my )?(?:messages?|data|chats?|conversations?) (?:get )?(?:sent|go|leave)\b",
+    re.I,
+)
+_MAX_CAPABILITY_Q = 220
+
+
+def asks_about_capabilities(message: str) -> bool:
+    m = (message or "").strip()
+    return len(m) <= _MAX_CAPABILITY_Q and bool(_CAPABILITY_RE.search(m))
+
+
 def about_self(message: str) -> bool:
     return bool(_SELF_RE.search(message or ""))
 
@@ -116,7 +149,7 @@ _SELF_DESCRIBE_RE = re.compile(
 
 
 def wants_self_description(message: str) -> bool:
-    return about_self(message) and bool(_SELF_DESCRIBE_RE.search(message or ""))
+    return (about_self(message) and bool(_SELF_DESCRIBE_RE.search(message or ""))) or asks_about_capabilities(message)
 
 
 # ── Follow-ups inherit the lookup ────────────────────────────────────────────

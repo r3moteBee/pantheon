@@ -1,10 +1,19 @@
 """Host execution: code_execute and run_command (HOST_EXEC_TOOLS, gated)."""
 from __future__ import annotations
 
+import os
 from typing import Any
 from agent.tools.registry import ToolContext, tool
 from agent.tools import workspace as _ws
 
+
+# Said once, for the configured mode (the old text called every mode an
+# "isolated sandbox" and then said subprocess mode had no isolation).
+_ISOLATION = (
+    "It runs in a Firecracker microVM, isolated from the server."
+    if (os.getenv("PANTHEON_SANDBOX") or "subprocess").strip().lower() == "firecracker" else
+    "It runs as a subprocess on the Pantheon server itself, with NO filesystem isolation."
+)
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -12,15 +21,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "code_execute",
             "description": (
-                "Execute a code snippet in an isolated sandbox and return its "
-                "stdout, stderr, and exit code. Use this to test code, run "
-                "computations, validate logic, generate data, or prototype "
-                "before committing. Supports Python, Node, and Bash. The "
-                "sandbox has a default 30-second timeout and 256 MB memory "
-                "limit. Output is truncated at 1 MB. In subprocess mode the "
-                "snippet runs on the host with no filesystem isolation; use "
-                "Firecracker mode (PANTHEON_SANDBOX=firecracker) for real "
-                "isolation."
+                "Execute a Python, Node or Bash snippet and return its stdout, "
+                "stderr and exit code. Use it to test code, run computations, "
+                "validate logic, generate data, or prototype. Default 30-second "
+                "timeout and 256 MB memory limit; output truncated at 1 MB. "
+                + _ISOLATION
             ),
             "parameters": {
                 "type": "object",

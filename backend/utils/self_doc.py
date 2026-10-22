@@ -1,425 +1,326 @@
-"""Self-documentation utility for Pantheon.
+"""get_self_documentation: what Pantheon can do and how THIS instance is set up.
 
-Gathers architecture, deployment, configuration, database, and skill metadata 
-and formats it into a structured Markdown document.
+Written for the agent answering "can you ...", "where does ... go", "what happens if
+...", "which model ..." - and for the agent itself mid-task. Two parts:
+
+1. How Pantheon works: a short capability guide with this instance's numbers filled in
+   (limits, toolchains, sandbox mode), so answers match the code.
+2. This instance right now: the tools offered in the CALLING context (web chat vs.
+   background task / messaging app) and why others are hidden, model routing (which
+   endpoints are on the local network), connections, skills, a few settings.
+
+Secrets never appear, not even masked: settings are shown only from SETTINGS_SHOWN
+(an allowlist of harmless keys) and URLs are reduced to their host. An earlier version
+masked by substring and printed the first/last 4 characters of vault_master_key,
+secret_key and llm_api_key into the model's context.
+
+generate_self_doc() is synchronous (SQLite, vault, registries); the tool runs it in a
+thread so it never blocks the event loop.
 """
 from __future__ import annotations
 
-import json
+import ipaddress
 import logging
-import platform
-import sqlite3
-import sys
-from pathlib import Path
-import subprocess
+import os
 from typing import Any
+from urllib.parse import urlsplit
 
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 
-def _get_git_info() -> dict[str, str]:
-    """Retrieve Git repository status."""
-    root_dir = Path(__file__).resolve().parent.parent.parent
-    info = {"branch": "unknown", "commit": "unknown", "date": "unknown"}
-    if not (root_dir / ".git").exists():
-        return info
-    
+# Settings shown verbatim. Allowlist, never a denylist: a new setting holding a
+# credential must not show up here by default.
+SETTINGS_SHOWN = (
+    "agent_host_exec", "agent_web_budget", "agent_force_search", "agent_thinking",
+    "llm_max_tokens", "history_token_budget", "pantheon_builder", "builder_timeout_seconds",
+    "builder_allow_network", "auto_index_uploads", "personality_weight", "context_focus",
+    "embedding_model", "allow_private_fetch", "auth_session_days", "app_env",
+)
+
+
+def _host(url: str | None) -> str:
+    """Host[:port] of a URL - no credentials, path or query."""
     try:
-        # Branch
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(root_dir),
-            text=True,
-            stderr=subprocess.DEVNULL
-        ).strip()
-        info["branch"] = branch
-        
-        # Commit & Date
-        commit_log = subprocess.check_output(
-            ["git", "log", "-1", "--format=%h - %s (%ad)", "--date=short"],
-            cwd=str(root_dir),
-            text=True,
-            stderr=subprocess.DEVNULL
-        ).strip()
-        if commit_log:
-            info["commit"] = commit_log
+        parts = urlsplit(url or "")
+        host = parts.hostname or ""
+        return f"{host}:{parts.port}" if parts.port else host
+    except Exception:
+        return ""
+
+
+def _is_local(host: str) -> bool:
+    h = host.split(":")[0].lower()
+    if not h or h == "localhost" or h.endswith((".local", ".lan", ".internal", ".svc", ".cluster.local", ".ts.net")):
+        return True
+    if "." not in h:
+        return True          # a bare service name
+    try:
+        ip = ipaddress.ip_address(h)
+        return ip.is_private or ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
+
+
+def _limits() -> dict[str, Any]:
+    s = get_settings()
+    out: dict[str, Any] = {
+        "max_rounds": int(os.getenv("MAX_TOOL_ITERATIONS", "100") or 100),
+        "web_budget": s.agent_web_budget,
+        "reply_tokens": s.llm_max_tokens,
+        "result_chars": 24_000,
+    }
+    try:
+        from agent import tool_results
+        out["result_chars"] = tool_results.max_chars()
     except Exception:
         pass
-    return info
+    return out
 
-def _get_binary_version(cmd: str) -> str:
-    """Get version of a CLI utility (like node or npm)."""
+
+def _sandbox_line() -> str:
+    mode = (os.getenv("PANTHEON_SANDBOX") or "subprocess").strip().lower()
+    if mode == "firecracker":
+        return "code_execute runs snippets (Python, Node, Bash) in a Firecracker microVM: isolated from the server."
+    return ("code_execute runs snippets (Python, Node, Bash) as a subprocess inside Pantheon's own server/container, "
+            "30 s timeout, 256 MB memory, WITHOUT filesystem isolation (Firecracker isolation is not enabled).")
+
+
+def _toolchains() -> str:
     try:
-        return subprocess.check_output([cmd, "-v"], text=True, stderr=subprocess.DEVNULL).strip()
+        from builder.backend import toolchains
+        return "; ".join(f"{t.name} ({t.about.split(':')[0].split(',')[0]})" for t in toolchains().values())
     except Exception:
-        return "not installed"
+        return "unknown"
 
-def _get_db_stats(db_path: Path) -> dict[str, Any]:
-    """Get tables and row counts for a SQLite database."""
-    stats = {"size_kb": 0.0, "tables": {}}
-    if not db_path.exists():
-        return stats
-    
-    stats["size_kb"] = round(db_path.stat().st_size / 1024, 2)
+
+def _guide(lim: dict[str, Any], builder_on: bool) -> str:
+    build = (f"run_build builds and tests a folder of artifacts in a throwaway container with no network and returns "
+             f"PASSED/FAILED plus a zip download link. Toolchains: {_toolchains()}. Swift is Swift on Linux: packages, "
+             "Foundation, XCTest - no SwiftUI/UIKit/AppKit, so iOS apps can be written and their logic tested but not "
+             "built or run as apps."
+             if builder_on else "run_build is not configured on this instance (no PANTHEON_BUILDER): code can be written "
+             "and saved, but not compiled in a build container.")
+    return f"""## How Pantheon works
+
+**Memory (per project).** Conversations are stored (episodic); artifacts and notes are indexed for meaning (semantic)
+and entities go into a knowledge graph. Each turn starts with relevant past messages, notes and graph entries of the
+SAME project recalled automatically; `recall` searches more, `remember` stores a fact. Projects don't share memory.
+
+**Artifacts vs workspace.** Artifacts are the durable store: notes, reports, transcripts, images, code/project files
+the user asked for (save_to_artifact, one folder per project), and chat uploads (`chat-attachments/<date>/`). Versioned,
+indexed for recall, on the Artifacts page, downloadable as a zip, buildable with run_build, pushable to GitHub. The
+workspace is the project's scratch folder on disk (code_execute / run_command files, downloads, git checkouts): not on
+the Artifacts page, indexed only with `index(target='workspace')`.
+
+**Tasks and jobs.** `create_task` schedules a background run: one-shot (`now`, `delay:N` minutes) or recurring
+(`interval:N` minutes, or cron such as `0 9 * * 1`). Job types: autonomous_task (run a plan once per firing),
+iteration_loop (execute/review turns, each saved as artifact `iteration/<job id, 8 chars>/turn-01.md`...),
+research_batch (one sourced note per item for surveys of many items, then a summary), coding_task (edits the project's
+bound GitHub repo and opens a PR; web chat only, starts at once). Approval: for a schedule, show the user a numbered
+plan first and call create_task with skip_review=true only after they approve it in this chat; any task created without
+that approval (and every task created outside the web chat) waits PAUSED as a proposal until the user approves it in
+the chat's Tasks tab. When a run finishes, a completion notice is posted into the chat that scheduled it and the run
+shows in the Tasks tab; `list_recent_jobs` / `get_job_status` read the real status.
+
+**Skills** are reusable recipes run with `/skill-name` (create_skill makes one); not schedules.
+
+**Limits.** Up to {lim['max_rounds']} tool rounds per turn (MAX_TOOL_ITERATIONS; background tasks default to the same
+and can raise it with max_iterations, up to 1000). Web chat: at most {lim['web_budget']} web lookups (web_search /
+web_fetch) per turn (AGENT_WEB_BUDGET) - bigger surveys go to a research_batch task. Each tool result is cut to
+{lim['result_chars']:,} characters (TOOL_RESULT_MAX_CHARS). Each model call writes at most {lim['reply_tokens']:,}
+tokens (LLM_MAX_TOKENS).
+
+**Running and building code.** {_sandbox_line()} run_command runs shell commands in the project's repo checkout or
+workspace. Both, and the git_* tools, only exist in the web chat (AGENT_HOST_EXEC). {build}
+
+**Models.** Every LLM call has a task class (agent, quick, code, long_context, vision, image_gen, summarize, extract,
+embed, rerank) routed to a configured endpoint/model with fallbacks. In web chat a router picks the class per turn
+(quick for short no-tool messages, code for coding, vision for images the agent model can't see, else agent); the
+model that answered is shown under each reply. The user pins one with `/model <agent|quick|code|long_context|vision|auto>`
+or the model picker next to the chat input; routes are set in Settings -> LLMs.
+
+**GitHub.** Needs a personal access token (Connections page -> GitHub) and a repo bound to the project (the chat's
+Repository tab). Then the `github` tool reads the repo, and `github(action="push_artifacts")` commits an artifact folder
+to a new branch and opens a pull request (web chat only); the Artifacts page has a Push to GitHub button too.
+
+**Reaching the user.** Replies go to the chat the message came from. Task results are posted into the scheduling chat.
+Messaging apps (Telegram, Slack, Discord, Matrix, Mattermost) are set up in Settings -> Channels; send_telegram only
+delivers when Telegram is configured. There is no email or phone push tool; email, calendar, drive and similar services
+need an MCP connector (Connections page -> MCP servers)."""
+
+
+def _context_section(project_id: str | None, interactive: bool, host_exec: bool) -> tuple[str, bool]:
+    """The calling context: tools offered now, and why others aren't. Returns (text, builder_on)."""
+    lines = ["## This conversation"]
+    lines.append("- Context: " + ("web chat driven by the user (interactive)." if interactive else
+                                  "a background task or a messaging-app chat (not interactive): tasks you create land as "
+                                  "proposals the user must approve in the web UI, and coding tasks / push_artifacts are refused."))
+    builder_on = False
+    names: list[str] = []
     try:
-        # Read-only: this only counts rows, and some of these files (e.g.
-        # the APScheduler DB) aren't ours to switch into WAL mode.
-        conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = [row[0] for row in cursor.fetchall() if not row[0].startswith("sqlite_")]
-        for table in tables:
-            try:
-                cursor.execute(f"SELECT COUNT(*) FROM {table};")
-                stats["tables"][table] = cursor.fetchone()[0]
-            except Exception:
-                pass
-        conn.close()
+        from agent.tools import get_all_tool_schemas, HOST_EXEC_TOOLS
+        from builder import builder_enabled
+        builder_on = builder_enabled()
+        names = [t["function"]["name"] for t in get_all_tool_schemas()
+                 if host_exec or t["function"]["name"] not in HOST_EXEC_TOOLS]
     except Exception as e:
-        logger.warning("Failed to query DB stats for %s: %s", db_path.name, e)
-    return stats
-
-def _get_chroma_stats(settings: Any) -> dict[str, Any]:
-    """Query ChromaDB stats."""
-    stats = {"status": "unknown", "collections": []}
+        logger.debug("tool list unavailable: %s", e)
+    off = []
+    if not host_exec:
+        off.append("code_execute, run_command, git_* and start_autoresearch (host execution is off here; "
+                   "AGENT_HOST_EXEC allows it only in web chat)")
+    if not builder_on:
+        off.append("run_build (no builder configured)")
     try:
-        import chromadb
-        if settings.chroma_host:
-            client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
-            stats["status"] = "connected (HTTP)"
-        else:
-            chroma_path = settings.data_dir / "chroma"
-            client = chromadb.PersistentClient(path=str(chroma_path))
-            stats["status"] = f"connected (local persistent at {chroma_path})"
-        
-        collections = client.list_collections()
-        for col in collections:
-            col_info = {"name": col.name, "count": col.count()}
-            stats["collections"].append(col_info)
-    except Exception as e:
-        stats["status"] = f"unavailable: {e}"
-    return stats
-
-def _mask_value(key: str, val: Any) -> Any:
-    """Mask credentials and sensitive strings."""
-    if val is None:
-        return None
-    sensitive_keys = {
-        "key", "secret", "password", "token", "auth", "master", "private"
-    }
-    key_lower = key.lower()
-    if any(sk in key_lower for sk in sensitive_keys):
-        val_str = str(val)
-        if len(val_str) > 8:
-            return f"{val_str[:4]}...{val_str[-4:]}"
-        return "********"
-    return val
-
-def generate_self_doc() -> str:
-    """Compile the Pantheon system documentation in Markdown format."""
-    settings = get_settings()
-    from utils.version import app_version as _app_version
-    app_version = _app_version()
-    git_info = _get_git_info()
-    
-    # 1. System Environment
-    sys_env = {
-        "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
-        "python": sys.version.split()[0],
-        "python_path": sys.executable,
-        "node": _get_binary_version("node"),
-        "npm": _get_binary_version("npm"),
-    }
-    
-    # 2. Database Stats
-    dbs = {
-        "episodic": _get_db_stats(Path(settings.episodic_db_path)),
-        "graph": _get_db_stats(Path(settings.graph_db_path)),
-        "vault": _get_db_stats(Path(settings.vault_db_path)),
-        "scheduler": _get_db_stats(Path(settings.scheduler_db_path)),
-    }
-    
-    # Chroma
-    chroma = _get_chroma_stats(settings)
-    
-    # Projects Metadata
-    projects_file = Path(settings.db_dir) / "projects.json"
-    project_count = 0
-    if projects_file.exists():
+        from agent.browser_tools import browser_enabled
+        if not browser_enabled():
+            off.append("browser tools (BROWSER_ENABLED is off: pages can be read as text with web_fetch, not clicked "
+                       "or logged into)")
+    except Exception:
+        pass
+    builtin = [n for n in names if not n.startswith("mcp_")]
+    mcp = [n for n in names if n.startswith("mcp_")]
+    if builtin:
+        lines.append(f"- Tools: the {len(builtin)} built-in tools in your tool list are all usable here.")
+    lines.append(f"- MCP tools: {len(mcp)}" + (f" ({', '.join(mcp[:40])})" if mcp else
+                                                 " - no email, calendar, Slack, drive or other external-service tools.") )
+    if off:
+        lines.append("- Not available here: " + "; ".join(off) + ".")
+    repo = None
+    if project_id:
         try:
-            projects_data = json.loads(projects_file.read_text(encoding="utf-8"))
-            project_count = len(projects_data)
+            from api.connections import get_project_repo_for_tools
+            repo = get_project_repo_for_tools(project_id)
+        except Exception:
+            repo = None
+    if repo:
+        lines.append(f"- GitHub: this project is bound to `{repo['owner']}/{repo['repo']}` (default branch "
+                     f"`{repo['default_branch']}`).")
+    else:
+        n_conn = 0
+        try:
+            from api.connections import _connect
+            with _connect() as cn:
+                n_conn = cn.execute("SELECT COUNT(*) FROM github_connections").fetchone()[0]
         except Exception:
             pass
+        lines.append("- GitHub: no repo is bound to this project" + (
+            f" ({n_conn} GitHub connection(s) exist; bind one in the chat's Repository tab)." if n_conn else
+            " and no GitHub connection is configured, so nothing can be pushed until the user adds a token "
+            "(Connections page -> GitHub) and binds a repo."))
+    return "\n".join(lines), builder_on
 
-    # 3+4. Task-class routing (source of truth for which model serves what)
-    routing_rows: list[dict] = []
-    routing_warnings: list[str] = []
-    endpoints = []
+
+def _instance_section() -> str:
+    s = get_settings()
+    lines = ["## This instance"]
+    try:
+        from utils.version import app_version
+        lines.append(f"- Pantheon version: {app_version()}")
+    except Exception:
+        pass
+    # Model routing
     try:
         from llm_config.models import TASK_CLASSES
-        from llm_config.store import get_profile, get_routes, list_endpoints, route_warnings
-        endpoints = [
-            {"name": ep.name, "base_url": ep.base_url, "api_type": ep.api_type}
-            for ep in list_endpoints()
-        ]
+        from llm_config.store import get_routes, list_endpoints, route_warnings
+        eps = {ep.name: _host(ep.base_url) for ep in list_endpoints()}
         routes = get_routes()
+        rows = []
         for cls, meta in TASK_CLASSES.items():
             entries = routes.get(cls) or []
             if not entries:
                 parent = meta.get("inherits")
-                routing_rows.append({
-                    "class": cls, "position": "—",
-                    "endpoint": "", "model": "",
-                    "note": ("not set — chat router never picks it" if cls in ("quick", "long_context")
-                             else f"not set — uses {parent}" if parent else "NOT CONFIGURED"),
-                })
+                rows.append(f"{cls}: " + (f"uses {parent}" if parent else "not set"))
                 continue
-            for i, e in enumerate(entries):
-                prof = get_profile(e["endpoint"], e["model"])
-                caps = [c for c in ("tools", "vision", "image_gen", "embedding") if getattr(prof, c)]
-                routing_rows.append({
-                    "class": cls, "position": "primary" if i == 0 else f"fallback {i}",
-                    "endpoint": e["endpoint"], "model": e["model"],
-                    "note": f"{prof.tier}; {', '.join(caps) or 'no special caps'}",
-                })
-        routing_warnings = route_warnings(routes)
+            chain = " -> ".join(f"{e['model']} @ {e['endpoint']}" for e in entries)
+            rows.append(f"{cls}: {chain}")
+        lines.append("- Model routing (class: model @ endpoint, fallbacks after ->): " + "; ".join(rows) + ".")
+        if eps:
+            lines.append("- Endpoints: " + "; ".join(
+                f"{n} = {h or '?'} ({'local network' if _is_local(h) else 'external service'})" for n, h in eps.items()) + ".")
+        for w in route_warnings(routes) or []:
+            lines.append(f"- Routing warning: {w}")
     except Exception as e:
-        logger.warning("Could not read LLM routing: %s", e)
-
-    recent_llm_errors: list[str] = []
+        logger.debug("routing unavailable: %s", e)
     try:
-        from llm_config.usage import summary as _usage_summary
-        for row in _usage_summary(24).get("rows", []):
-            if row.get("errors"):
-                recent_llm_errors.append(
-                    f"{row['task_class']} {row['endpoint']}/{row['model']}: "
-                    f"{row['errors']} error(s) in 24h — last: {row.get('last_error') or '?'}"
-                )
-    except Exception as e:
-        logger.debug("Could not read LLM usage: %s", e)
-
-    # 5. Live Search Chain (from SearchProviderManager)
-    search_chain = []
-    try:
-        from agent.search_providers import get_search_manager
-        search_info = get_search_manager().get_usage()
-        for prov in search_info.get("providers", []):
-            search_chain.append({
-                "name": prov["name"],
-                "type": prov["type"],
-                "url": prov["url"],
-                "enabled": prov["enabled"],
-                "api_key_set": prov["api_key_set"],
-                "daily_used": prov["daily_used"],
-                "daily_limit": prov["daily_limit"],
-            })
-    except Exception as e:
-        logger.warning("Could not read search providers: %s", e)
-
-    # 6. Connected MCP Connections (from MCPManager)
-    mcp_connections = []
-    try:
-        from mcp_client.manager import get_mcp_manager
-        mcp_connections = get_mcp_manager().list_connections()
-    except Exception as e:
-        logger.warning("Could not read MCP connections: %s", e)
-        
-    # 7. Registered Skills
-    skills_list = []
-    try:
-        from skills.registry import get_skill_registry
-        registry = get_skill_registry()
-        registry.ensure_loaded()
-        for skill in registry.list_all():
-            skills_list.append({
-                "name": skill.manifest.name,
-                "description": skill.manifest.description,
-                "triggers": skill.manifest.triggers or [],
-                "requires_mcp": skill.manifest.requires_mcp or [],
-                "is_bundled": skill.is_bundled,
-            })
-    except Exception as e:
-        logger.warning("Could not list skills: %s", e)
-
-    # 8. Env Config Settings (Masked)
-    masked_settings = {}
-    if hasattr(settings, "model_fields"):
-        for field in settings.model_fields:
-            val = getattr(settings, field)
-            masked_settings[field] = _mask_value(field, val)
-    else:
-        # Pydantic v1 fallback
-        for field in settings.__fields__:
-            val = getattr(settings, field)
-            masked_settings[field] = _mask_value(field, val)
-
-    # Compile the Markdown output
-    md = []
-    md.append("# 🏛️ Pantheon Self-Documentation System")
-    md.append("This document contains the dynamic self-documentation of the running Pantheon instance, generated in real-time.")
-    
-    # Section: Deployment Status
-    md.append("\n## 🚀 Current Deployment & System Environment")
-    md.append(f"- **Pantheon Version**: `{app_version}`")
-    md.append(f"- **Git Branch**: `{git_info['branch']}`")
-    md.append(f"- **Git Last Commit**: `{git_info['commit']}`")
-    md.append(f"- **Operating System**: `{sys_env['os']}`")
-    md.append(f"- **Python Version**: `{sys_env['python']}`")
-    md.append(f"- **Python Path**: `{sys_env['python_path']}`")
-    md.append(f"- **Node.js**: `{sys_env['node']}`")
-    md.append(f"- **npm**: `{sys_env['npm']}`")
-    
-    # Section: Architecture & Storage
-    md.append("\n## 📂 System Storage & Memory Architecture")
-    md.append(f"Pantheon resolves all runtime state under its configured data directory: `{settings.data_dir}`.")
-    md.append(f"\n- **Metadata Projects**: `{project_count}` projects registered in `projects.json`.")
-    
-    md.append("\n### SQLite Databases Status")
-    for db_name, db_info in dbs.items():
-        md.append(f"#### `{db_name}` Database")
-        md.append(f"- File Size: `{db_info['size_kb']} KB`")
-        if db_info["tables"]:
-            md.append("- Tables & Row Counts:")
-            for tbl, rows in db_info["tables"].items():
-                md.append(f"  - `{tbl}`: {rows} rows")
-        else:
-            md.append("- Status: `No database file or empty`")
-            
-    md.append("\n### ChromaDB Vector Memory")
-    md.append(f"- Status: `{chroma['status']}`")
-    if chroma["collections"]:
-        md.append("- Collections:")
-        for col in chroma["collections"]:
-            md.append(f"  - `{col['name']}`: {col['count']} vectors")
-    else:
-        md.append("- Collections: `No collections active`")
-
-    # Section: Active Configuration State
-    md.append("\n## ⚙️ Configuration State & LLM Settings")
-    
-    md.append("\n### Model Routing (task classes)")
-    md.append(
-        "Every LLM call declares a task class; each class uses its primary model and falls "
-        "back down the list on errors. Classes: agent (chat/jobs/bots), code, quick and "
-        "long_context (chat router only), extract (JSON extraction), summarize, vision, "
-        "image_gen (the generate_image tool), embed, rerank. There are no 'chat'/'prefill' "
-        "roles anymore — those were migrated to agent and summarize. Configure in "
-        "Settings → LLMs → Model routing."
-    )
-    try:
-        from llm_config import router as _chat_router
-        _rc = _chat_router.get_config()
-        md.append(
-            f"\n**Chat router:** {'on' if _rc['enabled'] else 'off'}"
-            f" (classifier {'on' if _rc['classifier'] else 'off'}, quick ≤ {_rc['quick_max_chars']} chars). "
-            "Each interactive chat turn picks a class before the tool loop starts: /model pin → "
-            "image the agent model can't see → context too long → skill's model_class → "
-            "code/traceback → recent code turns → short no-tool message (quick) → agent. A rule "
-            "only fires when its class has its own tool-capable model. The user can pin a "
-            "conversation with `/model <agent|quick|code|long_context|vision|auto>` or the model "
-            "picker next to the chat input; each reply shows which model answered."
-        )
-        from llm_config import tuning as _tuning
-        _recs = [r for r in _tuning.recommendations(24 * 7) if r["id"] != "more-data"]
-        if _recs:
-            md.append("\n**Routing tuning suggestions (last 7 days, from outcomes of routed turns; "
-                      "the user applies them in Settings → Routing tuning):**")
-            for r in _recs:
-                md.append(f"- [{r['severity']}] {r['title']}: {r['detail']}")
+        from llm_config import router as _r
+        rc = _r.get_config()
+        lines.append(f"- Chat router: {'on' if rc['enabled'] else 'off'} (quick <= {rc['quick_max_chars']} chars).")
     except Exception:
         pass
-    if routing_rows:
-        md.append("| Class | Position | Endpoint | Model | Profile / note |")
-        md.append("| --- | --- | --- | --- | --- |")
-        for r in routing_rows:
-            md.append(f"| `{r['class']}` | {r['position']} | `{r['endpoint'] or '—'}` | "
-                      f"`{r['model'] or '—'}` | {r['note']} |")
-    else:
-        md.append("*Routing table unavailable.*")
-    if routing_warnings:
-        md.append("\n**Routing warnings:**")
-        for w in routing_warnings:
-            md.append(f"- {w}")
-    if recent_llm_errors:
-        md.append("\n**LLM errors in the last 24h (from the call log):**")
-        for w in recent_llm_errors:
-            md.append(f"- {w}")
-
-    md.append("\n### Configured LLM Endpoints")
-    if endpoints:
-        md.append("| Endpoint Name | API Type | Base URL |")
-        md.append("| --- | --- | --- |")
-        for ep in endpoints:
-            md.append(f"| `{ep['name']}` | `{ep['api_type']}` | `{ep['base_url']}` |")
-    else:
-        md.append("*No saved endpoints configured in Vault.*")
-        
-    md.append("\n### Active Web Search Chain (Live Status)")
-    md.append("The web search manager runs searches using the following chain of providers in order:")
-    if search_chain:
-        md.append("| Provider | Type | Enabled | API Key Set | Base URL | Daily Usage |")
-        md.append("| --- | --- | --- | --- | --- | --- |")
-        for p in search_chain:
-            k_set = "Yes" if p["api_key_set"] else "No"
-            enabled = "Yes" if p["enabled"] else "No"
-            daily_usage = f"{p['daily_used']} / {p['daily_limit']}" if p["daily_limit"] > 0 else f"{p['daily_used']} / unlimited"
-            md.append(f"| `{p['name']}` | `{p['type']}` | {enabled} | {k_set} | `{p['url']}` | `{daily_usage}` |")
-    else:
-        md.append("*No search providers configured.*")
-
-    md.append("\n### Masked Environment Settings")
-    md.append("| Configuration Key | Value |")
-    md.append("| --- | --- |")
-    for key, val in sorted(masked_settings.items()):
-        md.append(f"| `{key}` | `{val}` |")
-
-    # Section: Connected MCP Servers
-    md.append("\n## 🔌 Connected MCP Connections")
-    md.append("Model Context Protocol (MCP) servers connected to the manager:")
-    if mcp_connections:
-        md.append("| Server Name | URL | Enabled | Connected | Tools Count | Auth Type |")
-        md.append("| --- | --- | --- | --- | --- | --- |")
-        for conn in mcp_connections:
-            enabled = "Yes" if conn["enabled"] else "No"
-            connected = "Yes" if conn["connected"] else "No"
-            md.append(f"| `{conn['name']}` | `{conn['url']}` | {enabled} | {connected} | {conn['tools_count']} | `{conn['auth_type']}` |")
-    else:
-        md.append("*No MCP connections configured.*")
-
-    # Section: Skills Registry
-    md.append("\n## 🧠 Registered Prompt Skills")
-    md.append("Skills are modular prompt templates configured via `skill.json` and `instructions.md` that guide the agent's behavior.")
-    if skills_list:
-        md.append("| Skill Slug | Type | Description | Triggers | Required MCP Tools |")
-        md.append("| --- | --- | --- | --- | --- |")
-        for skill in skills_list:
-            s_type = "Bundled" if skill["is_bundled"] else "User-Defined"
-            triggers = ", ".join(f"`{t}`" for t in skill["triggers"]) if skill["triggers"] else "*None*"
-            mcp = ", ".join(f"`{m}`" for m in skill["requires_mcp"]) if skill["requires_mcp"] else "*None*"
-            md.append(f"| `{skill['name']}` | {s_type} | {skill['description']} | {triggers} | {mcp} |")
-    else:
-        md.append("*No skills currently loaded in registry.*")
-        
-    # 9. Messaging Integrations
-    md.append("\n## 📡 Messaging Integrations")
-    md.append("Configured external messaging platforms mapped to Pantheon projects:")
+    try:
+        from llm_config.usage import summary as _usage
+        # counts only: provider error texts can echo a key ("Incorrect API key provided: sk-...")
+        errs = [f"{r['task_class']} {r['model']}@{r['endpoint']}: {r['errors']}"
+                for r in _usage(24).get("rows", []) if r.get("errors")]
+        if errs:
+            lines.append("- LLM errors in the last 24h: " + "; ".join(errs[:5]) + ".")
+    except Exception:
+        pass
+    try:
+        from llm_config import tuning as _tuning
+        recs = [r for r in _tuning.recommendations(24 * 7) if r["id"] != "more-data"]
+        if recs:
+            lines.append("- Routing tuning suggestions (the user applies them in Settings -> LLMs): "
+                         + "; ".join(f"{r['title']}" for r in recs[:4]) + ".")
+    except Exception:
+        pass
+    # Search
+    try:
+        from agent.search_providers import get_search_manager
+        provs = get_search_manager().get_usage().get("providers", [])
+        lines.append("- Web search chain (in order): " + ", ".join(
+            f"{p['name']}" + ("" if p.get("enabled") else " (disabled)")
+            + (" (no API key)" if p.get("type") in ("brave", "tavily", "serper", "exa") and not p.get("api_key_set") else "")
+            for p in provs) + ".")
+    except Exception:
+        pass
+    # MCP
+    try:
+        from mcp_client.manager import get_mcp_manager
+        conns = get_mcp_manager().list_connections()
+        lines.append("- MCP connectors: " + (", ".join(
+            f"{c['name']} ({'connected' if c.get('connected') else 'not connected'}, {c.get('tools_count', 0)} tools)"
+            for c in conns) if conns else "none configured") + ".")
+    except Exception:
+        pass
+    # Messaging
     try:
         from messaging.gateway import get_messaging_gateway
         gw = get_messaging_gateway()
-        # generate_self_doc is sync; gw.status() is async (needs running
-        # state). Report what's knowable synchronously.
-        adapters = list(getattr(gw, "_adapters", {}).items())
-        if adapters:
-            md.append("| Platform | Display Name | Configured |")
-            md.append("| --- | --- | --- |")
-            for name, a in adapters:
-                conf = "Yes" if a.is_configured() else "No"
-                md.append(f"| `{name}` | {a.display_name} | {conf} |")
-        else:
-            md.append("*No messaging adapters loaded.*")
-    except Exception as e:
-        logger.warning("Could not list messaging adapters: %s", e)
+        if not getattr(gw, "_adapters", None):
+            gw._auto_register()
+        conf = [n for n, a in gw._adapters.items() if a.is_configured()]
+        lines.append("- Messaging apps configured: " + (", ".join(conf) if conf else
+                                                       "none (no Telegram/Slack/Discord/Matrix/Mattermost)") + ".")
+    except Exception:
+        pass
+    # Skills
+    try:
+        from skills.registry import get_skill_registry
+        reg = get_skill_registry()
+        reg.ensure_loaded()
+        sk = [f"/{x.manifest.name}" for x in reg.list_all()]
+        lines.append("- Installed skills (run with /name): " + (", ".join(sk) if sk else "none") + ".")
+    except Exception:
+        pass
+    lines.append(f"- Data directory: {s.data_dir} (SQLite stores, artifacts, ChromaDB "
+                 f"{'server' if s.chroma_host else 'on disk'}).")
+    shown = []
+    for key in SETTINGS_SHOWN:
+        if hasattr(s, key):
+            shown.append(f"{key}={getattr(s, key)}")
+    lines.append("- Settings: " + ", ".join(shown) + ".")
+    return "\n".join(lines)
 
-    return "\n".join(md)
+
+def generate_self_doc(project_id: str | None = None, interactive: bool = True, host_exec: bool = True) -> str:
+    """The self-documentation for a caller in the given context (sync - run it in a thread)."""
+    lim = _limits()
+    ctx, builder_on = _context_section(project_id, interactive, host_exec)
+    parts = ["# Pantheon self-documentation",
+             "Pantheon is a self-hosted, single-user agent harness: chat, per-project memory, artifacts, web research, "
+             "scheduled background tasks and skills. Answer questions about yourself from this page.",
+             _guide(lim, builder_on), ctx, _instance_section()]
+    return "\n\n".join(parts)

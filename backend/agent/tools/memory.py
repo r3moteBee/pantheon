@@ -133,9 +133,9 @@ SCHEMAS: list[dict[str, Any]] = [
                 "artifacts are auto-indexed on save; use this to "
                 "backfill artifacts saved before that landed, to "
                 "force-reindex after editing tags, or to bulk-ingest "
-                "a folder like NBJ/. Provide either id (one artifact) "
+                "a folder like research/. Provide either id (one artifact) "
                 "or path_prefix (folder) — pass a bare folder name like "
-                "'NBJ/' (the project slug is added automatically)."
+                "'research/' (the project slug is added automatically)."
             ),
             "parameters": {
                 "type": "object",
@@ -146,7 +146,7 @@ SCHEMAS: list[dict[str, Any]] = [
                     },
                     "path_prefix": {
                         "type": "string",
-                        "description": "Folder prefix; index every text artifact whose path starts with this prefix. Pass bare folder name like 'NBJ/'."
+                        "description": "Folder prefix; index every text artifact whose path starts with this prefix. Pass bare folder name like 'research/'."
                     },
                     "force": {
                         "type": "boolean",
@@ -314,12 +314,12 @@ async def _tool_index_workspace(ctx: ToolContext, tool_name: str, tool_args: dic
                     f"Indexed {indexed} ({skipped} skipped): "
                     f"{total_chunks} chunks stored, "
                     f"{total_entities} entities extracted.\n"
-                    f"Tip: prefer `index_artifact` for artifact "
-                    f"folders; `index_workspace` is for files on disk."
+                    f"Tip: use index(target='artifact') for artifact "
+                    f"folders; target='workspace' is for files on disk."
                 )
         return (
             f"Path not found: {path_arg!r}. If you meant an "
-            f"artifact folder, use `index_artifact(""path_prefix={path_arg!r})` instead — workspace is for files on "
+            f"artifact folder, use `index(target='artifact', path_prefix={path_arg!r})` instead — workspace is for files on "
             f"disk, artifacts are the project's persistent store."
         )
     if result.get("skipped"):
@@ -354,7 +354,7 @@ async def _tool_index_artifact(ctx: ToolContext, tool_name: str, tool_args: dict
 
     if prefix is not None:
         # Apply same normalization as save/list so callers can
-        # pass a bare folder name like 'NBJ/'.
+        # pass a bare folder name like 'research/'.
         proj = _ps_idx(effective_project)
         norm = (prefix or "").lstrip("/").strip()
         if norm and norm != proj and not norm.startswith(f"{proj}/"):
@@ -384,7 +384,7 @@ async def _tool_index_artifact(ctx: ToolContext, tool_name: str, tool_args: dict
             f"{total_entities} entities extracted."
         )
 
-    return "index_artifact requires either 'id' or 'path_prefix'."
+    return "index(target='artifact') requires either 'id' or 'path_prefix'."
 
 
 
@@ -407,7 +407,7 @@ SCHEMAS.append({
         "name": "index",
         "description": (
             "Index content into semantic memory and the graph so recall finds it. "
-            "target='artifact': id (one artifact) or path_prefix (a folder like 'NBJ/') — new artifacts are "
+            "target='artifact': id (one artifact) or path_prefix (a folder like 'research/') — new artifacts are "
             "indexed on save; use this to backfill or re-index after editing. target='workspace': path "
             "(file or directory; '' = whole workspace) — Markdown, text, CSV, PDF, code. force re-indexes unchanged content."
         ),
@@ -416,7 +416,7 @@ SCHEMAS.append({
             "properties": {
                 "target": {"type": "string", "enum": ["artifact", "workspace"]},
                 "id": {"type": "string", "description": "artifact: a single artifact id."},
-                "path_prefix": {"type": "string", "description": "artifact: folder prefix, e.g. 'NBJ/'."},
+                "path_prefix": {"type": "string", "description": "artifact: folder prefix, e.g. 'research/'."},
                 "path": {"type": "string", "description": "workspace: relative file or directory path."},
                 "force": {"type": "boolean"},
             },

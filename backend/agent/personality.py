@@ -70,6 +70,59 @@ def load_agent_config() -> str:
     return "Use your tools and memory to assist the user effectively."
 
 
+# sha256 of every agent.md Pantheon has shipped (backend/data/personality/agent.md
+# and the copy once tracked at data/personality/agent.md). A data-dir agent.md
+# with one of these hashes is an unedited default. Installs only ever got the
+# file copied when it was missing, so they kept reading an old guide after
+# updates; refresh_default_agent_md replaces such copies and keeps user edits.
+SHIPPED_AGENT_MD_SHA256 = frozenset({
+    "23b4c4f785027b84b5391d5de0b41e64d47a40603eefcac744ff4886edb357df",
+    "3c6590caedfb1d720938865972bdc19350d6cf809a67e28a5c6fc5ecb4d1f9df",
+    "7a9b2b87bd32a491a91ab20329f7325ceae07d9e4e69b2f025d93b8abbd9b195",
+    "b20382ffe5e78c5413e4b52b0fdff32294994e9250aa307ecb6dfe520e426360",
+    "b8879f51858cbaaf60be9a0012b5f4515a13acc7ce505b916612601f6e18ce9c",
+    "c1d4a976f1f4df6e5a7bfe5deb4064507777269b6dfef63b94b95f8b41dfcc63",
+    "c7e7736e190a0756d2d45b97c8412d8b496dbae3eb7e1ae56be6421301d6b8b8",
+    "d3d0824a9b2182d4ad67a466ad43721f13bbf21df2b801e7f1525bd2ea917046",
+    "e064186477389e8705256b5117276237256c36f81cf22cff248aba4f45e629c0",
+    "eb633794aeaf00d39ce11957ed6e7fe26fbe2ea446267638beacda7b9371621e",
+    "f05a9859a47358b71a4e40a418681f7478e40d28ada4921eabe1348433750afe",
+    "f63e54cec0376dd04c88f9bd3f6ebc3440a3824bb290e1a3ce11a983c9a0de1c",
+})
+_AGENT_MD_MARKER = ".agent.md.bundled-sha256"   # hash of the default we last copied
+
+
+def _sha256(data: bytes) -> str:
+    import hashlib
+    return hashlib.sha256(data).hexdigest()
+
+
+def refresh_default_agent_md(dest_dir: Path, bundled: Path) -> str:
+    """Bring DATA_DIR/personality/agent.md up to the bundled default unless the
+    user edited it. Returns what happened: "copied", "refreshed", "current",
+    "kept-edited" or "no-bundled"."""
+    if not bundled.is_file():
+        return "no-bundled"
+    new = bundled.read_bytes()
+    dest = dest_dir / "agent.md"
+    marker = dest_dir / _AGENT_MD_MARKER
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    if not dest.exists() or not dest.read_text(encoding="utf-8").strip():
+        dest.write_bytes(new)
+        marker.write_text(_sha256(new), encoding="utf-8")
+        return "copied"
+    cur = _sha256(dest.read_bytes())
+    if cur == _sha256(new):
+        marker.write_text(cur, encoding="utf-8")
+        return "current"
+    last = marker.read_text(encoding="utf-8").strip() if marker.exists() else ""
+    if cur in SHIPPED_AGENT_MD_SHA256 or cur == last:
+        dest.write_bytes(new)
+        marker.write_text(_sha256(new), encoding="utf-8")
+        return "refreshed"
+    return "kept-edited"
+
+
 def _project_personality_dir(project_id: str) -> Path:
     """projects/<id>/personality, refusing ids that would escape projects_dir."""
     from utils.paths import check_project_id

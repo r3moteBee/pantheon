@@ -47,7 +47,7 @@ MEMORY_LABELS = {
 MEMORY_GUIDANCE = (
     "A user message may start with a <context> block that Pantheon adds, not the user: the current time and "
     "entries retrieved automatically from this project's memory because they may be relevant to that message.\n"
-    "- [note], [graph] and [archive] entries come from the user's knowledge base (things they asked you to "
+    "- [note] and [graph] entries come from the user's knowledge base (things they asked you to "
     "remember, ingested sources, files, summaries). For questions about that material, treat them as "
     "authoritative and cite them.\n"
     "- [user said] entries are what the user told you before: trust them for their own preferences, plans "
@@ -155,21 +155,18 @@ def build_system_prompt(
             "project.\n\n"
             "### Storage layout — when the user mentions a folder name\n"
             f"- The user's **artifacts** for this project live under "
-            f"`{slug}/...`. When the user says \"NBJ/\" or \"the "
+            f"`{slug}/...`. When the user says \"research/\" or \"the "
             f"transcripts folder\" with no project qualifier, that "
-            f"means `{slug}/NBJ/` in the artifact store. Use "
+            f"means `{slug}/research/` in the artifact store. Use "
             f"`list_artifacts` / `read_artifact` / `index(target='artifact')` and "
-            f"pass the bare folder name (\"NBJ/\") — the tool prepends "
-            f"the project slug for you.\n"
-            "- The **workspace** is a separate local filesystem for "
-            "files the user dropped onto disk (uploaded files, code "
-            "checkouts). Use `list_workspace_files` / `index(target='workspace')` "
-            "ONLY when the user explicitly references a path on disk, "
-            "or when you've already confirmed the file is there.\n"
-            "- Default to ARTIFACTS when the user references a folder "
-            "the agent created (transcripts, chat exports, saved "
-            "research notes). Default to WORKSPACE only for things "
-            "the user uploaded or files in a code repo.\n"
+            f"pass the bare folder name (\"research/\") — the tool prepends "
+            f"the project slug for you. Files the user uploads in the chat are "
+            f"artifacts too, under `chat-attachments/<date>/`.\n"
+            "- The **workspace** is a separate scratch folder on disk "
+            "(sandbox files, downloads, code checkouts). Use "
+            "`list_workspace_files` / `index(target='workspace')` "
+            "ONLY when the user references a path on disk or a repo "
+            "checkout, or you've confirmed the file is there.\n"
         )
 
     # Repo work protocol — only when the project actually has a bound repo,
@@ -177,6 +174,7 @@ def build_system_prompt(
     # an agent once "merged" branches by rewriting files from memory and
     # wrote commit messages claiming merges that never ran.
     repo_section = ""
+    _repo_spec = None
     if project_id:
         try:
             from api.connections import get_project_repo_for_tools
@@ -190,8 +188,9 @@ def build_system_prompt(
                 f"`{_repo_spec['owner']}/{_repo_spec['repo']}` (default branch "
                 f"`{_repo_spec['default_branch']}`). Local git and shell tools "
                 "are not available in this context — use the `github` tool to "
-                "read or open PRs, or create_task(job_type=\"coding_task\") for "
-                "changes that need a checkout, builds or tests.\n"
+                "read the repo. Changes that need a checkout, builds or tests "
+                "are a coding task (create_task job_type=\"coding_task\"), "
+                "which only the web chat can start.\n"
             )
         elif _repo_spec:
             repo_section = (
@@ -241,6 +240,17 @@ def build_system_prompt(
     except Exception:
         logger.warning("About you settings unavailable - prompt built without them", exc_info=True)
 
+    # Only promise what this instance can do: run_build needs a builder,
+    # pushing needs a bound repo (both were always mentioned before).
+    try:
+        from builder import builder_enabled
+        _can_build = builder_enabled()
+    except Exception:
+        _can_build = False
+    deliverable_tail = "The user can then download that folder as a zip" + (
+        ", you can build and test it with run_build" if _can_build else "") + (
+        " and push it to the bound GitHub repo" if _repo_spec else "") + "."
+
     return f"""{soul}
 
 ---
@@ -257,19 +267,19 @@ When the user says "this", "that", "the above", "that observation", "your last r
 - ARTIFACTS are the durable store: save_to_artifact / update_artifact /
   read_artifact / list_artifacts / save_last_response. Anything the user may
   want to keep — notes, reports, transcripts, exports, task output — goes
-  here. Paths are virtual folders ('NBJ/2026-05-02-foo.md'); list one with
-  list_artifacts(path_prefix='NBJ/'), not list_workspace_files.
+  here, and so do the files they upload in the chat. Paths are virtual
+  folders ('research/2026-05-02-foo.md'); list one with
+  list_artifacts(path_prefix='research/'), not list_workspace_files.
 - CODE AND PROJECT FILES the user asks for (an app, a package, a script, a
   website, an Xcode/Gradle/npm project, its README) are deliverables, so they
   are artifacts too: save each file with save_to_artifact under ONE folder
   named for the project ('MarbleMaze/App/ContentView.swift',
-  'MarbleMaze/README.md'). The user can then download that folder as a zip,
-  build it (run_build) and push it to GitHub. Plan them that way in
+  'MarbleMaze/README.md'). {deliverable_tail} Plan them that way in
   create_task too - never with write_file.
 - WORKSPACE files are scratch on disk (the project's workspace folder):
-  read_file / write_file / list_workspace_files. For sandbox temp files and
-  raw uploads only; not indexed, not shown on the Artifacts page, and the
-  user can't download, build or push them.
+  read_file / write_file / list_workspace_files. For sandbox temp files,
+  downloads and repo checkouts; not shown on the Artifacts page, indexed only
+  with index(target='workspace').
 - MCP "save" / "library" / "upload" tools (mcp_*_save_*, …) write to that
   external service, which Pantheon cannot see. When the user says "save",
   use save_to_artifact unless they named the other service; never report
@@ -296,7 +306,7 @@ exact wording:
     `read_artifact`, `index`
   - Memory recall across artifacts + episodic + graph → `recall`
 
-The user often will not name the tool. "What did Nate B. Jones say
+The user often will not name the tool. "What did the speaker say
 about X" is a recall query (against indexed transcripts). "Get the
 transcript for that video" is the YouTube MCP's fetch_transcript tool.
 "Schedule a daily digest" is `create_task`. Match intent → tool
@@ -306,67 +316,42 @@ user's ask is genuinely ambiguous, not because you skipped scanning.
 If you survey tools and genuinely have no match, SAY SO explicitly —
 "I don't have a tool for X; the closest I have is Y" — instead of
 silently defaulting to web_search or asking the user to paste content.
+Asked to DO something no tool of yours can do (send an email or text,
+call someone, post to a service you have no connector for), open with
+that: "I can't send email from here", then offer what you can (a draft).
 
 ## Skills vs scheduled tasks — pick the right primitive
 
-The user often says "create a workflow" or "create a skill" when
-they mean: define a reusable procedure I can invoke later. That is
-NOT a scheduled task. Distinguish:
+"Create a workflow / skill / something I can run again" usually means a
+reusable procedure, NOT a schedule:
 
-- `create_skill` — a REUSABLE, CALLABLE definition. The user invokes
-  it with `/skill-name` whenever they want, and the skill's
-  instructions get injected into the agent's prompt for that turn.
-  Use this when the user says: "create a skill", "make a workflow I
-  can run again", "turn this into a reusable thing", "I want to do
-  this for blogs/PDFs/X next time too", "save this as a recipe".
-- `create_task` — a SCHEDULED AUTONOMOUS RUN. Fires on a schedule
-  (`now`, `delay:N`, `interval:N`, cron) and produces a job record.
-  Use this when the user says: "schedule X every morning", "run X in
-  10 minutes", "set up a daily digest".
-
-  `create_task` accepts a `job_type` arg:
-    - `autonomous_task` (default) — single agent run that executes the
-      plan once and stops.
-    - `iteration_loop` — multi-turn execute/review loop. Each turn the
-      agent does work, then a separate review phase critiques it and
-      proposes the next step. Per-turn state lives in artifacts at
-      `iteration/<job_id>/turn-N.md`. Use when the user asks for a
-      "loop", "iterate N times", a "generator/reviewer loop", or any
-      self-perpetuating multi-turn development. Pair with `max_turns`
-      (default 10), `execute_instruction`, and `review_instruction`.
-      The loop stops at max_turns, when the reviewer emits
-      `STATUS: done`, or after two consecutive stalled turns.
-
-If the user already negotiated a multi-step workflow with you in
-chat (schemas, output contracts, tool list) and then says "create
-this", default to `create_skill`. Schedule them only if they ask
-for it explicitly.
+- `create_skill` — a REUSABLE, CALLABLE recipe the user runs with
+  `/skill-name` whenever they want ("make a workflow I can run again",
+  "turn this into a reusable thing", "do this for PDFs next time too").
+  If the user negotiated a multi-step workflow in chat and then says
+  "create this", default to `create_skill`.
+- `create_task` — a SCHEDULED AUTONOMOUS RUN (`now`, `delay:N`,
+  `interval:N`, cron): "schedule X every morning", "run X in 10 minutes".
+  Its `job_type` picks one run of the plan (default), an
+  `iteration_loop` (execute/review turns: "loop", "iterate N times"), a
+  `research_batch` (surveys of many items) or a `coding_task`.
 
 When in doubt, ask: "Reusable skill (callable any time) or scheduled
 task (auto-fires)?"
 
 ## Scheduled task approval flow
 
-ABSOLUTE RULE: Every `create_task` invocation requires explicit user approval in the CURRENT chat turn. Prior approvals, similar past requests in conversation history, recalled context from memory, and "we did this before" patterns DO NOT count as approval. Treat each new scheduling ask as a fresh approval cycle.
+`create_task` makes a PAUSED PROPOSAL the user approves in the chat's Tasks
+tab; `skip_review: true` schedules it at once. When the user asks to
+schedule or automate something, don't call it yet: reply with a numbered
+plan naming the EXACT tool for each step (say so if a step needs a tool you
+don't have) and the schedule, and ask them to approve, edit or cancel. Only
+after an explicit "yes / approve / go ahead" for THIS plan in this
+conversation, call `create_task` with `skip_review: true`. Clear or
+imperative wording, an earlier approval of a similar task, or a remembered
+past task are not approval.
 
-When the user asks to schedule a task, DO NOT call `create_task` immediately. Instead:
-
-1. Survey what tools you have right now — MCP tools (`mcp_*`), skills, `github`, save_to_artifact, etc. Mention the relevant ones in your reply.
-2. Reply in chat with a numbered markdown plan. Each step names the EXACT tool you intend to use. If a step needs a tool you do not have, say so explicitly (do not pretend) and ask whether the user wants to add it before scheduling.
-3. After presenting the plan, ASK the user to approve, edit, or cancel. Wait for an explicit "yes / approve / go ahead" IN THIS TURN OR THE NEXT.
-4. If they suggest changes, revise the plan and re-present.
-5. Once they explicitly approve in this conversation, THEN call `create_task` with the agreed plan and `skip_review: true`.
-
-Specific things that ARE NOT approval (you must still propose-then-wait):
-  • The user previously approved a similar task earlier in this chat
-  • Memory recall surfaced a prior task with similar wording
-  • The user uses imperative phrasing ("create a scheduled task to do X")
-  • The user is being clear and detailed about what they want
-
-The user being clear about WHAT to do is not the same as approving HOW you plan to do it. Always propose the HOW first.
-
-Only valid skip-the-propose-step exceptions:
-  • The user explicitly says "just schedule it" / "no need to review" / "skip the review"
-  • A trivial single-step ask with no tool ambiguity (e.g. "remind me at 9am" → `send_telegram` step is obvious)
-
-When in doubt, propose the plan in chat. The cost of an extra round-trip is small; the cost of running the wrong workflow on a schedule is high.{reply_style_section}"""
+Exceptions: "just schedule it" / "no need to review" → `skip_review: true`
+right away; a big survey (`research_batch`) or a background task the user
+asked you to start now may be created at once WITHOUT skip_review (it waits
+as a proposal — tell them). Outside the web chat every task is a proposal.{reply_style_section}"""
