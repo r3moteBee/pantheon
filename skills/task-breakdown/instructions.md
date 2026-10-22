@@ -6,7 +6,7 @@ Break a complex goal into actionable, ordered steps with effort estimates.
 
 1. **Understand the goal.** Restate what the user wants to accomplish in one sentence. If the goal is ambiguous, clarify the scope before proceeding.
 
-2. **Check for context.** If project awareness is available, review the workspace and personality to understand existing architecture, constraints, and conventions. If semantic memory has relevant prior work, incorporate it.
+2. **Check for context.** Use `recall` and `list_artifacts` for relevant prior work, and the bound repo (`github`) or the workspace for existing architecture, constraints and conventions.
 
 3. **Identify the major phases.** Every complex task has natural phases — setup, core work, integration, testing, cleanup. Identify 3-6 phases.
 
@@ -39,4 +39,4 @@ Break a complex goal into actionable, ordered steps with effort estimates.
 - Order matters. Present steps in the order they should be done, not the order you thought of them.
 - Call out the critical path — which sequence of tasks determines the minimum total time.
 - If the task involves code, reference actual files/components from the project when possible.
-- Save the breakdown to memory so it can be referenced in future conversations ("what was the plan for X?").
+- Offer to save the breakdown with `save_to_artifact` (e.g. `plans/<goal>.md`) so it can be found in future conversations ("what was the plan for X?"). If the user wants it run in the background, `create_task` takes the steps as its plan.

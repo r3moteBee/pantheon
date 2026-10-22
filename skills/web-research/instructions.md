@@ -29,4 +29,5 @@ Research a topic using web search and produce a clear, structured summary.
 - Always include source URLs. Unsourced claims erode trust.
 - If the information is time-sensitive, note the date of the sources.
 - If you can't find reliable information, say so rather than speculating.
-- Store key findings in semantic memory when auto_store is enabled, so they're available for future conversations.
+- If the user wants to keep the result, save it with `save_to_artifact` (e.g. `research/<topic>.md`); saved artifacts are indexed for recall. To keep a single source itself, use `ingest_source`.
+- For a long list of items (every state, every vendor), propose a `research_batch` task with `create_task` instead of researching them all in one reply.

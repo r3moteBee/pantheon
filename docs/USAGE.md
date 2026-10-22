@@ -6,10 +6,13 @@ A practical guide to getting the most out of your Pantheon agent. This covers ho
 
 Projects are Pantheon's unit of isolation. Each project has its own:
 
-- Workspace (files the agent can read/write)
-- Memory (semantic, episodic, graph — none of it leaks between projects)
-- Personality (soul.md — how the agent speaks and thinks in that context)
-- MCP tool scopes
+- Artifacts (saved documents, code, sources and uploads; see §5)
+- Workspace (scratch files on disk for commands and the repo checkout)
+- Memory (episodic, semantic, graph and archival notes — none of it leaks between projects)
+- Conversations, background tasks and a bound GitHub repo
+- Personality (soul.md — how the agent speaks and thinks in that context), or the global one
+
+MCP servers, LLM routes, skills and About you are global: every project sees the same ones (skills can be disabled per project).
 
 **Rule of thumb:** one project per domain or long-running initiative. Don't use a single project for unrelated work — it pollutes memory and makes recall noisy.
 
@@ -63,45 +66,38 @@ The web chat understands two kinds of leading `/` command:
 - **`/<skill-slug> [args]`** — run an installed skill explicitly (typing `/` opens the skill picker; `_` and `-` are interchangeable).
 - **`/model <class|auto> [message]`** — pin this conversation to a model class: `agent`, `quick`, `code`, `long_context` or `vision`. `/model auto` returns to automatic routing; `/model` alone shows the current pin. The model picker next to the chat input does the same thing. Pins last until the backend restarts, and a class only takes effect if it has its own route under Settings → LLMs → Model routing.
 
-## 4. Memory tiers
+## 4. Memory
 
-Pantheon has five memory stores the agent can read and write:
+Pantheon keeps several kinds of memory per project:
 
-- **Working** — in-process scratch for the current conversation; not persisted
-- **Episodic** — chat history and task logs: who said what, when
-- **Semantic** — embedded chunks from indexed artifacts and workspace files
-- **Graph** — entities and their relationships
-- **Archival** — markdown notes and a project summary (Memory → Archival tab)
+- **Episodic** — chat history, task logs and dated notes: who said what, when
+- **Semantic** — embedded chunks of your artifacts and indexed workspace files, plus facts the agent was asked to remember
+- **Graph** — entities and their relationships, extracted from sources, artifacts and conversations
+- **Archival** — markdown notes and a project summary that you keep in Memory → Archival. Recall doesn't search them; they are for you.
+- **Working** — the current conversation itself; not stored separately
 
-When you want the agent to remember something across sessions, ask it to `remember` in the appropriate tier. *"Remember in semantic memory that…"* is more durable than just *"remember that…"*.
+When you want the agent to remember something across sessions, ask it to `remember` it. It picks a tier: `semantic` for a fact to find by meaning later, `episodic` for a dated note about this conversation, `graph` to pull out the entities and relationships. *"Remember in semantic memory that…"* makes the choice explicit.
 
-To recall, say *"what do you know about X"* — the agent will search across tiers. You can also use `/memory <query>` in a messaging bot. Recall runs on every chat turn anyway, so you don't need magic phrases to reach earlier work.
+To recall, say *"what do you know about X"* — the agent searches semantic, episodic and graph memory with its `recall` tool. You can also use `/memory <query>` in a messaging bot. Recall runs on every chat turn anyway (unless you turn it off in Project Settings), so you don't need magic phrases to reach earlier work.
 
 How automatic recall behaves:
 
-- It looks for memories related to your message, reranks them, and leaves out ones the reranker scores as unrelated (`RECALL_MIN_RELEVANCE`, default 0.05). Small talk gets no memories at all. It also skips messages from the current conversation, because the agent can already see those.
-- The agent sees each memory labelled by where it came from: `[note]` (things you asked it to remember, indexed sources), `[user said]` (something you said in an earlier chat), `[your earlier reply]` (its own past answer, which may be out of date) and `[graph]` / `[archive]`. For anything time-sensitive, like latest versions, prices or news, it is told to use its tools even when a memory seems to answer.
+- It searches semantic, episodic and graph memory for things related to your message, reranks them, and leaves out ones the reranker scores as unrelated (`RECALL_MIN_RELEVANCE`, default 0.05). Small talk gets no memories at all. It also skips messages from the current conversation, because the agent can already see those.
+- The agent sees each memory labelled by where it came from: `[note]` (things you asked it to remember, indexed sources), `[user said]` (something you said in an earlier chat), `[your earlier reply]` (its own past answer, which may be out of date) and `[graph]`. For anything time-sensitive, like latest versions, prices or news, it is told to use its tools even when a memory seems to answer.
 - Memories and the current time are added to your newest message, not to the system prompt. The long, unchanging part of the prompt therefore stays identical from turn to turn, and local model servers (llama.cpp, vLLM) can reuse their cache for it, which makes replies noticeably faster.
 
 **Long conversations:** each turn sends only the newest part of the chat that fits `HISTORY_TOKEN_BUDGET` (by default a quarter of the model's context window, at most 24K tokens). Older turns drop out in blocks of about 10 turns, so the model server can keep reusing its cache between drops. They aren't forgotten: when your message relates to an earlier turn, recall repeats that turn next to your message, labelled `[earlier in this chat, ...]`. It does the same for relevant turns still in the history but far back, because small models tend to miss facts in the middle of a long prompt. Asking "did I mention X earlier?" works the same way.
 
-**"What's the latest version of X?"** When a search asks about a product's version, `web_search` also returns that product's release table from endoflife.date, or, for projects released on GitHub, its newest stable release (newer pre-releases are flagged as not stable). These sit above the search snippets, which are often months old. The lookup sends only the product name. Turn it off with `SEARCH_RELEASE_FACTS=false`.
+## 5. Artifacts and the workspace
 
-**New or unfamiliar names:** if you ask what something is, or ask the agent to use, set up or switch to something with a capitalised or camel-case name, such as "What is Jev?" or "use Jev to…", and its first draft didn't search the web, Pantheon searches "What is <name>?" before it answers. The same check applies to time-sensitive questions (`AGENT_FORCE_SEARCH`). The agent guide also tells it to check that a product can actually do what you're asking before giving setup steps.
+Two places hold files, and they are not interchangeable:
 
-**Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
+- **Artifacts** (Artifacts page, Artifacts tab in chat) are what you keep: versioned, searchable by recall, previewable, downloadable as a zip, buildable with `run_build` and pushable to GitHub. Saved answers, ingested sources, generated images, code and documents the agent writes for you, files you upload on the Artifacts page and chat attachments all land here. Text artifacts are indexed for recall automatically; uploaded images get a background vision/OCR pass. Binary uploads such as PDFs are stored but not indexed by themselves (ingest a PDF with `ingest_source`, or index it from the workspace).
+- **The workspace** is scratch space on disk (`data/workspace` for the default project, `data/projects/<id>/workspace` for others): where `run_command` and `code_execute` run, where the bound repo is checked out, where `download_file` and bot `/note` captures land. It isn't indexed unless you ask the agent to *"index the workspace"*, and you can't download, build or push it from the UI.
 
-**Big research requests:** a request that covers many items ("5 states at a time", "state by state", "all 50 states") isn't answered in one reply. The agent finds the list, then proposes a **research task** (Tasks tab) that researches each item separately, writes a note per item with its sources (or "not found"), and builds a summary from those notes in `research/<topic>/`. Approve it to run; you can cancel it between items, and running it again reuses the notes it already has. Long, instruction-style requests get a proper search query written for them instead of being searched word for word.
+If something you want ended up in the workspace, copy it over (Artifacts page → workspace button → **Copy to Artifacts**, below).
 
-**Follow-ups:** a short follow-up in a conversation about current facts ("and AMD?", "can you do the same for the House?") is looked up too, with a search the agent writes from the conversation, so it isn't answered from the model's memory. Acknowledgements ("thanks") and requests to reshape the last answer ("summarize that") aren't. In chat the agent makes at most `AGENT_WEB_BUDGET` (12) web lookups per message, then answers from what it found and says what it couldn't verify. A reply that hits the model's length limit says it was cut off.
-
-**Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
-
-**Links you paste:** a URL in your message (up to three) is opened before the agent starts its answer, so a summary or answer is based on the page itself, not on what the model already believes. Turn off with `AGENT_PREFETCH_URLS=false`.
-
-**Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
-
-## 5. Saving the agent's own output
+### Saving the agent's own output
 
 A common pattern: the agent produces a long analysis, and you want to file it. Use any of these:
 
@@ -114,7 +110,7 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
   - *"Save the last response as a bulleted action-items list to `todos.md`"* (`mode=custom` with your own transform prompt)
 - For .md files, a YAML frontmatter block (title, date, mode, source_messages, tags, source) and a title heading are added automatically.
 
-### Example Chat Exchange
+#### Example chat exchange
 > **User**: *Provide a high-level summary of the architectural tiers of Pantheon.*
 > **Agent**: *(Outputs the detailed memory and runtime architecture...)*
 > **User**: *Save that response verbatim to docs/memory_tiers.md with title 'Memory Tiers Overview' and tags 'architecture, docs'*
@@ -135,7 +131,7 @@ A common pattern: the agent produces a long analysis, and you want to file it. U
 > (The detailed architectural breakdown is written here verbatim)
 > ```
 
-### Code and apps are artifacts
+### Code and apps
 
 When you ask for an app, a script, a package or a project, the agent saves its files as artifacts under one folder named for the project, so you can download the folder as a zip, build it (`run_build`, see [builds.md](builds.md)) and push it to GitHub. If a `create_task` plan writes such files with `write_file` (the workspace, which you can't download, build or push), the plan is switched to `save_to_artifact` before you approve it, and the agent tells you. A code or document file the agent writes to the workspace anyway (outside `tmp/`, `build/` and similar folders) is also saved as an artifact at the same path.
 
@@ -145,7 +141,7 @@ Files that already ended up in the workspace can be copied over: on the Artifact
 
 ### Pushing artifacts to GitHub
 
-A folder of artifacts (or a set of selected files) can be committed to a GitHub repository in one go. It needs a GitHub connection: a personal access token with write access to the repo, added in Settings → Connections. To create repositories from Pantheon, the token also needs the `repo` scope (classic) or Administration write (fine-grained).
+A folder of artifacts (or a set of selected files) can be committed to a GitHub repository in one go. It needs a GitHub connection: a personal access token with write access to the repo, added under Connections → GitHub. To create repositories from Pantheon, the token also needs the `repo` scope (classic) or Administration write (fine-grained).
 
 - **From the Artifacts page.** Select a folder and press the GitHub button next to the download button, or select files and choose **Push to GitHub**. Pick the project's repo, another repo on the connection, or **Create a new repository** (private by default, with a README so it has a first commit). By default the files go to a new branch (`pantheon/<folder>-<date>`) and a pull request is opened. **Push straight to `main`** commits to the default branch instead, with no pull request. **Folder in the repository** puts the files under a subfolder. **Delete files in that repository folder that aren't in this push** makes the repo folder match exactly; it needs a subfolder, so it never touches the rest of the repo.
 - **From chat.** *"Push the SpiderKit folder to GitHub"* runs `github(action="push_artifacts", folder="SpiderKit/")` on the project's bound repo. The agent always pushes to a new branch and opens a pull request. It never pushes to the default branch or deletes files, and it only does this in a chat you are driving, never in a background task.
@@ -153,6 +149,24 @@ A folder of artifacts (or a set of selected files) can be committed to a GitHub 
 Each push is one commit made through GitHub's API (no clone). Files that already match the branch aren't uploaded again, and pushing the same folder twice reuses the open pull request. Pantheon remembers what was pushed where, and the dialog shows how many files changed since the last push. Files that look like credentials (`.env`, private keys, `id_rsa`, tokens in the text) need an extra confirmation on the Artifacts page, and the agent refuses to push them. Limits per push: 1,000 files, 50 MB.
 
 ## 6. Web search and the browser
+
+### When the agent searches
+
+**"What's the latest version of X?"** When a search asks about a product's version, `web_search` also returns that product's release table from endoflife.date, or, for projects released on GitHub, its newest stable release (newer pre-releases are flagged as not stable). These sit above the search snippets, which are often months old. The lookup sends only the product name. Turn it off with `SEARCH_RELEASE_FACTS=false`.
+
+**New or unfamiliar names:** if you ask what something is, or ask the agent to use, set up or switch to something with a capitalised or camel-case name, such as "What is Jev?" or "use Jev to…", and its first draft didn't search the web, Pantheon searches "What is <name>?" before it answers. The same check applies to time-sensitive questions (`AGENT_FORCE_SEARCH`). The agent guide also tells it to check that a product can actually do what you're asking before giving setup steps.
+
+**Sources:** when an answer relies on web results, it ends with a **Sources** list. If the agent doesn't write one, Pantheon appends up to two result URLs whose text actually contains the answer's main fact (the version, name or value it gives). Turn it off with `ANSWER_SOURCES=false`.
+
+**Big research requests:** a request that covers many items ("5 states at a time", "state by state", "all 50 states") isn't answered in one reply. The agent finds the list, then proposes a **research task** (Tasks tab) that researches each item separately, writes a note per item with its sources (or "not found"), and builds a summary from those notes in `research/<topic>/`. Approve it to run; you can cancel it between items, and running it again reuses the notes it already has. Long, instruction-style requests get a proper search query written for them instead of being searched word for word.
+
+**Follow-ups:** a short follow-up in a conversation about current facts ("and AMD?", "can you do the same for the House?") is looked up too, with a search the agent writes from the conversation, so it isn't answered from the model's memory. Acknowledgements ("thanks") and requests to reshape the last answer ("summarize that") aren't. In chat the agent makes at most `AGENT_WEB_BUDGET` (12) web lookups per message, then answers from what it found and says what it couldn't verify. A reply that hits the model's length limit says it was cut off.
+
+**Speed:** questions that have to be looked up (time-sensitive questions or an unfamiliar name) search right away, before the model's first step; version questions use the plain question as the query, other time-sensitive ones get the current month and year added. With `AGENT_THINKING`, the model stops thinking once it has tool results, except in the round right after that first search, and a reply it had left inside its reasoning is streamed. Settings: `AGENT_PRE_SEARCH`, `AGENT_THINKING_AFTER_TOOLS`.
+
+**Links you paste:** a URL in your message (up to three) is opened before the agent starts its answer, so a summary or answer is based on the page itself, not on what the model already believes. Turn off with `AGENT_PREFETCH_URLS=false`.
+
+**Small local models:** if the agent answers current-fact questions from memory instead of searching, set `AGENT_THINKING=true`. The agent model then reasons before acting; the server must accept `chat_template_kwargs` (llama.cpp and vLLM do). In one test with a 9B model it searched on 14 of 14 such questions instead of 8.
 
 ### Search provider chain
 Pantheon's `web_search` tool walks a configurable chain of providers (default: **SearXNG → Brave → DuckDuckGo**; Brave is skipped until it has an API key). It falls through to the next provider on any of:
@@ -181,19 +195,32 @@ Pantheon also ships with:
 
 Set `BROWSER_HEADLESS=false` in `.env` to watch the browser drive itself during debugging.
 
-## 7. Autonomous tasks
+## 7. Background tasks and approval
 
-Use `create_task` (or `/task <description>` in a messaging bot) to schedule the agent to work on something independently:
+Ask the agent to do something in the background, on a schedule, or over a long list, and it creates a task with `create_task`:
 
-- `schedule: "now"` — run immediately
+- `schedule: "now"` — run once, right away (after approval)
+- `schedule: "delay:30"` — run once, 30 minutes from now
 - `schedule: "interval:60"` — every 60 minutes
 - `schedule: "0 9 * * *"` — daily at 9 AM (cron)
 
-Long-running tasks should call `send_telegram` at key checkpoints so you stay in the loop.
+**Every task starts as a proposal.** The agent writes a step-by-step plan naming the tools each step uses, and the task waits, paused, in the chat's **Tasks** tab until you **Approve** it (you can edit the plan first, or **Run now**). The only exception: in the web chat, after you have explicitly approved the plan in the conversation, the agent may schedule it directly. Tasks proposed from a messaging bot or from another background task always wait for approval in the web UI.
+
+Kinds of task:
+
+- **Autonomous task** (default): the agent works through the plan once per run, optionally with a skill (`/daily-digest` …). Multi-part work keeps a task ledger artifact so a re-run resumes instead of starting over.
+- **Research batch:** a list researched one item at a time, with a sourced note per item and a summary (see "Big research requests" in §6).
+- **Iteration loop:** repeated execute/review turns until the reviewer says it's done or `max_turns` is reached.
+- **Coding task:** a coding agent works on the project's bound GitHub repo on a new branch and opens a pull request. It runs commands on the host, so it starts immediately, without a proposal, and only from the web chat.
+- **Autoresearch:** `/autoresearch` mutates one workspace file against a benchmark command and keeps only improvements (web chat only).
+
+A finished task posts its result into the conversation it came from. Background tasks can't run host commands (`run_command`, `code_execute`, `git_*`) unless `AGENT_HOST_EXEC=always`. In a messaging bot, `/task <description>` is you giving the order directly: it runs right away, without a plan.
+
+To hear from a long-running task on your phone, include it in the description (*"…and message me on Telegram when done"*): the `send_telegram` tool posts to every chat in `telegram_allowed_chat_ids`. It only works for Telegram, and only while the Telegram bot is running; otherwise nothing is sent.
 
 ### Examples of Autonomous Tasks
 * **Weekly Market Briefing**
-  * **Description**: *"Every Monday, search for recent updates on High Bandwidth Memory (HBM) supply chains, summarize the top 3 news items, write the report to `research/weekly-hbm-report.md`, and notify me on Telegram with the summary."*
+  * **Description**: *"Every Monday, search for recent updates on High Bandwidth Memory (HBM) supply chains, summarize the top 3 news items, save the report as an artifact at `research/weekly-hbm-report.md`, and notify me on Telegram with the summary."*
   * **Schedule**: `"0 9 * * 1"` (Cron expression for every Monday at 9 AM)
 * **Daily Release Watch**
   * **Description**: *"Check the releases page of GitHub repository 'ollama/ollama', ingest any new release notes via the github/release adapter, index it into memory, and alert me if a new version is released."*
@@ -205,7 +232,7 @@ Pantheon ships five messaging adapters: **Telegram, Slack, Discord, Matrix and M
 
 **Allowlists are deny-by-default.** An empty `telegram_allowed_chat_ids`, `slack_allowed_channel_ids`, `discord_allowed_guild_ids`, `matrix_allowed_room_ids` or `mattermost_allowed_channel_ids` means *nobody* can talk to that bot. Messages from unlisted chats are ignored and logged with the ID to add.
 
-All five support the same commands (`/project`, `/projects`, `/status`, `/files`, `/task`, `/memory`, `/note`) plus plain-text chat. Matrix uses a `!` prefix (`!project`), Mattermost accepts `!` or `/`. Bots run as background contexts, so host-exec tools (`run_command`, `git_*`) are off there unless `AGENT_HOST_EXEC=always`. Setup details per platform: [messaging.md](messaging.md).
+All five support the same commands (`/project`, `/projects`, `/status`, `/files`, `/task`, `/memory`, `/note`) plus plain-text chat. Matrix uses a `!` prefix (`!project`), Mattermost accepts `!` or `/`. Bots run as background contexts, so host-exec tools (`run_command`, `code_execute`, `git_*`, `start_autoresearch`) are off there unless `AGENT_HOST_EXEC=always`, and tasks the agent proposes from a bot wait for approval in the web UI. Setup details per platform: [messaging.md](messaging.md).
 
 ### Telegram
 
@@ -238,7 +265,7 @@ All notes are also indexed into semantic memory so you can recall them later via
 
 ## 9. Indexing a corpus into memory
 
-Drop files into the project workspace and tell the agent: *"index the workspace"* (or call `index(target="workspace")` directly). This ingests Markdown (with frontmatter), text, CSV, PDF, and code files into semantic + graph memory. After indexing, recall and chat become much richer.
+Text artifacts are indexed automatically. For a folder of files on disk, put them in the project's workspace directory and tell the agent: *"index the workspace"* (it calls `index(target="workspace")`). This ingests Markdown (with frontmatter), text, CSV, PDF and code files into semantic + graph memory; scanned PDF pages are read with the vision model when one is configured. After indexing, recall and chat become much richer.
 
 Re-index with `force: true` when you edit files.
 
@@ -248,7 +275,7 @@ For web sources you want to keep, ask the agent to *"ingest <url> as a blog/anno
 For YouTube, connect a YouTube transcript MCP server; the agent searches with that MCP's tools (`mcp_<server>_search_youtube` …) and forwards each video's `published` date to `ingest_source` so paths get real dates.
 
 ### Ingestion Example
-If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/pantheon/data/projects/<project-slug>/workspace/`, you can query the agent:
+If you place a PDF named `HBM3_Specification.pdf` into your workspace folder (`~/pantheon/data/projects/<project-id>/workspace/`, or `~/pantheon/data/workspace/` for the default project), you can query the agent:
 > **User**: *Index the workspace.*
 > 
 > *The agent will call `index(target="workspace")`, extract the text from the PDF, chunk it, embed it, and insert it into ChromaDB. Once finished, you can query information from that file across sessions:*
@@ -261,8 +288,8 @@ If you place a PDF named `HBM3_Specification.pdf` into your workspace folder `~/
 - **MCP budgets.** Every MCP call is counted per connection (Connections → MCP servers → expand a card → *Usage & budget*). Set a daily or monthly limit on any connection. Over the limit, calls are refused, and search tools fall back to the built-in web search. Past 80% of a limit, tool results carry a note so the agent can pace itself. Tavily is metered in credits using its pricing (advanced search = 2, …) and also shows your account's own usage. Other connections count calls.
 
 - **Run `consolidate_memory` at the end of a productive session.** It distills the conversation into semantic and graph memory so future sessions pick up where you left off.
-- **Keep `soul.md` short and specific.** Long, generic personalities bleed into analytical answers. Use the `minimal` personality weight for research projects.
-- **Watch the cost of long context.** Recall returns ~10-13 items by default; if you see it crowding out current work, ask the agent to narrow its recall with specific tier filters.
+- **Keep `soul.md` short and specific.** Long, generic personalities bleed into analytical answers. Use the *minimal* personality weight (chat header or Project Settings) for research projects.
+- **Watch the cost of long context.** Automatic recall adds up to about 4,000 tokens of memories per turn. If they crowd out current work, set the project's context focus to *focused* or turn memory recall off for that project (Project Settings).
 - **Back up `~/pantheon/data/`** — it contains all your memory, projects, and workspace files.
 
 ## 11. Uninstall / reinstall

@@ -4,16 +4,19 @@ Start here if you're reviewing Pantheon for the first time.
 
 1. **[README.md](README.md)** — what Pantheon is and how to install it.
 2. **[CLAUDE.md](CLAUDE.md)** — the working reference: architecture, conventions and gotchas. Read its **Design rationale** section before recommending architectural changes; those calls are deliberate.
-3. **[backend/README.md](backend/README.md)** — backend layout and routers.
-4. Subsystems:
+3. **[docs/design-notes.md](docs/design-notes.md)** — the incidents and measurements behind many of those rules. Check here before "simplifying" a guard that looks arbitrary.
+4. **[backend/README.md](backend/README.md)** and **[frontend/README.md](frontend/README.md)** — layout, routers, pages.
+5. Subsystems:
    - [docs/tools.md](docs/tools.md) (generated agent tool list)
    - [docs/jobs.md](docs/jobs.md)
-   - [docs/skills.md](docs/skills.md)
+   - [docs/skills.md](docs/skills.md) and [docs/skill-registry-protocol.md](docs/skill-registry-protocol.md)
+   - [docs/builds.md](docs/builds.md)
    - [docs/messaging.md](docs/messaging.md)
    - [docs/security.md](docs/security.md)
+   - [docs/api/client-api.md](docs/api/client-api.md) and [docs/api/artifacts-feed.md](docs/api/artifacts-feed.md)
    - [backend/sources/SOURCE_ADAPTERS.md](backend/sources/SOURCE_ADAPTERS.md)
    - [backend/memory/README.md](backend/memory/README.md)
-5. **[docs/USAGE.md](docs/USAGE.md)** — how a user drives the agent.
+6. **[docs/USAGE.md](docs/USAGE.md)** — how a user drives the agent.
 
 Pantheon is **single-user and single-process** by design: APScheduler and the job worker run inside the FastAPI process. Recommendations built on multi-tenant patterns (queue/worker split, per-tenant isolation, request-scoped DB pools) don't apply here.
 
@@ -27,4 +30,4 @@ Run the tests:
 cd backend && ../.venv/bin/python -m pytest tests/integration/ -q
 ```
 
-`docs/archive/` holds old plans and specs. They record past intent, not current behavior.
+`docs/archive/` holds old plans and unimplemented specs (including the MCP registry protocol). They record past intent, not current behavior.

@@ -4,7 +4,7 @@ Distill a conversation into a clear summary with key points, decisions, and acti
 
 ## Procedure
 
-1. **Gather context.** Review the current conversation. If episodic memory is available, recall recent session history to capture the full scope of what was discussed.
+1. **Gather context.** Review the current conversation. If the conversation is long, use `recall` (tier `episodic`) to bring back earlier turns that are no longer in view.
 
 2. **Identify the important parts:**
    - Decisions that were made
@@ -27,7 +27,7 @@ Distill a conversation into a clear summary with key points, decisions, and acti
 
    **action-items** — Just the action items, formatted as a checklist.
 
-4. **Store the summary.** When auto_store is enabled, the summary is saved to semantic memory so it can be recalled in future conversations ("what did we discuss last time?").
+4. **Keep it if asked.** Nothing is stored automatically. If the user wants the summary kept, save it with `save_to_artifact` (e.g. `notes/<date>-<topic>.md`) or `save_last_response`; saved artifacts are indexed, so "what did we discuss last time?" finds them. `consolidate_memory` distills the session into semantic and graph memory instead.
 
 ## Important
 

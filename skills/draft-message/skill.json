@@ -1,7 +1,7 @@
 {
   "name": "draft-message",
   "version": "2026-04-05",
-  "description": "Draft professional messages — emails, Slack messages, announcements, or any written communication. Use when the user asks to write a message, draft an email, compose a reply, announce something, or needs help with professional communication tone.",
+  "description": "Draft professional messages — emails, Slack messages, announcements, or any written communication — in the user's own writing voice when they have one. Use when the user asks to write a message, draft an email, compose a reply, announce something, or needs help with professional communication tone.",
   "author": "pantheon",
   "license": "MIT",
   "triggers": [

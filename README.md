@@ -1,6 +1,6 @@
 # Pantheon
 
-A **single-user, self-hosted AI agent harness** designed for long-running research and analysis workflows. It features a persistent five-tier memory system, an automated source-adapter ingestion pipeline, background job execution, and a knowledge-graph substrate.
+A **single-user, self-hosted AI agent harness** designed for long-running research and analysis workflows. It features persistent memory that every chat turn draws on, an automated source-adapter ingestion pipeline, background job execution, and a knowledge-graph substrate.
 
 You run Pantheon locally, connect your LLMs and MCP servers, and it accumulates context over time—handling daily ingestion feeds, scheduled workflows, and semantic indexing so the agent can resume right where you left off.
 
@@ -24,13 +24,16 @@ curl -fsSL https://raw.githubusercontent.com/r3moteBee/pantheon/main/deploy.sh |
 
 ## ✨ Core Features
 
-* **🧠 Five-Tier Memory:** Combines working (in-conversation), episodic (SQLite chat logs), semantic (ChromaDB embeddings), graph (concepts and relationships in SQLite), and archival memory in a single `recall()` query.
+* **🧠 Persistent Memory:** Episodic (chat history and notes in SQLite), semantic (ChromaDB embeddings of artifacts, indexed files and saved facts) and graph (concepts and relationships in SQLite). Every chat turn recalls from all three (unless you turn recall off for a project), reranked and filtered by relevance, so you can refer to last week's work without magic phrases. Archival notes and a project summary live alongside, edited in the Memory page.
 * **📥 Ingestion Pipeline:** 29 built-in source adapters across 10 mechanisms (YouTube, blog, PDF, web, forum, podcast, GitHub, eCFR, MA Legislature, SEC EDGAR) that turn a URL or ID into a structured artifact plus graph nodes. The agent's `ingest_source` tool keeps a source; `web_fetch` just reads a page without saving it.
 * **🕸️ Knowledge Graph:** Automatically extracts entities and relationships (e.g. concepts, organizations, authors) to find semantic overlaps and connect related ideas.
-* **⚙️ Async Jobs & Skills:** Unified background worker powered by APScheduler supporting autonomous workflows, scheduled tasks, and modular prompt recipes (skills).
-* **🔌 MCP & LLM Flexibility:** Model Context Protocol (MCP) client with API-key or OAuth 2.1 auth. LLMs are configured as named endpoints plus per-task-class routes (`agent`, `code`, `quick`, `long_context`, `extract`, `summarize`, `vision`, `image_gen`, `embed`, `rerank`) with ordered fallbacks, and an optional per-turn chat router (`/model <class|auto>` pins a class).
+* **⚙️ Background Jobs & Skills:** One in-process worker runs scheduled and one-shot tasks (each plan is approved by you first), coding tasks against a bound GitHub repo, iteration loops, and **research batches** that look up a list of items one at a time and write a sourced note per item. Skills are reusable prompt recipes invoked with `/<slug>`.
+* **📦 Artifacts as deliverables:** Code, documents and apps the agent writes are saved as versioned artifacts under one project folder: download them as a zip, **build and test** them in a throwaway, offline container (`run_build`, Kubernetes), and **push them to GitHub** as one commit and pull request.
+* **🙋 About you & writing voices:** Tell the agent who you are and how long and how formatted replies should be (per chat app), and save your own writing voices so drafts sound like you.
+* **🔌 MCP & LLM Flexibility:** Model Context Protocol (MCP) client with API-key or OAuth 2.1 auth and per-connection call budgets. LLMs are configured as named endpoints plus per-task-class routes (`agent`, `code`, `quick`, `long_context`, `extract`, `summarize`, `vision`, `image_gen`, `embed`, `rerank`) with ordered fallbacks, and an optional per-turn chat router (`/model <class|auto>` pins a class). Long tool loops are kept inside the model's context window.
 * **🔒 Encrypted Vault:** Securely manages sensitive credentials, API keys, and OAuth tokens using Fernet encryption.
-* **🖥️ Web UI:** Integrated responsive dashboard for chatting, viewing artifacts, exploring the knowledge graph, configuring MCP connections, and tuning model parameters.
+* **🖥️ Web UI:** Integrated responsive dashboard for chatting, viewing artifacts, exploring the knowledge graph, reviewing tasks, configuring MCP connections, and tuning model routing. Projects keep their memory apart; deleting one removes everything it owns, after a preview.
+* **💬 Messaging bots:** Telegram, Slack, Discord, Matrix and Mattermost, with deny-by-default allowlists.
 
 ---
 
@@ -136,15 +139,17 @@ Run `make help` for the full list.
 ~/pantheon/
 ├── backend/               # FastAPI backend + Agent execution loop
 │   ├── agent/             # Core agent logic and tools definitions
-│   ├── api/               # FastAPI routers (19 mounted under /api)
+│   ├── api/               # FastAPI routers mounted under /api
 │   ├── sources/           # Ingestion pipelines and adapters
-│   ├── memory/            # Five-tier memory manager classes
+│   ├── memory/            # Memory stores and the MemoryManager
 │   ├── jobs/              # Async job store, worker, watchdog, handlers
+│   ├── builder/           # run_build backends (throwaway Kubernetes pods)
 │   ├── llm_config/        # LLM endpoints, task-class routes, chat router
 │   └── requirements.txt   # Python dependency list
 ├── frontend/              # Vite + React dashboard code
 ├── data/                  # Runtime storage (SQLite DBs, ChromaDB, workspaces)
-├── docs/                  # API and feature documentation
+├── docs/                  # User guide, reference docs, design notes
+├── deploy/kubernetes/     # Builder namespace manifest
 ├── skills/                # Bundled skills (skill.json + instructions.md)
 ├── scripts/               # Maintenance scripts (vault key rotation, migrations, tools doc)
 ├── deploy.sh              # Unified installer script
@@ -158,13 +163,21 @@ Run `make help` for the full list.
 
 ## 📖 Further Reading
 
-* [`CLAUDE.md`](CLAUDE.md) — Hacking guidelines, testing instructions, and codebase constraints.
-* [`docs/USAGE.md`](docs/USAGE.md) — User guide for projects, ingestion, memory retrieval, and skills.
+* [`docs/USAGE.md`](docs/USAGE.md) — User guide: projects, memory, tasks and approval, artifacts vs workspace, web search, bots.
+* [`CLAUDE.md`](CLAUDE.md) — Conventions and gotchas for anyone (or any coding agent) changing the code.
+* [`REVIEW.md`](REVIEW.md) — Where to start when reviewing the codebase.
+* [`docs/design-notes.md`](docs/design-notes.md) — Why things work the way they do: incidents and measurements behind the rules.
+* [`docs/tools.md`](docs/tools.md) — Every agent tool (generated).
+* [`docs/jobs.md`](docs/jobs.md) — Background jobs, scheduling and plan review.
+* [`docs/skills.md`](docs/skills.md) — Skills: format, invocation, scanning, registries.
+* [`docs/builds.md`](docs/builds.md) — `run_build` and the Kubernetes builder.
+* [`docs/messaging.md`](docs/messaging.md) — Telegram, Slack, Discord, Matrix and Mattermost setup.
+* [`docs/security.md`](docs/security.md) — Auth, vault, outbound-fetch guards, host exec, sandbox, skill scanning.
+* [`docs/api/client-api.md`](docs/api/client-api.md) — Building your own client: login, REST, and the `/ws/chat` streaming protocol.
+* [`docs/api/artifacts-feed.md`](docs/api/artifacts-feed.md) — The agent-shaped artifacts feed.
 * [`backend/README.md`](backend/README.md) — Backend layout, mounted routers and memory tiers.
 * [`frontend/README.md`](frontend/README.md) — Frontend dev server, build and structure.
 * [`backend/sources/SOURCE_ADAPTERS.md`](backend/sources/SOURCE_ADAPTERS.md) — How to design new ingestion adapters.
-* [`docs/api/client-api.md`](docs/api/client-api.md) — building your own client: login, REST, and the `/ws/chat` streaming protocol.
-* [`docs/security.md`](docs/security.md) — auth, vault, outbound-fetch guards, host exec, sandbox, skill scanning.
 
 ---
 
