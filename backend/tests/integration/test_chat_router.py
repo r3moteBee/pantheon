@@ -283,6 +283,7 @@ def test_time_sensitive_actions_and_plans_are_not_quick(msg):
     "hi", "thanks!", "What's the capital of France?", "Is 7919 a prime number?",
     "What's 17% of 2,340 plus VAT at 23%?", "What's my car's license plate?", "Did I mention a speech earlier?",
     "Remind me what we decided about the offsite", "What was the name of that book I liked?",
+    "Sorry, I won't make it to dinner",   # "won't" is not "won"
 ])
 def test_small_talk_trivia_arithmetic_and_memory_stay_quick(msg):
     from llm_config.router import looks_quick
