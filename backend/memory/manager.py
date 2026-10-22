@@ -173,7 +173,7 @@ class ContextBudget:
 
 
 class MemoryManager:
-    """Central interface for all memory operations across all 5 tiers.
+    """Central interface for all memory operations (episodic, semantic, graph, archival, working).
 
     Enhanced with graph-augmented retrieval, context budgeting, and
     automatic post-conversation extraction.

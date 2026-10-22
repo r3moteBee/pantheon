@@ -232,7 +232,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pantheon",
-    description="A production-ready agentic AI framework with 5-tier memory, project isolation, and autonomous tasks.",
+    description="A self-hosted agent harness with persistent per-project memory, artifacts and background tasks.",
     version=_APP_VERSION,
     lifespan=lifespan,
 )

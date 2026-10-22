@@ -287,7 +287,7 @@ A registry is conformant if it:
 
 ## 11. Adding a registry to Pantheon
 
-Admins add a registry in **Settings → Skills → Skill Registry Hubs → Add Hub**,
+Admins add a registry in **Skills → Sources → Add Hub**,
 or with `POST /api/skills/registries`. Registries are stored in
 `data/skill_registries.json`; bearer tokens go to the vault
 (`skill_registry:<id>`), never into the file:

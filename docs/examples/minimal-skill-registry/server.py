@@ -9,7 +9,7 @@ Run:
     pip install fastapi uvicorn
     uvicorn server:app --reload --port 8788
 
-Then in Pantheon: Settings → Skills → Hubs → Add Hub
+Then in Pantheon: Skills → Sources → Add Hub
 URL: http://localhost:8788
 """
 from __future__ import annotations
