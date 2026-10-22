@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,27 @@ logger = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Words too common to select graph nodes by on their own.
+_STOPWORDS = frozenset("""
+a an and are as at be by can could did do does for from had has have how i in is it its me my of on or our
+should so that the their them then there these they this to us was we were what when where which who whom
+whose why will with would you your about tell know any all also into than just more most some such only
+""".split())
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9][a-z0-9+#]*", text.lower())
+
+
+def label_in_text(label: str, text: str) -> bool:
+    """True when ``label`` occurs in ``text`` as whole words (case-insensitive):
+    "AI" is in "AI features" but not in "said"."""
+    lab = label.strip().lower()
+    if not lab:
+        return False
+    return re.search(r"(?<![a-z0-9])" + re.escape(lab) + r"(?![a-z0-9])", text.lower()) is not None
 
 
 class GraphMemory:
@@ -633,31 +655,57 @@ class GraphMemory:
         return [dict(r) for r in rows]
 
     async def nodes_mentioned_in(self, text: str, limit: int = 5) -> list[dict[str, Any]]:
-        """Nodes whose label appears (case-insensitive) in ``text``, longest
-        label first. The substring scan runs inside SQLite instead of
-        loading nodes into Python (the old path only looked at the first
-        500 labels alphabetically)."""
+        """Nodes whose label appears in ``text`` as whole words (case-insensitive),
+        longest label first. SQLite pre-selects substring candidates; the
+        word-boundary check then drops "AI" in "said"."""
         if not text:
             return []
+        low = text.lower()
         with self._connect() as conn:
             rows = conn.execute("""
                 SELECT id, label, node_type FROM graph_nodes
                 WHERE project_id = ? AND length(label) >= 2
                   AND instr(?, lower(label)) > 0
                 ORDER BY length(label) DESC LIMIT ?
-            """, (self.project_id, text.lower(), limit)).fetchall()
-        return [dict(r) for r in rows]
+            """, (self.project_id, low, max(limit * 10, 50))).fetchall()
+        return [dict(r) for r in rows if label_in_text(r["label"], low)][:limit]
 
     async def search_nodes(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
-        """Search nodes by label (text match)."""
-        pattern = f"%{query}%"
+        """Nodes matching a free-text query, best first, each with a 0-1
+        ``match`` score: 1.0 when the whole label occurs in the query
+        ("Who does Jonas Varga report to?" -> "Jonas Varga"), else the share
+        of the label's words found in the query. (Was ``label LIKE
+        %<whole query>%``, which only fired when the query was a label.)"""
+        q = (query or "").strip()
+        if not q:
+            return []
+        qtok = {t for t in _tokens(q) if len(t) >= 3 and t not in _STOPWORDS}
+        found: dict[str, dict[str, Any]] = {}
+        for n in await self.nodes_mentioned_in(q, limit=limit):
+            found[n["id"]] = {"match": 1.0}
+        if qtok:
+            likes = " OR ".join("lower(label) LIKE ?" for _ in qtok)
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"SELECT id, label FROM graph_nodes WHERE project_id = ? AND ({likes}) LIMIT 500",
+                    (self.project_id, *[f"%{t}%" for t in qtok]),
+                ).fetchall()
+            for r in rows:
+                if r["id"] in found:
+                    continue
+                ltok = [t for t in _tokens(r["label"]) if t not in _STOPWORDS] or _tokens(r["label"])
+                hit = sum(1 for t in ltok if t in qtok)
+                if hit:
+                    found[r["id"]] = {"match": round(hit / len(ltok), 3)}
+        if not found:
+            return []
+        ids = sorted(found, key=lambda i: -found[i]["match"])[:limit]
         with self._connect() as conn:
-            rows = conn.execute("""
-                SELECT * FROM graph_nodes
-                WHERE project_id = ? AND label LIKE ?
-                ORDER BY label LIMIT ?
-            """, (self.project_id, pattern, limit)).fetchall()
+            rows = conn.execute(
+                f"SELECT * FROM graph_nodes WHERE id IN ({','.join('?' * len(ids))})", ids,
+            ).fetchall()
+        by_id = {r["id"]: r for r in rows}
         return [
-            {**dict(r), "metadata": json.loads(r["metadata"] or "{}")}
-            for r in rows
+            {**dict(by_id[i]), "metadata": json.loads(by_id[i]["metadata"] or "{}"), "match": found[i]["match"]}
+            for i in ids if i in by_id
         ]

@@ -253,6 +253,12 @@ class SemanticMemory:
             return (res.get("metadatas") or [{}])[0] or {}
         return None
 
+    async def get_where(self, where: dict[str, Any], limit: int | None = None) -> list[dict[str, Any]]:
+        """Metadata of documents matching a Chroma ``where`` filter."""
+        collection = await self._get_collection_async()
+        res = await _asyncio.to_thread(collection.get, where=where, include=["metadatas"], limit=limit)
+        return [m or {} for m in ((res or {}).get("metadatas") or [])]
+
     async def delete_where(self, where: dict[str, Any]) -> int:
         """Delete every document matching a Chroma ``where`` filter.
         Returns the number deleted (0 on error)."""

@@ -107,7 +107,15 @@ async def update_conversation_metadata(
 @router.delete("/conversations/{session_id}")
 async def delete_conversation(session_id: str) -> dict[str, str]:
     ep = EpisodicMemory()
-    await ep.delete_conversation(session_id)
+    pids = await ep.delete_conversation(session_id)
+    # Facts extracted from this conversation would keep its content recallable.
+    try:
+        from memory.semantic import SemanticMemory
+        for pid in pids:
+            await SemanticMemory(project_id=pid).delete_where({"$and": [
+                {"session_id": {"$eq": session_id}}, {"source": {"$eq": "auto_extraction"}}]})
+    except Exception as e:
+        logger.warning("Could not drop facts extracted from %s: %s", session_id, e)
     return {"status": "deleted", "session_id": session_id}
 
 

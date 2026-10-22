@@ -28,14 +28,19 @@ wires the `embed` route's `embed` / `embed_many`.
 
 - `recall(query, tiers=None, project_id=None, limit_per_tier=3, context_focus=None,
   in_context=None, min_relevance=0.0, session_fallback=None, …)`:
-  searches semantic, episodic and graph (the default tiers; archival and
-  working are never searched), sorts by score,
-  reranks when a `rerank` route exists, appends 1-hop graph context for
-  entities named in the top hits, applies context-focus recency weighting,
-  then dedups and trims to the `ContextBudget` recall budget. `in_context`
-  drops hits the prompt already carries, `min_relevance` drops reranked items
-  below the floor, and `session_fallback` adds similar earlier turns of that
-  chat (see "Memory, recall and history" in `/CLAUDE.md`).
+  searches semantic (never `kind=topic_node` label vectors; near-duplicate
+  chunks of one artifact collapsed), episodic (similarity only; vectors of
+  deleted messages and job prompts skipped) and graph (`search_nodes`: labels
+  named in the query as whole words, then word overlap; scored by embedding
+  similarity when no reranker is configured) - archival and working are never
+  searched. Sorts by score, appends 1-hop graph context for entities named
+  (whole words) in the top hits, reranks everything when a `rerank` route
+  exists, applies context-focus recency weighting once, then dedups and packs
+  the `ContextBudget` recall budget (an item that doesn't fit is skipped, not
+  the end of the list). `in_context` drops hits the prompt already carries,
+  `min_relevance` drops reranked items below the floor, and `session_fallback`
+  adds similar earlier turns of that chat (see "Memory, recall and history" in
+  `/CLAUDE.md`).
 - `remember(content, tier="semantic", metadata=None, session_id=None)`:
   `semantic` stores a vector; `episodic` / `working` add an episodic note;
   `graph` runs the conversation extractor (`run_extraction`, `min_messages=1`)

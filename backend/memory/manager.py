@@ -31,6 +31,10 @@ SESSION_FALLBACK_MAX = 2
 # leaves this much of settings.pre_recall_timeout_seconds.
 RERANK_RECALL_HEADROOM_S = 1.5
 
+# Semantic recall skips topic-label vectors (kind=topic_node). Chroma's $ne
+# also matches documents without a ``kind`` key, i.e. every ordinary memory.
+RECALL_SEMANTIC_WHERE = {"kind": {"$ne": "topic_node"}}
+
 
 def rerank_timeout() -> float:
     """Seconds ``_rerank`` may take before keeping the original order.
@@ -53,6 +57,32 @@ def _as_probabilities(scores: list[float]) -> list[float]:
     if all(0.0 <= s <= 1.0 for s in scores):
         return scores
     return [1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, s)))) for s in scores]
+
+
+def _words(text: str) -> set[str]:
+    import re
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _dedupe_chunks(results: list[dict[str, Any]], threshold: float = 0.8) -> list[dict[str, Any]]:
+    """Drop near-duplicate hits (best first): the same text stored twice, or
+    two chunks of one artifact that mostly overlap (different chunkers)."""
+    kept: list[tuple[str, set[str], dict[str, Any]]] = []
+    for r in results:
+        md = r.get("metadata") or {}
+        aid = str(md.get("artifact_id") or md.get("fm_artifact_id") or "")
+        w = _words(r.get("content", ""))
+        dup = False
+        for kaid, kw, _ in kept:
+            if not w or not kw:
+                continue
+            inter = len(w & kw)
+            if w == kw or (aid and aid == kaid and inter / min(len(w), len(kw)) >= threshold):
+                dup = True
+                break
+        if not dup:
+            kept.append((aid, w, r))
+    return [r for _, _, r in kept]
 
 
 def _estimate_tokens(text: str) -> int:
@@ -290,10 +320,24 @@ class MemoryManager:
             tiers = ["semantic", "episodic", "graph"]
 
         all_results: list[dict[str, Any]] = []
+        try:
+            from models.provider import get_provider_for
+            reranker = get_provider_for("rerank")
+        except Exception:
+            reranker = None
 
         if "semantic" in tiers:
             try:
-                sem_results = await self.semantic.search(query, n=limit_per_tier)
+                # Topic-label embeddings (memory.topic_embeddings) share the
+                # collection but are bare labels for the similarity pipeline,
+                # not memories: they used to take recall's semantic slots.
+                sem_results = await self.semantic.search(
+                    query, n=limit_per_tier + 3, where=RECALL_SEMANTIC_WHERE,
+                )
+                # Artifacts indexed by both writers (embedder + index_artifact,
+                # before the embedder stopped duplicating) return the same text
+                # twice; over-fetch a little so the dropped copies are refilled.
+                sem_results = _dedupe_chunks(sem_results)[:limit_per_tier]
                 for r in sem_results:
                     r["source"] = "semantic"
                     r["tier"] = "semantic"
@@ -340,29 +384,39 @@ class MemoryManager:
                     edge_index.setdefault(a, []).append(f"  → {rel}: {b}")
                     edge_index.setdefault(b, []).append(f"  ← {rel}: {a}")
 
+                graph_items = []
                 for r in graph_results[:limit_per_tier]:
                     label = r["label"]
                     rels = edge_index.get(label, [])
                     rel_text = ("\n" + "\n".join(rels)) if rels else ""
-                    all_results.append({
+                    graph_items.append({
                         "id": r["id"],
                         "content": f"[graph:{r['node_type']}] {label}{rel_text}",
                         "source": "graph",
                         "tier": "graph",
-                        "score": 0.65,
+                        # Fallback when there is no embedder: whole label named
+                        # in the query ranks high, partial word overlap lower.
+                        "score": round(0.45 + 0.3 * float(r.get("match", 0.5)), 4),
                         "metadata": r.get("metadata", {}),
                     })
+                if reranker is None:   # the reranker scores them otherwise
+                    await self._score_by_similarity(query, graph_items)
+                all_results.extend(graph_items)
             except Exception as e:
                 logger.error(f"Graph recall error: {e}")
 
         # Sort by score descending
         all_results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
+        # Graph-augmented enrichment: expand entities found in top results.
+        # Before reranking, so the reranker judges these blocks too (added
+        # after it, they sat at 0.8 x their parent's score above relevant
+        # hits, unfiltered by min_relevance).
+        all_results = await self._graph_augment(all_results)
+
         # Rerank if available
         if all_results:
             try:
-                from models.provider import get_provider_for
-                reranker = get_provider_for("rerank")
                 if reranker is not None:
                     all_results = await self._rerank(query, all_results, reranker)
             except Exception as e:
@@ -381,9 +435,6 @@ class MemoryManager:
                 session_min_similarity, all_results,
             )
 
-        # Graph-augmented enrichment: expand entities found in top results
-        all_results = await self._graph_augment(all_results)
-
         # Apply context-focus recency re-weighting
         focus = context_focus or "balanced"
         all_results = _apply_context_focus(all_results, focus)
@@ -392,6 +443,24 @@ class MemoryManager:
         all_results = self._apply_budget(all_results)
 
         return all_results
+
+    async def _score_by_similarity(self, query: str, items: list[dict[str, Any]]) -> None:
+        """Put graph hits on the same scale as semantic/episodic ones: cosine
+        similarity of the query to the rendered node text (one batch embed).
+        A fixed score (was 0.65) outranked better text hits whenever the
+        reranker was off or failed. Keeps the fallback score on any error."""
+        if not items or not (getattr(self, "embedding_fn", None) and getattr(self, "embedding_batch_fn", None)):
+            return
+        try:
+            vecs = await self.embedding_batch_fn([query] + [i["content"] for i in items])
+        except Exception as e:
+            logger.debug("graph similarity scoring skipped: %s", e)
+            return
+        q = vecs[0]
+        qn = math.sqrt(sum(x * x for x in q)) or 1.0
+        for item, v in zip(items, vecs[1:]):
+            vn = math.sqrt(sum(x * x for x in v)) or 1.0
+            item["score"] = round(max(0.0, sum(a * b for a, b in zip(q, v)) / (qn * vn)), 4)
 
     async def _graph_augment(
         self,
@@ -479,14 +548,19 @@ class MemoryManager:
     def _apply_budget(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Trim recalled results to fit within the recall token budget.
 
-        Also deduplicates near-identical content.
+        Packs in rank order and SKIPS an item that does not fit instead of
+        stopping there (one long chunk used to end recall, dropping every
+        smaller, lower-ranked hit). The best-ranked skipped item is then
+        truncated into what is left, if that is worth it. Also deduplicates
+        near-identical content.
         """
         budget = self.context_budget.available_for_recall()
         used = 0
-        budgeted: list[dict[str, Any]] = []
+        picked: list[tuple[int, dict[str, Any]]] = []
+        first_misfit: tuple[int, dict[str, Any]] | None = None
         seen_content: set[str] = set()
 
-        for r in results:
+        for i, r in enumerate(results):
             content = r.get("content", "")
             # Simple dedup: skip if first 100 chars match something already included
             content_key = content[:100].lower().strip()
@@ -496,15 +570,19 @@ class MemoryManager:
 
             tokens = _estimate_tokens(content)
             if used + tokens > budget:
-                # Try to fit a truncated version
-                remaining = budget - used
-                if remaining > 50:
-                    truncated = content[:remaining * CHARS_PER_TOKEN]
-                    r = {**r, "content": truncated + "...", "truncated": True}
-                    budgeted.append(r)
-                break
-            budgeted.append(r)
+                if first_misfit is None:
+                    first_misfit = (i, r)
+                continue
+            picked.append((i, r))
             used += tokens
+
+        remaining = budget - used
+        if first_misfit is not None and remaining > 50:
+            i, r = first_misfit
+            picked.append((i, {**r, "content": r.get("content", "")[:remaining * CHARS_PER_TOKEN] + "...",
+                               "truncated": True}))
+            picked.sort(key=lambda p: p[0])
+        budgeted = [r for _, r in picked]
 
         if len(budgeted) < len(results):
             logger.debug(

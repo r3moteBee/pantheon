@@ -87,6 +87,10 @@ The reranker ranks the right turn first for "did I mention a speech earlier?" bu
 
 When memories sat mid-system-prompt, every turn's first call recomputed the ~3K tokens after them plus the whole history. Moving them into a `<context>` block in front of the user message keeps tools + system prompt + history a byte-identical prefix.
 
+### Recall ranking + scoping (2026-10-21)
+
+Synthetic-corpus eval in the test pod (150 facts incl. 110 distractors, 28 artifacts, ~45 topic nodes, 11 conversations with one deleted; 30 TUNE / 16 HELDOUT queries, real embedder + reranker). Bare topic labels took up to a third of the semantic slots; deleted chats were still recalled; double-indexed artifacts returned near-duplicates. After the fixes, HELDOUT R@5 / MRR with the reranker went .767/.800 -> .833/.867 (without: .867/.722 -> .933/.817), wasted top-5 slots ~31% -> 0, deleted-content leaks 1 -> 0; recall latency ~74 -> ~105 ms. Applying recency to facts by `created_at` (12 h half-life) was tried and dropped: freshly indexed chunks outranked older facts. Headless chunks (the chunker strips headings) ranked low with embedder and reranker alike, hence the "title › heading" prefix.
+
 ## About you and reply style
 
 Asking was not enough: with the plain-text rule in the system prompt and the turn note, the 9B model still wrote headings and tables 4/4 times, so `run_autonomous` (the bots' path) converts plain-text replies with `utils/plain_text.markdown_to_plain`. From the system prompt alone, "short" replies were ~200 words; with `reply_style_note` repeated next to the question the 9B model gives about a third of its normal length, not the 80 words asked. Ported from tuatha's Profile page (without its accent colour, identity block and memory half-life; Pantheon's `context_focus` covers decay).

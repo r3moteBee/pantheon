@@ -8,6 +8,7 @@ for vector search.  Falls back to LIKE search when embeddings are unavailable.
 from __future__ import annotations
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -36,6 +37,17 @@ def _recency_score(timestamp_iso: str) -> float:
         return math.exp(-0.693 * age_days / _RECENCY_HALFLIFE_DAYS)
     except Exception:
         return 0.5
+
+
+# Prompts the job handlers store as role=user so a task's session replays in
+# the chat drawer (autonomous_task, iteration_loop). They are instructions the
+# harness wrote, not something the user said: never recalled as "[user] ...".
+_JOB_PROMPT_RE = re.compile(r"^You are running (an autonomous task|turn \d+ of \d+ of an iterative)")
+
+
+def is_job_prompt(role: str, content: str, metadata: dict | None = None) -> bool:
+    kind = str((metadata or {}).get("kind") or "")
+    return kind.endswith("_prompt") or (role == "user" and bool(_JOB_PROMPT_RE.match(content or "")))
 
 
 def episodic_collection_name(project_id: str) -> str:
@@ -229,7 +241,7 @@ class EpisodicMemory:
             conn.commit()
 
         # Fire-and-forget vector indexing (non-blocking)
-        if self._embedding_fn and role in ("user", "assistant"):
+        if self._embedding_fn and role in ("user", "assistant") and not is_job_prompt(role, content, metadata):
             from utils.background import spawn
             spawn(self._index_message_vector(
                 msg_id, content,
@@ -390,16 +402,34 @@ class EpisodicMemory:
         )
 
         items = []
+        hit_ids = (results or {}).get("ids") or [[]]
+        live = self._existing_message_ids(hit_ids[0]) if hit_ids[0] else set()
+        orphans = [i for i in hit_ids[0] if i not in live]
+        if orphans:
+            # Vectors of messages deleted before delete_message/-conversation
+            # dropped them: never recall them, and clean them up.
+            logger.info("Episodic recall: dropping %d vector(s) of deleted messages", len(orphans))
+            try:
+                await _asyncio.to_thread(collection.delete, ids=orphans)
+            except Exception:
+                logger.debug("orphan vector cleanup failed", exc_info=True)
         if results and results.get("ids") and results["ids"][0]:
             for i, doc_id in enumerate(results["ids"][0]):
+                if doc_id not in live:
+                    continue
+                meta = results["metadatas"][0][i] if results.get("metadatas") else {}
+                if is_job_prompt(meta.get("role", ""), results["documents"][0][i]):
+                    continue   # indexed before save_message stopped indexing them
                 distance = results["distances"][0][i] if results.get("distances") else 1.0
                 similarity = max(0.0, 1.0 - distance)
                 meta = results["metadatas"][0][i] if results.get("metadatas") else {}
                 timestamp = meta.get("timestamp", "")
 
-                # Apply recency weighting
+                # Score = similarity only: MemoryManager.recall applies recency
+                # once, for every tier (this used to blend in its own 30-day
+                # recency first, so episodic hits got it twice).
                 recency = _recency_score(timestamp) if timestamp else 0.5
-                final_score = similarity * 0.7 + recency * 0.3
+                final_score = similarity
 
                 items.append({
                     "id": doc_id,
@@ -413,6 +443,13 @@ class EpisodicMemory:
                 })
 
         return sorted(items, key=lambda x: x.get("score", 0), reverse=True)
+
+    def _existing_message_ids(self, ids: list[str]) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT id FROM messages WHERE id IN ({','.join('?' * len(ids))})", list(ids),
+            ).fetchall()
+        return {r[0] for r in rows}
 
     async def _like_search(
         self,
@@ -432,6 +469,8 @@ class EpisodicMemory:
             """, (project_id, pattern, limit)).fetchall()
         results = []
         for r in rows:
+            if is_job_prompt(r["role"], r["content"]):
+                continue
             recency = _recency_score(r["timestamp"])
             results.append({
                 **dict(r),
@@ -566,11 +605,40 @@ class EpisodicMemory:
         return cursor.rowcount > 0
 
     async def delete_message(self, message_id: str) -> bool:
-        """Delete a specific message."""
+        """Delete a specific message and its search vector."""
         with self._connect() as conn:
+            row = conn.execute("SELECT project_id FROM messages WHERE id = ?", (message_id,)).fetchone()
             cursor = conn.execute("DELETE FROM messages WHERE id = ?", (message_id,))
             conn.commit()
+        if row:
+            await self._drop_vectors(row["project_id"], ids=[message_id])
         return cursor.rowcount > 0
+
+    def _collection_for(self, project_id: str):
+        """The message-vector collection of ``project_id`` (this instance's own
+        when it matches; API callers construct EpisodicMemory() for 'default')."""
+        if project_id == self.project_id:
+            return self._get_vector_collection()
+        return EpisodicMemory(db_path=self.db_path, project_id=project_id)._get_vector_collection()
+
+    async def _drop_vectors(self, project_id: str, *, ids: list[str] | None = None,
+                            session_id: str | None = None) -> int:
+        """Remove message vectors by id or by session so deleted messages stop
+        being recalled (they used to stay in Chroma after the SQLite delete)."""
+        try:
+            collection = await _asyncio.to_thread(self._collection_for, project_id)
+            if collection is None:
+                return 0
+            if session_id is not None:
+                got = await _asyncio.to_thread(collection.get, where={"session_id": session_id}, include=[])
+                ids = (got or {}).get("ids") or []
+            if not ids:
+                return 0
+            await _asyncio.to_thread(collection.delete, ids=list(ids))
+            return len(ids)
+        except Exception as e:
+            logger.warning("Could not drop message vectors in %s: %s", project_id, e)
+            return 0
 
     async def set_conversation_title(
         self, session_id: str, title: str, *, only_if_empty: bool = True,
@@ -614,12 +682,20 @@ class EpisodicMemory:
                 )
             conn.commit()
 
-    async def delete_conversation(self, session_id: str) -> None:
-        """Delete a conversation row and all its messages."""
+    async def delete_conversation(self, session_id: str) -> list[str]:
+        """Delete a conversation row, all its messages and their search
+        vectors. Returns the project ids the conversation's messages were in."""
         with self._connect() as conn:
+            pids = [r[0] for r in conn.execute(
+                "SELECT DISTINCT project_id FROM messages WHERE session_id = ? "
+                "UNION SELECT project_id FROM conversations WHERE session_id = ?",
+                (session_id, session_id)).fetchall()]
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM conversations WHERE session_id = ?", (session_id,))
             conn.commit()
+        for pid in pids:
+            await self._drop_vectors(pid, session_id=session_id)
+        return pids
 
     async def project_stats(self, project_id: str) -> dict[str, Any]:
         """Diagnostic counts for one project: messages, conversations, and
