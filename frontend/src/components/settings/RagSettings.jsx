@@ -5,6 +5,7 @@ import { settingsApi } from '../../api/client'
 
 export default function RagSettings() {
   const [enabled, setEnabled] = useState(true)
+  const [skillDiscovery, setSkillDiscovery] = useState('off')
   const [chunkSize, setChunkSize] = useState(500)
   const [chunkOverlap, setChunkOverlap] = useState(50)
   const [strategy, setStrategy] = useState('headings')
@@ -15,6 +16,7 @@ export default function RagSettings() {
   useEffect(() => {
     settingsApi.get().then((res) => {
       setEnabled(res.data.memory_recall_enabled !== false)
+      setSkillDiscovery(res.data.skill_discovery || 'off')
       setChunkSize(res.data.file_chunk_size || 500)
       setChunkOverlap(res.data.file_chunk_overlap || 50)
       setStrategy(res.data.file_chunk_strategy || 'headings')
@@ -29,6 +31,7 @@ export default function RagSettings() {
     try {
       await settingsApi.update({
         memory_recall_enabled: enabled,
+        skill_discovery: skillDiscovery,
         file_chunk_size: parseInt(chunkSize) || 500,
         file_chunk_overlap: parseInt(chunkOverlap) || 50,
         file_chunk_strategy: strategy,
@@ -80,6 +83,24 @@ export default function RagSettings() {
               }`}
             />
           </button>
+        </div>
+
+        {/* Skill discovery default (projects can override it in Project Settings) */}
+        <div>
+          <label htmlFor="skill-discovery-global" className="block text-xs font-semibold text-gray-200">Skill discovery</label>
+          <span className="text-xs text-gray-400 block mb-1">
+            Default for every project: whether the agent matches your message against installed skills. Off = only when you type /skill; suggest = offers a matching skill; auto = applies it. Project Settings can override this per project.
+          </span>
+          <select
+            id="skill-discovery-global"
+            value={skillDiscovery}
+            onChange={(e) => setSkillDiscovery(e.target.value)}
+            className={inputClass}
+          >
+            <option value="off">off</option>
+            <option value="suggest">suggest</option>
+            <option value="auto">auto</option>
+          </select>
         </div>
 
         <div className="border-t border-gray-700/50 my-4" />
