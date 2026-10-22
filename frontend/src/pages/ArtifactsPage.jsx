@@ -51,6 +51,7 @@ function displayTitle(a) {
 }
 
 const RAIL_MIN = 180, RAIL_MAX = 480
+const NARROW_MQ = '(max-width: 1299px)'
 
 // "About artifacts": neutral help, collapsed by default (#13).
 function AboutArtifacts() {
@@ -173,6 +174,16 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
     try { localStorage.setItem('pan_artifacts_rail_width', String(railWidth)) } catch {}
   }, [railWidth])
   const [mobileRailOpen, setMobileRailOpen] = useState(false)
+  // Below ~1300px an open artifact would crush the viewer (~300px at 1100px),
+  // so the folder pane auto-collapses to the narrow rail while one is open;
+  // the expand button reopens it for that artifact session (N6).
+  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia(NARROW_MQ).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_MQ)
+    const onChange = (e) => setNarrow(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
   const startRailResize = (e) => {
     e.preventDefault()
     const startX = e.clientX, startW = railWidth
@@ -204,6 +215,15 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
   const linkedId = lockedProjectId ? null : searchParams.get('id')
   const [activeId, setActiveId] = useState(linkedId)
   useEffect(() => { if (linkedId) setActiveId(linkedId) }, [linkedId])
+  // null = follow the auto rule; true/false = the user's choice while an artifact is open.
+  const [railOverride, setRailOverride] = useState(null)
+  useEffect(() => { if (!activeId) setRailOverride(null) }, [activeId])
+  const autoCollapse = narrow && !!activeId
+  const railCollapsed = autoCollapse ? (railOverride ?? true) : foldersCollapsed
+  const toggleRail = () => {
+    if (autoCollapse) setRailOverride(!railCollapsed)
+    else setFoldersCollapsed((v) => !v)
+  }
 
   const [allFoldersByProject, setAllFoldersByProject] = useState({})
   const [allProjects, setAllProjects] = useState([])
@@ -379,12 +399,12 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
         className={
           (mobileRailOpen ? "absolute inset-y-0 left-0 z-30 w-72 max-w-[85vw] shadow-2xl block " : "hidden ") +
           "md:static md:z-auto md:shadow-none md:max-w-none md:block " +
-          (foldersCollapsed ? "md:w-10 " : "md:w-[var(--rail-w)] ") +
+          (railCollapsed ? "md:w-10 " : "md:w-[var(--rail-w)] ") +
           "border-r border-gray-800 bg-gray-950 overflow-y-auto overflow-x-hidden p-2 space-y-3 flex-shrink-0 " +
           ""
         }
       >
-        <div className={"flex " + (foldersCollapsed ? "md:justify-center justify-end" : "justify-end")}>
+        <div className={"flex " + (railCollapsed ? "md:justify-center justify-end" : "justify-end")}>
           <button
             onClick={() => setMobileRailOpen(false)}
             aria-label="Close folders"
@@ -394,15 +414,18 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
             <X className="w-4 h-4" />
           </button>
           <button
-            onClick={() => setFoldersCollapsed(v => !v)}
-            aria-label={foldersCollapsed ? "Expand folders" : "Collapse folders"}
-            title={foldersCollapsed ? "Expand folders" : "Collapse folders"}
+            onClick={toggleRail}
+            aria-label={railCollapsed ? "Expand folders" : "Collapse folders"}
+            aria-expanded={!railCollapsed}
+            title={railCollapsed
+              ? (autoCollapse ? "Expand folders (collapsed to give the open artifact room)" : "Expand folders")
+              : "Collapse folders"}
             className="hidden md:block text-gray-400 hover:text-gray-200 p-1 rounded"
           >
-            {foldersCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+            {railCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
           </button>
         </div>
-        {(!foldersCollapsed || mobileRailOpen) && (<div className={foldersCollapsed ? 'md:hidden space-y-3' : 'space-y-3'}>
+        {(!railCollapsed || mobileRailOpen) && (<div className={railCollapsed ? 'md:hidden space-y-3' : 'space-y-3'}>
         {!lockedProjectId && (
           <div>
             <div className="text-xs font-semibold text-gray-400 uppercase mb-2">
@@ -493,7 +516,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
         </div>
         </div>)}
       </div>
-      {!foldersCollapsed && (
+      {!railCollapsed && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -517,7 +540,7 @@ export default function ArtifactsPage({ lockedProjectId = null }) {
       <div className={
         "min-w-0 border-r border-gray-800 flex flex-col " +
         (activeId
-          ? "md:w-80 md:flex-shrink-0 hidden md:flex "
+          ? "md:w-72 xl:w-80 md:flex-shrink-0 hidden md:flex "
           : "flex-1 ")
       }>
         {!activeId && (
@@ -918,11 +941,14 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove, onMissing }) {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="border-b border-gray-800 px-3 sm:px-4 py-2 flex items-center gap-1 sm:gap-1.5">
+      {/* In a narrow viewer the action buttons wrap under the title (flex-wrap + the
+          title's min width) instead of squeezing it to "mar…"; a long title wraps to
+          two lines and the full title is on hover (N6). */}
+      <div className="border-b border-gray-800 px-3 sm:px-4 py-2 flex flex-wrap items-center gap-x-1 sm:gap-x-1.5 gap-y-1">
         <Icon className="w-4 h-4 text-gray-400 shrink-0 mr-1" aria-hidden="true" />
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium flex items-center gap-2 min-w-0" title={artifact.title || artifact.path}>
-            <span className="truncate">{displayTitle(artifact)}</span>
+        <div className="flex-1 min-w-[12rem]">
+          <div className="text-sm font-medium flex items-start gap-2 min-w-0" title={artifact.title || artifact.path}>
+            <span className="line-clamp-2 break-words min-w-0">{displayTitle(artifact)}</span>
             {versionNumber > 0 && (
               <button
                 onClick={() => setShowVersions(true)}
@@ -939,6 +965,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove, onMissing }) {
             {dirty && <span className="text-amber-300 ml-2">· unsaved</span>}
           </div>
         </div>
+        <div className="flex items-center gap-1 sm:gap-1.5 ml-auto shrink-0">
         <button onClick={togglePin} className={iconBtn + ' hover:text-amber-400'}
                 aria-label={artifact.pinned ? 'Unpin' : 'Pin'} aria-pressed={!!artifact.pinned}
                 title={artifact.pinned ? 'Unpin' : 'Pin (keeps it at the top of search)'}>
@@ -978,6 +1005,7 @@ function ArtifactDetail({ id, onChanged, onClose, onRequestMove, onMissing }) {
         <button onClick={onClose} className={iconBtn} aria-label="Close" title="Close">
           <X className="w-4 h-4" />
         </button>
+        </div>
       </div>
 
       {/* Tags row */}

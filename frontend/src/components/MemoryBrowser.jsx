@@ -6,7 +6,7 @@ import { memoryApi } from '../api/client'
 import GraphView from './GraphView'
 import Time from './Time'
 import InfoBox from './InfoBox'
-import EpisodicEntry from './memory/EpisodicEntry'
+import EpisodicEntry, { semanticSummary, sessionLabel } from './memory/EpisodicEntry'
 
 // Load once per project id. The effects used to depend on the activeProject
 // object, which Layout replaces (id-only -> full record) right after mount,
@@ -55,8 +55,7 @@ function EpisodicTab() {
   )
 
   const filteredMessages = messages.filter(m =>
-    m.content.toLowerCase().includes(search.toLowerCase()) ||
-    m.role.toLowerCase().includes(search.toLowerCase())
+    [m.content, m.role, m.session_id, sessionLabel(m)].some((v) => (v || '').toLowerCase().includes(search.toLowerCase()))
   )
 
   const deleteNote = async (noteId) => {
@@ -174,10 +173,11 @@ function SemanticTab() {
 
   useLoadPerProject(activeProject?.id, loadDocs)
 
-  const filtered = docs.filter(d =>
-    d.content.toLowerCase().includes(search.toLowerCase()) ||
-    d.id.toLowerCase().includes(search.toLowerCase())
-  )
+  const q = search.toLowerCase()
+  const filtered = docs.filter(d => {
+    const s = semanticSummary(d)
+    return [d.content, d.id, s.kind, s.source_path, s.source_title].some((v) => (v || '').toLowerCase().includes(q))
+  })
 
   const deleteDoc = async (docId) => {
     try {
@@ -215,27 +215,7 @@ function SemanticTab() {
 
       <div className="space-y-2">
         {filtered.map(doc => (
-          <div key={doc.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-            <div className="flex items-start justify-between mb-2">
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-400 font-mono truncate">{doc.id}</p>
-                {doc.score !== undefined && (
-                  <span className="inline-block mt-1 px-2 py-1 bg-brand-900 text-brand-200 text-xs rounded">
-                    Score: {(doc.score * 100).toFixed(0)}%
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={() => deleteDoc(doc.id)}
-                aria-label="Delete document"
-                title="Delete document"
-                className="ml-2 p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-sm text-gray-300 line-clamp-3 break-words">{doc.content}</p>
-          </div>
+          <EpisodicEntry key={doc.id} kind="semantic" item={doc} onDelete={deleteDoc} />
         ))}
         {filtered.length === 0 && !loading && docs.length > 0 && (
           <p className="text-center text-gray-400 py-8">No documents match the search</p>
