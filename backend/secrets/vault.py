@@ -78,6 +78,24 @@ class SecretsVault:
             new = self._v2_fernet(self._master_key, salt, iters)
             legacy = self._legacy_fernet(self._master_key)
             rows = conn.execute("SELECT key, encrypted_value FROM secrets").fetchall()
+            # Every row must decrypt with the v1 key before anything changes.
+            # Marking the vault v2 with some rows still v1-encrypted would
+            # strand them: nothing ever reads them with the v1 KDF again.
+            unreadable = []
+            for key, blob in rows:
+                try:
+                    legacy.decrypt(blob)
+                except InvalidToken:
+                    unreadable.append(key)
+            if unreadable:
+                logger.error(
+                    "Vault KDF v1->v2 migration ABORTED: %d of %d secret(s) cannot be "
+                    "decrypted with VAULT_MASTER_KEY (%s). The vault stays v1 and "
+                    "unchanged; fix the key (or delete those secrets) and restart.",
+                    len(unreadable), len(rows), ", ".join(sorted(unreadable)[:10]),
+                )
+                _cache.clear()
+                return legacy
             migrated = failed = 0
             try:
                 conn.execute("BEGIN IMMEDIATE")
