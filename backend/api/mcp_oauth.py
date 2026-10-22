@@ -1,8 +1,9 @@
 """MCP OAuth 2.1 endpoints — start the flow + receive the callback.
 
 Per MCP spec 2025-06-18 the client must run the authorization-code flow with
-PKCE. Pantheon is a single-user local app, so the redirect target is the
-FastAPI process itself at /api/mcp/oauth/callback. The callback URL is
+PKCE. The redirect target is this FastAPI process at /api/mcp/oauth/callback,
+as the browser reaches it (PUBLIC_BASE_URL, else derived from the request
+that starts the flow: mcp_client.oauth.callback_url_for). The callback URL is
 registered via DCR for each MCP server the first time the user clicks
 Authorize on that connection.
 """
@@ -12,7 +13,7 @@ import html
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from mcp_client.manager import get_mcp_manager
@@ -22,16 +23,17 @@ router = APIRouter()
 
 
 @router.post("/mcp/connections/{name}/start-oauth")
-async def start_oauth(name: str) -> dict:
+async def start_oauth(name: str, request: Request) -> dict:
     """Begin the OAuth dance: discover the AS, DCR-register, return auth URL.
 
     Frontend opens the returned `authorize_url` in a new tab. The user
     authorizes in their browser; the AS redirects back to /callback, which
     completes the exchange and persists tokens.
     """
+    from mcp_client.oauth import callback_url_for
     mgr = get_mcp_manager()
     try:
-        return await mgr.start_oauth(name)
+        return await mgr.start_oauth(name, redirect_uri=callback_url_for(request))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

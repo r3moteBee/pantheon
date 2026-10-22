@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,24 +19,14 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter()
 
-_PROJECTS_META_FILE = None
-
-
 def _meta_file() -> Path:
     path = settings.db_dir / "projects.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-def _load_projects() -> dict[str, Any]:
-    meta = _meta_file()
-    if meta.exists():
-        try:
-            return json.loads(meta.read_text())
-        except Exception:
-            pass
-    # Initialize with default project
-    default = {
+def _default_projects() -> dict[str, Any]:
+    return {
         "default": {
             "id": "default",
             "name": "Default Project",
@@ -44,12 +35,41 @@ def _load_projects() -> dict[str, Any]:
             "active": True,
         }
     }
-    meta.write_text(json.dumps(default, indent=2))
-    return default
 
 
-def _save_projects(projects: dict[str, Any]) -> None:
-    _meta_file().write_text(json.dumps(projects, indent=2))
+def _corrupt(e: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail=f"{e}. Pantheon left it untouched; fix it or restore projects.json.bak "
+               f"in {settings.db_dir}.",
+    )
+
+
+def _load_projects() -> dict[str, Any]:
+    """projects.json, created with the default project when missing. A file
+    that doesn't parse raises (HTTP 500) — it is never replaced by defaults."""
+    from utils.jsonfile import JsonFileCorrupt, read_json
+    meta = _meta_file()
+    try:
+        data = read_json(meta)
+        if data is not None:
+            return data
+        with update_projects() as projects:
+            return dict(projects)
+    except JsonFileCorrupt as e:
+        raise _corrupt(e) from e
+
+
+@contextmanager
+def update_projects():
+    """Locked read-modify-write of projects.json (utils.jsonfile): every
+    writer goes through this so concurrent edits don't drop each other."""
+    from utils.jsonfile import JsonFileCorrupt, update_json
+    try:
+        with update_json(_meta_file(), _default_projects) as projects:
+            yield projects
+    except JsonFileCorrupt as e:
+        raise _corrupt(e) from e
 
 
 class CreateProjectRequest(BaseModel):
@@ -73,31 +93,29 @@ async def list_projects() -> dict[str, Any]:
 @router.post("/projects")
 async def create_project(req: CreateProjectRequest) -> dict[str, Any]:
     """Create a new project."""
-    projects = _load_projects()
     project_id = req.id or str(uuid.uuid4())[:8]
 
     # Sanitize ID
     import re
     project_id = re.sub(r'[^a-zA-Z0-9-_]', '-', project_id).lower()
 
-    if project_id in projects:
-        raise HTTPException(status_code=409, detail=f"Project '{project_id}' already exists")
+    with update_projects() as projects:
+        if project_id in projects:
+            raise HTTPException(status_code=409, detail=f"Project '{project_id}' already exists")
 
-    project = {
-        "id": project_id,
-        "name": req.name,
-        "description": req.description,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "active": True,
-    }
-    projects[project_id] = project
+        project = {
+            "id": project_id,
+            "name": req.name,
+            "description": req.description,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "active": True,
+        }
+        projects[project_id] = project
 
-    # Create project directories
-    project_dir = settings.projects_dir / project_id
-    for subdir in ["workspace", "personality", "notes"]:
-        (project_dir / subdir).mkdir(parents=True, exist_ok=True)
-
-    _save_projects(projects)
+        # Create project directories
+        project_dir = settings.projects_dir / project_id
+        for subdir in ["workspace", "personality", "notes"]:
+            (project_dir / subdir).mkdir(parents=True, exist_ok=True)
     logger.info(f"Project created: {project_id}")
     return project
 
@@ -124,16 +142,15 @@ async def get_project(project_id: str) -> dict[str, Any]:
 @router.put("/projects/{project_id}")
 async def update_project(project_id: str, req: UpdateProjectRequest) -> dict[str, Any]:
     """Update project metadata."""
-    projects = _load_projects()
-    if project_id not in projects:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if req.name:
-        projects[project_id]["name"] = req.name
-    if req.description is not None:
-        projects[project_id]["description"] = req.description
-    projects[project_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
-    _save_projects(projects)
-    return projects[project_id]
+    with update_projects() as projects:
+        if project_id not in projects:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if req.name:
+            projects[project_id]["name"] = req.name
+        if req.description is not None:
+            projects[project_id]["description"] = req.description
+        projects[project_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return dict(projects[project_id])
 
 
 @router.get("/projects/{project_id}/delete-preview")
@@ -171,9 +188,8 @@ async def delete_project(project_id: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    projects = _load_projects()
-    projects.pop(project_id, None)
-    _save_projects(projects)
+    with update_projects() as projects:
+        projects.pop(project_id, None)
     logger.info(f"Project deleted: {project_id}")
     return {"status": "deleted", "project_id": project_id, "removed": removed}
 

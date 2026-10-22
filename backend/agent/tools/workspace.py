@@ -72,8 +72,20 @@ def _install_precommit_hook(repo_dir: Path) -> str:
 
 
 def _repo_checkout_dir(project_id: str | None, owner: str, repo: str) -> Path:
-    """Canonical location of a repo's local checkout inside the workspace."""
-    return _get_workspace_base(project_id) / "repos" / f"{owner}__{repo}"
+    """Canonical location of a repo's local checkout inside the workspace.
+
+    owner/repo come from the stored binding; they are checked against
+    GitHub's name rules again here (the bind endpoint does too) so a bad row
+    can never point the checkout — and git_sync_repo(fresh=true)'s rmtree —
+    outside ``<workspace>/repos/``. Raises ValueError."""
+    from integrations.github import validate_owner, validate_repo_name
+    validate_owner(owner)
+    validate_repo_name(repo)
+    repos = _get_workspace_base(project_id) / "repos"
+    d = repos / f"{owner}__{repo}"
+    if not is_within(d, repos) or d.resolve() == repos.resolve():
+        raise ValueError(f"Repo checkout path escapes the workspace: {owner}/{repo}")
+    return d
 
 
 def _resolve_repo_checkout(project_id: str | None) -> Path | None:
@@ -86,7 +98,10 @@ def _resolve_repo_checkout(project_id: str | None) -> Path | None:
         return None
     if not spec:
         return None
-    d = _repo_checkout_dir(project_id, spec["owner"], spec["repo"])
+    try:
+        d = _repo_checkout_dir(project_id, spec["owner"], spec["repo"])
+    except ValueError:
+        return None
     return d if (d / ".git").exists() else None
 
 
@@ -125,35 +140,15 @@ def _scrub_git_config(checkout: Path) -> None:
 
 
 async def _run_git_cmd(
-    args: list[str], cwd: Path, auto_init: bool = True,
+    args: list[str], cwd: Path, auto_init: bool = False,
     env: dict[str, str] | None = None,
 ) -> tuple[int, str, str]:
-    """Execute a git command in the specified workspace directory, initializing it first if needed."""
-    if auto_init and not (cwd / ".git").exists():
-        # Initialize repository
-        p_init = await asyncio.create_subprocess_exec(
-            "git", "init",
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await p_init.communicate()
-        # Set agent config
-        p_email = await asyncio.create_subprocess_exec(
-            "git", "config", "user.email", "agent@pantheon.local",
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await p_email.communicate()
-        p_name = await asyncio.create_subprocess_exec(
-            "git", "config", "user.name", "Pantheon Agent",
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await p_name.communicate()
+    """Execute a git command in ``cwd``.
 
+    ``auto_init`` is accepted for old callers and ignored: git never
+    initialises a repository on its own any more (it used to `git init` the
+    workspace root, which git_commit / git_push_pr then pushed whole).
+    """
     proc = await asyncio.create_subprocess_exec(
         "git", *args,
         cwd=str(cwd),

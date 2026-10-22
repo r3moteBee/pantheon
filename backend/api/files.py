@@ -14,7 +14,7 @@ import zipfile
 import aiofiles
 from fastapi import APIRouter, Body, HTTPException, UploadFile, File, Query
 
-from utils.paths import check_project_id as _check_project_id, is_within
+from utils.paths import check_project_id as _check_project_id, is_within, iter_files_within
 from typing import List as TList
 from fastapi.responses import FileResponse, StreamingResponse
 
@@ -280,12 +280,11 @@ async def download_zip(
                     raise HTTPException(status_code=413, detail="Selection exceeds 2GB limit")
                 zf.write(target, arcname=str(target.relative_to(base)))
             elif target.is_dir():
-                for sub in target.rglob("*"):
-                    if sub.is_file():
-                        total_bytes += sub.stat().st_size
-                        if total_bytes > MAX_BYTES:
-                            raise HTTPException(status_code=413, detail="Selection exceeds 2GB limit")
-                        zf.write(sub, arcname=str(sub.relative_to(base)))
+                for sub in iter_files_within(target, base):
+                    total_bytes += sub.stat().st_size
+                    if total_bytes > MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="Selection exceeds 2GB limit")
+                    zf.write(sub, arcname=str(sub.relative_to(base)))
 
     buf.seek(0)
     zip_name = f"{project_id}-files.zip"
@@ -373,7 +372,7 @@ async def workspace_to_artifacts(
     src = _safe_path(path, project_id)
     if not path.strip("/") or not src.exists():
         raise HTTPException(status_code=404, detail="no such workspace file or folder")
-    files = [src] if src.is_file() else sorted(p for p in src.rglob("*") if p.is_file())
+    files = [src] if src.is_file() else sorted(iter_files_within(src, _get_workspace(project_id)))
     files = [p for p in files if not any(part.startswith(".") for part in p.relative_to(src.parent).parts)]
     if len(files) > 500:
         raise HTTPException(status_code=400, detail=f"{len(files)} files; copy at most 500 at a time")
@@ -553,9 +552,7 @@ async def convert_files(
             if target.is_file():
                 expanded_paths.append(target)
             elif target.is_dir():
-                for p in target.rglob("*"):
-                    if p.is_file():
-                        expanded_paths.append(p)
+                expanded_paths.extend(iter_files_within(target, base))
             else:
                 raise HTTPException(status_code=404, detail=f"Path not found: {pattern}")
 

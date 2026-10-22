@@ -42,9 +42,46 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Where the FastAPI router serves the callback. If you change this, also
-# update _CALLBACK_PATH in backend/api/mcp_oauth.py.
-DEFAULT_CALLBACK_URL = "http://localhost:8000/api/mcp/oauth/callback"
+# Where the FastAPI router serves the callback (api/mcp_oauth.py).
+CALLBACK_PATH = "/api/mcp/oauth/callback"
+# Fallback for a bare local install when nothing better is known.
+DEFAULT_CALLBACK_URL = "http://localhost:8000" + CALLBACK_PATH
+
+
+def _origin_url(origin: tuple[str, str, int]) -> str:
+    scheme, host, port = origin
+    if ":" in host:              # IPv6 literal
+        host = f"[{host}]"
+    default = {"http": 80, "https": 443}.get(scheme)
+    return f"{scheme}://{host}" + ("" if port == default else f":{port}")
+
+
+def callback_url_for(conn=None) -> str:
+    """The redirect_uri for an OAuth flow started by ``conn`` (the Request).
+
+    Order: PUBLIC_BASE_URL; else the request's ``Origin`` when it passes the
+    CSRF origin check (it is what the browser shows, including a port a
+    reverse proxy drops from Host); else the request's own origin
+    (api.auth.request_origin: Host, or X-Forwarded-* from a trusted proxy);
+    else http://localhost:8000. The value is stored with the pending state so
+    the token exchange sends the same redirect_uri.
+    """
+    from config import get_settings
+    base = (getattr(get_settings(), "public_base_url", "") or "").strip().rstrip("/")
+    if base:
+        return base + CALLBACK_PATH
+    if conn is None:
+        return DEFAULT_CALLBACK_URL
+    from api.auth import _origin_tuple, origin_is_allowed, request_origin
+    origin = conn.headers.get("origin")
+    if origin and origin_is_allowed(origin, conn=conn):
+        parsed = _origin_tuple(origin)
+        if parsed:
+            return _origin_url(parsed) + CALLBACK_PATH
+    own = request_origin(conn)
+    if own:
+        return _origin_url(own) + CALLBACK_PATH
+    return DEFAULT_CALLBACK_URL
 
 # State entries older than this are swept from the pending dict.
 _STATE_TTL_SECONDS = 600

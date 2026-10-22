@@ -1,6 +1,7 @@
 """SandboxBackend ABC and shared types."""
 from __future__ import annotations
 import abc
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -57,6 +58,23 @@ def language_to_interpreter(language: str) -> list[str]:
 
 def language_to_default_filename(language: str) -> str:
     return _DEFAULT_FILENAMES.get(language.lower(), "main.py")
+
+
+_SAFE_SCRIPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def safe_script_filename(filename: str | None, language: str) -> str:
+    """The script name a backend writes the snippet to: a bare basename of
+    letters, digits, '.', '_', '-' (it is joined to a temp/inject dir and
+    pasted into the guest's runner script). Anything else — directories,
+    '..', absolute paths, shell metacharacters, '' — gets the language's
+    default name."""
+    default = language_to_default_filename(language)
+    if not filename or not isinstance(filename, str):
+        return default
+    if "/" in filename or "\\" in filename or filename in (".", ".."):
+        return default
+    return filename if _SAFE_SCRIPT_NAME.match(filename) and ".." not in filename else default
 
 
 class SandboxBackend(abc.ABC):

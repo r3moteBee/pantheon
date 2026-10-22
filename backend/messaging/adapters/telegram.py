@@ -316,6 +316,7 @@ class TelegramAdapter(BaseMessagingAdapter):
 
             # ── Pending skill suggestions ───────────────────────────
             _tg_pending_suggestions: dict[str, dict] = {}
+            _TG_MAX_PENDING = 100
 
             async def _run_agent_and_reply(update, message, project, skill_context=None, active_skill_name=None):
                 from agent.core import AgentCore
@@ -410,7 +411,11 @@ class TelegramAdapter(BaseMessagingAdapter):
                             else:
                                 import uuid as _uuid
                                 suggestion_id = str(_uuid.uuid4())[:8]
+                                # Bounded: drop the oldest unanswered suggestions.
+                                while len(_tg_pending_suggestions) >= _TG_MAX_PENDING:
+                                    _tg_pending_suggestions.pop(next(iter(_tg_pending_suggestions)))
                                 _tg_pending_suggestions[suggestion_id] = {
+                                    "chat_id": update.effective_chat.id if update.effective_chat else None,
                                     "message": message,
                                     "project": project,
                                     "skill": skill.name,
@@ -446,13 +451,21 @@ class TelegramAdapter(BaseMessagingAdapter):
             # ── Skill callback handler ──────────────────────────────
             async def skill_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 query = update.callback_query
+                if not _is_allowed(update):
+                    await query.answer()
+                    return
                 await query.answer()
                 data = query.data or ""
                 if not data.startswith("skill_"):
                     return
 
                 action, _, suggestion_id = data.partition(":")
-                pending = _tg_pending_suggestions.pop(suggestion_id, None)
+                pending = _tg_pending_suggestions.get(suggestion_id)
+                chat_id = update.effective_chat.id if update.effective_chat else None
+                if pending and pending.get("chat_id") != chat_id:
+                    pending = None   # a suggestion is answered only from its own chat
+                else:
+                    _tg_pending_suggestions.pop(suggestion_id, None)
                 if not pending:
                     await query.edit_message_text("Suggestion expired.")
                     return

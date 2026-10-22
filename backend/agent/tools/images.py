@@ -91,6 +91,8 @@ async def _generate_image_tool(tool_args: dict[str, Any], project_id: str,
         store_ = get_store()
         ref = source_ref.removeprefix("artifact://")
         a = store_.get(ref)
+        if a is not None and a.get("project_id") != project_id:
+            a = None  # only this project's artifacts
         if a is None:
             slug_ = project_slug(project_id)
             p_ = ref if ref.startswith(f"{slug_}/") else f"{slug_}/{ref.lstrip('/')}"

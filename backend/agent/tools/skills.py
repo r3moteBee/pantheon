@@ -88,7 +88,7 @@ async def _tool_get_self_documentation(ctx: ToolContext, tool_name: str, tool_ar
         import asyncio
         from utils.self_doc import generate_self_doc
         return await asyncio.to_thread(generate_self_doc, ctx.effective_project,
-                                       ctx.interactive, ctx.host_exec)
+                                       ctx.interactive, ctx.host_exec, ctx.channel)
     except Exception as e:
         return f"get_self_documentation failed: {e}"
 

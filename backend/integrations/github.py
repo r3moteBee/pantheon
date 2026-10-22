@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -40,6 +42,93 @@ class GitHubForbidden(GitHubError):
 
 class GitHubNotFound(GitHubError):
     pass
+
+
+class GitHubInvalidName(GitHubError, ValueError):
+    """An owner/repo/branch/path that would not stay inside /repos/{owner}/{repo}/."""
+
+
+# ── Name / path validation ──
+# Every value the model (or a request body) supplies goes into a URL path
+# under /repos/{owner}/{repo}/. httpx normalises dot segments, so an
+# unencoded "../../other" would leave that prefix (2026-10-22 review).
+# All URL building goes through repo_path(); _request() refuses any path
+# that still carries a dot segment.
+
+_OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def validate_owner(owner: str) -> str:
+    """GitHub user/org names: letters, digits and '-', 1-39 chars."""
+    if not isinstance(owner, str) or not _OWNER_RE.match(owner):
+        raise GitHubInvalidName(f"Invalid GitHub owner name: {owner!r}")
+    return owner
+
+
+def validate_repo_name(repo: str) -> str:
+    """GitHub repo names: letters, digits, '.', '_', '-'; never '.' or '..'."""
+    if not isinstance(repo, str) or not _REPO_RE.match(repo) or repo in (".", ".."):
+        raise GitHubInvalidName(f"Invalid GitHub repository name: {repo!r}")
+    return repo
+
+
+def validate_ref_name(name: str, what: str = "branch") -> str:
+    """git check-ref-format rules for a branch/tag/ref name (plus no '%',
+    so nothing decodes into a dot segment server-side)."""
+    bad = (
+        not isinstance(name, str) or not name or len(name) > 255
+        or name.startswith(("/", "-", ".")) or name.endswith(("/", ".", ".lock"))
+        or ".." in name or "//" in name or "@{" in name or name == "@"
+        or _CTRL_RE.search(name) is not None
+        or any(c in name for c in " ~^:?*[\\%")
+        or any(seg.startswith(".") or seg.endswith(".lock") for seg in name.split("/"))
+    )
+    if bad:
+        raise GitHubInvalidName(f"Invalid {what} name: {name!r}")
+    return name
+
+
+def quote_repo_file_path(path: str) -> str:
+    """A file/directory path inside a repo, URL-quoted per segment.
+    '' (repo root) is allowed; '.'/'..' segments, backslashes and control
+    characters are not."""
+    if path is None:
+        path = ""
+    if not isinstance(path, str):
+        raise GitHubInvalidName(f"Invalid repo path: {path!r}")
+    if "\\" in path or _CTRL_RE.search(path):
+        raise GitHubInvalidName(f"Invalid repo path: {path!r}")
+    p = path.strip("/")
+    if not p:
+        return ""
+    for seg in p.split("/"):
+        if seg == "" or seg in (".", "..") or unquote(seg) in (".", ".."):
+            raise GitHubInvalidName(f"Invalid repo path: {path!r}")
+    return quote(p, safe="/")
+
+
+def repo_path(owner: str, repo: str, *parts: str) -> str:
+    """'/repos/{owner}/{repo}/...' from validated owner/repo and already
+    validated (and quoted) parts — the one place repo URLs are built."""
+    base = f"/repos/{validate_owner(owner)}/{validate_repo_name(repo)}"
+    tail = "/".join(p for p in parts if p)
+    return f"{base}/{tail}" if tail else base
+
+
+def _ref_part(name: str, what: str = "branch") -> str:
+    return quote(validate_ref_name(name, what), safe="/")
+
+
+def _has_dot_segment(path: str) -> bool:
+    for seg in urlsplit(path).path.split("/"):
+        s = seg
+        for _ in range(3):  # %252e%252e -> %2e%2e -> ..
+            s = unquote(s)
+        if s in (".", "..") or "\\" in s:
+            return True
+    return False
 
 
 @dataclass
@@ -112,10 +201,11 @@ class GitHubClient:
     the token from the secrets vault and constructs this on demand.
     """
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         if not token:
             raise GitHubAuthError("Empty token")
         self._token = token
+        self._transport = transport  # tests pass httpx.MockTransport
 
     @property
     def headers(self) -> dict[str, str]:
@@ -129,8 +219,19 @@ class GitHubClient:
         params: dict[str, Any] | None = None,
         json: Any | None = None,
     ) -> httpx.Response:
-        url = path if path.startswith("http") else f"{GITHUB_API}{path}"
-        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0)) as client:
+        if path.startswith("http"):
+            # Only pagination 'next' links: never send the token elsewhere.
+            if not path.startswith(GITHUB_API + "/"):
+                raise GitHubInvalidName(f"Refusing non-GitHub API URL: {path[:100]!r}")
+            url = path
+        else:
+            url = f"{GITHUB_API}{path}"
+        if _has_dot_segment(url):
+            raise GitHubInvalidName(f"Refusing GitHub API path with a dot segment: {path[:200]!r}")
+        kw: dict[str, Any] = {"timeout": httpx.Timeout(20.0)}
+        if self._transport is not None:
+            kw["transport"] = self._transport
+        async with httpx.AsyncClient(**kw) as client:
             resp = await client.request(method, url, headers=self.headers, params=params, json=json)
         if resp.status_code == 401:
             raise GitHubAuthError("GitHub rejected the token (401). Re-enter the PAT.")
@@ -185,7 +286,7 @@ class GitHubClient:
         return resp.json()
 
     async def get_repo(self, owner: str, repo: str) -> dict[str, Any]:
-        return (await self._request("GET", f"/repos/{owner}/{repo}")).json()
+        return (await self._request("GET", repo_path(owner, repo))).json()
 
     # ── File reads ──
 
@@ -193,7 +294,8 @@ class GitHubClient:
         self, owner: str, repo: str, path: str = "", ref: str | None = None
     ) -> list[dict[str, Any]]:
         params = {"ref": ref} if ref else None
-        resp = await self._request("GET", f"/repos/{owner}/{repo}/contents/{path}", params=params)
+        resp = await self._request("GET", repo_path(owner, repo, "contents", quote_repo_file_path(path)),
+                                   params=params)
         data = resp.json()
         return data if isinstance(data, list) else [data]
 
@@ -201,8 +303,11 @@ class GitHubClient:
         self, owner: str, repo: str, path: str, ref: str | None = None
     ) -> dict[str, Any]:
         """Returns dict with 'content' (utf-8 text), 'sha', 'size', 'encoding'."""
+        qpath = quote_repo_file_path(path)
+        if not qpath:
+            raise GitHubInvalidName("read_file needs a file path")
         params = {"ref": ref} if ref else None
-        resp = await self._request("GET", f"/repos/{owner}/{repo}/contents/{path}", params=params)
+        resp = await self._request("GET", repo_path(owner, repo, "contents", qpath), params=params)
         data = resp.json()
         if isinstance(data, list):
             raise GitHubError(f"{path} is a directory, not a file")
@@ -227,7 +332,7 @@ class GitHubClient:
 
     async def list_branches(self, owner: str, repo: str) -> list[dict[str, Any]]:
         """List branches for a repo. Returns [{name, commit_sha}, ...]."""
-        rows = await self._paginate(f"/repos/{owner}/{repo}/branches")
+        rows = await self._paginate(repo_path(owner, repo, "branches"))
         out = []
         for r in rows:
             out.append({
@@ -239,17 +344,21 @@ class GitHubClient:
 
     async def get_ref(self, owner: str, repo: str, ref: str) -> dict[str, Any]:
         """ref is 'heads/<branch>' or 'tags/<tag>'."""
-        resp = await self._request("GET", f"/repos/{owner}/{repo}/git/ref/{ref}")
+        kind, _, name = (ref or "").partition("/")
+        if kind not in ("heads", "tags"):
+            raise GitHubInvalidName(f"Invalid ref (want heads/<branch> or tags/<tag>): {ref!r}")
+        resp = await self._request("GET", repo_path(owner, repo, "git", "ref", kind, _ref_part(name)))
         return resp.json()
 
     async def create_branch(
         self, owner: str, repo: str, *, new_branch: str, base_branch: str | None = None
     ) -> dict[str, Any]:
+        validate_ref_name(new_branch)
         base = base_branch or await self.get_default_branch(owner, repo)
         base_ref = await self.get_ref(owner, repo, f"heads/{base}")
         sha = base_ref["object"]["sha"]
         body = {"ref": f"refs/heads/{new_branch}", "sha": sha}
-        resp = await self._request("POST", f"/repos/{owner}/{repo}/git/refs", json=body)
+        resp = await self._request("POST", repo_path(owner, repo, "git", "refs"), json=body)
         return resp.json()
 
     async def write_files(
@@ -262,10 +371,14 @@ class GitHubClient:
         message: str,
     ) -> dict[str, Any]:
         """Atomic multi-file commit via the Git Trees API."""
+        validate_ref_name(branch)
+        for f in files:
+            if not quote_repo_file_path(f.get("path") or ""):
+                raise GitHubInvalidName("write_files: empty file path")
         # 1. Get current commit + tree on the branch
         head = await self.get_ref(owner, repo, f"heads/{branch}")
         head_sha = head["object"]["sha"]
-        commit_resp = await self._request("GET", f"/repos/{owner}/{repo}/git/commits/{head_sha}")
+        commit_resp = await self._request("GET", repo_path(owner, repo, "git", "commits", quote(str(head_sha), safe="")))
         commit = commit_resp.json()
         base_tree_sha = commit["tree"]["sha"]
 
@@ -274,7 +387,7 @@ class GitHubClient:
         for f in files:
             blob_body = {"content": f["content"], "encoding": "utf-8"}
             blob = (await self._request(
-                "POST", f"/repos/{owner}/{repo}/git/blobs", json=blob_body
+                "POST", repo_path(owner, repo, "git", "blobs"), json=blob_body
             )).json()
             tree_entries.append({
                 "path": f["path"],
@@ -283,19 +396,19 @@ class GitHubClient:
                 "sha": blob["sha"],
             })
         new_tree = (await self._request(
-            "POST", f"/repos/{owner}/{repo}/git/trees",
+            "POST", repo_path(owner, repo, "git", "trees"),
             json={"base_tree": base_tree_sha, "tree": tree_entries},
         )).json()
 
         # 3. Create the commit
         new_commit = (await self._request(
-            "POST", f"/repos/{owner}/{repo}/git/commits",
+            "POST", repo_path(owner, repo, "git", "commits"),
             json={"message": message, "tree": new_tree["sha"], "parents": [head_sha]},
         )).json()
 
         # 4. Move the branch to the new commit
         await self._request(
-            "PATCH", f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            "PATCH", repo_path(owner, repo, "git", "refs", "heads", _ref_part(branch)),
             json={"sha": new_commit["sha"], "force": False},
         )
         return {"commit_sha": new_commit["sha"], "branch": branch, "files": [f["path"] for f in files]}
@@ -311,15 +424,21 @@ class GitHubClient:
         body: str = "",
         draft: bool = False,
     ) -> dict[str, Any]:
+        validate_ref_name(base, "base branch")
+        if ":" in head:  # 'owner:branch' for cross-fork PRs
+            validate_owner(head.split(":", 1)[0])
+            validate_ref_name(head.split(":", 1)[1], "head branch")
+        else:
+            validate_ref_name(head, "head branch")
         body_json = {"title": title, "head": head, "base": base, "body": body, "draft": draft}
-        resp = await self._request("POST", f"/repos/{owner}/{repo}/pulls", json=body_json)
+        resp = await self._request("POST", repo_path(owner, repo, "pulls"), json=body_json)
         return resp.json()
 
     async def merge_pr(
         self, owner: str, repo: str, pr_number: int, *, merge_method: str = "squash"
     ) -> dict[str, Any]:
         resp = await self._request(
-            "PUT", f"/repos/{owner}/{repo}/pulls/{pr_number}/merge",
+            "PUT", repo_path(owner, repo, "pulls", str(int(pr_number)), "merge"),
             json={"merge_method": merge_method},
         )
         return resp.json()
@@ -333,7 +452,7 @@ class GitHubClient:
             params["head"] = head
         if base:
             params["base"] = base
-        rows = await self._paginate(f"/repos/{owner}/{repo}/pulls", params=params)
+        rows = await self._paginate(repo_path(owner, repo, "pulls"), params=params)
         out = []
         for r in rows:
             out.append({
@@ -350,5 +469,5 @@ class GitHubClient:
     async def delete_branch(self, owner: str, repo: str, branch: str) -> None:
         """Delete a branch ref. 422 from GitHub if it's the default branch."""
         await self._request(
-            "DELETE", f"/repos/{owner}/{repo}/git/refs/heads/{branch}",
+            "DELETE", repo_path(owner, repo, "git", "refs", "heads", _ref_part(branch)),
         )

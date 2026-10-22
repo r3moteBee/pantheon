@@ -242,16 +242,6 @@ app = FastAPI(
 async def _invalid_project_id(request: Request, exc: InvalidProjectId):
     return JSONResponse({"detail": str(exc)}, status_code=400)
 
-# ── CORS (must be added before auth middleware) ───────────────────────────────
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
 # ── Auth middleware ───────────────────────────────────────────────────────────
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -267,7 +257,7 @@ async def auth_middleware(request: Request, call_next):
     # no password a form on any site could otherwise trigger state changes.
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin")
-        if origin and not origin_is_allowed(origin, request.headers.get("host")):
+        if origin and not origin_is_allowed(origin, conn=request):
             return JSONResponse({"error": "Cross-origin request blocked"}, status_code=403)
 
     # Auth disabled — only reachable by hosts that can't be DNS-rebound
@@ -300,6 +290,19 @@ async def auth_middleware(request: Request, call_next):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     return await call_next(request)
+
+
+# ── CORS (added AFTER the auth middleware = outermost) ────────────────────────
+# Starlette runs the last-added middleware first. CORS has to wrap auth so
+# preflight OPTIONS requests are answered without a session and 401/403/421
+# responses still carry Access-Control-Allow-Origin for listed origins.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── API routers ───────────────────────────────────────────────────────────────

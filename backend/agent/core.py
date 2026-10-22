@@ -14,7 +14,7 @@ from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
-from agent.tools import HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas
+from agent.tools import BOT_BLOCKED_TOOLS, HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas, is_bot_channel
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import context_fit, tool_results
 from config import get_settings
@@ -306,8 +306,9 @@ class AgentCore:
         # True only for turns a person drives from the web UI.
         self.interactive = interactive
         # Host-exec tools (shell/code/git) are opt-in per construction site.
-        # Default False so any new caller is safe by default.
-        self.host_exec = host_exec
+        # Default False so any new caller is safe by default. Messaging-app
+        # turns never get them, even with AGENT_HOST_EXEC=always.
+        self.host_exec = host_exec and not is_bot_channel(channel)
         self.project_id = project_id
         self.project_name = project_name
         self.session_id = session_id or str(uuid.uuid4())
@@ -447,6 +448,12 @@ class AgentCore:
                 continue
             seen_files.add(filename)
             candidate = base / "uploads" / filename
+            # The name comes from message text: "uploads/../../x.png" must
+            # not read images from elsewhere on the host.
+            from utils.paths import is_within
+            if not is_within(candidate, base / "uploads"):
+                logger.debug("Skipping upload path outside uploads/: %s", filename)
+                continue
             if candidate.exists() and candidate.stat().st_size <= _MAX_IMAGE_SIZE:
                 try:
                     raw = candidate.read_bytes()
@@ -544,7 +551,8 @@ class AgentCore:
                        "plan": "1. Research each item separately and save a sourced note per item.\n"
                                "2. Write the summary from the notes."},
             memory_manager=self.memory_manager, project_id=self.project_id, session_id=self.session_id,
-            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec)
+            last_assistant_text="", interactive=self.interactive, host_exec=self.host_exec,
+            channel=self.channel)
         if not str(result).startswith("Task PROPOSED"):
             logger.info("research_batch proposal not filed: %s", str(result)[:200])
             return ""
@@ -766,6 +774,9 @@ class AgentCore:
                     t for t in all_tools
                     if t.get("function", {}).get("name") not in HOST_EXEC_TOOLS
                 ]
+            if is_bot_channel(self.channel):
+                all_tools = [t for t in all_tools
+                             if t.get("function", {}).get("name") not in BOT_BLOCKED_TOOLS]
             if self.only_tools is not None:
                 all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 
@@ -821,7 +832,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="get_self_documentation", tool_args={}, memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 yield {"type": "tool_result", "name": "get_self_documentation", "result": result,
                        "tool_id": sd["id"], "is_error": tool_results.is_error(result)}
@@ -846,7 +857,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="writing_voice", tool_args=voice_args, memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 yield {"type": "tool_result", "name": "writing_voice", "result": result,
                        "tool_id": wv["id"], "is_error": tool_results.is_error(result)}
@@ -867,7 +878,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="web_fetch", tool_args=pf["args"], memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 web_evidence.update(evidence_from("web_fetch", pf["args"], result))
                 yield {"type": "tool_result", "name": "web_fetch", "result": result, "tool_id": pf["id"],
@@ -897,7 +908,7 @@ class AgentCore:
                 result = await execute_tool(
                     tool_name="web_search", tool_args=pre["args"], memory_manager=self.memory_manager,
                     project_id=self.project_id, session_id=self.session_id, last_assistant_text="",
-                    interactive=self.interactive, host_exec=self.host_exec,
+                    interactive=self.interactive, host_exec=self.host_exec, channel=self.channel,
                 )
                 web_evidence.update(evidence_from("web_search", pre["args"], result))
                 yield {"type": "tool_result", "name": "web_search", "result": result, "tool_id": pre["id"],
@@ -1171,6 +1182,7 @@ class AgentCore:
                             last_assistant_text=last_assistant_text,
                             interactive=self.interactive,
                             host_exec=self.host_exec,
+                            channel=self.channel,
                         )
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):

@@ -196,12 +196,14 @@ class KubernetesBuilder(BuildBackend):
                                         json={"metadata": {"ownerReferences": owner}})
                     return await self._wait(c, name, timeout_s)
                 finally:
-                    try:
-                        await self._req(c, "DELETE", f"/pods/{name}", params={"gracePeriodSeconds": "0"})
-                        for cm in parts:
-                            await self._req(c, "DELETE", f"/configmaps/{cm}")
-                    except Exception as e:
-                        logger.warning("Build %s cleanup failed: %s", name, e)
+                    # Each delete on its own: a failed pod delete used to skip
+                    # the ConfigMaps, leaving the source behind in the namespace.
+                    for path, params in [(f"/pods/{name}", {"gracePeriodSeconds": "0"})] + [
+                            (f"/configmaps/{cm}", None) for cm in parts]:
+                        try:
+                            await self._req(c, "DELETE", path, params=params)
+                        except Exception as e:
+                            logger.warning("Build %s cleanup of %s failed: %s", name, path, e)
 
     async def _wait(self, c: httpx.AsyncClient, name: str, timeout_s: int) -> BuildResult:
         created = time.monotonic()

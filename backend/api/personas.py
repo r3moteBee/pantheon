@@ -215,18 +215,18 @@ async def apply_persona(persona_id: str, project_id: str) -> dict[str, str]:
 
 def _update_project_persona(project_id: str, persona_id: str | None) -> None:
     """Store (or clear, with None) the applied preset id in projects.json."""
+    from utils.jsonfile import update_json
     meta_file = settings.db_dir / "projects.json"
     if not meta_file.exists():
         return
     try:
-        projects = json.loads(meta_file.read_text())
-        if project_id in projects:
-            if persona_id:
-                projects[project_id]["persona_id"] = persona_id
-            else:
-                projects[project_id].pop("persona_id", None)
-            projects[project_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
-            meta_file.write_text(json.dumps(projects, indent=2))
+        with update_json(meta_file, dict) as projects:
+            if project_id in projects:
+                if persona_id:
+                    projects[project_id]["persona_id"] = persona_id
+                else:
+                    projects[project_id].pop("persona_id", None)
+                projects[project_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
     except Exception as e:
         logger.warning("Failed to update project persona metadata: %s", e)
 
@@ -241,18 +241,18 @@ def migrate_project_personas() -> dict[str, list[str]] | None:
     vault = get_vault()
     if vault.get_secret("persona_presets_migrated_v1"):
         return None
+    from utils.jsonfile import update_json
     meta_file = settings.db_dir / "projects.json"
-    projects = {}
-    if meta_file.exists():
-        try:
-            projects = json.loads(meta_file.read_text())
-        except Exception:
-            projects = {}
     # Pan was removed as a preset; its soul is recognised from the global one.
     from agent.personality import migrate_persona_overrides
-    report = migrate_persona_overrides(projects, bundled_preset_souls())
-    if report["reverted"] and meta_file.exists():
-        meta_file.write_text(json.dumps(projects, indent=2))
+    if meta_file.exists():
+        # Locked + atomic; written only if the migration changed something.
+        # An unreadable projects.json raises (startup logs it) instead of
+        # being replaced.
+        with update_json(meta_file, dict) as projects:
+            report = migrate_persona_overrides(projects, bundled_preset_souls())
+    else:
+        report = migrate_persona_overrides({}, bundled_preset_souls())
     vault.set_secret("persona_presets_migrated_v1", "1")
     logger.info("Persona presets migration: %s", report)
     return report

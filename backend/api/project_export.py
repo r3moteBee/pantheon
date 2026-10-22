@@ -50,10 +50,8 @@ def _hash_bytes(data: bytes) -> str:
 
 def _collect_metadata(project_id: str) -> dict[str, Any]:
     """Collect project metadata from projects.json."""
-    meta_path = settings.db_dir / "projects.json"
-    if not meta_path.exists():
-        return {}
-    projects = json.loads(meta_path.read_text())
+    from utils.jsonfile import read_json
+    projects = read_json(settings.db_dir / "projects.json", {}) or {}
     return projects.get(project_id, {})
 
 
@@ -324,21 +322,41 @@ def workspace_dir(project_id: str) -> Path:
     return settings.projects_dir / project_id / "workspace"
 
 
+# Version-control metadata dirs. Never exported or imported: a .git/config
+# or hook from an archive would run on the next git command in that
+# checkout (core.fsmonitor, core.hooksPath, hooks/*).
+VCS_DIRS = frozenset({".git", ".hg", ".svn", ".bzr", "_darcs", ".jj"})
+
+
+def is_vcs_path(relative: str) -> bool:
+    """True when any component of ``relative`` is a VCS control dir/file
+    (case-insensitive, either slash)."""
+    parts = relative.replace("\\", "/").split("/")
+    return any(p.lower() in VCS_DIRS for p in parts)
+
+
 def _add_directory_to_zip(
     zf: zipfile.ZipFile,
     src_dir: Path,
     arc_prefix: str,
 ) -> int:
-    """Recursively add a directory to the zip. Returns file count."""
+    """Recursively add a directory to the zip. Returns file count.
+    Skips VCS control dirs (VCS_DIRS), symlinks and OS junk files."""
+    import os
     count = 0
     if not src_dir.is_dir():
         return 0
-    for fp in sorted(src_dir.rglob("*")):
-        if fp.is_file():
-            # Skip system files
-            if fp.name in (".DS_Store", "Thumbs.db", "__pycache__"):
+    for root, dirs, files in os.walk(src_dir, followlinks=False):
+        dirs[:] = sorted(d for d in dirs
+                         if d.lower() not in VCS_DIRS and d != "__pycache__"
+                         and not (Path(root) / d).is_symlink())
+        for fname in sorted(files):
+            if fname in (".DS_Store", "Thumbs.db") or fname.lower() in VCS_DIRS:
                 continue
-            arcname = f"{arc_prefix}/{fp.relative_to(src_dir)}"
+            fp = Path(root) / fname
+            if fp.is_symlink() or not fp.is_file():
+                continue
+            arcname = f"{arc_prefix}/{fp.relative_to(src_dir).as_posix()}"
             zf.write(fp, arcname)
             count += 1
     return count

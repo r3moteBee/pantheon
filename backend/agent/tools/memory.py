@@ -343,6 +343,9 @@ async def _tool_index_artifact(ctx: ToolContext, tool_name: str, tool_args: dict
     prefix = tool_args.get("path_prefix")
 
     if aid:
+        found = store.get(aid)
+        if not found or found.get("project_id") != effective_project:
+            return f"Artifact {aid} not found in this project."
         result = await mgr.index_artifact(aid, force=force)
         if result.get("skipped"):
             return f"Artifact {aid} skipped: {result.get('reason', 'unchanged')}"

@@ -85,11 +85,19 @@ async def add_connection(req: AddConnectionRequest) -> dict[str, Any]:
 @router.put("/mcp/connections/{name}")
 async def update_connection(name: str, req: UpdateConnectionRequest) -> dict[str, Any]:
     """Update an existing MCP connection."""
+    from mcp_client.manager import restore_masked_url
     mgr = get_mcp_manager()
+    url = req.url
+    if url is not None:
+        # GET /mcp/connections returns masked URLs; keep the real secrets
+        # where the edited URL still carries the *** placeholders.
+        cfg = mgr._get_cfg(name)
+        if cfg:
+            url = restore_masked_url(url, cfg.get("url", ""))
     try:
         return await mgr.update_connection(
             name=name,
-            url=req.url,
+            url=url,
             api_key=req.api_key,
             headers=req.headers,
             enabled=req.enabled,
@@ -303,7 +311,7 @@ async def test_tavily_direct() -> dict[str, Any]:
 async def debug_connection(name: str) -> dict[str, Any]:
     """Debug a connection — shows what URL/headers are actually being sent.
 
-    API keys are masked. Use the backend logs for full request/response tracing.
+    Header values, URL userinfo and query values are masked. Use the backend logs for full request/response tracing.
     """
     mgr = get_mcp_manager()
     cfg = None
@@ -322,27 +330,25 @@ async def debug_connection(name: str) -> dict[str, Any]:
         headers=cfg.get("headers", {}),
     )
 
+    from mcp_client.manager import MASK, mask_url
     built_url = client._build_url()
     built_headers = client._build_headers()
 
-    # Mask secrets
+    # Every header value is masked (custom headers usually carry keys) and
+    # URLs lose their userinfo and query-string values.
     api_key = cfg.get("api_key", "")
-    mask = "***" + api_key[-4:] if len(api_key) > 12 else "***"
-    safe_url = built_url.replace(api_key, mask) if api_key else built_url
-    safe_headers = {
-        k: (v.replace(api_key, mask) if api_key and api_key in v else v)
-        for k, v in built_headers.items()
-    }
+    safe_url = mask_url(built_url)
+    safe_headers = {k: MASK for k in built_headers}
 
     active_client = mgr._clients.get(name)
 
     return {
         "name": name,
-        "stored_url": cfg["url"][:50] + "..." if len(cfg["url"]) > 50 else cfg["url"],
+        "stored_url": mask_url(cfg["url"]),
         "built_url": safe_url,
         "built_headers": safe_headers,
         "has_api_key": bool(api_key),
-        "api_key_suffix": ("…" + api_key[-4:] if len(api_key) > 12 else "set") if api_key else "(none)",
+        "api_key_suffix": "set" if api_key else "(none)",
         "session_id": active_client.session_id if active_client else None,
         "is_initialized": active_client._initialized if active_client else False,
         "tools_count": len(active_client.tools) if active_client else 0,

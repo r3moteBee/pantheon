@@ -87,7 +87,7 @@ def test_self_doc_tool_runs_off_the_event_loop(clean_settings, monkeypatch):
     from agent import tools
     seen = {}
 
-    def fake(project_id=None, interactive=True, host_exec=True):
+    def fake(project_id=None, interactive=True, host_exec=True, channel=None):
         import threading
         seen.update(thread=threading.current_thread().name, args=(project_id, interactive, host_exec))
         return "doc"

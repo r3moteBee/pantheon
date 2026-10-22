@@ -214,6 +214,15 @@ async def _tool_github_tools(ctx: ToolContext, tool_name: str, tool_args: dict[s
     token = get_token(conn_row["id"])
     if not token:
         return f"Connection {conn_row['id']} has no stored token. Re-add it on the Connections page (GitHub tab)."
+    action = tool_name.removeprefix("github_")
+    if action in WRITE_ACTIONS and _from_messaging_app(ctx):
+        return (f"{action} isn't available from {ctx.channel}: changes to the GitHub repo are made "
+                "from the web chat or a background task the user approved. Tell the user what you "
+                "would change so they can do it from the web chat.")
+    if action in INTERACTIVE_ONLY_ACTIONS and not ctx.interactive:
+        return (f"{action} only runs in a chat the user is driving; background tasks can't "
+                f"{'merge pull requests' if action == 'merge_pr' else 'delete branches'}. "
+                "Tell the user what you would like done so they can do it from the chat or on GitHub.")
     client = GitHubClient(token)
     try:
         if tool_name == "github_push_artifacts":
@@ -364,6 +373,20 @@ async def _push_artifacts(ctx: ToolContext, conn_row: dict, spec: dict, tool_arg
 # github_<action> handler above; those names stay callable (hidden) so
 # skills written against them keep working.
 
+# Irreversible repo changes need a person in the loop (push_artifacts checks
+# the same in _push_artifacts). create_branch / write_files / create_pr stay
+# open to background runs: iteration_loop and coding_task jobs (plans the
+# user approved) commit through them, and they only add a branch or a PR.
+INTERACTIVE_ONLY_ACTIONS = frozenset({"merge_pr", "delete_branch"})
+# Repo writes a messaging-app turn may not make: the bot relays messages from
+# chat-app users (allowlisted, but not the web UI's signed-in user), and
+# background jobs that commit (coding_task, iteration_loop) have channel None.
+WRITE_ACTIONS = frozenset({"create_branch", "delete_branch", "write_files", "push_artifacts", "create_pr", "merge_pr"})
+
+
+def _from_messaging_app(ctx) -> bool:
+    return bool(getattr(ctx, "channel", None)) and ctx.channel != "web"
+
 GITHUB_ACTIONS = ("list_connections", "read_file", "list_directory", "list_branches", "list_pulls",
                   "create_branch", "delete_branch", "write_files", "push_artifacts", "create_pr", "merge_pr")
 
@@ -375,12 +398,12 @@ SCHEMAS.append({
             "GitHub API on the repo bound to this project (no local checkout needed). Actions and their args: "
             "read_file(path, ref?) · list_directory(path?, ref?) · list_branches(name_prefix?) · "
             "list_pulls(state?, head?, base?) · create_branch(new_branch, base_branch?) · "
-            "delete_branch(branch) — never the default branch · write_files(branch, message, files=[{path, content}]) "
+            "delete_branch(branch) — never the default branch; web chat only · write_files(branch, message, files=[{path, content}]) "
             "— one atomic commit, after create_branch · push_artifacts(folder, branch?, message?, path?, title?, body?, base?) "
             "— commits an artifact folder as it is stored (no need to resend the files) to a NEW branch and "
             "opens a pull request; path = folder inside the repo; never the default branch · "
             "create_pr(title, head, base?, body?, draft?) · "
-            "merge_pr(pr_number, merge_method?) — only when the user approved merging · "
+            "merge_pr(pr_number, merge_method?) — only when the user approved merging; web chat only · "
             "list_connections() — diagnostic only."
         ),
         "parameters": {

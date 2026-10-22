@@ -22,6 +22,10 @@ class ToolContext:
     # True only for turns a person is driving in the web UI.
     interactive: bool = False
     host_exec: bool = False
+    # Where the turn came from: "web", a messaging app ("telegram", ...) or
+    # None for background jobs. Bots relay messages from chat-app users, so
+    # repo writes refuse them (see agent/tools/github.py).
+    channel: str | None = None
 
     @property
     def effective_project(self) -> str:

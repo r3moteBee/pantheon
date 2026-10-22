@@ -607,6 +607,9 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
             return (f"Error: update_artifact was not run - it needs `content`, the complete new text of "
                     f"artifact {aid}. It replaces the whole file, so pass all of it (read_artifact shows "
                     "the current text); an edit_summary alone changes nothing.")
+        cur = store.get(aid)
+        if not cur or cur.get("project_id") != effective_project:
+            return f"Artifact {aid} not found in this project."
         try:
             a = store.update(
                 aid,
@@ -626,6 +629,8 @@ async def _tool_artifact_tools(ctx: ToolContext, tool_name: str, tool_args: dict
         a = None
         if aid:
             a = store.get(aid)
+            if a and a.get("project_id") != effective_project:
+                return f"Artifact {aid} not found in this project."
         elif path:
             norm_path = _normalize_artifact_path(path)
             a = store.get_by_path(effective_project, norm_path)

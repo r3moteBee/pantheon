@@ -29,11 +29,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from utils.paths import is_within
 from sandbox.backend import (
     SandboxBackend,
     SandboxConfig,
     SandboxResult,
-    language_to_default_filename,
+    safe_script_filename,
     language_to_interpreter,
 )
 
@@ -82,7 +83,7 @@ class FirecrackerSandbox(SandboxBackend):
         config: SandboxConfig | None = None,
     ) -> SandboxResult:
         cfg = config or SandboxConfig()
-        filename = filename or language_to_default_filename(language)
+        filename = safe_script_filename(filename, language)
         runtime = self._language_to_runtime(language)
         rootfs_template = self._get_rootfs(runtime)
         if not rootfs_template:
@@ -355,13 +356,32 @@ async def _sync_back(img: Path, dest: Path, before: set[str], vm_dir: Path) -> s
     return await asyncio.to_thread(_mirror, out_dir, dest, before)
 
 
+def _symlink_stays_inside(dest: Path, rel: str, target: str) -> bool:
+    """A guest symlink at ``rel`` pointing at ``target`` may be recreated on
+    the host only when it is relative and resolves inside ``dest`` (an
+    absolute or ../.. link would let the next host-side read or write go
+    anywhere)."""
+    if not target or os.path.isabs(target):
+        return False
+    joined = os.path.normpath(os.path.join(str(dest), os.path.dirname(rel), target))
+    return is_within(Path(joined), dest)
+
+
 def _mirror(src: Path, dest: Path, before: set[str]) -> str | None:
+    skipped: list[str] = []
     try:
         after = _tree(src)
         for rel in sorted(after):
             s, d = src / rel, dest / rel
+            # Never write through a host-side symlink that leads out.
+            if not is_within(d.parent, dest):
+                skipped.append(rel)
+                continue
             if s.is_symlink():
                 target = os.readlink(s)
+                if not _symlink_stays_inside(dest, rel, target):
+                    skipped.append(rel)
+                    continue
                 if d.is_symlink() and os.readlink(d) == target:
                     continue
                 if d.exists() or d.is_symlink():
@@ -391,6 +411,11 @@ def _mirror(src: Path, dest: Path, before: set[str]) -> str | None:
                 d.unlink(missing_ok=True)
             elif d.is_dir():
                 shutil.rmtree(d, ignore_errors=True)
+        if skipped:
+            logger.warning("Firecracker sync-back skipped %d path(s) leading outside the workspace: %s",
+                           len(skipped), skipped[:10])
+            return ("workspace sync-back skipped symlink(s) pointing outside the workspace: "
+                    + ", ".join(skipped[:10]))
         return None
     except Exception as e:  # report, don't lose the command's output
         logger.error("Firecracker workspace sync-back failed: %s", e, exc_info=True)

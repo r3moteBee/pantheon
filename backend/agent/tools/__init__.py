@@ -36,6 +36,39 @@ HOST_EXEC_TOOLS = frozenset({
     "start_autoresearch",   # queues a job that runs a benchmark command on the host
 })
 
+# Messaging-app turns (Telegram, Slack, Discord, Matrix, Mattermost) relay
+# messages from chat-app users: allowlisted, but not the web UI's signed-in
+# user, and one leaked bot token away from a stranger. They never get host
+# exec (whatever AGENT_HOST_EXEC says) nor these destructive / persistent-change
+# tools; AgentCore hides them and execute_tool refuses them. GitHub repo writes
+# are refused inside the github tool (agent/tools/github.py WRITE_ACTIONS).
+BOT_BLOCKED_TOOLS = HOST_EXEC_TOOLS | frozenset({
+    "delete_artifact", "rerun_job", "create_skill",
+    "approve_merge", "force_merge", "reject_merge", "start_coding_task",  # legacy names
+})
+# merge_topics actions a bot turn may still run.
+BOT_MERGE_ACTIONS = frozenset({"list"})
+
+
+def is_bot_channel(channel: str | None) -> bool:
+    """True for a messaging-app turn (channel set and not the web chat)."""
+    return bool(channel) and channel != "web"
+
+
+def bot_refusal(tool_name: str, tool_args: dict[str, Any] | None, channel: str | None) -> str | None:
+    """The refusal text for a tool a messaging-app turn may not run, else None."""
+    if not is_bot_channel(channel):
+        return None
+    blocked = tool_name in BOT_BLOCKED_TOOLS or (
+        tool_name == "merge_topics"
+        and str((tool_args or {}).get("action") or "").strip() not in BOT_MERGE_ACTIONS)
+    if not blocked:
+        return None
+    return (f"{tool_name} isn't available from {channel}: it changes or deletes things, or runs code "
+            "on the host, so it only runs from the web chat. Tell the user what you would do so they "
+            "can do it there.")
+
+
 # The order the model sees the tools in (kept stable across refactors).
 _ORDER = ['remember', 'recall', 'create_graph_node', 'link_concepts', 'read_file', 'write_file', 'list_workspace_files', 'web_search', 'web_fetch', 'create_task', 'send_telegram', 'index', 'link_topic_similarity', 'merge_topics', 'rerun_job', 'get_self_documentation', 'create_skill', 'list_source_adapters', 'ingest_source', 'batch_ingest_sources', 'extract_topics', 'save_last_response', 'show_file', 'download_file', 'generate_image', 'get_job_status', 'list_recent_jobs', 'consolidate_memory', 'code_execute', 'run_command', 'run_build', 'github', 'save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'delete_artifact', 'batch_convert_documents', 'git_sync_repo', 'git_status', 'git_create_branch', 'git_merge', 'git_commit', 'git_push_pr', 'analyze_company_financials', 'compare_company_strategy_and_risks', 'analyze_earnings_call', 'start_autoresearch', 'writing_voice']
 
@@ -108,6 +141,7 @@ async def execute_tool(
     last_assistant_text: str = "",
     interactive: bool = False,
     host_exec: bool = False,
+    channel: str | None = None,
 ) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -116,6 +150,9 @@ async def execute_tool(
     ``host_exec`` must be the caller's AgentCore.host_exec: host-execution
     tools are refused here too, not only hidden from the schema.
     """
+    refusal = bot_refusal(tool_name, tool_args, channel)
+    if refusal:
+        return refusal
     if tool_name in HOST_EXEC_TOOLS and not host_exec:
         return (
             f"Tool '{tool_name}' is disabled in this context "
@@ -143,6 +180,7 @@ async def execute_tool(
             last_assistant_text=last_assistant_text,
             interactive=interactive,
             host_exec=host_exec,
+            channel=channel,
         )
         return await handler(ctx, tool_name, tool_args)
     except Exception as e:
