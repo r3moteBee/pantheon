@@ -31,48 +31,32 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "create_skill",
             "description": (
-                "Create a reusable SKILL (invoked with /skill-name in chat) — not a scheduled task "
-                "(create_task). Use when the user wants a workflow they'll repeat. instructions is "
-                "the full markdown recipe: name the exact tool per step and include any schemas, "
-                "output paths or thresholds already agreed."
+                "Create a reusable skill the user runs with /name - not a scheduled task. instructions is the "
+                "full markdown recipe: the exact tool per step plus any schemas, paths or thresholds already "
+                "agreed."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": (
-                            "Slug-form name (lowercase, hyphens, no "
-                            "spaces). Used as the /skill-name invocation."
-                        )
+                        "description": "Slug (lowercase, hyphens)."
                     },
                     "description": {
                         "type": "string",
-                        "description": "One-line description shown in the skills list."
+                        "description": "One line."
                     },
                     "triggers": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": (
-                            "Phrases that should auto-suggest this skill. "
-                            "Pick content-bearing phrases, not stopwords. "
-                            "Example: ['fetch youtube transcript', "
-                            "'ingest video into graph']."
-                        )
+                        "description": "Content-bearing phrases that suggest it."
                     },
                     "tags": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Topical tags for filtering."
+                        "items": {"type": "string"}
                     },
                     "instructions": {
-                        "type": "string",
-                        "description": (
-                            "Full markdown workflow definition. The "
-                            "agent reads this when the skill is "
-                            "invoked. Be specific about tool names, "
-                            "parameter contracts, and output paths."
-                        )
+                        "type": "string"
                     }
                 },
                 "required": ["name", "description", "instructions"]

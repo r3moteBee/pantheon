@@ -17,15 +17,11 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": (
-                "Read a scratch file from the project workspace (sandbox runs, "
-                "raw uploads). Saved notes, transcripts and reports are "
-                "artifacts — use read_artifact for those."
-            ),
+            "description": "Read a scratch workspace file (saved notes are artifacts: read_artifact).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file within the workspace"}
+                    "path": {"type": "string"}
                 },
                 "required": ["path"]
             }
@@ -36,17 +32,16 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "write_file",
             "description": (
-                "Write a file to the project workspace on disk: scratch data, or files that "
-                "run_command / code_execute need. Code, documents and project files the user "
-                "asked for are deliverables: save them with save_to_artifact under one project "
-                "folder. (A code or document file written here outside tmp/, build/ and similar "
-                "folders is also saved as an artifact at the same path.)"
+                "Write a scratch file to the project workspace (for run_command / code_execute). Code and "
+                "documents the user asked for are deliverables: save them with save_to_artifact under one "
+                "project folder (a code or document file written here outside tmp/, build/ and similar folders "
+                "is mirrored to an artifact)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file within the workspace"},
-                    "content": {"type": "string", "description": "Content to write to the file"}
+                    "path": {"type": "string"},
+                    "content": {"type": "string"}
                 },
                 "required": ["path", "content"]
             }
@@ -57,14 +52,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "list_workspace_files",
             "description": (
-                "List scratch files in the project workspace. Saved artifacts "
-                "are not here — use list_artifacts(path_prefix='research/') to "
-                "browse or verify them."
+                "List scratch files in the project workspace (saved artifacts: "
+                "list_artifacts(path_prefix='research/'))."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Subdirectory path to list (default: root workspace)", "default": ""}
+                    "path": {"type": "string", "default": ""}
                 }
             }
         }
@@ -73,12 +67,14 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "show_file",
-            "description": "Display a file inline in the chat UI. Supports images (png/jpg/gif/svg/webp), PDFs, HTML, markdown, and text files. Use this instead of read_file when the user asks to 'show', 'display', or 'view' a file. The file will be rendered as a visual preview in the chat. IMPORTANT: Only call this ONCE per file — a single successful call displays the file. Never retry or call again for the same file.",
+            "description": (
+                "Show a workspace file (image, PDF, HTML, markdown, text) in the chat. Call once per file."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path to the file within the workspace"},
-                    "caption": {"type": "string", "description": "Optional caption to display below the file"}
+                    "path": {"type": "string"},
+                    "caption": {"type": "string"}
                 },
                 "required": ["path"]
             }
@@ -88,13 +84,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "download_file",
-            "description": "Download a file from a URL and save it to the workspace. Use this when the user asks you to download, fetch, or save a file from the internet (PDFs, images, documents, data files, etc.). The file is saved to the specified path in the workspace and can then be viewed with show_file or read with read_file.",
+            "description": "Download a file from a URL into the workspace.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "The URL to download the file from"},
-                    "path": {"type": "string", "description": "Relative path in workspace to save the file (e.g., 'documents/report.pdf'). Directories are created automatically."},
-                    "filename": {"type": "string", "description": "Optional filename override. If omitted, derived from the URL or Content-Disposition header."}
+                    "url": {"type": "string"},
+                    "path": {"type": "string", "description": "Workspace path, e.g. 'documents/report.pdf'."},
+                    "filename": {"type": "string"}
                 },
                 "required": ["url", "path"]
             }
@@ -133,26 +129,26 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "batch_convert_documents",
-            "description": "Batch-convert multiple files matching wildcards, folder names, or specific paths in the workspace into another format.",
+            "description": "Convert workspace files (paths, folders or wildcards) to another format.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "paths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of relative paths, folders, or wildcards to match (e.g., ['reports/*.docx', 'data/txt/'])"
+                        "description": "e.g. ['reports/*.docx', 'data/txt/']."
                     },
                     "target_format": {
                         "type": "string",
-                        "description": "The desired target format extension (e.g. 'html', 'pdf', 'docx', 'md', 'txt')"
+                        "description": "e.g. html, pdf, docx, md, txt."
                     },
                     "out_dir": {
                         "type": "string",
-                        "description": "Optional relative output directory. If omitted, target will be placed in the same folder as the source file."
+                        "description": "Default: next to the source."
                     },
                     "save_as_artifact": {
                         "type": "boolean",
-                        "description": "Whether to also ingest each converted file as a permanent artifact in the store (default: false)."
+                        "description": "Also save each result as an artifact."
                     }
                 },
                 "required": ["paths", "target_format"]

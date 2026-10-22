@@ -12,24 +12,20 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "git_sync_repo",
             "description": (
-                "Clone the project's bound GitHub repo into the local "
-                "workspace (or fetch + fast-forward it if already cloned) "
-                "and return the checkout path. Run this FIRST before doing "
-                "local coding work: all other git_* tools and run_command "
-                "automatically operate on this checkout once it exists. "
-                "Files inside it are reachable via read_file/write_file "
-                "under 'repos/<owner>__<repo>/...'."
+                "Clone or update the project's bound repo locally and return the checkout path. Run it first; "
+                "git_* tools and run_command then use that checkout (also readable via read_file under "
+                "'repos/<owner>__<repo>/')."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "branch": {
                         "type": "string",
-                        "description": "Optional branch to check out after syncing. Defaults to the repo's default branch. Created locally if it doesn't exist yet."
+                        "description": "Branch to check out (created if missing)."
                     },
                     "fresh": {
                         "type": "boolean",
-                        "description": "If true, delete the existing checkout and re-clone from scratch."
+                        "description": "Delete and re-clone."
                     }
                 },
                 "additionalProperties": False
@@ -40,7 +36,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "git_status",
-            "description": "Show the local git working tree status (runs git status --porcelain).",
+            "description": "git status of the local checkout.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -52,13 +48,12 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "git_create_branch",
-            "description": "Create and switch to a new local git branch. Switched to existing if it already exists.",
+            "description": "Create or switch to a local branch.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "branch_name": {
-                        "type": "string",
-                        "description": "Name of the branch to create or switch to."
+                        "type": "string"
                     }
                 },
                 "required": ["branch_name"],
@@ -71,28 +66,22 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "git_merge",
             "description": (
-                "Merge a branch into the CURRENT branch of the local repo "
-                "checkout. This is the ONLY correct way to merge — never "
-                "simulate a merge by copying file contents between branches. "
-                "On conflicts it returns the conflicted files with their "
-                "conflict hunks; edit only those regions, then git_commit to "
-                "conclude the merge. Pass abort=true to abandon an "
-                "in-progress merge."
+                "Merge a branch into the current branch of the local checkout - the only correct way to merge. "
+                "On conflicts it returns the hunks: edit only those, then git_commit. abort=true abandons the "
+                "merge."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "branch": {
                         "type": "string",
-                        "description": "Branch to merge in (local name or remote like 'feature/x' — origin/<branch> is tried automatically)."
+                        "description": "Branch to merge in (origin/<branch> tried automatically)."
                     },
                     "message": {
-                        "type": "string",
-                        "description": "Optional merge commit message. Defaults to 'Merge <ref> into <current branch>'."
+                        "type": "string"
                     },
                     "abort": {
-                        "type": "boolean",
-                        "description": "Abort the in-progress merge and restore the working tree."
+                        "type": "boolean"
                     }
                 },
                 "additionalProperties": False
@@ -104,23 +93,19 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "git_commit",
             "description": (
-                "Stage files and commit them on the CURRENT branch of the "
-                "local repo checkout. Refuses to commit files containing "
-                "unresolved merge-conflict markers. The result names the "
-                "branch the commit landed on — verify it matches your "
-                "intent."
+                "Stage and commit on the current branch of the local checkout; refuses unresolved conflict "
+                "markers. Check the branch named in the result."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "message": {
-                        "type": "string",
-                        "description": "The commit message."
+                        "type": "string"
                     },
                     "files": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of relative paths to files to stage. If empty/omitted, stages all workspace changes (git add .)."
+                        "description": "Paths to stage (default: all changes)."
                     }
                 },
                 "required": ["message"],
@@ -132,21 +117,19 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "git_push_pr",
-            "description": "Push the current git branch to the remote GitHub repository and create a Pull Request.",
+            "description": "Push the current branch and open a pull request.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {
-                        "type": "string",
-                        "description": "The Pull Request title."
+                        "type": "string"
                     },
                     "body": {
-                        "type": "string",
-                        "description": "Optional description for the Pull Request."
+                        "type": "string"
                     },
                     "base": {
                         "type": "string",
-                        "description": "Optional base branch to merge into. Defaults to remote's default branch or 'main'."
+                        "description": "Default: the repo's default branch."
                     }
                 },
                 "required": ["title"],

@@ -14,48 +14,50 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "create_task",
             "description": (
-                "Schedule an autonomous background task. Unless skip_review=true it is created "
-                "PAUSED as a proposal; it runs only after the user approves it in the chat's Tasks tab. "
-                "For a schedule the user asked for, show them the plan in chat first and call this with "
-                "skip_review=true once they approve. "
-                "Work you can do in this turn (one image, one lookup) is not a task - do it now. "
-                "In the plan, name the exact tools each step uses (look at the tools you actually have — "
-                "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
-                "say so in the plan rather than pretending."
+                "Schedule background work: for later ('in 15 minutes', 'tomorrow at 9', 'next week'), on a "
+                "schedule ('every morning'), or too big for one reply. Unless skip_review=true it is created "
+                "PAUSED as a proposal the user approves in the chat's Tasks tab; for a schedule the user asked "
+                "for, show them the plan in chat first and call this with skip_review=true once they approve. "
+                "Work you can do now (one image, one lookup) is not a task - do it."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Short label for the Tasks list, 3-7 words, e.g. 'Daily PR digest'."
+                        "description": "Short label, 3-7 words."
                     },
                     "description": {
                         "type": "string",
-                        "description": "What the agent should do, in full — the background run sees only this, the plan and project memory."
+                        "description": (
+                            "Everything the run needs to know; it sees only this, the plan and project memory."
+                        )
                     },
                     "schedule": {
                         "type": "string",
                         "description": (
-                            "One-shot: 'now' or 'delay:N' (minutes). Recurring: 'interval:N' (minutes) or cron "
-                            "('0 9 * * *' = daily 9am). 'in 2 minutes' is delay:2."
+                            "'now', 'delay:N' (once, N minutes from now), 'interval:N' (every N minutes) or cron "
+                            "('0 9 * * *'). Repeat only when the user asked for a repeat."
                         )
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": "Max run time, default 1800. Use 3600-7200 for batch ingests of 20+ items."
+                        "description": "Seconds; at least 1800 (the default), 3600-7200 for big batches."
                     },
                     "max_iterations": {
                         "type": "integer",
-                        "description": "Agent-loop round budget, default 100. Raise (e.g. 300) for long multi-step work, with timeout_seconds."
+                        "description": "Round budget, default 100."
                     },
                     "skill_name": {
                         "type": "string",
-                        "description": "Skill slug whose instructions drive the task (like /<slug> in chat)."
+                        "description": "Installed skill to run (its slug), instead of '/slug' in the description."
                     },
                     "plan": {
                         "type": "string",
-                        "description": "Numbered markdown steps, each naming its tool ('1. ... with `ingest_source`')."
+                        "description": (
+                            "Numbered steps, each naming the tool it uses ('1. ... with `ingest_source`'); say "
+                            "so if a step needs a tool you don't have."
+                        )
                     },
                     "skip_review": {
                         "type": "boolean",
@@ -68,57 +70,58 @@ SCHEMAS: list[dict[str, Any]] = [
                         "enum": ["autonomous_task", "iteration_loop", "coding_task", "research_batch"],
                         "default": "autonomous_task",
                         "description": (
-                            "autonomous_task (default): run the plan once per firing. iteration_loop: execute/review "
-                            "turns ('loop', 'iterate N times'), each saved as artifact iteration/<job id, 8 chars>/turn-01.md... "
-                            "coding_task: a coding agent edits the bound GitHub repo and opens a PR - only for authoring "
-                            "code, web chat only, starts at once; put stack and layout in coding_context. research_batch: "
-                            "one sourced note per item of a LIST (states, companies) then a summary - for more than ~5 "
-                            "items; give items and item_question."
+                            "autonomous_task: run the plan once. research_batch: research a list of items (more "
+                            "than ~5), a sourced note per item, then a summary; needs items and item_question. "
+                            "iteration_loop: execute/review turns ('loop', 'iterate N times'), each saved as "
+                            "iteration/<job id, 8 chars>/turn-01.md... coding_task: a coding agent edits the "
+                            "bound repo and opens a PR - only for writing code; web chat only, starts at once."
                         )
                     },
                     "coding_context": {
                         "type": "string",
-                        "description": "coding_task only: tech stack, file layout, conventions."
+                        "description": "coding_task: stack, file layout, conventions."
                     },
                     "branch_name": {
                         "type": "string",
-                        "description": "coding_task only: branch to work on (auto-named if omitted)."
+                        "description": "coding_task: branch (auto if omitted)."
                     },
                     "base_branch": {
                         "type": "string",
-                        "description": "coding_task only: base branch (repo default if omitted)."
+                        "description": "coding_task: base branch."
                     },
                     "items": {
                         "type": "array", "items": {"type": "string"},
-                        "description": "research_batch only: the items to research, one note each (e.g. the 50 state names)."
+                        "description": "research_batch: the items, one note each."
                     },
                     "item_question": {
                         "type": "string",
-                        "description": "research_batch only: the question for each item, with {item} where the item goes, "
-                                       "e.g. 'Who is running for US Senate in {item} in 2026, and who is favoured?'"
+                        "description": (
+                            "research_batch: the question per item with {item}, e.g. 'What changed in {item} "
+                            "this month?'"
+                        )
                     },
                     "lookups_per_item": {
                         "type": "integer", "default": 6,
-                        "description": "research_batch only: web lookups per item (1-15)."
+                        "description": "research_batch: web lookups per item (1-15)."
                     },
                     "max_turns": {
                         "type": "integer",
                         "default": 10,
-                        "description": "iteration_loop only: max turns (stops early when the reviewer says STATUS: done)."
+                        "description": "iteration_loop: max turns."
                     },
                     "execute_instruction": {
                         "type": "string",
-                        "description": "iteration_loop only: per-turn execute instruction (default: the description)."
+                        "description": "iteration_loop: per-turn instruction."
                     },
                     "review_instruction": {
                         "type": "string",
-                        "description": "iteration_loop only: per-turn review instruction (default: find gaps, pick the next step, emit STATUS: continue|done)."
+                        "description": "iteration_loop: per-turn review instruction."
                     },
                     "branch_strategy": {
                         "type": "string",
                         "enum": ["single_feature", "main", "branch_per_turn"],
                         "default": "single_feature",
-                        "description": "iteration_loop with a bound repo: where turns commit (branch iteration/<id>, main, or one per turn)."
+                        "description": "iteration_loop with a repo: where turns commit."
                     }
                 },
                 "required": ["name", "description", "schedule", "plan"]
@@ -129,11 +132,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "send_telegram",
-            "description": "Send a message to the user via Telegram (only works when Telegram is set up in Settings -> Channels). Use for important updates, task completions, or when you need human input on a long-running task.",
+            "description": (
+                "Send the user a Telegram message (only works when Telegram is set up in Settings -> Channels)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "message": {"type": "string", "description": "Message to send"}
+                    "message": {"type": "string"}
                 },
                 "required": ["message"]
             }
@@ -143,27 +148,13 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "rerun_job",
-            "description": (
-                "Re-run a finished job (completed / failed / stalled / "
-                "cancelled) with the exact same payload, title, "
-                "schedule_id, and timeout. Creates a NEW job entry "
-                "linked back to the original via parent_job_id; the "
-                "original record stays as audit history.\n\n"
-                "Useful when:\n"
-                "  - the user says 'run yesterday\'s research task again'\n"
-                "  - a recent ingest looks incomplete and you want to "
-                "redo the same work\n"
-                "  - a failed task got fixed (e.g. MCP reconnected) "
-                "and the user wants to retry without rebuilding the "
-                "schedule\n\n"
-                "Accepts the full job UUID or an 8-char prefix."
-            ),
+            "description": "Re-run a finished job with the same payload; the original stays as history.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "job_id": {
                         "type": "string",
-                        "description": "Full UUID or 8-char prefix from list_recent_jobs."
+                        "description": "UUID or 8-char prefix."
                     }
                 },
                 "required": ["job_id"]
@@ -175,16 +166,9 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "get_job_status",
             "description": (
-                "Get the current state of a background job. Pass either "
-                "a job UUID (full id from list_recent_jobs) OR a "
-                "schedule_id (the short 8-char hex id returned by "
-                "create_task — refers to the schedule, not a single "
-                "run). When given a schedule_id, this returns the most "
-                "recent run of that schedule. Use this when the user "
-                "asks about a task you started earlier — READ THE "
-                "ACTUAL STATUS before claiming the job did/didn't run. "
-                "Returns status, progress text, error, result, "
-                "session_id, artifact_id, and pr_url where applicable."
+                "Status of a background job, by job id or the 8-char schedule id from create_task (latest run). "
+                "Use it when the user asks about a task, before saying it did or didn't run - not to wait for "
+                "one."
             ),
             "parameters": {
                 "type": "object",
@@ -199,24 +183,17 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_recent_jobs",
-            "description": (
-                "List recent background jobs for the active project. Use "
-                "this when the user asks 'what are you working on' / "
-                "'is anything still running' / 'did that finish'. Filter "
-                "by status when needed. By default omits system job types "
-                "(extraction, file_indexing) so the list is user-relevant."
-            ),
+            "description": "Recent background jobs in this project ('what are you working on', 'did that finish').",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["queued","running","completed","failed","cancelled","stalled"],
-                        "description": "Optional status filter."
+                        "enum": ["queued","running","completed","failed","cancelled","stalled"]
                     },
                     "include_system": {
                         "type": "boolean",
-                        "description": "Include extraction/file_indexing rows. Default false.",
+                        "description": "Include extraction/indexing jobs.",
                         "default": False
                     },
                     "limit": {"type": "integer", "default": 10}
@@ -268,19 +245,20 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "start_autoresearch",
-            "description": "Start the autoresearch loop as a background job: an LLM mutates one workspace file, runs the "
-                           "benchmark command after each change, keeps a change only if the metric improves, and saves a "
-                           "report artifact. Web chat only (the benchmark runs on the host). Agree the settings with the "
-                           "user first.",
+            "description": (
+                "Background loop that mutates one workspace file, runs a benchmark after each change, keeps "
+                "changes that improve the metric and saves a report. Web chat only. Agree the settings with the "
+                "user first."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_file": {"type": "string", "description": "File to optimise, relative to the project workspace"},
-                    "eval_cmd": {"type": "string", "description": "Shell command run in the workspace after each change, e.g. 'python benchmark.py'"},
-                    "metric": {"type": "string", "description": "Metric name the benchmark prints, e.g. 'time' for 'time: 1.23'"},
-                    "direction": {"type": "string", "enum": ["min", "max"], "description": "min (time, loss) or max (accuracy, throughput)"},
-                    "iterations": {"type": "integer", "description": "Mutation rounds (default 10, max 50)"},
-                    "instructions": {"type": "string", "description": "Optimisation guidance and constraints"},
+                    "target_file": {"type": "string", "description": "Workspace-relative file to optimise."},
+                    "eval_cmd": {"type": "string", "description": "Benchmark command, e.g. 'python benchmark.py'."},
+                    "metric": {"type": "string", "description": "Metric name it prints, e.g. 'time'."},
+                    "direction": {"type": "string", "enum": ["min", "max"]},
+                    "iterations": {"type": "integer", "description": "Default 10, max 50."},
+                    "instructions": {"type": "string"},
                 },
                 "required": ["target_file", "eval_cmd", "metric", "direction"],
             },

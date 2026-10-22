@@ -120,28 +120,19 @@ def _build_available_skills_block(project_id: str) -> str:
     lines = [
         "## Available skills (installed in this project)",
         "",
-        "When the user's request matches one of the trigger phrases "
-        "below, INVOKE THE SKILL. The skill\'s instructions will run "
-        "as part of your normal turn — you do NOT need create_task "
-        "or a coding task. Either:",
-        "  • follow the skill\'s instructions inline this turn, OR",
-        "  • tell the user you\'re running the skill and proceed with "
-        "    the steps it lays out, citing the skill name in your reply.",
-        "",
-        "Skills are NOT scheduled tasks and are NOT coding tasks. They "
-        "are reusable recipes the user has already approved.",
+        "When a request matches a skill, run it this turn by following its steps (no create_task or coding "
+        "task needed). Skills are recipes the user already approved, not scheduled tasks.",
         "",
     ]
     for sk in skills[:30]:
         try:
             name = sk.name
-            desc = (sk.manifest.description or "").strip().splitlines()[0][:160]
-            triggers = ", ".join(f"\"{t}\"" for t in (sk.triggers or [])[:6])
+            desc = (sk.manifest.description or "").strip().splitlines()[0]
+            desc = desc.split(". Use when")[0].split(". Use this")[0].rstrip(".")[:110]
+            triggers = ", ".join(f"\"{t}\"" for t in (sk.triggers or [])[:2])
         except Exception:
             continue
-        lines.append(f"- **/{name}** — {desc}")
-        if triggers:
-            lines.append(f"    triggers: {triggers}")
+        lines.append(f"- /{name}: {desc}" + (f" ({triggers})" if triggers else ""))
     if len(skills) > 30:
         lines.append(f"\n_... and {len(skills) - 30} more skills_")
     return "\n".join(lines)

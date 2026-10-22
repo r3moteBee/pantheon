@@ -11,31 +11,24 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "link_topic_similarity",
             "description": (
-                "Backfill the cross-artifact similarity pipeline "
-                "for already-indexed artifacts. Adds "
-                "SEMANTICALLY_SIMILAR_TO edges between topic nodes "
-                "whose embeddings cosine-match >= 0.86, and queues "
-                "merge proposals for >= 0.92 (proposals are NOT "
-                "auto-applied — use merge_topics to review and apply).\n\n"
-                "Use this after enabling similarity on an adapter, "
-                "after a bulk ingest where you want to make sure "
-                "everything is cross-linked, or whenever the user "
-                "says \'cross-link existing topics\'."
+                "Backfill similarity links between already-indexed topics (and queue merge proposals for "
+                "near-duplicates; apply them with merge_topics). Use after a bulk ingest or when asked to "
+                "cross-link topics."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path_prefix": {
                         "type": "string",
-                        "description": "Optional artifact path prefix to scope the run (e.g. \'youtube-transcripts/\'). Bare folder names are auto-prefixed with the project slug."
+                        "description": "Optional folder, e.g. 'youtube-transcripts/'."
                     },
                     "link_threshold": {
                         "type": "number",
-                        "description": "Cosine threshold for SEMANTICALLY_SIMILAR_TO edges. Default 0.86."
+                        "description": "Default 0.86."
                     },
                     "merge_threshold": {
                         "type": "number",
-                        "description": "Cosine threshold for queuing merge proposals. Default 0.92."
+                        "description": "Default 0.92."
                     }
                 }
             }
@@ -146,14 +139,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_source_adapters",
-            "description": (
-                "List the source adapters registered in the project. "
-                "Each entry has source_type (e.g. 'youtube/keynote'), "
-                "display_name, bucket aliases, and the MCP tools the "
-                "adapter requires. Use this when the user asks 'what "
-                "can I ingest' or before constructing an ingest_source "
-                "call to confirm the source_type is supported."
-            ),
+            "description": "Source adapters you can ingest with (source_type, required MCP tools).",
             "parameters": {"type": "object", "properties": {}, "required": []}
         }
     },
@@ -162,24 +148,28 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "ingest_source",
             "description": (
-                "Ingest one item through a source adapter: fetch server-side, extract topics, save as "
-                "an artifact (re-ingesting the same item updates it), embed and link the graph. Use "
-                "list_source_adapters for source_types; batch_ingest_sources for many."
+                "Ingest one item through a source adapter: fetched server-side, topics extracted, saved as an "
+                "artifact (re-ingest updates it), indexed and linked in the graph. source_types: "
+                "list_source_adapters; many items: batch_ingest_sources."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "source_type": {
                         "type": "string",
-                        "description": "Canonical source type (e.g. 'youtube/keynote', 'youtube/interview', 'youtube/other'). Must be a registered adapter."
+                        "description": "Registered adapter, e.g. 'youtube/keynote'."
                     },
                     "identifier": {
                         "type": "string",
-                        "description": "Source-specific id. For YouTube: video_id (e.g. dQw4w9WgXcQ). For blog: URL. For PDF: file path or URL."
+                        "description": "YouTube video_id, blog URL, or PDF path/URL."
                     },
                     "extras": {
                         "type": "object",
-                        "description": "Optional per-call hints. Recognized keys: published (relative string from search like '4 months ago' — adapter parses to ISO), published_at (absolute YYYY-MM-DD; wins over published if both set), retrieved_at, searched_by (the criteria object), extractor_strategy (override default extractor), skip_extraction (bool), max_topics (int). When ingesting YouTube search results, ALWAYS forward each video's 'published' string so artifact paths get a real date instead of unknown-date/.",
+                        "description": (
+                            "Optional: published (e.g. '4 months ago' - always pass it for YouTube search "
+                            "results), published_at (YYYY-MM-DD), extractor_strategy, skip_extraction, "
+                            "max_topics."
+                        ),
                         "additionalProperties": True
                     }
                 },
@@ -191,13 +181,7 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "batch_ingest_sources",
-            "description": (
-                "Run ingest_source over a list of items with "
-                "per-item failure isolation. Use for the typical "
-                "5-10 item ingest run from a search step. A single "
-                "fetch failure does not abort the run; failed items "
-                "appear in the response with skip_reason set."
-            ),
+            "description": "ingest_source over a list of items; one failure doesn't stop the rest.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -211,8 +195,7 @@ SCHEMAS: list[dict[str, Any]] = [
                                 "extras": {"type": "object", "additionalProperties": True}
                             },
                             "required": ["source_type", "identifier"]
-                        },
-                        "description": "List of ingest items."
+                        }
                     }
                 },
                 "required": ["items"]
@@ -223,34 +206,24 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "extract_topics",
-            "description": (
-                "Run topic extraction on an existing artifact (or "
-                "raw text) and return the structured topics / "
-                "speakers / claims without writing them anywhere. "
-                "Use when you want to inspect what the extractor "
-                "would produce before letting ingest_source commit "
-                "the results, or to re-run extraction with a "
-                "different strategy after the fact."
-            ),
+            "description": "Preview topic extraction for an artifact or raw text without saving anything.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "artifact_id": {
-                        "type": "string",
-                        "description": "Existing artifact id to extract from. Either this or text is required."
+                        "type": "string"
                     },
                     "text": {
-                        "type": "string",
-                        "description": "Raw text to extract from when no artifact exists yet."
+                        "type": "string"
                     },
                     "strategy": {
                         "type": "string",
-                        "description": "Extractor name. Defaults to 'llm_default'. Use 'noop' to skip extraction (no-op pass-through).",
+                        "description": "Default 'llm_default'.",
                         "default": "llm_default"
                     },
                     "max_topics": {
                         "type": "integer",
-                        "description": "Cap on returned topics. Default 12.",
+                        "description": "Default 12.",
                         "default": 12
                     }
                 }
@@ -623,12 +596,10 @@ SCHEMAS.append({
     "function": {
         "name": "merge_topics",
         "description": (
-            "Review and apply merges of duplicate topic nodes in the graph. "
-            "list(status?, limit?) shows proposals (labels, types, similarity, id). "
-            "approve(proposal_id, canonical_label) EXECUTES a merge — irreversible, only after the user "
-            "confirmed; if they don't say which label survives, keep the longer one and say so. "
-            "reject(proposal_id) keeps both nodes. force(label_a, label_b, canonical_label) merges two "
-            "named nodes with no proposal — only on explicit request."
+            "Duplicate topic nodes in the graph. list(status?, limit?) shows merge proposals. "
+            "approve(proposal_id, canonical_label) merges - irreversible, only after the user confirmed (default "
+            "survivor: the longer label). reject(proposal_id). force(label_a, label_b, canonical_label) only on "
+            "explicit request."
         ),
         "parameters": {
             "type": "object",
@@ -637,7 +608,7 @@ SCHEMAS.append({
                 "status": {"type": "string", "enum": ["pending", "approved", "rejected", "merged", "stale", "all"]},
                 "limit": {"type": "integer"},
                 "proposal_id": {"type": "string"},
-                "canonical_label": {"type": "string", "description": "The label that survives; must be one of the two."},
+                "canonical_label": {"type": "string", "description": "The surviving label (one of the two)."},
                 "label_a": {"type": "string"},
                 "label_b": {"type": "string"},
             },

@@ -12,22 +12,20 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze_company_financials",
-            "description": "Perform a vertical common size analysis, calculate key financial ratios, or analyze Year-over-Year (YoY) growth patterns for a company using direct SEC/EDGAR XBRL data.",
+            "description": "Common-size analysis, key ratios or YoY growth for a company from SEC/EDGAR XBRL data.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ticker": {
-                        "type": "string",
-                        "description": "The stock ticker symbol of the company (e.g., 'AAPL', 'MSFT')."
+                        "type": "string"
                     },
                     "analysis_type": {
                         "type": "string",
-                        "enum": ["common_size", "ratios", "growth"],
-                        "description": "The type of financial analysis to run."
+                        "enum": ["common_size", "ratios", "growth"]
                     },
                     "years": {
                         "type": "integer",
-                        "description": "Optional. The number of historical fiscal years to include (default: 3)."
+                        "description": "Default 3."
                     }
                 },
                 "required": ["ticker", "analysis_type"],
@@ -39,23 +37,23 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "compare_company_strategy_and_risks",
-            "description": "Extract, summarize, and compare corporate strategy, R&D patterns, and risk factors from company annual reports (10-K filings) using the LLM.",
+            "description": "Summarise and compare strategy, R&D and risk factors from companies' 10-K filings.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "tickers": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of stock ticker symbols to analyze and compare (e.g., ['AAPL', 'MSFT'])."
+                        "description": "e.g. ['AAPL', 'MSFT']."
                     },
                     "focus_areas": {
                         "type": "array",
                         "items": {"type": "string", "enum": ["strategy", "risks", "rd_patterns", "all"]},
-                        "description": "Optional. Areas of focus for the analysis (default: ['all'])."
+                        "description": "Default ['all']."
                     },
                     "year": {
                         "type": "integer",
-                        "description": "Optional. Target fiscal year to look up (default: latest available)."
+                        "description": "Fiscal year (default latest)."
                     }
                 },
                 "required": ["tickers"],
@@ -67,17 +65,19 @@ SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "analyze_earnings_call",
-            "description": "Extract key business themes, revenue guidance, product updates, and executive sentiment from an earnings call transcript file in the workspace using the LLM.",
+            "description": (
+                "Themes, guidance, product updates and sentiment from an earnings-call transcript in the "
+                "workspace."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "file_path": {
-                        "type": "string",
-                        "description": "Relative path to the transcript file in the workspace (e.g., 'transcripts/Q3_2025_earnings.txt')."
+                        "type": "string"
                     },
                     "extract_guidance": {
                         "type": "boolean",
-                        "description": "Optional. Explicitly pull forward-looking guidance and projections (default: true)."
+                        "description": "Default true."
                     }
                 },
                 "required": ["file_path"],

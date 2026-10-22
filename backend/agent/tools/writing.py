@@ -12,11 +12,9 @@ SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "writing_voice",
             "description": (
-                "Read one of the user's saved writing voices (their own style: notes plus samples of their "
-                "writing) before drafting anything that goes out under their name - a post, email, letter, "
-                "article, bio or speech. action='get' returns the voice's notes, excerpts of its newest samples "
-                "and how to imitate it (no name = the default voice); 'list' lists the voices; 'sample' returns "
-                "one whole sample."
+                "Read one of the user's saved writing voices before drafting anything that goes out under their "
+                "name (post, email, letter, article, bio, speech). action='get': the voice's notes, sample "
+                "excerpts and how to imitate it (no name = default voice); 'list'; 'sample': one whole sample."
             ),
             "parameters": {
                 "type": "object",
@@ -24,15 +22,14 @@ SCHEMAS: list[dict[str, Any]] = [
                     "action": {
                         "type": "string",
                         "enum": ["get", "list", "sample"],
-                        "description": "get (default): the voice to write in. list: all voices. sample: one full sample.",
                     },
                     "name": {
                         "type": "string",
-                        "description": "Voice name, when the user named one. Omit to use the default voice.",
+                        "description": "The voice the user named (default voice if omitted).",
                     },
                     "sample": {
                         "type": "string",
-                        "description": "For action='sample': the sample's title (omit for the newest).",
+                        "description": "action=sample: the sample's title (default: newest).",
                     },
                 },
                 "additionalProperties": False,
