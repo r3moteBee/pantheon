@@ -782,6 +782,7 @@ class AgentCore:
             )[-2000:] if self.interactive else ""
             proposed_tasks: list[str] = []      # create_task proposals waiting for approval this turn
             nudges = 0                          # follow-through rounds this turn (agent/follow_through.py)
+            nudged_text = ""                    # replies before a follow-through round, kept in full_response
             called_tools: set[str] = set()      # tools actually run this turn (for unbacked_claim)
             iterations = 0
             iteration_limit = max_iterations or MAX_TOOL_ITERATIONS
@@ -1122,7 +1123,8 @@ class AgentCore:
                         current_text = final
 
                 if current_text:
-                    full_response = current_text
+                    # A reply the follow-through round answered stays part of it: the user saw both (streamed).
+                    full_response = nudged_text + current_text
 
                 if (not tool_calls_this_round and not current_text.strip()
                         and round_finish in ("length", "empty")):
@@ -1150,6 +1152,7 @@ class AgentCore:
                                 "reply claims" if claimed else "reply ended with",
                                 (claimed or (promised, ""))[0][:120], nudges, MAX_NUDGES)
                     messages.append({"role": "assistant", "content": current_text})
+                    nudged_text += current_text + "\n\n"
                     messages.append({"role": "user", "content": unbacked_claim_nudge(*claimed) if claimed
                                      else follow_through_nudge(promised)})
                     yield {"type": "text_delta", "content": "\n\n"}

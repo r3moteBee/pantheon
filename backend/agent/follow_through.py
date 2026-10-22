@@ -77,9 +77,15 @@ def announced_action(text: str | None) -> str | None:
     return None
 
 
+# "If I ask you to schedule a daily digest, what happens?" asks how things work; a reply describing that
+# ("the task is created paused ...") is not a claim (self-knowledge eval, 2026-10-22).
+_HYPOTHETICAL_RE = re.compile(r"\b(?:what (?:happens|would happen|will happen)|how (?:does|do|would|will|can)|"
+                              r"if i (?:ask|asked|tell|told|say|said|want)|what if|explain how)\b", re.I)
+
+
 def unbacked_claim(text: str | None, user_message: str | None, called: set[str]) -> tuple[str, str] | None:
     """(sentence, tool) when the reply says an action happened that no tool call this turn did."""
-    if not text:
+    if not text or _HYPOTHETICAL_RE.search(user_message or ""):
         return None
     for tool, claim_re, asked_re in _CLAIMS:
         done = bool(called & _SAVE_TOOLS) if tool == "save" else tool in called

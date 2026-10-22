@@ -199,3 +199,20 @@ async def test_a_false_queued_claim_gets_the_call_made():
         [e async for e in agent.chat("Remind me tomorrow at 9am to renew the domain.")]
     assert calls == ["create_task"]
     assert "did not call create_task" in prov.seen[1][-1]["content"]
+
+
+def test_a_question_about_how_tasks_work_is_not_a_claim():
+    from agent.follow_through import unbacked_claim
+    reply = "The task is created paused as a proposal, and once approved it is scheduled every morning."
+    assert unbacked_claim(reply, "If I ask you to schedule a daily digest, what happens?", set()) is None
+    assert unbacked_claim(reply, "Schedule a daily digest every morning.", set())
+
+
+@pytest.mark.asyncio
+async def test_the_reply_before_a_nudge_stays_in_the_saved_answer():
+    # The plan from round 1 was streamed to the user; the saved reply used to keep only the correction.
+    prov = _Prov([("text", "Plan:\n1. Fetch the notes.\n\nI'll fetch the release notes now."),
+                  ("text", "No fetch is needed after all.")])
+    events, _ = await _run(prov)
+    done = [e for e in events if e["type"] == "done"][-1]["full_response"]
+    assert "1. Fetch the notes." in done and "No fetch is needed" in done
