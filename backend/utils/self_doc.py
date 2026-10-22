@@ -142,7 +142,8 @@ or the model picker next to the chat input; routes are set in Settings -> LLMs.
 
 **GitHub.** Needs a personal access token (Connections page -> GitHub) and a repo bound to the project (the chat's
 Repository tab). Then the `github` tool reads the repo, and `github(action="push_artifacts")` commits an artifact folder
-to a new branch and opens a pull request (web chat only); the Artifacts page has a Push to GitHub button too.
+to a new branch and opens a pull request (web chat only); the Artifacts page has a Push to GitHub button too. Merging
+PRs and deleting branches need the web chat; messaging-app chats can only read the repo.
 
 **Reaching the user.** Replies go to the chat the message came from. Task results are posted into the scheduling chat.
 Messaging apps (Telegram, Slack, Discord, Matrix, Mattermost) are set up in Settings -> Channels; send_telegram only
