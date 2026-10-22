@@ -171,7 +171,15 @@ export default function EpisodicEntry({ kind = 'message', item: rawItem, onDelet
             {item.session_id.startsWith('artifact:') ? 'from an artifact' : 'from a conversation'}
           </span>
         ) : null}
-        {ts && <Time value={ts} className="text-xs text-gray-400 whitespace-nowrap" />}
+        {kind === 'semantic' && item.seq ? (
+          // Several entries from one source (e.g. snapshots of a task ledger) look
+          // alike until expanded (round 3 #3): number them oldest to newest.
+          <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-200 whitespace-nowrap"
+            title={`Entry ${item.seq} of ${item.seqTotal} from this source, oldest first`}>
+            {item.seq}/{item.seqTotal}
+          </span>
+        ) : null}
+        {ts && <Time value={ts} relative={!item.seq} seconds={!!item.seq} className="text-xs text-gray-400 whitespace-nowrap" />}
         {typeof item.score === 'number' && (
           <span className="text-xs px-1.5 py-0.5 bg-brand-900 text-brand-200 rounded whitespace-nowrap">
             Score: {(item.score * 100).toFixed(0)}%

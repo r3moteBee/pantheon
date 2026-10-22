@@ -51,10 +51,15 @@ export default function ConnectionsPage() {
  */
 export function ConnectionsFrame({ title, description, actions, children }) {
   return (
+    // Header and body share ONE column, so the title's left edge is the body's
+    // left edge on every tab (round 3 #2: the title sat at the page gutter while
+    // the body sat in a centered column - a "double indent").
     <div className="h-full overflow-y-auto scrollbar-thin">
-      <PageHeader title={title} description={description} actions={actions} />
-      <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-4">
-        {children}
+      <div className="max-w-3xl mx-auto px-4 sm:px-6">
+        <PageHeader title={title} description={description} actions={actions} className="!px-0" />
+        <div className="py-4 sm:py-6 space-y-4">
+          {children}
+        </div>
       </div>
     </div>
   )

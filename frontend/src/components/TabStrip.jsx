@@ -34,17 +34,18 @@ export default function TabStrip({ tabs, value, onChange, variant = 'underline',
     const gap = parseFloat(getComputedStyle(ghost).columnGap) || 0
     const total = widths.reduce((a, w) => a + w, 0) + gap * Math.max(0, widths.length - 1)
     if (total <= avail + 0.5) { setVisible(null); return }
+    // Fixed order (round 3 #1): the visible set never depends on which tab is
+    // active, so tabs stay where muscle memory expects them. When the active
+    // tab is in the overflow, the "More" button carries its name instead.
     const budget = avail - moreNode.getBoundingClientRect().width - gap
-    const activeIdx = Math.max(0, tabs.findIndex((t) => t.id === value))
-    const keep = new Set([activeIdx])
-    let used = widths[activeIdx] || 0
+    const keep = new Set()
+    let used = 0
     for (let i = 0; i < widths.length; i++) {
-      if (i === activeIdx) continue
-      if (used + gap + widths[i] > budget) break
-      keep.add(i); used += gap + widths[i]
+      if (used + (keep.size ? gap : 0) + widths[i] > budget) break
+      keep.add(i); used += (keep.size > 1 ? gap : 0) + widths[i]
     }
     setVisible(keep)
-  }, [tabs, value])
+  }, [tabs])
 
   useLayoutEffect(measure, [measure])
   useEffect(() => {
@@ -124,6 +125,8 @@ function MoreMenu({ items, value, onChange, variant }) {
   const menuRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [coords, setCoords] = useState({ left: 0, top: 0 })
+  const activeHidden = items.find((t) => t.id === value) || null
+  const ActiveIcon = activeHidden?.icon
 
   useLayoutEffect(() => {
     if (!open || !btnRef.current) return
@@ -156,11 +159,14 @@ function MoreMenu({ items, value, onChange, variant }) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`More sections (${items.map((t) => t.label).join(', ')})`}
-        title="More sections"
-        className={tabClass(variant, open)}
+        aria-label={(activeHidden ? `${activeHidden.label} (current section). ` : '') + `More sections (${items.map((t) => t.label).join(', ')})`}
+        title={activeHidden ? `${activeHidden.label} - current section. More sections` : 'More sections'}
+        className={tabClass(variant, open || !!activeHidden)}
       >
-        <MoreHorizontal className="w-3.5 h-3.5" aria-hidden="true" /> More <ChevronDown className="w-3 h-3" aria-hidden="true" />
+        {activeHidden
+          ? <>{ActiveIcon && <ActiveIcon className={variant === 'pill' ? 'w-3 h-3' : 'w-3.5 h-3.5'} aria-hidden="true" />}{activeHidden.label}</>
+          : <><MoreHorizontal className="w-3.5 h-3.5" aria-hidden="true" /> More</>}
+        <ChevronDown className="w-3 h-3" aria-hidden="true" />
       </button>
       {open && createPortal(
         <div
