@@ -24,3 +24,18 @@
     border-radius: 3px;
   }
 }
+
+@layer base {
+  /* Visible keyboard focus everywhere (UI review #20); mouse clicks don't show it. */
+  :where(button, a, [role="button"], [tabindex], input, select, textarea, summary):focus-visible {
+    outline: 2px solid theme('colors.brand.500');
+    outline-offset: 2px;
+    border-radius: 0.25rem;
+  }
+  /* Placeholders must not read like saved values (UI review #35). */
+  ::placeholder {
+    color: theme('colors.gray.500');
+    font-style: italic;
+    opacity: 1;
+  }
+}

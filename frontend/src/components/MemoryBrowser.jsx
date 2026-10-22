@@ -1,8 +1,26 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { Search, Trash2, RefreshCw, ChevronDown, ChevronRight, Plus, X } from 'lucide-react'
 import { useStore } from '../store'
 import { memoryApi } from '../api/client'
 import GraphView from './GraphView'
+import Time from './Time'
+import InfoBox from './InfoBox'
+import EpisodicEntry from './memory/EpisodicEntry'
+
+// Load once per project id. The effects used to depend on the activeProject
+// object, which Layout replaces (id-only -> full record) right after mount,
+// and React StrictMode re-runs mount effects in dev: both refetched (#26).
+// The ref survives StrictMode's simulated remount, so one load per id.
+function useLoadPerProject(projectId, load) {
+  const loadedFor = useRef(null)
+  useEffect(() => {
+    if (!projectId || loadedFor.current === projectId) return
+    loadedFor.current = projectId
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+}
 
 function EpisodicTab() {
   const [notes, setNotes] = useState([])
@@ -29,9 +47,7 @@ function EpisodicTab() {
     setLoading(false)
   }
 
-  useEffect(() => {
-    if (activeProject?.id) loadData()
-  }, [activeProject])
+  useLoadPerProject(activeProject?.id, loadData)
 
   const filteredNotes = notes.filter(n =>
     n.content.toLowerCase().includes(search.toLowerCase()) ||
@@ -67,7 +83,7 @@ function EpisodicTab() {
     <div className="space-y-4">
       <div className="flex gap-2">
         <div className="flex-1 relative">
-          <Search className="w-4 h-4 absolute left-3 top-3 text-gray-500" />
+          <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" aria-hidden="true" />
           <input
             type="text"
             value={search}
@@ -79,9 +95,11 @@ function EpisodicTab() {
         <button
           onClick={loadData}
           disabled={loading}
+          aria-label="Reload episodic memory"
+          title="Reload"
           className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
@@ -108,29 +126,12 @@ function EpisodicTab() {
       {view === 'messages' && (
         <div className="space-y-2">
           {filteredMessages.map(msg => (
-            <div key={msg.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-              <div className="flex items-start justify-between mb-1">
-                <div className="flex items-center gap-2">
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                    msg.role === 'user' ? 'bg-brand-600/20 text-brand-400' : 'bg-emerald-600/20 text-emerald-400'
-                  }`}>
-                    {msg.role}
-                  </span>
-                  <span className="text-xs text-gray-500">{msg.session_id?.slice(0, 8)}</span>
-                  <span className="text-xs text-gray-600">{msg.timestamp}</span>
-                </div>
-                <button
-                  onClick={() => deleteMessage(msg.id)}
-                  className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <p className="text-sm text-gray-300 line-clamp-3">{msg.content}</p>
-            </div>
+            <EpisodicEntry key={msg.id} item={msg} onDelete={deleteMessage} />
           ))}
-          {filteredMessages.length === 0 && (
-            <p className="text-center text-gray-600 py-8">No messages stored yet</p>
+          {filteredMessages.length === 0 && !loading && (
+            <p className="text-center text-gray-400 py-8">
+              {messages.length === 0 ? 'No messages stored yet' : 'No messages match the search'}
+            </p>
           )}
         </div>
       )}
@@ -138,23 +139,14 @@ function EpisodicTab() {
       {view === 'notes' && (
         <div className="space-y-2">
           {filteredNotes.map(note => (
-            <div key={note.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-500 font-mono">{note.id}</p>
-                </div>
-                <button
-                  onClick={() => deleteNote(note.id)}
-                  className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              <p className="text-sm text-gray-300 line-clamp-3">{note.content}</p>
-            </div>
+            <EpisodicEntry key={note.id} kind="note" item={note} onDelete={deleteNote} />
           ))}
-          {filteredNotes.length === 0 && (
-            <p className="text-center text-gray-600 py-8">No notes found</p>
+          {filteredNotes.length === 0 && !loading && (
+            <p className="text-center text-gray-400 py-8">
+              {notes.length === 0
+                ? 'No episodic notes yet. The agent adds one when you ask it to remember something about this conversation.'
+                : 'No notes match the search'}
+            </p>
           )}
         </div>
       )}
@@ -180,9 +172,7 @@ function SemanticTab() {
     setLoading(false)
   }
 
-  useEffect(() => {
-    if (activeProject?.id) loadDocs()
-  }, [activeProject])
+  useLoadPerProject(activeProject?.id, loadDocs)
 
   const filtered = docs.filter(d =>
     d.content.toLowerCase().includes(search.toLowerCase()) ||
@@ -203,7 +193,7 @@ function SemanticTab() {
     <div className="space-y-4">
       <div className="flex gap-2">
         <div className="flex-1 relative">
-          <Search className="w-4 h-4 absolute left-3 top-3 text-gray-500" />
+          <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" aria-hidden="true" />
           <input
             type="text"
             value={search}
@@ -215,9 +205,11 @@ function SemanticTab() {
         <button
           onClick={loadDocs}
           disabled={loading}
+          aria-label="Reload semantic memory"
+          title="Reload"
           className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
@@ -226,7 +218,7 @@ function SemanticTab() {
           <div key={doc.id} className="bg-gray-800 rounded-lg p-3 border border-gray-700">
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1 min-w-0">
-                <p className="text-xs text-gray-500 font-mono">{doc.id}</p>
+                <p className="text-xs text-gray-400 font-mono truncate">{doc.id}</p>
                 {doc.score !== undefined && (
                   <span className="inline-block mt-1 px-2 py-1 bg-brand-900 text-brand-200 text-xs rounded">
                     Score: {(doc.score * 100).toFixed(0)}%
@@ -235,17 +227,20 @@ function SemanticTab() {
               </div>
               <button
                 onClick={() => deleteDoc(doc.id)}
-                className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
+                aria-label="Delete document"
+                title="Delete document"
+                className="ml-2 p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
-            <p className="text-sm text-gray-300 line-clamp-3">{doc.content}</p>
+            <p className="text-sm text-gray-300 line-clamp-3 break-words">{doc.content}</p>
           </div>
         ))}
-        {filtered.length === 0 && (
-          <p className="text-center text-gray-600 py-8">No documents found</p>
+        {filtered.length === 0 && !loading && docs.length > 0 && (
+          <p className="text-center text-gray-400 py-8">No documents match the search</p>
         )}
+        {docs.length === 0 && !loading && <SemanticEmpty />}
       </div>
     </div>
   )
@@ -289,12 +284,7 @@ function ArchivalTab() {
     }
   }
 
-  useEffect(() => {
-    if (activeProject?.id) {
-      loadNotes()
-      loadSummary()
-    }
-  }, [activeProject])
+  useLoadPerProject(activeProject?.id, () => { loadNotes(); loadSummary() })
 
   const filtered = notes.filter(n =>
     n.filename.toLowerCase().includes(search.toLowerCase()) ||
@@ -357,14 +347,6 @@ function ArchivalTab() {
     }
   }
 
-  const formatDate = (iso) => {
-    try {
-      return new Date(iso).toLocaleString()
-    } catch {
-      return iso
-    }
-  }
-
   const formatSize = (bytes) => {
     if (!bytes) return ''
     if (bytes < 1024) return `${bytes} B`
@@ -411,7 +393,9 @@ function ArchivalTab() {
             {showSummary && !editingSummary && (
               <button
                 onClick={() => setShowSummary(false)}
-                className="p-1 text-gray-500 hover:text-gray-300"
+                aria-label="Hide project summary"
+                title="Hide"
+                className="p-1 text-gray-400 hover:text-gray-200"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -428,7 +412,7 @@ function ArchivalTab() {
             />
           ) : (
             <div className="text-sm text-gray-400 whitespace-pre-wrap">
-              {summary || <span className="italic text-gray-600">No project summary yet</span>}
+              {summary || <span className="italic text-gray-400">No project summary yet</span>}
             </div>
           )
         )}
@@ -438,7 +422,7 @@ function ArchivalTab() {
       <div>
         <div className="flex gap-2 mb-4">
           <div className="flex-1 relative">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-gray-500" />
+            <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" aria-hidden="true" />
             <input
               type="text"
               value={search}
@@ -449,7 +433,7 @@ function ArchivalTab() {
           </div>
           <button
             onClick={() => setShowNewNote(!showNewNote)}
-            className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg flex items-center gap-1"
+            className="px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg flex items-center gap-1 whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
             New
@@ -457,6 +441,8 @@ function ArchivalTab() {
           <button
             onClick={loadNotes}
             disabled={loading}
+            aria-label="Reload archival notes"
+            title="Reload"
             className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-300 disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -501,18 +487,20 @@ function ArchivalTab() {
                   className="flex-1 flex items-center gap-2 text-left min-w-0"
                 >
                   {expandedNote === note.filename ? (
-                    <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                    <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
                   ) : (
-                    <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                    <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
                   )}
-                  <span className="text-sm text-gray-300 truncate">{note.filename}</span>
-                  <span className="text-xs text-gray-600 flex-shrink-0">{formatSize(note.size)}</span>
+                  <span className="text-sm text-gray-300 truncate" title={note.filename}>{note.filename}</span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{formatSize(note.size)}</span>
                 </button>
                 <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                  <span className="text-xs text-gray-600">{formatDate(note.modified)}</span>
+                  <Time value={note.modified} className="text-xs text-gray-400 whitespace-nowrap" />
                   <button
                     onClick={() => deleteNote(note.filename)}
-                    className="p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
+                    aria-label={`Delete ${note.filename}`}
+                    title="Delete note"
+                    className="p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -528,7 +516,7 @@ function ArchivalTab() {
             </div>
           ))}
           {filtered.length === 0 && (
-            <p className="text-center text-gray-600 py-8">
+            <p className="text-center text-gray-400 py-8">
               {notes.length === 0 ? 'No archival notes yet' : 'No matching notes'}
             </p>
           )}
@@ -538,18 +526,63 @@ function ArchivalTab() {
   )
 }
 
-export default function MemoryBrowser({ embedded = false }) {
-  const [activeTab, setActiveTab] = useState('episodic')
+const MEMORY_TABS = [
+  { id: 'episodic', label: 'Episodic' },
+  { id: 'semantic', label: 'Semantic' },
+  { id: 'graph', label: 'Graph' },
+  { id: 'archival', label: 'Archival' },
+]
 
-  const tabs = [
-    { id: 'episodic', label: 'Episodic' },
-    { id: 'semantic', label: 'Semantic' },
-    { id: 'graph', label: 'Graph' },
-    { id: 'archival', label: 'Archival' },
-  ]
+// Empty Semantic tab: say what fills it and where to go (#24).
+function SemanticEmpty() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  // Inside the project workspace the tabs are a ?tab= param; standalone, use /artifacts.
+  const openArtifacts = () => {
+    if (searchParams.has('tab')) {
+      const next = new URLSearchParams(searchParams)
+      next.set('tab', 'artifacts'); next.delete('mem')
+      setSearchParams(next)
+    } else {
+      navigate('/artifacts')
+    }
+  }
+  return (
+    <InfoBox title="No semantic memory in this project yet">
+      <p>
+        Semantic memory holds searchable, embedded chunks of this project's artifacts and indexed
+        workspace files, plus facts you asked the agent to remember. Recall searches it on every chat turn.
+      </p>
+      <ul className="list-disc pl-5 mt-1.5 space-y-0.5">
+        <li>Save, create or upload a text artifact; it's indexed automatically.</li>
+        <li>Put files in the project workspace and ask the agent to <em>"index the workspace"</em>.</li>
+        <li>Ask the agent to <em>"remember in semantic memory that…"</em>.</li>
+      </ul>
+      <button
+        type="button"
+        onClick={openArtifacts}
+        className="mt-2.5 px-3 py-1.5 text-xs font-medium rounded-md bg-brand-700 hover:bg-brand-600 text-white whitespace-nowrap"
+      >
+        Open Artifacts
+      </button>
+    </InfoBox>
+  )
+}
+
+export default function MemoryBrowser({ embedded = false }) {
+  // The sub-tab lives in the URL (?mem=graph) so reload and links keep it (#15).
+  const [searchParams, setSearchParams] = useSearchParams()
+  const memParam = searchParams.get('mem')
+  const activeTab = MEMORY_TABS.some((t) => t.id === memParam) ? memParam : 'episodic'
+  const setActiveTab = (id) => {
+    const next = new URLSearchParams(searchParams)
+    if (id === 'episodic') next.delete('mem'); else next.set('mem', id)
+    setSearchParams(next, { replace: true })
+  }
+  const tabs = MEMORY_TABS
 
   return (
-    <div className="flex flex-col h-full bg-gray-950">
+    <div className="flex flex-col h-full bg-gray-950" data-area="memory">
       {!embedded && (
         <div className="px-6 py-4 bg-gray-900 border-b border-gray-800">
           <h1 className="text-xl font-bold text-gray-100">Memory Browser</h1>
@@ -557,12 +590,14 @@ export default function MemoryBrowser({ embedded = false }) {
       )}
 
       {/* Tabs */}
-      <div className="flex gap-0 border-b border-gray-800 overflow-x-auto">
+      <div className="flex gap-0 border-b border-gray-800 overflow-x-auto" role="tablist" aria-label="Memory tiers">
         {tabs.map(tab => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab.id
                 ? 'border-brand-500 text-brand-400'
                 : 'border-transparent text-gray-400 hover:text-gray-300'
@@ -574,7 +609,7 @@ export default function MemoryBrowser({ embedded = false }) {
       </div>
 
       {/* Content */}
-      <div className={"flex-1 " + (activeTab === 'graph' ? "overflow-hidden" : "overflow-y-auto p-6") + " scrollbar-thin"}>
+      <div className={"flex-1 min-h-0 " + (activeTab === 'graph' ? "overflow-hidden" : "overflow-y-auto p-3 sm:p-6") + " scrollbar-thin"}>
         {activeTab === 'episodic' && <EpisodicTab />}
         {activeTab === 'semantic' && <SemanticTab />}
         {activeTab === 'graph' && <GraphView />}

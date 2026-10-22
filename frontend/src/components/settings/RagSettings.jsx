@@ -41,10 +41,10 @@ export default function RagSettings() {
   }
 
   if (loading) {
-    return <div className="text-xs text-gray-500">Loading RAG Settings...</div>
+    return <div className="text-xs text-gray-400">Loading RAG Settings...</div>
   }
 
-  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
 
   return (
     <div className="space-y-6">
@@ -52,7 +52,7 @@ export default function RagSettings() {
         <h3 className="text-sm font-semibold text-gray-200 mb-1 flex items-center gap-1.5">
           <Server className="w-4 h-4 text-brand-400" /> RAG & Retrieval Settings
         </h3>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-400">
           Configure ChromaDB indexing parameters to fine-tune how workspace files and artifacts are chunked and recalled in conversation.
         </p>
       </div>
@@ -62,13 +62,16 @@ export default function RagSettings() {
         <div className="flex items-center justify-between">
           <div>
             <label className="block text-xs font-semibold text-gray-200">Memory Recall</label>
-            <span className="text-[11px] text-gray-500">Automatically query and attach relevant vector memory to LLM context.</span>
+            <span className="text-xs text-gray-400">Automatically query and attach relevant vector memory to LLM context.</span>
           </div>
           <button
             type="button"
             onClick={() => setEnabled(!enabled)}
-            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-              enabled ? 'bg-brand-600' : 'bg-gray-700'
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Memory Recall"
+            className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+              enabled ? 'bg-brand-700' : 'bg-gray-700'
             }`}
           >
             <span
@@ -93,7 +96,7 @@ export default function RagSettings() {
             <option value="paragraphs">Paragraphs (respect line breaks)</option>
             <option value="fixed">Fixed-size (split strictly by characters)</option>
           </select>
-          <span className="text-[10px] text-gray-500 block mt-1">
+          <span className="text-xs text-gray-400 block mt-1">
             "headings" splits Markdown by headers then sub-splits paragraphs. "paragraphs" uses empty lines. "fixed" uses exact character counts.
           </span>
         </div>
@@ -110,7 +113,7 @@ export default function RagSettings() {
               onChange={(e) => setChunkSize(e.target.value)}
               className={inputClass}
             />
-            <span className="text-[10px] text-gray-500 block mt-1">Target token length for each individual vector chunk (default: 500).</span>
+            <span className="text-xs text-gray-400 block mt-1">Target token length for each individual vector chunk (default: 500).</span>
           </div>
 
           {/* Chunk Overlap */}
@@ -124,7 +127,7 @@ export default function RagSettings() {
               onChange={(e) => setChunkOverlap(e.target.value)}
               className={inputClass}
             />
-            <span className="text-[10px] text-gray-500 block mt-1">Token count overlap between consecutive text chunks (default: 50).</span>
+            <span className="text-xs text-gray-400 block mt-1">Token count overlap between consecutive text chunks (default: 50).</span>
           </div>
         </div>
       </div>
@@ -133,7 +136,7 @@ export default function RagSettings() {
         <button
           onClick={save}
           disabled={saving || !chunkSize || chunkOverlap === ''}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50 transition-colors"
         >
           <Save className="w-4 h-4" />
           {saving ? 'Saving...' : 'Save RAG Settings'}

@@ -95,6 +95,18 @@ function computeBetweenness(nodes, links) {
   return result
 }
 
+const LABEL_HIDE_PX = 9      // labels smaller than this on screen are hidden (#23)
+const LABEL_MAX_PX = 16
+const PREWARM_TICKS = 160    // lay out off-screen, then show a settled graph
+
+/**
+ * Props: entities [{id,name,entity_type,degree,attributes}], relationships
+ * [{id,source_id,target_id,relationship_type,weight}], selectedNode,
+ * onSelectNode(node|null), highlightBridges, typeFilter, searchTerm,
+ * pathHighlight {nodeIds:Set, edgeIds:Set}, duplicateIds (Set: dashed ring).
+ * Size follows the container (ResizeObserver); the graph is fitted to the
+ * view once the layout settles, and on the "Fit" button.
+ */
 export default function ForceGraph({
   entities = [],
   relationships = [],
@@ -103,13 +115,37 @@ export default function ForceGraph({
   highlightBridges = false,
   typeFilter = null,
   searchTerm = '',
-  width = 800,
-  height = 600,
-  pathHighlight = null,  // {nodeIds: Set, edgeIds: Set} — fade non-path elements
+  pathHighlight = null,
+  duplicateIds = null,
 }) {
+  const wrapRef = useRef(null)
   const svgRef = useRef(null)
   const simRef = useRef(null)
+  const zoomRef = useRef(null)
+  const sizeRef = useRef({ width: 800, height: 600 })
+  const kRef = useRef(1)
+  const fitRef = useRef(() => {})
+  const labelRef = useRef(() => {})
+  const onSelectRef = useRef(onSelectNode)
+  onSelectRef.current = onSelectNode
+  const [size, setSize] = useState({ width: 800, height: 600 })
   const [betweenness, setBetweenness] = useState(new Map())
+
+  // Track the container size; refit when it changes.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      if (width > 0 && height > 0) setSize({ width: Math.round(width), height: Math.round(height) })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  useEffect(() => {
+    sizeRef.current = size
+    fitRef.current(false)
+  }, [size])
 
   // Build nodes/links from props
   const { nodes, links } = React.useMemo(() => {
@@ -139,6 +175,13 @@ export default function ForceGraph({
 
     return { nodes, links }
   }, [entities, relationships, typeFilter])
+
+  // Hubs keep their label at low zoom: the top ~15% by degree (min degree 3).
+  const hubIds = React.useMemo(() => {
+    const sorted = [...nodes].sort((a, b) => b.degree - a.degree)
+    const n = Math.max(1, Math.ceil(nodes.length * 0.15))
+    return new Set(sorted.slice(0, n).filter((d) => d.degree >= 3).map((d) => d.id))
+  }, [nodes])
 
   // Compute betweenness when data changes
   useEffect(() => {
@@ -171,11 +214,29 @@ export default function ForceGraph({
 
     const g = svg.append('g')
 
+    // Labels keep a readable on-screen size: they grow with zoom up to
+    // LABEL_MAX_PX and hide below LABEL_HIDE_PX (hubs, the selection and
+    // hovered/search/path nodes excepted, see labelRef).
+    const applyLabels = () => {
+      const k = kRef.current
+      g.selectAll('text.node-label')
+        .attr('font-size', (d) => Math.min((d.degree > 5 ? 12 : 11) * k, LABEL_MAX_PX) / k)
+        .attr('display', (d) => {
+          const px = (d.degree > 5 ? 12 : 11) * k
+          return px >= LABEL_HIDE_PX || d._forceLabel ? null : 'none'
+        })
+    }
+    labelRef.current = applyLabels
+
     // Zoom
     const zoom = d3.zoom()
       .scaleExtent([0.1, 8])
-      .on('zoom', (event) => g.attr('transform', event.transform))
-    svg.call(zoom)
+      .on('zoom', (event) => {
+        g.attr('transform', event.transform)
+        if (event.transform.k !== kRef.current) { kRef.current = event.transform.k; applyLabels() }
+      })
+    svg.call(zoom).on('dblclick.zoom', null)
+    zoomRef.current = zoom
 
     // Arrow markers for directed edges
     svg.append('defs').append('marker')
@@ -190,13 +251,20 @@ export default function ForceGraph({
       .attr('d', 'M0,-5L10,0L0,5')
       .attr('fill', '#4b5563')
 
-    // Simulation
+    const { width, height } = sizeRef.current
+    // Simulation: settles quickly and stops (alphaMin) instead of drifting.
     const simulation = d3.forceSimulation(nodes)
       .force('link', d3.forceLink(links).id((d) => d.id).distance(80).strength(0.3))
-      .force('charge', d3.forceManyBody().strength(-150).distanceMax(300))
+      .force('charge', d3.forceManyBody().strength(-180).distanceMax(320))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius((d) => getRadius(d.degree) + 2))
-
+      .force('x', d3.forceX(width / 2).strength(0.04))
+      .force('y', d3.forceY(height / 2).strength(0.04))
+      .force('collision', d3.forceCollide().radius((d) => getRadius(d.degree) + 6))
+      .alphaMin(0.02)
+      .alphaDecay(0.05)
+      .stop()
+    // Lay out before the first paint so the graph appears settled.
+    simulation.tick(PREWARM_TICKS)
     simRef.current = simulation
 
     // Links
@@ -204,7 +272,8 @@ export default function ForceGraph({
       .selectAll('line')
       .data(links)
       .join('line')
-      .attr('stroke', '#374151')
+      .attr('class', 'link')
+      .attr('stroke', '#475569')
       .attr('stroke-opacity', 0.6)
       .attr('stroke-width', (d) => Math.max(1, d.weight * 3))
       .attr('marker-end', 'url(#arrow)')
@@ -215,9 +284,10 @@ export default function ForceGraph({
       .data(links)
       .join('text')
       .attr('text-anchor', 'middle')
-      .attr('fill', '#6b7280')
-      .attr('font-size', '8px')
+      .attr('fill', '#cbd5e1')
+      .attr('font-size', '9px')
       .attr('opacity', 0)
+      .attr('pointer-events', 'none')
       .text((d) => d.type)
 
     // Node groups
@@ -237,6 +307,16 @@ export default function ForceGraph({
       .attr('opacity', 0)
       .attr('class', 'bridge-glow')
 
+    // Possible-duplicate ring (dashed)
+    node.append('circle')
+      .attr('r', (d) => getRadius(d.degree) + 3)
+      .attr('fill', 'none')
+      .attr('stroke', '#fb923c')
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '3 2')
+      .attr('opacity', 0)
+      .attr('class', 'dup-ring')
+
     // Main circle
     node.append('circle')
       .attr('r', (d) => getRadius(d.degree))
@@ -247,23 +327,28 @@ export default function ForceGraph({
 
     // Labels
     node.append('text')
+      .attr('class', 'node-label')
       .attr('dx', (d) => getRadius(d.degree) + 4)
       .attr('dy', '0.35em')
-      .attr('fill', '#d1d5db')
-      .attr('font-size', (d) => (d.degree > 5 ? '11px' : '9px'))
-      .text((d) => d.name.length > 20 ? d.name.slice(0, 18) + '…' : d.name)
+      .attr('fill', '#e5e7eb')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#030712')
+      .attr('stroke-width', 3)
+      .attr('stroke-linejoin', 'round')
+      .text((d) => d.name.length > 24 ? d.name.slice(0, 22) + '…' : d.name)
+      .append('title').text((d) => d.name)
 
     // Click handler
     node.on('click', (event, d) => {
       event.stopPropagation()
-      onSelectNode?.(d)
+      onSelectRef.current?.(d)
     })
 
     // Hover: show connected edges + labels
     node.on('mouseenter', (event, d) => {
       link
         .attr('stroke', (l) =>
-          l.source.id === d.id || l.target.id === d.id ? '#60a5fa' : '#374151'
+          l.source.id === d.id || l.target.id === d.id ? '#60a5fa' : '#475569'
         )
         .attr('stroke-opacity', (l) =>
           l.source.id === d.id || l.target.id === d.id ? 1 : 0.2
@@ -271,18 +356,19 @@ export default function ForceGraph({
       edgeLabel.attr('opacity', (l) =>
         l.source.id === d.id || l.target.id === d.id ? 1 : 0
       )
+      d3.select(event.currentTarget).select('text.node-label').attr('display', null)
     })
 
     node.on('mouseleave', () => {
-      link.attr('stroke', '#374151').attr('stroke-opacity', 0.6)
+      link.attr('stroke', '#475569').attr('stroke-opacity', 0.6)
       edgeLabel.attr('opacity', 0)
+      applyLabels()
     })
 
     // Click background to deselect
-    svg.on('click', () => onSelectNode?.(null))
+    svg.on('click', () => onSelectRef.current?.(null))
 
-    // Tick
-    simulation.on('tick', () => {
+    const draw = () => {
       link
         .attr('x1', (d) => d.source.x)
         .attr('y1', (d) => d.source.y)
@@ -294,44 +380,65 @@ export default function ForceGraph({
         .attr('y', (d) => (d.source.y + d.target.y) / 2)
 
       node.attr('transform', (d) => `translate(${d.x},${d.y})`)
-    })
+    }
+    simulation.on('tick', draw)
 
-    // Auto-fit after initial settle
-    simulation.on('end', () => {
-      const bounds = g.node().getBBox()
-      if (bounds.width > 0 && bounds.height > 0) {
-        const padding = 40
-        const scale = Math.min(
-          (width - padding * 2) / bounds.width,
-          (height - padding * 2) / bounds.height,
-          1.5
-        )
-        const tx = width / 2 - (bounds.x + bounds.width / 2) * scale
-        const ty = height / 2 - (bounds.y + bounds.height / 2) * scale
-        svg.transition().duration(500).call(
-          zoom.transform,
-          d3.zoomIdentity.translate(tx, ty).scale(scale)
-        )
+    // Fit the nodes' bounding box (plus label room) into the view.
+    const fit = (animate = true) => {
+      const { width: w, height: h } = sizeRef.current
+      if (!nodes.length || !w || !h) return
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
+      for (const d of nodes) {
+        const r = getRadius(d.degree)
+        x0 = Math.min(x0, d.x - r); y0 = Math.min(y0, d.y - r)
+        x1 = Math.max(x1, d.x + r + 90); y1 = Math.max(y1, d.y + r)  // 90: label room
       }
-    })
+      const pad = 24
+      const bw = Math.max(x1 - x0, 1), bh = Math.max(y1 - y0, 1)
+      const scale = Math.max(0.1, Math.min((w - pad * 2) / bw, (h - pad * 2) / bh, 2))
+      const t = d3.zoomIdentity
+        .translate(w / 2 - (x0 + bw / 2) * scale, h / 2 - (y0 + bh / 2) * scale)
+        .scale(scale)
+      ;(animate ? svg.transition().duration(400) : svg).call(zoom.transform, t)
+    }
+    fitRef.current = fit
+    draw()
+    fit(false)
+    applyLabels()
 
     return () => {
       simulation.stop()
     }
-  }, [nodes, links, width, height])
+  }, [nodes, links])
 
-  // Update visual states reactively (selection, bridges, search)
+  // Update visual states reactively (selection, bridges, search, path, duplicates)
   useEffect(() => {
     if (!svgRef.current) return
     const svg = d3.select(svgRef.current)
+    const selId = selectedNode?.id
+    const neighbours = new Set()
+    if (selId) {
+      for (const l of links) {
+        const s = l.source?.id ?? l.source, t = l.target?.id ?? l.target
+        if (s === selId) neighbours.add(t)
+        if (t === selId) neighbours.add(s)
+      }
+    }
+
+    // Labels forced visible at any zoom
+    svg.selectAll('text.node-label').each((d) => {
+      d._forceLabel = hubIds.has(d.id) || d.id === selId || neighbours.has(d.id)
+        || searchMatches.has(d.id) || !!pathHighlight?.nodeIds?.has(d.id)
+    })
+    labelRef.current()
 
     // Selected node highlight
     svg.selectAll('.main-circle')
       .attr('stroke', (d) =>
-        selectedNode?.id === d.id ? '#fff' : searchMatches.has(d.id) ? '#fbbf24' : '#1f2937'
+        selId === d.id ? '#fff' : searchMatches.has(d.id) ? '#fbbf24' : '#1f2937'
       )
       .attr('stroke-width', (d) =>
-        selectedNode?.id === d.id ? 3 : searchMatches.has(d.id) ? 2.5 : 1.5
+        selId === d.id ? 3 : searchMatches.has(d.id) ? 2.5 : 1.5
       )
 
     // Bridge glow
@@ -339,6 +446,9 @@ export default function ForceGraph({
       .attr('opacity', (d) =>
         highlightBridges && (betweenness.get(d.id) || 0) > 0.3 ? 0.7 : 0
       )
+
+    svg.selectAll('.dup-ring')
+      .attr('opacity', (d) => (duplicateIds?.has(d.id) ? 0.9 : 0))
 
     // Path highlight overlay — fade non-path nodes/links, gold-stroke path elements
     if (pathHighlight && pathHighlight.nodeIds) {
@@ -364,29 +474,44 @@ export default function ForceGraph({
     } else {
       svg.selectAll('.main-circle').attr('opacity', 1.0)
       svg.selectAll('.node-label').attr('opacity', 1.0)
-      svg.selectAll('line.link').attr('opacity', 0.6).attr('stroke', '#475569')
+      svg.selectAll('line.link').attr('opacity', 1).attr('stroke', '#475569')
     }
-  }, [selectedNode, highlightBridges, betweenness, searchMatches, pathHighlight])
+  }, [nodes, links, hubIds, selectedNode, highlightBridges, betweenness, searchMatches, pathHighlight, duplicateIds])
 
-  if (nodes.length === 0) {
-    return (
-      <div
-        className="flex items-center justify-center text-gray-500 text-sm"
-        style={{ width, height }}
-      >
-        No graph data to visualize
-      </div>
-    )
+  const zoomBy = (factor) => {
+    if (!svgRef.current || !zoomRef.current) return
+    d3.select(svgRef.current).transition().duration(200).call(zoomRef.current.scaleBy, factor)
   }
 
   return (
-    <svg
-      ref={svgRef}
-      width={width}
-      height={height}
-      style={{ width: '100%', height: '100%', minHeight: 400 }}
-      className="bg-gray-950 rounded-lg border border-gray-800"
-    />
+    <div ref={wrapRef} className="relative w-full h-full min-h-[320px]">
+      {nodes.length === 0 ? (
+        <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+          No graph data to visualize
+        </div>
+      ) : (
+        <>
+          <svg
+            ref={svgRef}
+            width={size.width}
+            height={size.height}
+            className="absolute inset-0 bg-gray-950"
+            role="img"
+            aria-label={`Knowledge graph: ${nodes.length} entities, ${links.length} relationships`}
+          />
+          <div className="absolute bottom-3 left-3 flex items-center gap-1 bg-gray-900/90 border border-gray-700 rounded-md p-0.5 shadow">
+            <button type="button" onClick={() => fitRef.current(true)} title="Fit the whole graph in view"
+                    className="px-2 py-1 text-xs text-gray-200 hover:bg-gray-800 rounded whitespace-nowrap">
+              Fit
+            </button>
+            <button type="button" onClick={() => zoomBy(1.4)} aria-label="Zoom in" title="Zoom in"
+                    className="px-2 py-1 text-xs text-gray-200 hover:bg-gray-800 rounded">+</button>
+            <button type="button" onClick={() => zoomBy(1 / 1.4)} aria-label="Zoom out" title="Zoom out"
+                    className="px-2 py-1 text-xs text-gray-200 hover:bg-gray-800 rounded">−</button>
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -402,6 +527,7 @@ function drag(simulation) {
       d.fy = event.y
     })
     .on('end', (event, d) => {
+      // alphaTarget 0: the simulation cools down and stops (alphaMin) again.
       if (!event.active) simulation.alphaTarget(0)
       d.fx = null
       d.fy = null

@@ -14,13 +14,33 @@ import { createChatSocket } from '../../api/client'
 //   activeSkillBadge       skill name while a skill turn streams
 //   pendingSuggestion      { skill, description, reason, suggestionId } | null
 //   acceptSuggestion()     / declineSuggestion()
-//   modelClass, setModelClass   per-conversation router pin ('auto' = unpinned)
+//   modelClass, setModelClass   chat mode = router pin ('auto' = unpinned),
+//                               remembered per project in localStorage
+const modeKey = (projectId) => `pantheon_chat_mode_${projectId}`
+const loadMode = (projectId) => {
+  try { return localStorage.getItem(modeKey(projectId)) || 'auto' } catch { return 'auto' }
+}
+const saveMode = (projectId, mode) => {
+  try {
+    if (!mode || mode === 'auto') localStorage.removeItem(modeKey(projectId))
+    else localStorage.setItem(modeKey(projectId), mode)
+  } catch { /* storage blocked: the mode just isn't remembered */ }
+}
+
 export default function useChatSocket() {
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
   const [pendingSuggestion, setPendingSuggestion] = useState(null)
-  // Chat router: per-conversation model pin ("auto" = let the router pick)
-  // and the current turn's route.
-  const [modelClass, setModelClass] = useState('auto')
+  // Chat router: the chat mode ("auto" = let the router pick), sent with
+  // every message so the backend pins the conversation to it, and the
+  // current turn's route.
+  const projectId = useStore((s) => s.activeProject?.id || 'default')
+  const projectIdRef = useRef(projectId)
+  projectIdRef.current = projectId
+  const [modelClass, setModelClassState] = useState(() => loadMode(projectId))
+  const setModelClass = useCallback((mode) => {
+    setModelClassState(mode)
+    saveMode(projectIdRef.current, mode)
+  }, [])
   const [liveRoute, setLiveRoute] = useState(null)
   const liveRouteRef = useRef(null)
   const socketRef = useRef(null)
@@ -31,12 +51,11 @@ export default function useChatSocket() {
   const appendStreamingContent = useStore((s) => s.appendStreamingContent)
   const addToolCall = useStore((s) => s.addToolCall)
   const clearToolCalls = useStore((s) => s.clearToolCalls)
-  const sessionId = useStore((s) => s.sessionId)
   const setSessionId = useStore((s) => s.setSessionId)
   const addNotification = useStore((s) => s.addNotification)
 
-  // A new conversation starts unpinned.
-  useEffect(() => { if (!sessionId) setModelClass('auto') }, [sessionId])
+  // Each project keeps its own mode (new conversations and reloads included).
+  useEffect(() => { setModelClassState(loadMode(projectId)) }, [projectId])
 
   const connectSocket = useCallback(() => {
     if (socketRef.current?.readyState === WebSocket.OPEN) return

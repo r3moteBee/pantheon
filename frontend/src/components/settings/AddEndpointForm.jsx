@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { llmApi } from '../../api/client'
 import InfoTooltip from '../help/InfoTooltip'
+import { primaryButton, secondaryButton } from '../PageHeader'
 
 const API_TYPES = [
   { value: 'openai', label: 'OpenAI / OpenAI-compatible', placeholder: 'https://api.openai.com/v1' },
@@ -87,13 +88,16 @@ export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed })
       ref={formRef}
       onSubmit={handleSave}
       className='border border-gray-700 rounded-md p-3 bg-gray-900/30 space-y-3'
+      aria-labelledby='add-endpoint-heading'
     >
+      <h4 id='add-endpoint-heading' className='text-sm font-semibold text-gray-200'>Add endpoint</h4>
       <div className='grid grid-cols-1 md:grid-cols-2 gap-3'>
         <div>
-          <label className='block text-xs text-gray-400 mb-1'>
+          <label htmlFor='ep-name' className='block text-xs text-gray-300 mb-1'>
             Name <InfoTooltip text={HINTS.name} />
           </label>
           <input
+            id='ep-name'
             type='text'
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -103,10 +107,11 @@ export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed })
           />
         </div>
         <div>
-          <label className='block text-xs text-gray-400 mb-1'>
+          <label htmlFor='ep-type' className='block text-xs text-gray-300 mb-1'>
             API type <InfoTooltip text={HINTS.api_type} />
           </label>
           <select
+            id='ep-type'
             value={apiType}
             onChange={(e) => setApiType(e.target.value)}
             className='w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm'
@@ -118,52 +123,55 @@ export default function AddEndpointForm({ onSaved, prefill, onPrefillConsumed })
         </div>
       </div>
       <div>
-        <label className='block text-xs text-gray-400 mb-1'>
+        <label htmlFor='ep-url' className='block text-xs text-gray-300 mb-1'>
           Base URL <InfoTooltip text={HINTS.base_url} />
         </label>
         <input
+            id='ep-url'
           type='url'
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder={apiTypeMeta?.placeholder || ''}
+          placeholder={apiTypeMeta?.placeholder ? `e.g. ${apiTypeMeta.placeholder}` : ''}
           required
           className='w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm'
         />
       </div>
       <div>
-        <label className='block text-xs text-gray-400 mb-1'>
+        <label htmlFor='ep-key' className='block text-xs text-gray-300 mb-1'>
           API key <InfoTooltip text={HINTS.api_key} />
         </label>
         <div className='flex gap-2'>
           <input
+            id='ep-key'
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder='(leave blank for Ollama / open endpoints)'
+            placeholder='leave blank for Ollama / open endpoints'
             className='flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm'
           />
           <button
             type='button'
             onClick={() => setShowKey((v) => !v)}
-            className='text-xs px-2 py-1 rounded bg-gray-700'
+            className='text-xs px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 whitespace-nowrap'
+            aria-label={showKey ? 'Hide API key' : 'Show API key'}
           >
             {showKey ? 'Hide' : 'Show'}
           </button>
         </div>
       </div>
-      <div className='flex items-center gap-2'>
+      <div className='flex flex-wrap items-center gap-2'>
         <button
           type='button'
           onClick={handleTest}
           disabled={busy || !baseUrl}
-          className='text-xs px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50'
+          className={secondaryButton}
         >
           {busy ? 'Testing…' : 'Test'}
         </button>
         <button
           type='submit'
           disabled={busy || !name || !baseUrl}
-          className='text-xs px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50'
+          className={primaryButton}
         >
           Save endpoint
         </button>

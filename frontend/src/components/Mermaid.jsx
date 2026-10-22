@@ -88,7 +88,7 @@ export default function Mermaid({ code, basename = 'mermaid-diagram' }) {
     <div className="my-4 group relative rounded border border-gray-800 bg-gray-950/40 p-3">
       <div ref={containerRef} className="flex justify-center overflow-x-auto" />
       {!hasSvg && (
-        <div className="text-xs text-gray-500 italic text-center">Rendering diagram…</div>
+        <div className="text-xs text-gray-400 italic text-center">Rendering diagram…</div>
       )}
       {hasSvg && (
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition">

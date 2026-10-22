@@ -11,7 +11,29 @@ const _initialProjectId = (() => {
 })()
 
 
-export const useStore = create((set) => ({
+// Last open conversation per project (UI review #3). localStorage with an
+// in-memory mirror so a blocked/private storage still works within the tab.
+const _convMirror = new Map()
+const _convKey = (projectId) => `pantheon_conv_${projectId || 'default'}`
+export function readProjectConversation(projectId) {
+  try {
+    const v = localStorage.getItem(_convKey(projectId))
+    if (v) return v
+  } catch {}
+  return _convMirror.get(_convKey(projectId)) || null
+}
+export function writeProjectConversation(projectId, sessionId) {
+  const k = _convKey(projectId)
+  if (sessionId) _convMirror.set(k, sessionId)
+  else _convMirror.delete(k)
+  try {
+    if (sessionId) localStorage.setItem(k, sessionId)
+    else localStorage.removeItem(k)
+  } catch {}
+}
+
+
+export const useStore = create((set, get) => ({
   // Active project
   activeProject: { id: _initialProjectId, name: '' },
   setActiveProject: (project) => {
@@ -19,11 +41,13 @@ export const useStore = create((set) => ({
     set({ activeProject: project })
   },
 
-  // Active session
+  // Active session. Every change is remembered as the active project's
+  // last conversation, so reloads and project switches can reopen it.
   sessionId: null,
-  setSessionId: (id) => set({ sessionId: id }),
-
-
+  setSessionId: (id) => {
+    writeProjectConversation(get().activeProject?.id, id || null)
+    set({ sessionId: id })
+  },
 
   historyOpen: false,
   setHistoryOpen: (v) => set({ historyOpen: !!v }),

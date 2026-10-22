@@ -61,7 +61,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
     }
   }, [adapter.name, appSettings])
 
-  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+  const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
 
   const save = async () => {
     setSaving(true)
@@ -122,7 +122,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
     setRestarting(false)
   }
 
-  const statusColor = adapter.running ? 'text-green-400' : adapter.configured ? 'text-yellow-400' : 'text-gray-500'
+  const statusColor = adapter.running ? 'text-green-400' : adapter.configured ? 'text-yellow-400' : 'text-gray-400'
   const statusText = adapter.running ? 'Running' : adapter.configured ? 'Stopped' : 'Not configured'
   const StatusIcon = adapter.running ? Wifi : WifiOff
 
@@ -149,17 +149,17 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
           <span className="text-sm font-semibold text-gray-200">{adapter.display_name}</span>
           <span className={`text-xs ${statusColor}`}>{statusText}</span>
           {adapter.channel_count > 0 && (
-            <span className="text-xs text-gray-500">{adapter.channel_count} channels</span>
+            <span className="text-xs text-gray-400">{adapter.channel_count} channels</span>
           )}
         </div>
-        {expanded ? <ChevronUp className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
+        {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
       </button>
 
       {expanded && (
         <div className="mt-4 space-y-4">
           {adapter.name === 'telegram' && (
             <>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Connect a Telegram bot to chat with the agent.
                 Create a bot via{' '}
                 <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">@BotFather</a>.
@@ -179,14 +179,14 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="123456789, 987654321"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated chat IDs. Required — the bot ignores everyone else (rejected IDs are logged).</p>
+                <p className="text-xs text-gray-400 mt-1">Comma-separated chat IDs. Required — the bot ignores everyone else (rejected IDs are logged).</p>
               </div>
             </>
           )}
 
           {adapter.name === 'discord' && (
             <>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Connect a Discord bot.
                 Create one at{' '}
                 <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer" className="text-brand-400 hover:underline">Discord Developer Portal</a>.
@@ -207,7 +207,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="123456789012345678"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated server IDs. Required — the bot ignores other servers.</p>
+                <p className="text-xs text-gray-400 mt-1">Comma-separated server IDs. Required — the bot ignores other servers.</p>
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-400 mb-1.5">Slash Command Scope</label>
@@ -225,7 +225,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
 
           {adapter.name === 'slack' && (
             <>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Connect a Slack bot via WebSockets (Socket Mode).
                 Requires a Slack App with <strong>connections:write</strong> and <strong>app_mentions:read</strong> / <strong>message:im</strong> scopes.
               </p>
@@ -250,14 +250,14 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="C123456, C789012"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
+                <p className="text-xs text-gray-400 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
               </div>
             </>
           )}
 
           {adapter.name === 'matrix' && (
             <>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Connect a Matrix bot to your homeserver.
               </p>
               <div>
@@ -295,14 +295,14 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="!abc123:matrix.org"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated room IDs. Required — the bot ignores other rooms.</p>
+                <p className="text-xs text-gray-400 mt-1">Comma-separated room IDs. Required — the bot ignores other rooms.</p>
               </div>
             </>
           )}
 
           {adapter.name === 'mattermost' && (
             <>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-gray-400">
                 Connect a Mattermost bot integration using WebSockets.
               </p>
               <div>
@@ -353,7 +353,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
                   placeholder="channel id, channel id"
                   className={inputClass}
                 />
-                <p className="text-xs text-gray-600 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
+                <p className="text-xs text-gray-400 mt-1">Comma-separated channel IDs. Required — the bot ignores other channels.</p>
               </div>
             </>
           )}
@@ -362,7 +362,7 @@ function AdapterCard({ adapter, settings: appSettings, onSave, onRestart }) {
             <button
               onClick={save}
               disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
               Save
@@ -404,7 +404,7 @@ function TokenField({ label, value, onChange, tokenSet }) {
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={tokenSet ? '(leave blank to keep existing)' : 'Paste token here…'}
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
         />
         <button onClick={() => setShow(!show)} className="px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-gray-400">
           {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -449,7 +449,7 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
 
   if (rows.length === 0) {
     return (
-      <p className="text-xs text-gray-500 italic">
+      <p className="text-xs text-gray-400 italic">
         No channels discovered yet. Start an adapter and refresh.
       </p>
     )
@@ -468,7 +468,7 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-xs text-gray-500 border-b border-gray-800">
+          <tr className="text-xs text-gray-400 border-b border-gray-800">
             <th className="text-left py-2 px-2 font-medium">Channel</th>
             <th className="text-left py-2 px-2 font-medium">Platform</th>
             <th className="text-left py-2 px-2 font-medium">Project</th>
@@ -480,10 +480,10 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
             <tr key={row.channel_id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
               <td className="py-2 px-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-gray-500">{platformIcon(row.platform)}</span>
+                  <span className="text-gray-400">{platformIcon(row.platform)}</span>
                   <span className="text-gray-200">{row.name}</span>
                 </div>
-                <span className="text-xs text-gray-600">{row.channel_id}</span>
+                <span className="text-xs text-gray-400">{row.channel_id}</span>
               </td>
               <td className="py-2 px-2 text-gray-400 capitalize">{row.platform}</td>
               <td className="py-2 px-2">
@@ -497,7 +497,7 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
                       onRemoveMapping(row.channel_id)
                     }
                   }}
-                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:border-brand-500"
                 >
                   <option value="">Default ({defaultProject})</option>
                   {projects.map((p) => (
@@ -509,7 +509,7 @@ function ChannelMappingTable({ channels, mappings, projects, defaultProject, onS
                 {row.mapped && (
                   <button
                     onClick={() => onRemoveMapping(row.channel_id)}
-                    className="text-gray-600 hover:text-red-400"
+                    className="text-gray-400 hover:text-red-400"
                     title="Remove mapping"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -594,7 +594,7 @@ export default function MessagingSettings() {
     }
   }
 
-  const inputClass = 'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-brand-500'
+  const inputClass = 'bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 focus:border-brand-500'
 
   return (
     <div className="space-y-6">
@@ -626,7 +626,7 @@ export default function MessagingSettings() {
           />
         ))}
         {adapters.length === 0 && (
-          <p className="text-xs text-gray-500 italic">Loading adapters…</p>
+          <p className="text-xs text-gray-400 italic">Loading adapters…</p>
         )}
       </div>
 

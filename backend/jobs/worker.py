@@ -158,7 +158,8 @@ class JobWorker:
             return
         if stop_reason == "cancelled":
             logger.info("Job %s cancelled by user", jid)
-            self.store.mark_cancelled(jid, session_id=session_id)
+            self.store.mark_cancelled(jid, session_id=session_id,
+                                      reason="Cancelled by request while running")
             return
         if stop_reason == "stalled":
             logger.warning("Job %s was marked stalled; handler stopped", jid)
@@ -188,7 +189,11 @@ class JobWorker:
             logger.warning("Job %s reported failure: %s", jid, err[:200])
             self.store.fail(jid, error=err, session_id=merged.get("session_id"), result=merged)
         elif status == "cancelled":
-            self.store.mark_cancelled(jid, session_id=merged.get("session_id"), result=merged)
+            self.store.mark_cancelled(
+                jid, session_id=merged.get("session_id"), result=merged,
+                reason=str(merged.get("reason") or merged.get("error")
+                           or "The job's handler stopped and reported itself cancelled"),
+            )
         else:
             self.store.complete(
                 jid,

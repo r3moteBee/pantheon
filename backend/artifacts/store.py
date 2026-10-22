@@ -625,6 +625,33 @@ class ArtifactStore:
                 counts[t] = counts.get(t, 0) + 1
         return counts
 
+    def rename_tag(self, project_id: str, old: str, new: str) -> int:
+        """Rename tag ``old`` to ``new`` on every live artifact in a project.
+        If an artifact already has ``new`` the two merge (no duplicate). Tag
+        edits don't create versions (same as PATCH tags). Returns the count."""
+        old, new = (old or "").strip(), (new or "").strip()
+        if not old or not new or old == new:
+            return 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, tags FROM artifacts WHERE project_id = ? AND deleted_at IS NULL "
+                "AND tags LIKE ?",
+                (project_id, f"%{json.dumps(old)[1:-1]}%"),
+            ).fetchall()
+        n = 0
+        for r in rows:
+            tags = json.loads(r["tags"] or "[]")
+            if old not in tags:
+                continue
+            out: list[str] = []
+            for t in tags:
+                t = new if t == old else t
+                if t not in out:
+                    out.append(t)
+            self.update(r["id"], tags=out)
+            n += 1
+        return n
+
     def feed(
         self,
         *,

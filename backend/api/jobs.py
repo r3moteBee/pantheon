@@ -46,11 +46,24 @@ async def list_jobs(
     return {"jobs": items, "count": len(items), "known_types": known_types()}
 
 
+def _project_name(project_id: str | None) -> str | None:
+    """Display name for the job detail (UI review #32); None if unknown."""
+    if not project_id:
+        return None
+    try:
+        from api.projects import _load_projects
+        p = _load_projects().get(project_id)
+        return (p or {}).get("name") or None
+    except Exception:
+        return None
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(job_id: str) -> dict[str, Any]:
     j = get_store().get_or_none(job_id)
     if not j:
         raise HTTPException(status_code=404, detail="job not found")
+    j["project_name"] = _project_name(j.get("project_id"))
     return j
 
 
@@ -75,9 +88,14 @@ async def create_job(req: CreateJobRequest) -> dict[str, Any]:
     )
 
 
+class CancelJobRequest(BaseModel):
+    reason: str | None = None
+
+
 @router.post("/jobs/{job_id}/cancel")
-async def cancel_job(job_id: str) -> dict[str, str]:
-    if not get_store().cancel(job_id):
+async def cancel_job(job_id: str, req: CancelJobRequest | None = None) -> dict[str, str]:
+    reason = ((req.reason or "").strip() if req else "") or "Cancelled by the user"
+    if not get_store().cancel(job_id, reason=reason):
         raise HTTPException(status_code=400, detail="job not cancellable")
     return {"status": "cancel_requested", "id": job_id}
 

@@ -62,9 +62,9 @@ export default function ChatRouter({ refreshKey }) {
       <div className='flex flex-wrap gap-2'>
         {view.classes.map((c) => (
           <span key={c.name} title={c.usable ? `${c.endpoint}/${c.model}` : c.reason}
-            className={`text-[11px] px-2 py-0.5 rounded border ${c.usable
+            className={`text-xs px-2 py-0.5 rounded border ${c.usable
               ? 'border-emerald-700 text-emerald-300 bg-emerald-950/40'
-              : 'border-gray-700 text-gray-500'}`}>
+              : 'border-gray-700 text-gray-400'}`}>
             {c.label}: {c.usable ? c.model : 'off'}
           </span>
         ))}

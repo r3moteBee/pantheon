@@ -38,15 +38,17 @@ Pages are in `src/pages/`, routed in `src/App.jsx`:
 
 | Path | Page |
 |---|---|
-| `/chat` | Streaming chat. Tabs (`ChatTabs.jsx`): Chat, Memory, Artifacts, Repository, Tasks, Project Settings (`components/chat-tabs/`) |
-| `/memory` | Browse/search episodic, semantic, graph and archival memory; force-graph view |
-| `/artifacts` | Artifact tree with previews, version history, upload, zip export, Push to GitHub, and the project workspace with Copy to Artifacts (`/files` redirects here) |
-| `/skills` | Skill library, security scan, editor, importer |
-| `/mcp` | Redirects to Connections → MCP servers |
-| `/connections` | MCP servers, GitHub, web-search providers (`/sources` redirects here) |
-| `/personas` | Redirects to Settings → Personality (presets) |
+| `/chat` | The **Workspace** (sidebar). Tabs (`ChatTabs.jsx`, `?tab=`): Chat, Memory, Artifacts, Repository, Tasks, Project Settings (`components/chat-tabs/`). `?c=<session>` is the open conversation (also remembered per project in localStorage); `?mem=` the Memory sub-tab; `?id=` an artifact; `?job=` a job in Tasks |
+| `/memory` | Same memory browser outside the Workspace (episodic, semantic, graph, archival; `?mem=`) |
+| `/artifacts`, `/files`, `/workspace` | Redirect to the Workspace Artifacts tab, keeping the query (the tab's scope toggle shows every project) |
+| `/skills` | Skill library, security scan, editor, importer, Sources (skill registry hubs) - `?section=` |
+| `/mcp`, `/sources` | Redirect to Connections |
+| `/connections` | MCP servers (global), GitHub, web-search providers - `?section=` |
+| `/personas`, `/personality` | Redirect to Settings → Personality |
 | `/projects` | Project CRUD, import/export, delete with a preview of what goes (`DeleteProjectModal`) |
-| `/settings` | LLMs, RAG Settings, Channels, About you, Personality, Skills, Tasks, Security, Secrets, System Update (`/personality` and `/tasks` redirect here) |
+| `/settings` | `?section=`: LLMs, RAG Settings, Channels, About you, Personality, Tasks, Sandbox & Audit, Secrets, System Update (`/tasks` redirects here; `?tab=skills` goes to Skills → Sources) |
+
+Shared UI pieces: `utils/time.js` + `components/Time.jsx` (every timestamp: local, relative when recent, full time + zone on hover), `components/PageHeader.jsx` (page title + the primary/secondary button styles), `components/InfoBox.jsx` (blue help vs amber warning), `hooks/usePageTitle.js`, `hooks/useUrlState.js`. Text on dark backgrounds is `text-gray-400` or lighter and at least 12px; icon-only buttons have `aria-label`; the focus ring comes from `index.css` (don't add `outline-none`).
 
 ## Structure
 

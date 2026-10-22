@@ -386,6 +386,8 @@ export const skillsApi = {
 // Tasks API
 export const tasksApi = {
   listAll: () => api.get('/api/tasks/all'),
+  // Schedule created by the user in the UI: no plan review (user-approved), see ProjectTasksPanel.
+  create: (data) => api.post('/api/tasks', data),
   cancel: (taskId) => api.delete(`/api/tasks/${taskId}`),
   runNow: (taskId) => api.post(`/api/tasks/${taskId}/run-now`),
   approve: (taskId) => api.post(`/api/tasks/${taskId}/approve`),

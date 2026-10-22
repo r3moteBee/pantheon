@@ -802,7 +802,7 @@ class GenericSkillRegistryAdapter(HubAdapter):
 # ── Importer Orchestrator ───────────────────────────────────────────────────
 
 # Static built-in adapters. Configured registries are added at runtime via
-# register_skill_registry() from the hubs saved in Settings → Skills (data/skill_registries.json).
+# register_skill_registry() from the hubs saved in Skills → Sources (data/skill_registries.json).
 _ADAPTERS: dict[str, HubAdapter] = {
     "skill_md": SkillMdAdapter(),
     "github": GitHubAdapter(),

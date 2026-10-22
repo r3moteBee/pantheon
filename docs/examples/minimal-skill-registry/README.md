@@ -14,7 +14,7 @@ pip install fastapi uvicorn
 uvicorn server:app --reload --port 8788
 ```
 
-Then in Pantheon: **Settings → Skills → Skill Registry Hubs → Add Hub** and
+Then in Pantheon: **Skills → Sources → Add Hub** and
 enter `http://localhost:8788`. The new registry appears in the skill
 importer's **Search Hubs** tab alongside the built-in hubs.
 

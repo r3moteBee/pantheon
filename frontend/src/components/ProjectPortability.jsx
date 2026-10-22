@@ -20,6 +20,8 @@ import {
 } from 'lucide-react'
 import { projectsApi } from '../api/client'
 import { useStore } from '../store'
+import { secondaryButton } from './PageHeader'
+import Time from './Time'
 
 // ── Export Modal ──────────────────────────────────────────────────────────────
 
@@ -94,10 +96,10 @@ function ExportModal({ project, onClose }) {
             <Download className="w-5 h-5 text-brand-400" />
             <div>
               <h2 className="text-lg font-semibold text-gray-100">Export Project</h2>
-              <p className="text-xs text-gray-500">{project.name}</p>
+              <p className="text-xs text-gray-400">{project.name}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-300">
+          <button aria-label="Close" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-300">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -124,7 +126,7 @@ function ExportModal({ project, onClose }) {
               <Icon className="w-4 h-4 text-gray-400 shrink-0" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium text-gray-200">{label}</div>
-                <div className="text-xs text-gray-500">{desc}</div>
+                <div className="text-xs text-gray-400">{desc}</div>
               </div>
             </label>
           ))}
@@ -174,7 +176,7 @@ function ExportModal({ project, onClose }) {
           <button
             onClick={doExport}
             disabled={loading || selectedComponents.length === 0}
-            className="flex-1 px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+            className="flex-1 px-4 py-2.5 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
             Export
@@ -280,7 +282,7 @@ function ImportModal({ onClose, onImported }) {
             <Upload className="w-5 h-5 text-green-400" />
             <h2 className="text-lg font-semibold text-gray-100">Import Project</h2>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-300">
+          <button aria-label="Close" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-300">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -298,11 +300,11 @@ function ImportModal({ onClose, onImported }) {
               onChange={handleFileSelect}
               className="hidden"
             />
-            <Package className="w-8 h-8 text-gray-500 mx-auto mb-2" />
+            <Package className="w-8 h-8 text-gray-400 mx-auto mb-2" />
             {file ? (
               <div className="text-sm text-gray-300">{file.name} ({(file.size / 1024).toFixed(1)} KB)</div>
             ) : (
-              <div className="text-sm text-gray-500">Click to select a .zip export file</div>
+              <div className="text-sm text-gray-400">Click to select a .zip export file</div>
             )}
           </div>
 
@@ -316,7 +318,7 @@ function ImportModal({ onClose, onImported }) {
                   value={targetName}
                   onChange={(e) => setTargetName(e.target.value)}
                   placeholder="Leave empty to use original name"
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
                 />
               </div>
 
@@ -327,10 +329,10 @@ function ImportModal({ onClose, onImported }) {
                   value={targetId}
                   onChange={(e) => setTargetId(e.target.value)}
                   placeholder="Leave empty to use original ID"
-                  className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                  className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
                 />
                 {!overwrite && (
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-xs text-gray-400">
                     If the ID already exists, a new unique ID will be created automatically.
                   </p>
                 )}
@@ -355,7 +357,7 @@ function ImportModal({ onClose, onImported }) {
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs cursor-pointer transition-colors ${
                       components[key]
                         ? 'bg-brand-900/40 text-brand-300 border border-brand-700'
-                        : 'bg-gray-800 text-gray-500 border border-gray-700'
+                        : 'bg-gray-800 text-gray-400 border border-gray-700'
                     }`}
                   >
                     <input
@@ -393,7 +395,7 @@ function ImportModal({ onClose, onImported }) {
                     <div>Archive: {(scanResult.stats.archive_size / 1024).toFixed(1)} KB</div>
                   )}
                   {scanResult.stats.file_count && <div>Files: {scanResult.stats.file_count}</div>}
-                  {scanResult.stats.exported_at && <div>Exported: {new Date(scanResult.stats.exported_at).toLocaleString()}</div>}
+                  {scanResult.stats.exported_at && <div>Exported: <Time value={scanResult.stats.exported_at} /></div>}
                 </div>
               )}
 
@@ -408,7 +410,7 @@ function ImportModal({ onClose, onImported }) {
                         <Icon className={`w-3.5 h-3.5 mt-0.5 shrink-0 ${style.color}`} />
                         <div>
                           <div className="text-xs text-gray-200">{f.message}</div>
-                          {f.detail && <div className="text-xs text-gray-500 mt-0.5">{f.detail}</div>}
+                          {f.detail && <div className="text-xs text-gray-400 mt-0.5">{f.detail}</div>}
                         </div>
                       </div>
                     )
@@ -437,7 +439,7 @@ function ImportModal({ onClose, onImported }) {
                 </div>
               )}
               {importResult.stats && Object.keys(importResult.stats).length > 0 && (
-                <div className="text-xs text-gray-500 mt-2 space-y-0.5">
+                <div className="text-xs text-gray-400 mt-2 space-y-0.5">
                   {Object.entries(importResult.stats).map(([k, v]) => (
                     <div key={k}>{k.replace(/_/g, ' ')}: {v}</div>
                   ))}
@@ -472,7 +474,7 @@ function ImportModal({ onClose, onImported }) {
           {importResult?.success && (
             <button
               onClick={onClose}
-              className="w-full px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg transition-colors"
+              className="w-full px-4 py-2.5 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg transition-colors"
             >
               Done
             </button>
@@ -492,6 +494,7 @@ export function ExportButton({ project }) {
       <button
         onClick={() => setShowModal(true)}
         title="Export project"
+        aria-label={`Export project ${project.name}`}
         className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors"
       >
         <Download className="w-3.5 h-3.5" />
@@ -507,10 +510,10 @@ export function ImportButton({ onImported }) {
     <>
       <button
         onClick={() => setShowModal(true)}
-        className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-green-300 text-sm rounded transition-colors flex items-center gap-2"
+        className={secondaryButton}
       >
-        <Upload className="w-3.5 h-3.5" />
-        Import Project
+        <Upload className="w-3.5 h-3.5" aria-hidden="true" />
+        Import
       </button>
       {showModal && (
         <ImportModal

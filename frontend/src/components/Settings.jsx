@@ -1,129 +1,95 @@
-import React, { useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { RefreshCw, MessageCircle, Shield, Cpu, Key, Library, Clock, Server, User as UserIcon, UserRound } from 'lucide-react'
+import React from 'react'
+import { Navigate } from 'react-router-dom'
+import { RefreshCw, MessageCircle, Shield, Cpu, Key, Clock, Server, User as UserIcon, UserRound } from 'lucide-react'
 import MessagingSettings from './MessagingSettings'
 import LlmSettings from './settings/LlmSettings'
 import RagSettings from './settings/RagSettings'
 import ChannelsHelp from './settings/ChannelsHelp'
 import PersonalitySettings from './settings/PersonalitySettings'
 import AboutYouSettings from './settings/AboutYouSettings'
-import SkillHubsSettings from './settings/SkillHubsSettings'
 import TasksSettings from './settings/TasksSettings'
 import SecuritySettings from './settings/SecuritySettings'
 import SecretsSettings from './settings/SecretsSettings'
 import SystemUpdate from './settings/SystemUpdate'
+import { useUrlParam } from '../hooks/useUrlState'
+import usePageTitle from '../hooks/usePageTitle'
+
+const TABS = [
+  { id: 'llms', label: 'LLMs', icon: Cpu },
+  { id: 'rag', label: 'RAG Settings', icon: Server },
+  { id: 'channels', label: 'Channels', icon: MessageCircle },
+  { id: 'about', label: 'About you', icon: UserRound },
+  { id: 'personality', label: 'Personality', icon: UserIcon },
+  { id: 'tasks', label: 'Tasks', icon: Clock },
+  // Sandbox status + security audit log. Not to be confused with the skill
+  // scans under Skills -> Security.
+  { id: 'security', label: 'Sandbox & Audit', icon: Shield },
+  { id: 'secrets', label: 'Secrets', icon: Key },
+  { id: 'update', label: 'System Update', icon: RefreshCw },
+]
+
+// Every section shares one content column (UI review #36: was 672/768 px).
+function Section({ children, spaced = true }) {
+  return (
+    <div className="h-full overflow-y-auto scrollbar-thin">
+      <div className={`max-w-[860px] mx-auto p-4 sm:p-6 ${spaced ? 'space-y-8' : ''}`}>
+        {children}
+      </div>
+    </div>
+  )
+}
 
 export default function Settings() {
-  // ?tab=<id> opens a tab directly (e.g. /personas redirects to Personality).
-  const [params] = useSearchParams()
-  const [tab, setTab] = useState(params.get('tab') || 'llms')
+  // ?section=<id> keeps the open section across reloads (UI review #15);
+  // the older ?tab=<id> links (e.g. /personas -> Personality) still work.
+  // "skills" (registry hubs) moved to Skills -> Sources.
+  const [rawTab] = useUrlParam('section', 'llms', { aliases: ['tab'] })
+  const [tab, setTab] = useUrlParam('section', 'llms', {
+    aliases: ['tab'], allowed: TABS.map((t) => t.id),
+  })
+  const current = TABS.find((t) => t.id === tab)
+  usePageTitle(current?.label, 'Settings')
 
-  const tabs = [
-    { id: 'llms', label: 'LLMs', icon: Cpu },
-    { id: 'rag', label: 'RAG Settings', icon: Server },
-    { id: 'channels', label: 'Channels', icon: MessageCircle },
-    { id: 'about', label: 'About you', icon: UserRound },
-    { id: 'personality', label: 'Personality', icon: UserIcon },
-    { id: 'skills', label: 'Skills', icon: Library },
-    { id: 'tasks', label: 'Tasks', icon: Clock },
-    { id: 'security', label: 'Security', icon: Shield },
-    { id: 'secrets', label: 'Secrets', icon: Key },
-    { id: 'update', label: 'System Update', icon: RefreshCw },
-  ]
+  if (rawTab === 'skills') return <Navigate to="/skills?section=sources" replace />
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center border-b border-gray-800 px-6 pt-4 overflow-x-auto scrollbar-thin">
-        {tabs.map((t) => {
+      <div
+        role="tablist"
+        aria-label="Settings sections"
+        className="flex items-center border-b border-gray-800 px-2 sm:px-6 pt-4 overflow-x-auto scrollbar-thin"
+      >
+        {TABS.map((t) => {
           const Icon = t.icon
+          const active = tab === t.id
           return (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={active}
               onClick={() => setTab(t.id)}
               className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-                tab === t.id
+                active
                   ? 'border-brand-400 text-brand-300'
-                  : 'border-transparent text-gray-500 hover:text-gray-300'
+                  : 'border-transparent text-gray-400 hover:text-gray-200'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
               {t.label}
             </button>
           )
         })}
       </div>
       <div className="flex-1 overflow-hidden">
-        {tab === 'llms' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <LlmSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'rag' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <RagSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'channels' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <ChannelsHelp />
-              <MessagingSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'skills' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <SkillHubsSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'tasks' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-3xl mx-auto p-6 space-y-8">
-              <TasksSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'about' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-3xl mx-auto p-6">
-              <AboutYouSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'personality' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-3xl mx-auto p-6">
-              <PersonalitySettings />
-            </div>
-          </div>
-        )}
-        {tab === 'security' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <SecuritySettings />
-            </div>
-          </div>
-        )}
-        {tab === 'secrets' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <SecretsSettings />
-            </div>
-          </div>
-        )}
-        {tab === 'update' && (
-          <div className="h-full overflow-y-auto scrollbar-thin">
-            <div className="max-w-2xl mx-auto p-6 space-y-8">
-              <SystemUpdate />
-            </div>
-          </div>
-        )}
+        {tab === 'llms' && <Section><LlmSettings /></Section>}
+        {tab === 'rag' && <Section><RagSettings /></Section>}
+        {tab === 'channels' && <Section><ChannelsHelp /><MessagingSettings /></Section>}
+        {tab === 'tasks' && <Section><TasksSettings /></Section>}
+        {tab === 'about' && <Section spaced={false}><AboutYouSettings /></Section>}
+        {tab === 'personality' && <Section spaced={false}><PersonalitySettings /></Section>}
+        {tab === 'security' && <Section><SecuritySettings /></Section>}
+        {tab === 'secrets' && <Section><SecretsSettings /></Section>}
+        {tab === 'update' && <Section><SystemUpdate /></Section>}
       </div>
     </div>
   )

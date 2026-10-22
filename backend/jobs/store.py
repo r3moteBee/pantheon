@@ -90,6 +90,11 @@ class JobStore:
         sql = sql_path.read_text() if sql_path.exists() else _INLINE_SCHEMA
         with self._connect() as conn:
             conn.executescript(sql)
+            # Why a job was cancelled (UI review #6/#32). Added after the
+            # table shipped, so existing databases get the column here.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+            if "cancel_reason" not in cols:
+                conn.execute("ALTER TABLE jobs ADD COLUMN cancel_reason TEXT")
 
     def create(
         self,
@@ -341,17 +346,26 @@ class JobStore:
 
     def mark_cancelled(
         self, job_id: str, *, session_id: str | None = None,
-        result: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None, reason: str | None = None,
     ) -> bool:
-        """running → cancelled once the handler has actually stopped."""
+        """running → cancelled once the handler has actually stopped.
+
+        The reason recorded is the one given at cancel() time if any, else
+        ``reason`` (e.g. what a handler reported), else a generic note. It is
+        also copied into ``error`` (when empty) so the agent's job-ledger
+        context, which shows ``error`` for cancelled jobs, explains it."""
+        fallback = reason or "Cancelled (no reason recorded)"
         with self._connect() as conn:
             cur = conn.execute(
                 """UPDATE jobs SET status = ?, completed_at = ?,
                                    session_id = COALESCE(?, session_id),
-                                   result = COALESCE(?, result)
+                                   result = COALESCE(?, result),
+                                   cancel_reason = COALESCE(cancel_reason, ?),
+                                   error = COALESCE(error, cancel_reason, ?)
                    WHERE id = ? AND status = 'running'""",
                 (JobStatus.CANCELLED, _now(), session_id,
-                 json.dumps(result) if result is not None else None, job_id),
+                 json.dumps(result) if result is not None else None,
+                 fallback[:2000], fallback[:2000], job_id),
             )
             return cur.rowcount > 0
 
@@ -360,23 +374,27 @@ class JobStore:
             row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return row["status"] if row else None
 
-    def cancel(self, job_id: str) -> bool:
-        """User-requested cancel. If queued, terminate immediately. If
-        running, set the cooperative flag and let the handler stop on the
-        next ctx.cancel_requested() poll."""
+    def cancel(self, job_id: str, *, reason: str | None = None) -> bool:
+        """Requested cancel. If queued, terminate immediately. If running,
+        set the cooperative flag and let the handler stop on the next
+        ctx.cancel_requested() poll. ``reason`` is stored in cancel_reason
+        (and shown in the Tasks detail)."""
+        reason = (reason or "Cancelled by request")[:2000]
         with self._connect() as conn:
             row = conn.execute("SELECT status FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if not row:
                 return False
             if row["status"] == JobStatus.QUEUED:
                 conn.execute(
-                    "UPDATE jobs SET status=?, completed_at=? WHERE id=?",
-                    (JobStatus.CANCELLED, _now(), job_id),
+                    """UPDATE jobs SET status=?, completed_at=?, cancel_reason=?,
+                                       error=COALESCE(error, ?) WHERE id=?""",
+                    (JobStatus.CANCELLED, _now(), reason, reason, job_id),
                 )
                 return True
             if row["status"] == JobStatus.RUNNING:
                 conn.execute(
-                    "UPDATE jobs SET cancel_requested = 1 WHERE id = ?", (job_id,)
+                    "UPDATE jobs SET cancel_requested = 1, cancel_reason = ? WHERE id = ?",
+                    (reason, job_id),
                 )
                 return True
             return False

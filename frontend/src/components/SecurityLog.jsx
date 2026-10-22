@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { Shield, RefreshCw, Trash2, ChevronDown, ChevronUp, AlertTriangle, ShieldX, ShieldCheck, Key, Settings, Zap } from 'lucide-react'
 import { settingsApi } from '../api/client'
 import { useStore } from '../store'
+import Time from './Time'
 
 const EVENT_CONFIG = {
   'auth.login_success':          { icon: ShieldCheck, color: 'text-green-400', label: 'Login success' },
@@ -10,7 +11,7 @@ const EVENT_CONFIG = {
   'skill.scan_failed':           { icon: ShieldX, color: 'text-red-400', label: 'Scan failed' },
   'skill.scan_all':              { icon: Shield, color: 'text-blue-400', label: 'Scan all' },
   'skill.enabled':               { icon: Zap, color: 'text-green-400', label: 'Skill enabled' },
-  'skill.disabled':              { icon: Zap, color: 'text-gray-500', label: 'Skill disabled' },
+  'skill.disabled':              { icon: Zap, color: 'text-gray-400', label: 'Skill disabled' },
   'skill.override_used':         { icon: AlertTriangle, color: 'text-amber-400', label: 'Override used' },
   'skill.override_failed':       { icon: ShieldX, color: 'text-red-400', label: 'Override failed' },
   'skill.quarantined':           { icon: ShieldX, color: 'text-red-400', label: 'Quarantined' },
@@ -53,7 +54,6 @@ function LogEntry({ entry }) {
     ([k]) => !['ts', 'event', 'level'].includes(k)
   )
 
-  const ts = entry.ts ? new Date(entry.ts).toLocaleString() : ''
 
   return (
     <div
@@ -65,20 +65,20 @@ function LogEntry({ entry }) {
         <span className={`text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
         <span className="flex-1" />
         {details.length > 0 && (
-          <span className="text-[10px] text-gray-600">
+          <span className="text-xs text-gray-400 truncate min-w-0">
             {details.slice(0, 3).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')}
           </span>
         )}
-        <span className="text-[10px] text-gray-600 flex-shrink-0">{ts}</span>
+        <span className="text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">{entry.ts && <Time value={entry.ts} />}</span>
         {details.length > 0 && (
-          expanded ? <ChevronUp className="w-3 h-3 text-gray-600" /> : <ChevronDown className="w-3 h-3 text-gray-600" />
+          expanded ? <ChevronUp className="w-3 h-3 text-gray-400" /> : <ChevronDown className="w-3 h-3 text-gray-400" />
         )}
       </div>
       {expanded && details.length > 0 && (
         <div className="mt-2 pl-5 space-y-0.5">
           {details.map(([k, v]) => (
-            <div key={k} className="text-[11px]">
-              <span className="text-gray-500">{k}:</span>{' '}
+            <div key={k} className="text-xs">
+              <span className="text-gray-400">{k}:</span>{' '}
               <span className="text-gray-300 font-mono">
                 {typeof v === 'object' ? JSON.stringify(v) : String(v)}
               </span>
@@ -139,7 +139,7 @@ export default function SecurityLog({ embedded = false }) {
           <div className="flex items-center gap-3">
             {!embedded && <Shield className="w-5 h-5 text-brand-400" />}
             {!embedded && <h1 className="text-lg font-semibold text-white">Security Log</h1>}
-            <span className="text-xs text-gray-500">{total} events</span>
+            <span className="text-xs text-gray-400">{total} events</span>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -168,7 +168,7 @@ export default function SecurityLog({ embedded = false }) {
               <button
                 onClick={() => setConfirmClear(true)}
                 disabled={entries.length === 0}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs bg-gray-800 text-gray-500 hover:text-red-400 hover:bg-gray-700 transition-colors disabled:opacity-50"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs bg-gray-800 text-gray-400 hover:text-red-400 hover:bg-gray-700 transition-colors disabled:opacity-50"
               >
                 <Trash2 className="w-3 h-3" /> Clear
               </button>
@@ -182,10 +182,10 @@ export default function SecurityLog({ embedded = false }) {
             <button
               key={opt.value}
               onClick={() => setFilter(opt.value)}
-              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
+              className={`px-2.5 py-1 rounded text-xs transition-colors ${
                 filter === opt.value
                   ? 'bg-brand-900 text-brand-300'
-                  : 'bg-gray-800 text-gray-500 hover:text-gray-300'
+                  : 'bg-gray-800 text-gray-400 hover:text-gray-300'
               }`}
             >
               {opt.label}
@@ -195,11 +195,11 @@ export default function SecurityLog({ embedded = false }) {
 
         {/* Log entries */}
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-500 py-8">
+          <div className="flex items-center gap-2 text-sm text-gray-400 py-8">
             <RefreshCw className="w-4 h-4 animate-spin" /> Loading...
           </div>
         ) : filtered.length === 0 ? (
-          <div className="text-center py-12 text-gray-600">
+          <div className="text-center py-12 text-gray-400">
             <Shield className="w-8 h-8 mx-auto mb-3 opacity-50" />
             <p className="text-sm">No security events recorded.</p>
           </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import { Search, Save } from 'lucide-react'
+import { Search, Save, ArrowUp, ArrowDown, Copy, Trash2 } from 'lucide-react'
 import { useStore } from '../../store'
 import { settingsApi } from '../../api/client'
 import HelpDrawer from '../help/HelpDrawer'
+import Time from '../Time'
+import { primaryButton, secondaryButton } from '../PageHeader'
 
 export default function SearchProvidersTab() {
   const [providers, setProviders] = useState([])
@@ -46,6 +48,8 @@ export default function SearchProvidersTab() {
   }
 
   const removeProvider = (idx) => {
+    const p = providers[idx]
+    if (!confirm(`Remove the "${p.name || `#${idx + 1}`}" provider from the chain? (Takes effect when you save.)`)) return
     setProviders(providers.filter((_, i) => i !== idx))
   }
 
@@ -180,7 +184,7 @@ export default function SearchProvidersTab() {
   const usageFor = (name) => usage.providers?.find((u) => u.name === name) || {}
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="h-full overflow-y-auto p-4 sm:p-6">
       <div className="max-w-3xl mx-auto space-y-4">
         <div className="flex items-center gap-2">
           <Search className="w-5 h-5 text-gray-400" />
@@ -190,14 +194,14 @@ export default function SearchProvidersTab() {
         <HelpDrawer title='About the search provider chain' storageKey='help.search-providers'>
           <p className='text-xs text-gray-400 mb-3'>
             Click a <strong>provider type on the left</strong> (or the <strong>+ Add</strong> button on the right) to append it to the search chain.
-            Pantheon's <code className='text-amber-200/80'>web_search</code> tool
+            Pantheon's <code className='text-sky-200'>web_search</code> tool
             tries providers <strong>top-to-bottom</strong> and falls through to
             the next one on any error, empty result set, or exhausted quota /
             rate limit. Quotas are tracked locally per provider — reset them at
             the start of a new billing cycle.
           </p>
           <table className='w-full text-xs mb-3'>
-            <thead className='text-gray-500'>
+            <thead className='text-gray-400'>
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Type</th>
                 <th className='text-left font-normal pb-1 pr-3'>Needs key?</th>
@@ -206,12 +210,12 @@ export default function SearchProvidersTab() {
               </tr>
             </thead>
             <tbody className='text-gray-300'>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('brave')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Brave preset to chain'
                   >
                     Brave
@@ -223,12 +227,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('brave')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('tavily')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Tavily preset to chain'
                   >
                     Tavily
@@ -240,12 +244,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('tavily')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('google')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Google Custom Search preset to chain'
                   >
                     Google
@@ -257,12 +261,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('google')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('bing')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Bing Search preset to chain'
                   >
                     Bing
@@ -274,12 +278,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('bing')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('wikipedia')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Wikipedia preset to chain'
                   >
                     Wikipedia
@@ -291,12 +295,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('wikipedia')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('searxng')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add SearXNG preset to chain'
                   >
                     SearXNG
@@ -308,12 +312,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('searxng')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('ddg')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add DuckDuckGo preset to chain'
                   >
                     DuckDuckGo
@@ -325,12 +329,12 @@ export default function SearchProvidersTab() {
                   <button onClick={() => addPreset('ddg')} className='text-brand-400 hover:text-brand-300 hover:underline'>+ Add</button>
                 </td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
+              <tr className='border-t border-sky-900/40'>
                 <td className='py-1.5 pr-3 align-top'>
                   <button
                     type='button'
                     onClick={() => addPreset('generic')}
-                    className='text-left text-brand-400 hover:underline focus:outline-none focus:underline font-semibold'
+                    className='text-left text-brand-400 hover:underline focus:underline font-semibold'
                     title='Pre-fill and add Generic JSON preset to chain'
                   >
                     Generic JSON
@@ -346,17 +350,17 @@ export default function SearchProvidersTab() {
           </table>
           <p className='text-xs text-gray-400 mb-3'>
             API keys are stored in the local vault keyed by the
-            <code className='text-amber-200/80'> api_key vault key </code>
+            <code className='text-sky-200'> api_key vault key </code>
             field. The <strong>Test</strong> panel at the bottom lets you fire a
             real query and see which provider answered (plus a fallthrough
             trace if earlier ones failed).
           </p>
-          <div className='text-xs border-t border-amber-900/30 pt-3 text-amber-200/70'>
+          <div className='text-xs border-t border-sky-900/40 pt-3 text-gray-300'>
             <strong>Note on Brave Search vs. MCP:</strong> You can configure Brave Search here or as an MCP server. Setting it up here integrates it directly into Pantheon's fast, built-in search fallthrough chain without running external processes. Connecting it as an MCP server, however, grants the agent access to Brave's advanced capabilities like local maps metadata and image search.
           </div>
         </HelpDrawer>
 
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-400">
           Providers are tried top-to-bottom. The agent falls through to the next provider on
           any error, empty result set, or exhausted quota / rate limit. Per-provider quotas
           are tracked locally; reset them at the start of a new billing cycle.
@@ -369,16 +373,18 @@ export default function SearchProvidersTab() {
             const dailyPct = p.daily_limit > 0 ? Math.min(100, (u.daily_used || 0) / p.daily_limit * 100) : 0
             return (
               <div key={idx} className="bg-gray-900 border border-gray-700 rounded-lg p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 w-6">#{idx + 1}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-300 w-6" title="Position in the fallback chain">#{idx + 1}</span>
                   <input
                     type="text"
                     value={p.name}
                     onChange={(e) => updateField(idx, 'name', e.target.value)}
                     className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 w-32"
                     placeholder="name"
+                    aria-label={`Provider #${idx + 1} name`}
                   />
                   <select
+                    aria-label={`Provider #${idx + 1} type`}
                     value={p.type}
                     onChange={(e) => {
                       const type = e.target.value
@@ -408,7 +414,7 @@ export default function SearchProvidersTab() {
                     <option value="wikipedia">Wikipedia</option>
                     <option value="generic">Generic JSON</option>
                   </select>
-                  <label className="flex items-center gap-1 text-xs text-gray-400">
+                  <label className="flex items-center gap-1 text-xs text-gray-300">
                     <input
                       type="checkbox"
                       checked={p.enabled !== false}
@@ -417,65 +423,105 @@ export default function SearchProvidersTab() {
                     enabled
                   </label>
                   <div className="flex-1" />
-                  <button onClick={() => moveUp(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Move up">↑</button>
-                  <button onClick={() => moveDown(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Move down">↓</button>
-                  <button onClick={() => duplicateProvider(idx)} className="text-xs px-2 py-1 text-gray-400 hover:text-white" title="Duplicate row">⎘</button>
-                  <button onClick={() => removeProvider(idx)} className="text-xs px-2 py-1 text-red-400 hover:text-red-300">remove</button>
+                  <div className="flex items-center gap-0.5">
+                    <button onClick={() => moveUp(idx)} disabled={idx === 0}
+                            className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40"
+                            title="Move up (tried earlier)" aria-label={`Move ${p.name || 'provider'} up`}>
+                      <ArrowUp className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                    <button onClick={() => moveDown(idx)} disabled={idx === providers.length - 1}
+                            className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-40"
+                            title="Move down (tried later)" aria-label={`Move ${p.name || 'provider'} down`}>
+                      <ArrowDown className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                    <button onClick={() => duplicateProvider(idx)}
+                            className="p-1.5 rounded text-gray-300 hover:text-white hover:bg-gray-800"
+                            title="Duplicate this provider (e.g. a second API key)" aria-label={`Duplicate ${p.name || 'provider'}`}>
+                      <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                    <span className="mx-1 h-4 w-px bg-gray-700" aria-hidden="true" />
+                    <button onClick={() => removeProvider(idx)}
+                            className="p-1.5 rounded text-gray-400 hover:text-red-300 hover:bg-red-950/50"
+                            title="Remove from chain" aria-label={`Remove ${p.name || 'provider'}`}>
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
                 </div>
 
                 {p.type !== 'ddg' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      value={p.url || ''}
-                      onChange={(e) => updateField(idx, 'url', e.target.value)}
-                      placeholder="URL"
-                      className={`bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 ${p.type === 'wikipedia' ? 'col-span-2' : ''}`}
-                    />
-                    {p.type !== 'wikipedia' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="sm:col-span-2">
+                      <label htmlFor={`sp-url-${idx}`} className="block text-xs text-gray-300 mb-0.5">URL</label>
                       <input
+                        id={`sp-url-${idx}`}
                         type="text"
-                        value={p.api_key_vault_key || ''}
-                        onChange={(e) => updateField(idx, 'api_key_vault_key', e.target.value)}
-                        placeholder="api_key vault key (e.g. brave_api_key)"
-                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                        value={p.url || ''}
+                        onChange={(e) => updateField(idx, 'url', e.target.value)}
+                        title={p.url || ''}
+                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 font-mono"
                       />
+                    </div>
+                    {p.type !== 'wikipedia' && (
+                      <div>
+                        <label htmlFor={`sp-vk-${idx}`} className="block text-xs text-gray-300 mb-0.5">Vault key name</label>
+                        <input
+                          id={`sp-vk-${idx}`}
+                          type="text"
+                          value={p.api_key_vault_key || ''}
+                          onChange={(e) => updateField(idx, 'api_key_vault_key', e.target.value)}
+                          placeholder="e.g. brave_api_key"
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 font-mono"
+                        />
+                      </div>
                     )}
                     {p.type !== 'wikipedia' && (
-                      <input
-                        type="password"
-                        value={p.api_key || ''}
-                        onChange={(e) => updateField(idx, 'api_key', e.target.value)}
-                        placeholder={u.api_key_set ? '(key saved — leave blank to keep)' : 'API key'}
-                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100 col-span-2"
-                      />
+                      <div>
+                        <label htmlFor={`sp-key-${idx}`} className="block text-xs text-gray-300 mb-0.5">
+                          API key {u.api_key_set && <span className="text-green-300">(saved)</span>}
+                        </label>
+                        <input
+                          id={`sp-key-${idx}`}
+                          type="password"
+                          value={p.api_key || ''}
+                          onChange={(e) => updateField(idx, 'api_key', e.target.value)}
+                          placeholder={u.api_key_set ? 'leave blank to keep the saved key' : 'paste to store in the vault'}
+                          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
+                        />
+                      </div>
                     )}
                   </div>
                 )}
 
                 <div className="grid grid-cols-3 gap-2">
+                  <p className="col-span-3 -mb-1 text-xs text-gray-400">Limits: 0 = unlimited.</p>
                   <div>
-                    <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Daily limit</label>
+                    <label htmlFor={`sp-d-${idx}`} className="block text-xs text-gray-300 mb-0.5">Daily limit</label>
                     <input
+                      id={`sp-d-${idx}`}
                       type="number"
+                      min={0}
                       value={p.daily_limit || 0}
                       onChange={(e) => updateField(idx, 'daily_limit', e.target.value)}
                       className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Monthly limit</label>
+                    <label htmlFor={`sp-m-${idx}`} className="block text-xs text-gray-300 mb-0.5">Monthly limit</label>
                     <input
+                      id={`sp-m-${idx}`}
                       type="number"
+                      min={0}
                       value={p.monthly_limit || 0}
                       onChange={(e) => updateField(idx, 'monthly_limit', e.target.value)}
                       className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm text-gray-100"
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] uppercase text-gray-500 mb-0.5">Req / sec</label>
+                    <label htmlFor={`sp-r-${idx}`} className="block text-xs text-gray-300 mb-0.5">Requests / sec</label>
                     <input
+                      id={`sp-r-${idx}`}
                       type="number"
+                      min={0}
                       step="0.1"
                       value={p.rps || 0}
                       onChange={(e) => updateField(idx, 'rps', e.target.value)}
@@ -484,7 +530,7 @@ export default function SearchProvidersTab() {
                   </div>
                 </div>
 
-                <div className="text-[11px] text-gray-400 space-y-1 pt-1">
+                <div className="text-xs text-gray-400 space-y-1 pt-1">
                   <div className="flex items-center gap-2">
                     <span className="w-16">Daily:</span>
                     <span className="font-mono">{u.daily_used || 0}{p.daily_limit > 0 ? ` / ${p.daily_limit}` : ''}</span>
@@ -493,7 +539,7 @@ export default function SearchProvidersTab() {
                         <div className="h-full bg-brand-500" style={{ width: `${dailyPct}%` }} />
                       </div>
                     )}
-                    <button onClick={() => reset(p.name, 'daily')} className="text-[10px] text-gray-500 hover:text-gray-300">reset</button>
+                    <button onClick={() => reset(p.name, 'daily')} className="text-xs text-gray-300 hover:text-white underline decoration-dotted" aria-label={`Reset daily usage for ${p.name}`}>reset</button>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-16">Monthly:</span>
@@ -503,16 +549,19 @@ export default function SearchProvidersTab() {
                         <div className="h-full bg-brand-500" style={{ width: `${monthlyPct}%` }} />
                       </div>
                     )}
-                    <button onClick={() => reset(p.name, 'monthly')} className="text-[10px] text-gray-500 hover:text-gray-300">reset</button>
+                    <button onClick={() => reset(p.name, 'monthly')} className="text-xs text-gray-300 hover:text-white underline decoration-dotted" aria-label={`Reset monthly usage for ${p.name}`}>reset</button>
                   </div>
-                  <div className="flex items-center gap-3 text-gray-500">
-                    <span>errors: {u.errors || 0}</span>
+                  <div className="flex flex-wrap items-center gap-3 text-gray-400">
+                    <span className={u.errors > 0 ? 'rounded bg-red-950/60 px-1.5 text-red-300' : ''}
+                          title={u.errors > 0 ? 'Calls to this provider that errored (the chain fell through to the next one)' : undefined}>
+                      errors: {u.errors || 0}
+                    </span>
                     <span>skipped: {u.skipped || 0}</span>
-                    {u.last_used && <span>last: {new Date(u.last_used).toLocaleString()}</span>}
+                    {u.last_used && <span>last: <Time value={u.last_used} /></span>}
                   </div>
                   {u.remote && (
-                    <div className="mt-1 px-2 py-1 rounded bg-gray-800/60 border border-gray-700/60 text-[10px] text-gray-400 space-y-0.5">
-                      <div className="text-amber-400/80 font-semibold uppercase tracking-wide">Brave-reported</div>
+                    <div className="mt-1 px-2 py-1 rounded bg-gray-800/60 border border-gray-700/60 text-xs text-gray-400 space-y-0.5">
+                      <div className="text-gray-300 font-semibold uppercase tracking-wide">Brave-reported</div>
                       {u.remote.month_limit != null && (
                         <div>
                           Month: <span className="font-mono text-gray-200">{u.remote.month_used ?? '?'} / {u.remote.month_limit}</span>
@@ -525,7 +574,7 @@ export default function SearchProvidersTab() {
                         </div>
                       )}
                       {u.remote.captured_at && (
-                        <div className="text-gray-600">captured {new Date(u.remote.captured_at).toLocaleString()}</div>
+                        <div className="text-gray-400">captured <Time value={u.remote.captured_at} /></div>
                       )}
                     </div>
                   )}
@@ -536,17 +585,10 @@ export default function SearchProvidersTab() {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={addProvider}
-            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-xs text-gray-200 rounded border border-gray-700"
-          >
+          <button onClick={addProvider} className={secondaryButton}>
             + Add provider
           </button>
-          <button
-            onClick={save}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50"
-          >
+          <button onClick={save} disabled={loading} className={primaryButton}>
             <Save className="w-4 h-4" />
             Save Provider Chain
           </button>
@@ -575,7 +617,7 @@ export default function SearchProvidersTab() {
           {testResult && (
             <div className="space-y-2 pt-1">
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-500">Answered by:</span>
+                <span className="text-gray-400">Answered by:</span>
                 {testResult.providerUsed && testResult.providerUsed !== 'none' ? (
                   <span className="px-2 py-0.5 rounded bg-green-900/40 border border-green-700 text-green-300 font-mono">
                     {testResult.providerUsed}
@@ -588,19 +630,19 @@ export default function SearchProvidersTab() {
               </div>
 
               {testResult.fallthrough.length > 0 && (
-                <div className="text-xs text-gray-500">
+                <div className="text-xs text-gray-400">
                   <div className="mb-1">Fallthrough trace:</div>
                   <ul className="space-y-0.5 ml-2">
                     {testResult.fallthrough.map((line, i) => (
-                      <li key={i} className="font-mono text-amber-400/80">• {line}</li>
+                      <li key={i} className="font-mono text-amber-300">• {line}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
               <div>
-                <div className="text-[10px] uppercase text-gray-500 mb-1">Result body</div>
-                <pre className="text-[11px] text-gray-300 bg-black/40 border border-gray-800 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono">
+                <div className="text-xs uppercase text-gray-400 mb-1">Result body</div>
+                <pre className="text-xs text-gray-300 bg-black/40 border border-gray-800 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap font-mono">
                   {testResult.body || '(empty)'}
                 </pre>
               </div>

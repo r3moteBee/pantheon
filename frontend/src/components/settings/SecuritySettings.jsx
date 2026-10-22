@@ -11,7 +11,7 @@ function AuditLog() {
         <Shield className="w-5 h-5 text-gray-400" />
         <h2 className="text-lg font-semibold text-gray-200">Security Audit Log</h2>
       </div>
-      <p className="text-xs text-gray-500 mb-4">
+      <p className="text-xs text-gray-400 mb-4">
         All security-relevant events across authentication, skills, vault, and settings.
       </p>
       <div className="rounded-lg border border-gray-800 overflow-hidden" style={{ height: '480px' }}>

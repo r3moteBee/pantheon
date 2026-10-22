@@ -8,6 +8,9 @@ import {
 } from '../../api/client'
 import { useStore } from '../../store'
 import InfoTooltip from '../help/InfoTooltip'
+import Time from '../Time'
+import { primaryButton } from '../PageHeader'
+import { CHAT_SETTINGS } from '../ChatActions'
 import DeleteProjectModal from '../DeleteProjectModal'
 
 const TONES   = ['minimal', 'balanced', 'strong']
@@ -163,23 +166,23 @@ export default function ProjectSettingsPanel({ projectId }) {
     addNotification?.({ type: 'success', message: `Deleted project ${name}` })
   }
 
-  if (loading) return <div className="p-6 text-xs text-gray-500">Loading project settings…</div>
+  if (loading) return <div className="p-6 text-xs text-gray-400">Loading project settings…</div>
 
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-3xl mx-auto space-y-8">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xl font-semibold flex items-center gap-2">
             <SettingsIcon className="w-5 h-5" /> Project settings
           </h2>
           <div className="flex items-center gap-2">
-            <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
+            <button type="button" onClick={refresh} className="text-xs text-gray-300 hover:text-white flex items-center gap-1 whitespace-nowrap">
               <RefreshCw className="w-3 h-3" /> Reload
             </button>
             <button
               onClick={saveAll}
               disabled={saving || (!metaDirty && !chatDirty && preset === presetLoaded)}
-              className="px-3 py-1.5 text-sm rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-40"
+              className={primaryButton}
             >
               <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save changes'}
             </button>
@@ -209,16 +212,16 @@ export default function ProjectSettingsPanel({ projectId }) {
             />
           </Field>
           {project && (
-            <div className="text-[10px] text-gray-500">
-              ID: <code className="text-gray-400">{project.id}</code>
-              {project.created_at && <> · created {project.created_at.slice(0, 10)}</>}
-              {project.updated_at && <> · updated {project.updated_at.slice(0, 10)}</>}
+            <div className="text-xs text-gray-400">
+              ID: <code className="text-gray-300">{project.id}</code>
+              {project.created_at && <> · created <Time value={project.created_at} relative={false} /></>}
+              {project.updated_at && <> · updated <Time value={project.updated_at} /></>}
             </div>
           )}
         </Section>
 
         {/* Chat defaults */}
-        <Section title="Chat defaults" hint="Used by chat in this project; the chat-header toggles change the same values. “Global” follows Settings.">
+        <Section title="Chat defaults" hint="Used by chat in this project; Chat options in the chat header change the same values. “Global” follows Settings.">
           <Field
             label="Personality"
             tooltip="Global follows Settings → Personality. A preset gives this project its own voice (the global Key Commitments are kept). Edit it in Settings → Personality."
@@ -235,10 +238,10 @@ export default function ProjectSettingsPanel({ projectId }) {
               ))}
             </select>
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field
-              label="Tone weight"
-              tooltip="How strongly the persona's tone colors responses. Use minimal for matter-of-fact answers, strong for fully in-character."
+              label={CHAT_SETTINGS.tone_weight.label}
+              tooltip={CHAT_SETTINGS.tone_weight.help}
             >
               <select
                 value={chatDefaults.tone_weight}
@@ -250,8 +253,8 @@ export default function ProjectSettingsPanel({ projectId }) {
               </select>
             </Field>
             <Field
-              label="Context focus"
-              tooltip="How tightly the agent stays on the current message vs. the wider conversation."
+              label={CHAT_SETTINGS.context_focus.label}
+              tooltip={CHAT_SETTINGS.context_focus.help}
             >
               <select
                 value={chatDefaults.context_focus}
@@ -263,8 +266,8 @@ export default function ProjectSettingsPanel({ projectId }) {
               </select>
             </Field>
             <Field
-              label="Memory recall"
-              tooltip="Search past chats, artifacts and the graph for relevant context before each reply."
+              label={CHAT_SETTINGS.memory_recall.label}
+              tooltip={CHAT_SETTINGS.memory_recall.help}
             >
               <select
                 value={chatDefaults.memory_recall}
@@ -277,8 +280,8 @@ export default function ProjectSettingsPanel({ projectId }) {
               </select>
             </Field>
             <Field
-              label="Skill discovery"
-              tooltip="Whether the agent auto-loads matching skills: off = manual /skill only; suggest = ask first; auto = load silently."
+              label={CHAT_SETTINGS.skill_discovery.label}
+              tooltip={`${CHAT_SETTINGS.skill_discovery.help} Set per project only: there is no global value to inherit.`}
             >
               <select
                 value={chatDefaults.skill_discovery}
@@ -298,7 +301,7 @@ export default function ProjectSettingsPanel({ projectId }) {
           >
             <Download className="w-4 h-4" /> Export ZIP
           </button>
-          <p className="text-[11px] text-gray-500">
+          <p className="text-xs text-gray-400">
             Bundle this project's metadata, memory and conversations, files, artifacts and scheduled tasks into a portable archive.
           </p>
         </Section>
@@ -311,7 +314,7 @@ export default function ProjectSettingsPanel({ projectId }) {
           >
             <Trash2 className="w-4 h-4" /> Delete project
           </button>
-          <p className="text-[11px] text-gray-500">
+          <p className="text-xs text-gray-400">
             Permanently removes the project and everything in it: conversations, memory, artifacts, files,
             tasks and settings. You'll see the full list before anything is deleted.
             {projectId === 'default' && ' The default project cannot be deleted.'}
@@ -342,7 +345,7 @@ function Section({ title, hint, icon: Icon, tone, children }) {
           {Icon && <Icon className="w-4 h-4" />}
           {title}
         </h3>
-        {hint && <p className="text-[11px] text-gray-500 mt-1">{hint}</p>}
+        {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
       </div>
       {children}
     </section>

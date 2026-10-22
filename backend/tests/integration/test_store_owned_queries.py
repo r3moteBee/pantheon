@@ -133,3 +133,16 @@ def test_runtime_chunk_settings_vault_over_config(monkeypatch):
     # The router re-exports the same function
     from api import settings as api_settings
     assert api_settings.get_active_chunk_settings is runtime_settings.get_active_chunk_settings
+
+
+async def test_get_sessions_returns_first_user_message(ep):
+    # The chat history drawer titles untitled conversations with this.
+    await ep.save_message(session_id="s9", project_id="p9", role="assistant", content="Hello, how can I help?")
+    await ep.save_message(session_id="s9", project_id="p9", role="user", content="Plan the marble maze level")
+    await ep.save_message(session_id="s9", project_id="p9", role="user", content="second question")
+    await ep.save_message(session_id="s10", project_id="p9", role="assistant", content="only the agent spoke")
+    await ep.save_message(session_id="s11", project_id="p9", role="user", content="x" * 500)
+    rows = {r["session_id"]: r for r in await ep.get_sessions(project_id="p9")}
+    assert rows["s9"]["first_user_message"] == "Plan the marble maze level"
+    assert rows["s10"]["first_user_message"] is None
+    assert len(rows["s11"]["first_user_message"]) == 200
