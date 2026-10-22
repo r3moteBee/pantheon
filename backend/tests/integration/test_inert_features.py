@@ -190,7 +190,8 @@ def test_chat_settings_project_overrides_global(vault, data_dir):
     cs.set_overrides("p1", {"tone_weight": "minimal", "memory_recall": True, "skill_discovery": "suggest"})
     eff = cs.effective("p1")
     assert (eff["tone_weight"], eff["memory_recall"], eff["skill_discovery"]) == ("minimal", True, "suggest")
-    assert eff["source"] == {"tone_weight": "project", "context_focus": "global", "memory_recall": "project"}
+    assert eff["source"] == {"tone_weight": "project", "context_focus": "global", "memory_recall": "project",
+                             "skill_discovery": "project"}
     assert vault.get_secret("skill_discovery_p1") == "suggest"    # same key chat reads
     cs.set_overrides("p1", {"tone_weight": None})
     assert cs.effective("p1")["tone_weight"] == "strong"
@@ -199,6 +200,52 @@ def test_chat_settings_project_overrides_global(vault, data_dir):
                 {"skill_discovery": "always"}):
         with pytest.raises(ValueError):
             cs.set_overrides("p1", bad)
+
+
+def test_skill_discovery_falls_back_to_the_global_value(vault, data_dir):
+    """UI review #8: skill discovery inherits like the other three knobs.
+    Per-project storage stays in the vault (skill_discovery_<project>)."""
+    from utils import chat_settings as cs
+    eff = cs.effective("p7")
+    assert eff["skill_discovery"] == "off" and eff["source"]["skill_discovery"] == "global"
+    assert cs.set_skill_discovery_global("Suggest ") == "suggest"
+    assert vault.get_secret("skill_discovery") == "suggest"
+    assert cs.global_values()["skill_discovery"] == "suggest"
+    assert cs.skill_discovery("p7") == "suggest" and cs.overrides("p7") == {}
+    assert cs.effective("p7")["source"]["skill_discovery"] == "global"
+    cs.set_overrides("p7", {"skill_discovery": "auto"})
+    eff = cs.effective("p7")
+    assert eff["skill_discovery"] == "auto" and eff["source"]["skill_discovery"] == "project"
+    assert cs.overrides("p7") == {"skill_discovery": "auto"}
+    assert vault.get_secret("skill_discovery_p7") == "auto"
+    assert cs.skill_discovery("other") == "suggest"               # other projects still inherit
+    cs.set_overrides("p7", {"skill_discovery": ""})               # back to "Global (...)"
+    assert vault.get_secret("skill_discovery_p7") is None and cs.skill_discovery("p7") == "suggest"
+    vault.set_secret("skill_discovery", "bogus")                  # a bad stored value reads as off
+    assert cs.skill_discovery("p7") == "off"
+    with pytest.raises(ValueError):
+        cs.set_skill_discovery_global("always")
+
+
+@pytest.mark.asyncio
+async def test_skill_discovery_global_through_the_apis(vault, data_dir):
+    from fastapi import HTTPException
+    from api.settings import SettingsUpdate, get_settings_endpoint, update_settings
+    from api.skills import get_skill_discovery, set_skill_discovery
+    from api.projects import get_project_settings, update_project_settings
+    await update_settings(SettingsUpdate(skill_discovery="suggest"))
+    assert (await get_settings_endpoint())["skill_discovery"] == "suggest"
+    assert await get_skill_discovery("p8") == {"project_id": "p8", "skill_discovery": "suggest", "source": "global"}
+    out = await get_project_settings("p8")
+    assert out["global"]["skill_discovery"] == "suggest" and out["overrides"] == {}
+    assert out["effective"]["skill_discovery"] == "suggest"
+    assert out["effective"]["source"]["skill_discovery"] == "global"
+    await set_skill_discovery("p8", mode="auto")                   # skills API keeps writing per project
+    assert (await get_skill_discovery("p8"))["source"] == "project"
+    out = await update_project_settings("p8", {"skill_discovery": None})
+    assert out["overrides"] == {} and out["effective"]["skill_discovery"] == "suggest"
+    with pytest.raises(HTTPException):
+        await update_settings(SettingsUpdate(skill_discovery="always"))
 
 
 def test_old_rows_with_wrong_scale_are_ignored(vault, data_dir):

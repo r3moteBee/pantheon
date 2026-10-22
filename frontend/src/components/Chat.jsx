@@ -7,8 +7,9 @@ import ChatComposer from './chat/ChatComposer'
 import ChatHistoryDrawer from './chat/ChatHistoryDrawer'
 import SaveToArtifactModal, { defaultSavePath } from './chat/SaveToArtifactModal'
 import { DropOverlay } from './chat/Attachments'
-import useChatSocket from './chat/useChatSocket'
+import useChatSocket, { persistedToolCalls } from './chat/useChatSocket'
 import useChatAttachments from './chat/useChatAttachments'
+import { CHAT_COLUMN } from './layout/columns'
 
 // Composition shell: the transcript, the composer, and the history drawer /
 // save modal. Socket events live in useChatSocket, attachments in
@@ -146,7 +147,7 @@ export default function Chat() {
     setIsStreaming(false)
     const content = streamingContent
     if (content) {
-      addMessage({ role: 'assistant', content, toolCalls: [...currentToolCalls], timestamp: new Date().toISOString() })
+      addMessage({ role: 'assistant', content, toolCalls: persistedToolCalls(currentToolCalls), timestamp: new Date().toISOString() })
     }
     setStreamingContent('')
     clearToolCalls()
@@ -163,9 +164,9 @@ export default function Chat() {
 
       {/* Messages */}
       <div className="relative flex-1 min-h-0 flex flex-col">
-      <div ref={scrollRef} onScroll={updateAtBottom} className="flex-1 overflow-y-auto p-4 scrollbar-thin">
-        {/* One centered column, the composer's width (max-w-4xl). */}
-        <div className={`max-w-4xl mx-auto ${messages.length === 0 ? 'h-full' : ''}`}>
+      <div ref={scrollRef} onScroll={updateAtBottom} className="flex-1 overflow-y-auto py-4 scrollbar-thin">
+        {/* One centered column, exactly the composer's (layout/columns.js). */}
+        <div data-chat-column="messages" className={`${CHAT_COLUMN} ${messages.length === 0 ? 'h-full' : ''}`}>
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <Brain className="w-12 h-12 text-gray-600 mb-4" aria-hidden="true" />

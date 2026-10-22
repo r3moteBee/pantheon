@@ -281,8 +281,8 @@ async def chat(req: ChatRequest) -> ChatResponse:
     else:
         # 2. Auto-discovery
         try:
-            from secrets.vault import get_vault as _gv
-            discovery_mode = _gv().get_secret(f"skill_discovery_{req.project_id}") or "off"
+            from utils.chat_settings import skill_discovery as _sd
+            discovery_mode = _sd(req.project_id)
         except Exception:
             discovery_mode = "off"
         if discovery_mode in ("suggest", "auto"):
@@ -623,9 +623,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             else:
                 # 2. Check for auto-discovery if enabled
                 try:
-                    from secrets.vault import get_vault as _gv
-                    _vault = _gv()
-                    discovery_mode = _vault.get_secret(f"skill_discovery_{project_id}") or "off"
+                    from utils.chat_settings import skill_discovery as _sd
+                    discovery_mode = _sd(project_id)
                 except Exception:
                     discovery_mode = "off"
 

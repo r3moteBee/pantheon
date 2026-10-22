@@ -1,12 +1,8 @@
-// Shared content-column widths (UI review #16). The chat message list and
-// the composer both use CHAT_COLUMN so their left/right edges line up;
-// `.content-column` is defined once in index.css.
-//
-//   <div className={CHAT_COLUMN}>…messages…</div>
-//   <div className={CHAT_COLUMN}>…composer row…</div>
-//
-// Put the horizontal gutter (CHAT_GUTTER) on the same element in both places,
-// never on one of them only, or the edges drift apart again.
-export const CHAT_COLUMN = 'content-column'
-export const CHAT_COLUMN_MAX = '56rem'   // = Tailwind max-w-4xl (896px)
+// Shared reading-column widths (UI review #16). The chat transcript, the
+// attachment tray and the composer use the SAME class string so the bubbles
+// and the input line up at every viewport; parent containers add vertical
+// padding only. Put the gutter on this element in every place, never on one
+// of them only, or the edges drift apart again.
+export const CHAT_COLUMN = 'mx-auto w-full max-w-3xl px-4'
+export const CHAT_COLUMN_MAX = '48rem'   // = Tailwind max-w-3xl (768px)
 export const CHAT_GUTTER = 'px-4'

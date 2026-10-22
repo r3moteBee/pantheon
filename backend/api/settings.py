@@ -41,6 +41,7 @@ class SettingsUpdate(BaseModel):
     memory_recall_enabled: bool | None = None
     personality_weight: str | None = None
     context_focus: str | None = None
+    skill_discovery: str | None = None
     file_chunk_size: int | None = None
     file_chunk_overlap: int | None = None
     file_chunk_strategy: str | None = None
@@ -49,6 +50,11 @@ class SettingsUpdate(BaseModel):
 
 class SecretUpdate(BaseModel):
     value: str
+
+
+def _chat_settings():
+    from utils import chat_settings
+    return chat_settings
 
 
 # In-memory settings overrides (persisted in vault)
@@ -83,6 +89,7 @@ def _get_effective_settings() -> dict[str, Any]:
         "memory_recall_enabled": (vault.get_secret("memory_recall_enabled") or "true").lower() == "true",
         "personality_weight": vault.get_secret("personality_weight") or settings_config.personality_weight,
         "context_focus": vault.get_secret("context_focus") or settings_config.context_focus,
+        "skill_discovery": _chat_settings().skill_discovery_global(),
         "file_chunk_size": size,
         "file_chunk_overlap": overlap,
         "file_chunk_strategy": strategy,
@@ -147,6 +154,12 @@ async def update_settings(req: SettingsUpdate) -> dict[str, Any]:
         val = req.context_focus.lower().strip()
         if val in ("broad", "balanced", "focused"):
             vault.set_secret("context_focus", val)
+    if req.skill_discovery is not None:
+        # Global default for projects without their own value (utils/chat_settings).
+        try:
+            _chat_settings().set_skill_discovery_global(req.skill_discovery)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if req.file_chunk_size is not None:
         vault.set_secret("file_chunk_size", str(req.file_chunk_size))
     if req.file_chunk_overlap is not None:

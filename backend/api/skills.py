@@ -181,11 +181,13 @@ async def scan_summary() -> dict[str, Any]:
 
 @router.get("/skills/discovery/{project_id}")
 async def get_skill_discovery(project_id: str) -> dict[str, str]:
-    """Get the skill discovery mode for a project."""
-    from secrets.vault import get_vault
-    vault = get_vault()
-    mode = vault.get_secret(f"skill_discovery_{project_id}") or "off"
-    return {"project_id": project_id, "skill_discovery": mode}
+    """The effective skill discovery mode for a project (its own value, else
+    the global one) and where it comes from."""
+    from utils import chat_settings
+    own = chat_settings.skill_discovery_override(project_id)
+    return {"project_id": project_id,
+            "skill_discovery": own if own is not None else chat_settings.skill_discovery_global(),
+            "source": "project" if own is not None else "global"}
 
 
 @router.put("/skills/discovery/{project_id}")

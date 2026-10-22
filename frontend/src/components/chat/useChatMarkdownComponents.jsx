@@ -48,7 +48,7 @@ export default function useChatMarkdownComponents() {
     // Inline code only: fenced blocks are rendered by the shared <pre>
     // handler (markdownComponents.jsx -> CodeBlock) from this element's props.
     code: ({ node, className, children, ...props }) => (
-      <code className={`bg-gray-700/80 px-1 py-0.5 rounded text-[0.85em] font-mono text-gray-100 ${className || ''}`} {...props}>{children}</code>
+      <code className={`bg-gray-700/80 px-1 py-0.5 rounded text-xs font-mono text-gray-100 ${className || ''}`} {...props}>{children}</code>
     ),
     img: ({ src, alt, node, ...props }) => {
       if (isWorkspacePath(src)) {
