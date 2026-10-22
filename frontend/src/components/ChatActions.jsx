@@ -55,6 +55,18 @@ export default function ChatActions() {
   const setPersonalityWeight = useStore((s) => s.setPersonalityWeight)
 
   const projectId = activeProject?.id || 'default'
+  // Where each effective value comes from ('project' override or the
+  // 'global' Settings value), shown next to the knob in the popover.
+  const [sources, setSources] = React.useState({})
+
+  const applyEffective = React.useCallback((eff) => {
+    setMemoryRecall(eff.memory_recall !== false)
+    setContextFocus(eff.context_focus || 'balanced')
+    setPersonalityWeight(eff.tone_weight || 'balanced')
+    setSkillDiscovery(eff.skill_discovery || 'off')
+    setSources(eff.source || {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // These are per-project chat settings (with global fallback) that the
   // backend reads on every turn — load the effective values on project
@@ -63,11 +75,7 @@ export default function ChatActions() {
     let cancelled = false
     projectSettingsApi.get(projectId).then((res) => {
       if (cancelled) return
-      const eff = res?.data?.effective || {}
-      setMemoryRecall(eff.memory_recall !== false)
-      setContextFocus(eff.context_focus || 'balanced')
-      setPersonalityWeight(eff.tone_weight || 'balanced')
-      setSkillDiscovery(eff.skill_discovery || 'off')
+      applyEffective(res?.data?.effective || {})
     }).catch(() => { /* keep current values */ })
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,7 +99,8 @@ export default function ChatActions() {
     if (value === previous) return
     setters[knob](value)
     try {
-      await projectSettingsApi.update(projectId, { [knob]: knob === 'memory_recall' ? value === 'on' : value })
+      const res = await projectSettingsApi.update(projectId, { [knob]: knob === 'memory_recall' ? value === 'on' : value })
+      if (res?.data?.effective) applyEffective(res.data.effective)
     } catch (e) {
       setters[knob](previous)
       addNotification({ type: 'error', message: `Couldn't save ${CHAT_SETTINGS[knob].label.toLowerCase()}: ${e.message}` })
@@ -127,12 +136,12 @@ export default function ChatActions() {
         onClick={() => { setSessionId(null); clearMessages() }}
       />
       <Divider />
-      <ChatOptions values={values} onChange={persist} />
+      <ChatOptions values={values} sources={sources} onChange={persist} />
     </div>
   )
 }
 
-function ChatOptions({ values, onChange }) {
+function ChatOptions({ values, sources = {}, onChange }) {
   const [open, setOpen] = React.useState(false)
   const [coords, setCoords] = React.useState({ left: 0, top: 0 })
   const btnRef = React.useRef(null)
@@ -204,7 +213,17 @@ function ChatOptions({ values, onChange }) {
           <div className="text-sm font-semibold text-gray-100">Chat options</div>
           {Object.entries(CHAT_SETTINGS).map(([key, s]) => (
             <div key={key}>
-              <div id={`chatopt-${key}`} className="text-xs font-medium text-gray-200">{s.label}</div>
+              <div className="flex items-baseline justify-between gap-2">
+                <div id={`chatopt-${key}`} className="text-xs font-medium text-gray-200">{s.label}</div>
+                {sources[key] && (
+                  <span
+                    className="text-xs text-gray-400 whitespace-nowrap"
+                    title={sources[key] === 'project' ? 'Set for this project' : 'Inherited from Settings (global)'}
+                  >
+                    {sources[key] === 'project' ? 'this project' : `global (${values[key]})`}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-gray-400 mb-1.5">{s.help}</p>
               <div role="radiogroup" aria-labelledby={`chatopt-${key}`} className="flex rounded-md border border-gray-700 overflow-hidden">
                 {s.options.map(([value, label]) => {

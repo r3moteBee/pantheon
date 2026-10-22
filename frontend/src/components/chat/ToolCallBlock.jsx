@@ -131,7 +131,10 @@ function GeneratedImages({ ids, caption }) {
 
 // One tool call in a message: show_file results render as a file preview,
 // generate_image results as the images, everything else as a collapsible
-// args/result block.
+// args/result block. The `context_loaded` banner ("corpus context loaded")
+// is only ever rendered by the streaming turn: it is dropped from the
+// finished message (useChatSocket.persistedToolCalls) because the backend
+// doesn't store it, so history never has it either.
 export default function ToolCallBlock({ toolCall }) {
   const [expanded, setExpanded] = useState(false)
   const isContextLoad = toolCall.name === 'context_loaded'
