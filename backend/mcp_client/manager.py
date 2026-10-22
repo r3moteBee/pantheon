@@ -27,6 +27,49 @@ _MAX_STRUCTURED_CHARS = 50_000
 _REFRESH_LOCKS: dict[str, "asyncio.Lock"] = {}
 
 
+MASK = "***"
+
+
+def mask_url(url: str) -> str:
+    """``url`` safe to show: userinfo replaced by ***, every query-string
+    value replaced by *** (names kept, e.g. ?tavilyApiKey=***), fragment
+    dropped. Services put API keys in both places."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    try:
+        parts = urlsplit(url or "")
+        netloc = parts.netloc
+        if "@" in netloc:
+            netloc = MASK + "@" + netloc.rsplit("@", 1)[1]
+        query = parts.query
+        if query:
+            pairs = parse_qsl(query, keep_blank_values=True)
+            query = urlencode([(k, MASK) for k, _ in pairs], safe="*") if pairs else MASK
+        return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    except ValueError:
+        return MASK
+
+
+def restore_masked_url(new_url: str, old_url: str) -> str:
+    """Undo mask_url() on a URL the UI sends back: a *** userinfo or query
+    value takes the stored URL's value, so saving an edited, masked URL
+    doesn't overwrite the real key with "***"."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+    if MASK not in (new_url or ""):
+        return new_url
+    try:
+        new, old = urlsplit(new_url), urlsplit(old_url or "")
+        netloc = new.netloc
+        if netloc.startswith(MASK + "@") and "@" in old.netloc:
+            netloc = old.netloc.rsplit("@", 1)[0] + "@" + netloc.split("@", 1)[1]
+        old_q = dict(parse_qsl(old.query, keep_blank_values=True))
+        pairs = [(k, old_q.get(k, v) if v == MASK else v)
+                 for k, v in parse_qsl(new.query, keep_blank_values=True)]
+        return urlunsplit((new.scheme, netloc, new.path, urlencode(pairs) if pairs else new.query,
+                           new.fragment or old.fragment))
+    except ValueError:
+        return new_url
+
+
 def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
     """Return an async callable that yields the current access token.
 
@@ -239,13 +282,13 @@ class MCPManager:
                 }
             entry = {
                 "name": name,
-                "url": cfg["url"],
+                "url": mask_url(cfg["url"]),
                 "enabled": cfg.get("enabled", True),
                 "auth_type": auth_type,
                 "has_api_key": bool(cfg.get("api_key")),
                 "oauth_status": oauth_status,
                 "oauth": oauth_meta,
-                "headers": {k: "***" for k in cfg.get("headers", {})},
+                "headers": {k: MASK for k in cfg.get("headers", {})},
                 "connected": name in self._clients,
                 "tools_count": len(self._clients[name].tools) if name in self._clients else 0,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
@@ -414,7 +457,7 @@ class MCPManager:
 
     # ── OAuth flow ───────────────────────────────────────────────────────
 
-    async def start_oauth(self, name: str) -> dict[str, Any]:
+    async def start_oauth(self, name: str, redirect_uri: str | None = None) -> dict[str, Any]:
         """Begin the OAuth dance for a connection: probe → PRM → AS → DCR → URL.
 
         Returns the authorization URL the user must visit. Persists the
@@ -426,6 +469,9 @@ class MCPManager:
         cfg = self._get_cfg(name)
         if not cfg:
             raise ValueError(f"Connection '{name}' not found")
+        # Where the AS sends the browser back (oauth.callback_url_for); kept
+        # in the pending state so the code exchange uses the same value.
+        redirect_uri = redirect_uri or oauth_mod.callback_url_for(None)
 
         prm_url = await oauth_mod.probe_for_oauth(cfg["url"])
         if not prm_url:
@@ -444,7 +490,7 @@ class MCPManager:
 
         client = await oauth_mod.register_client(
             as_meta=as_meta,
-            redirect_uri=oauth_mod.DEFAULT_CALLBACK_URL,
+            redirect_uri=redirect_uri,
             client_name=f"Pantheon ({name})",
             scopes=prm.scopes_supported or as_meta.scopes_supported,
         )
@@ -458,7 +504,7 @@ class MCPManager:
             name=name,
             as_meta=as_meta,
             client_id=client.client_id,
-            redirect_uri=oauth_mod.DEFAULT_CALLBACK_URL,
+            redirect_uri=redirect_uri,
             scopes=scopes,
             resource=resource,
         )
@@ -474,6 +520,7 @@ class MCPManager:
             "scopes": scopes,
             "resource": resource,
             "prm_url": prm_url,
+            "redirect_uri": redirect_uri,
             "registered_at": __import__("time").time(),
         }
         self._save_configs()
