@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { Plus, RefreshCw, Trash2, Globe } from 'lucide-react'
 import { skillsApi } from '../../api/client'
+import { primaryButton } from '../PageHeader'
 
 export default function SkillHubsSettings() {
   const [registries, setRegistries] = useState([])
@@ -87,7 +88,7 @@ export default function SkillHubsSettings() {
           <h2 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
             <Globe className="w-4 h-4" /> Skill Registry Hubs
           </h2>
-          <p className="text-xs text-gray-500 mt-1">
+          <p className="text-xs text-gray-400 mt-1">
             Configure private skill registries that implement the{' '}
             <span className="text-gray-400">Pantheon Skill Registry Protocol v1.0</span>.
             They become searchable from Skills → Import.
@@ -96,9 +97,9 @@ export default function SkillHubsSettings() {
         {!showForm && (
           <button
             onClick={() => setShowForm(true)}
-            className="flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white"
+            className={`${primaryButton} flex-shrink-0`}
           >
-            <Plus className="w-3.5 h-3.5" /> Add Hub
+            <Plus className="w-3.5 h-3.5" aria-hidden="true" /> Add Hub
           </button>
         )}
       </div>
@@ -159,7 +160,7 @@ export default function SkillHubsSettings() {
             {form.auth_type === 'bearer' && (
               <div>
                 <label className="block text-xs text-gray-400 mb-1">
-                  Bearer Token {editingId && <span className="text-gray-600">(leave blank to keep)</span>}
+                  Bearer Token {editingId && <span className="text-gray-400">(leave blank to keep)</span>}
                 </label>
                 <input
                   type="password"
@@ -180,7 +181,7 @@ export default function SkillHubsSettings() {
             <button
               onClick={submit}
               disabled={busy || !form.url || (!editingId && !form.id)}
-              className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+              className="px-3 py-1.5 text-xs rounded bg-brand-700 hover:bg-brand-600 text-white disabled:opacity-50"
             >
               {editingId ? 'Save' : 'Add'}
             </button>
@@ -189,9 +190,9 @@ export default function SkillHubsSettings() {
       )}
 
       {loading ? (
-        <div className="text-xs text-gray-500">Loading…</div>
+        <div className="text-xs text-gray-400">Loading…</div>
       ) : registries.length === 0 ? (
-        <div className="p-4 rounded border border-dashed border-gray-800 text-xs text-gray-500 text-center">
+        <div className="p-4 rounded border border-dashed border-gray-800 text-xs text-gray-400 text-center">
           No hubs available.
         </div>
       ) : (
@@ -201,17 +202,17 @@ export default function SkillHubsSettings() {
               <div className="min-w-0">
                 <div className="text-sm text-gray-200 truncate">
                   {r.display_name || r.id}
-                  <span className="ml-2 text-xs text-gray-600">[{r.id}]</span>
+                  <span className="ml-2 text-xs text-gray-400">[{r.id}]</span>
                   {r.builtin && (
-                    <span className="ml-2 px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-400 uppercase">Built-in</span>
+                    <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-gray-800 text-gray-400 uppercase">Built-in</span>
                   )}
                   {r.builtin && !r.searchable && (
-                    <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-gray-800 text-gray-500">Not searchable</span>
+                    <span className="ml-1 px-1.5 py-0.5 text-xs rounded bg-gray-800 text-gray-400">Not searchable</span>
                   )}
                 </div>
-                {r.url && <div className="text-xs text-gray-500 truncate">{r.url}</div>}
+                {r.url && <div className="text-xs text-gray-400 truncate">{r.url}</div>}
                 {!r.builtin && (
-                  <div className="text-xs text-gray-600 mt-0.5">
+                  <div className="text-xs text-gray-400 mt-0.5">
                     Auth: {r.auth?.type}
                     {r.auth?.type === 'bearer' && (
                       <span className="ml-1">{r.auth?.token_set ? '✓' : '(missing token)'}</span>

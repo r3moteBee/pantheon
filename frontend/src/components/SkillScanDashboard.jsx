@@ -5,18 +5,19 @@ import {
 } from 'lucide-react'
 import { useStore } from '../store'
 import { skillsApi } from '../api/client'
+import Time from './Time'
 
 const STATUS_CONFIG = {
   passed: { icon: ShieldCheck, color: 'text-green-400', bg: 'bg-green-900/30', label: 'Passed' },
   failed: { icon: ShieldX, color: 'text-red-400', bg: 'bg-red-900/30', label: 'Failed' },
-  unscanned: { icon: ShieldQuestion, color: 'text-gray-500', bg: 'bg-gray-800', label: 'Unscanned' },
+  unscanned: { icon: ShieldQuestion, color: 'text-gray-400', bg: 'bg-gray-800', label: 'Unscanned' },
 }
 
 function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.unscanned
   const Icon = cfg.icon
   return (
-    <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded ${cfg.bg} ${cfg.color}`}>
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded ${cfg.bg} ${cfg.color}`}>
       <Icon className="w-3 h-3" /> {cfg.label}
     </span>
   )
@@ -27,12 +28,12 @@ function CountCard({ label, count, icon: Icon, color, total }) {
   return (
     <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-gray-500">{label}</span>
+        <span className="text-xs text-gray-400">{label}</span>
         <Icon className={`w-4 h-4 ${color}`} />
       </div>
       <div className="flex items-baseline gap-2">
         <span className={`text-2xl font-bold ${color}`}>{count}</span>
-        <span className="text-xs text-gray-600">/ {total} ({pct}%)</span>
+        <span className="text-xs text-gray-400">/ {total} ({pct}%)</span>
       </div>
     </div>
   )
@@ -47,7 +48,7 @@ const SEVERITY_COLOR = {
 }
 
 function ScanFindings({ scanResult }) {
-  if (!scanResult) return <p className="text-xs text-gray-500">No scan data available.</p>
+  if (!scanResult) return <p className="text-xs text-gray-400">No scan data available.</p>
 
   const { passed, risk_score, findings, scanned_at, scanner_version } = scanResult
   const criticals = findings?.filter((f) => f.severity === 'critical') || []
@@ -60,17 +61,17 @@ function ScanFindings({ scanResult }) {
         <h4 className="text-xs font-medium text-gray-400 flex items-center gap-1">
           <ScanSearch className="w-3 h-3" /> Security Scan
         </h4>
-        <div className="flex items-center gap-2 text-[10px] text-gray-600">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
           {scanner_version && <span>v{scanner_version}</span>}
-          {scanned_at && <span>{new Date(scanned_at).toLocaleString()}</span>}
+          {scanned_at && <Time value={scanned_at} />}
         </div>
       </div>
 
       <div className={`flex items-center gap-3 text-xs px-3 py-2 rounded ${passed ? 'bg-green-900/20 text-green-400' : 'bg-red-900/20 text-red-400'}`}>
         {passed ? <ShieldCheck className="w-4 h-4" /> : <ShieldX className="w-4 h-4" />}
         <span className="font-medium">{passed ? 'PASSED' : 'FAILED'}</span>
-        <span className="text-gray-500">Risk: {Math.round((risk_score || 0) * 100)}%</span>
-        <span className="text-gray-500">
+        <span className="text-gray-400">Risk: {Math.round((risk_score || 0) * 100)}%</span>
+        <span className="text-gray-400">
           {criticals.length} critical · {warnings.length} warnings · {infos.length} info
         </span>
       </div>
@@ -78,17 +79,17 @@ function ScanFindings({ scanResult }) {
       {findings?.length > 0 && (
         <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-thin">
           {findings.map((f, i) => (
-            <div key={i} className={`flex items-start gap-2 text-[11px] px-2 py-1.5 rounded ${SEVERITY_COLOR[f.severity] || SEVERITY_COLOR.info}`}>
+            <div key={i} className={`flex items-start gap-2 text-xs px-2 py-1.5 rounded ${SEVERITY_COLOR[f.severity] || SEVERITY_COLOR.info}`}>
               <span className="font-mono uppercase font-bold w-14 flex-shrink-0">{f.severity}</span>
               <span className="text-gray-300 flex-1">{f.message}</span>
-              {f.file && <span className="font-mono text-gray-600 flex-shrink-0">{f.file}{f.line ? `:${f.line}` : ''}</span>}
+              {f.file && <span className="font-mono text-gray-400 flex-shrink-0">{f.file}{f.line ? `:${f.line}` : ''}</span>}
             </div>
           ))}
         </div>
       )}
 
       {(!findings || findings.length === 0) && (
-        <p className="text-[11px] text-gray-600 px-2">No findings.</p>
+        <p className="text-xs text-gray-400 px-2">No findings.</p>
       )}
     </div>
   )
@@ -162,31 +163,31 @@ function SkillRow({ skill, onDelete, onDataChange }) {
         className="flex items-center gap-4 px-4 py-2.5 hover:bg-gray-750 transition-colors cursor-pointer"
         onClick={handleExpand}
       >
-        <div className="text-gray-600">
+        <div className="text-gray-400">
           {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm text-white font-medium">{skill.name}</span>
             {skill.is_bundled && (
-              <span className="text-[9px] px-1 py-0 rounded bg-gray-700 text-gray-500">bundled</span>
+              <span className="text-xs px-1.5 rounded border border-gray-700 bg-gray-900 text-gray-300 whitespace-nowrap">bundled</span>
             )}
             {skill.has_scripts && (
-              <span className="text-[9px] px-1 py-0 rounded bg-amber-900/40 text-amber-500">has scripts</span>
+              <span className="text-xs px-1 py-0 rounded bg-amber-900/40 text-amber-500">has scripts</span>
             )}
           </div>
           {skill.scanned_at && (
-            <span className="text-[10px] text-gray-600">
-              Scanned {new Date(skill.scanned_at).toLocaleString()}
+            <span className="text-xs text-gray-400">
+              Scanned <Time value={skill.scanned_at} />
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {skill.findings_count > 0 && (
-            <span className="text-[10px] text-gray-500">{skill.findings_count} findings</span>
+            <span className="text-xs text-gray-400">{skill.findings_count} findings</span>
           )}
           {skill.risk_score != null && skill.risk_score > 0 && (
-            <span className={`text-[10px] font-mono ${skill.risk_score >= 0.5 ? 'text-red-400' : skill.risk_score >= 0.2 ? 'text-amber-400' : 'text-yellow-500'}`}>
+            <span className={`text-xs font-mono ${skill.risk_score >= 0.5 ? 'text-red-400' : skill.risk_score >= 0.2 ? 'text-amber-400' : 'text-yellow-500'}`}>
               risk: {Math.round(skill.risk_score * 100)}%
             </span>
           )}
@@ -197,7 +198,7 @@ function SkillRow({ skill, onDelete, onDataChange }) {
             onClick={handleScan}
             disabled={scanning}
             title="Run security scan"
-            className="text-gray-500 hover:text-brand-400 transition-colors disabled:opacity-50"
+            className="text-gray-400 hover:text-brand-400 transition-colors disabled:opacity-50"
           >
             {scanning ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ScanSearch className="w-3.5 h-3.5" />}
           </button>
@@ -206,7 +207,7 @@ function SkillRow({ skill, onDelete, onDataChange }) {
           <button
             onClick={(e) => { e.stopPropagation(); setConfirmDelete(true) }}
             title="Delete skill"
-            className="text-gray-600 hover:text-red-400 transition-colors"
+            className="text-gray-400 hover:text-red-400 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -234,13 +235,13 @@ function SkillRow({ skill, onDelete, onDataChange }) {
             <div className="flex gap-2">
               <button
                 onClick={(e) => { e.stopPropagation(); setConfirmDelete(false) }}
-                className="px-2.5 py-1 text-[11px] rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+                className="px-2.5 py-1 text-xs rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={(e) => { e.stopPropagation(); handleDelete() }}
-                className="px-2.5 py-1 text-[11px] rounded bg-red-700 text-white hover:bg-red-600 transition-colors"
+                className="px-2.5 py-1 text-xs rounded bg-red-700 text-white hover:bg-red-600 transition-colors"
               >
                 {skill.is_bundled ? 'Remove' : 'Delete'}
               </button>
@@ -253,7 +254,7 @@ function SkillRow({ skill, onDelete, onDataChange }) {
       {expanded && (
         <div className="px-4 py-3 bg-gray-850 border-t border-gray-700">
           {loadingScan ? (
-            <div className="flex items-center gap-2 text-xs text-gray-500">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
               <RefreshCw className="w-3 h-3 animate-spin" /> Loading scan results...
             </div>
           ) : (
@@ -328,7 +329,7 @@ export default function SkillScanDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-500 text-sm gap-2">
+      <div className="flex items-center justify-center h-full text-gray-400 text-sm gap-2">
         <RefreshCw className="w-4 h-4 animate-spin" /> Loading scan data...
       </div>
     )
@@ -373,7 +374,7 @@ export default function SkillScanDashboard() {
           <CountCard label="Total Skills" count={counts.total} icon={Package} color="text-gray-300" total={counts.total} />
           <CountCard label="Passed" count={counts.passed} icon={ShieldCheck} color="text-green-400" total={counts.total} />
           <CountCard label="Failed" count={counts.failed} icon={ShieldX} color="text-red-400" total={counts.total} />
-          <CountCard label="Unscanned" count={counts.unscanned} icon={ShieldQuestion} color="text-gray-500" total={counts.total} />
+          <CountCard label="Unscanned" count={counts.unscanned} icon={ShieldQuestion} color="text-gray-400" total={counts.total} />
         </div>
 
         {/* Skills table */}
@@ -382,7 +383,7 @@ export default function SkillScanDashboard() {
             <h2 className="text-xs font-medium text-gray-400">All Skills — click to view scan details</h2>
           </div>
           {sorted.length === 0 ? (
-            <div className="px-4 py-6 text-center text-xs text-gray-600">No skills loaded.</div>
+            <div className="px-4 py-6 text-center text-xs text-gray-400">No skills loaded.</div>
           ) : (
             <div>
               {sorted.map((skill) => (
@@ -409,18 +410,18 @@ export default function SkillScanDashboard() {
                 <div key={q.name} className="flex items-center justify-between px-4 py-2.5">
                   <div>
                     <span className="text-sm text-red-300">{q.name}</span>
-                    {q.description && <p className="text-[10px] text-gray-600 mt-0.5">{q.description}</p>}
+                    {q.description && <p className="text-xs text-gray-400 mt-0.5">{q.description}</p>}
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleDeleteQuarantined(q.name)}
-                      className="text-[11px] px-2.5 py-1 rounded bg-red-900/40 text-red-400 hover:text-red-300 hover:bg-red-900/60 transition-colors"
+                      className="text-xs px-2.5 py-1 rounded bg-red-900/40 text-red-400 hover:text-red-300 hover:bg-red-900/60 transition-colors"
                     >
                       Delete
                     </button>
                     <button
                       onClick={() => handleUnquarantine(q.name)}
-                      className="text-[11px] px-2.5 py-1 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
+                      className="text-xs px-2.5 py-1 rounded bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 transition-colors"
                     >
                       Restore
                     </button>

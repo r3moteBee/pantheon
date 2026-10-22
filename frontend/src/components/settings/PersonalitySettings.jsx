@@ -9,7 +9,7 @@ export default function PersonalitySettings() {
         <UserIcon className="w-4 h-4 text-brand-400" />
         Personality
       </h3>
-      <p className="text-[11px] text-gray-500 mb-4">
+      <p className="text-xs text-gray-400 mb-4">
         The agent's identity (soul.md) and working rules (agent.md). Projects
         follow the global personality unless you give one its own: apply a
         preset or edit it with that project as the scope. Presets keep the

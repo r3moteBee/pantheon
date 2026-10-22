@@ -129,7 +129,7 @@ export default function SystemUpdate() {
           </p>
         </div>
         <div className="bg-gray-850/40 rounded-lg p-4 border border-gray-800">
-          <div className="flex items-center justify-between text-xs text-gray-500">
+          <div className="flex items-center justify-between text-xs text-gray-400">
             <span>Status:</span>
             <span className="text-brand-300 font-medium font-mono">
               {reconnectAttempts > 0 ? `Reconnecting... (Attempt ${reconnectAttempts})` : 'Scheduling restart...'}
@@ -179,7 +179,7 @@ export default function SystemUpdate() {
         <h3 className="text-sm font-semibold text-gray-200 mb-1 flex items-center gap-1.5">
           <RefreshCw className="w-4 h-4 text-brand-400" /> System Updater
         </h3>
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-gray-400">
           Check for updates, pull changes from the git upstream branch, compile assets, and automatically restart backend services.
         </p>
       </div>
@@ -196,7 +196,7 @@ export default function SystemUpdate() {
           <Check className="w-8 h-8 text-green-400 mx-auto" />
           <div className="space-y-1">
             <p className="text-sm font-medium text-gray-200">You are on the latest version</p>
-            <p className="text-xs text-gray-500">{updateInfo?.message || 'Pantheon is up to date.'}</p>
+            <p className="text-xs text-gray-400">{updateInfo?.message || 'Pantheon is up to date.'}</p>
           </div>
           <button
             onClick={check}
@@ -246,7 +246,7 @@ export default function SystemUpdate() {
                     navigator.clipboard.writeText(updateInfo.dockerInstructions)
                     addNotification({ type: 'success', message: 'Commands copied to clipboard!' })
                   }}
-                  className="absolute top-2 right-2 p-1.5 bg-gray-800/80 hover:bg-gray-700/80 border border-gray-700 text-gray-300 rounded transition-colors text-[10px] flex items-center gap-1 font-sans"
+                  className="absolute top-2 right-2 p-1.5 bg-gray-800/80 hover:bg-gray-700/80 border border-gray-700 text-gray-300 rounded transition-colors text-xs flex items-center gap-1 font-sans"
                 >
                   <Copy className="w-3 h-3" /> Copy
                 </button>
@@ -258,7 +258,7 @@ export default function SystemUpdate() {
                 <Shield className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <h4 className="text-xs font-semibold text-gray-200">Security Authorization Required</h4>
-                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                  <p className="text-xs text-gray-400 leading-relaxed">
                     Executing an update runs bash shell scripts locally to pull code and rebuild assets.
                     {updateInfo?.auth_enabled 
                       ? ' Enter your administration password to proceed.'
@@ -278,7 +278,7 @@ export default function SystemUpdate() {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="••••••••••••"
-                        className="w-full bg-gray-950 border border-gray-700 rounded-lg pl-3 pr-10 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                        className="w-full bg-gray-950 border border-gray-700 rounded-lg pl-3 pr-10 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
                       />
                       <button
                         type="button"
@@ -309,7 +309,7 @@ export default function SystemUpdate() {
                 <button
                   onClick={handleUpdate}
                   disabled={updateInfo?.auth_enabled ? !password : !confirmChecked}
-                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                  className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-700 hover:bg-brand-600 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
                 >
                   <RefreshCw className="w-4 h-4" /> Apply Update & Restart
                 </button>

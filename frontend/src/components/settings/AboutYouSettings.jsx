@@ -6,9 +6,9 @@ import { useStore } from '../../store'
 import { aboutYouApi } from '../../api/client'
 import InfoTooltip from '../help/InfoTooltip'
 
-const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+const inputClass = 'w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
 const cardClass = 'bg-gray-800/40 border border-gray-700/50 rounded-lg p-4 space-y-4'
-const buttonClass = 'flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 transition-colors'
+const buttonClass = 'flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50 transition-colors'
 const smallButtonClass = 'flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md border border-gray-700 text-gray-300 hover:bg-gray-800 disabled:opacity-50 transition-colors'
 
 const LENGTHS = [
@@ -30,7 +30,7 @@ function SectionHeading({ icon: Icon, title, children }) {
       <h3 className="text-sm font-semibold text-gray-200 mb-1 flex items-center gap-1.5">
         <Icon className="w-4 h-4 text-brand-400" /> {title}
       </h3>
-      <p className="text-xs text-gray-500">{children}</p>
+      <p className="text-xs text-gray-400">{children}</p>
     </div>
   )
 }
@@ -72,7 +72,7 @@ function AboutSection({ initial, limit, onSaved }) {
           className={`${inputClass} resize-y min-h-[8rem]`}
         />
         <div className="flex items-center justify-between">
-          <span className={`text-[11px] ${text.length > limit * 0.9 ? 'text-amber-400' : 'text-gray-500'}`}>
+          <span className={`text-xs ${text.length > limit * 0.9 ? 'text-amber-400' : 'text-gray-400'}`}>
             {text.length.toLocaleString()} / {limit.toLocaleString()} characters
           </span>
           <button onClick={save} disabled={saving || text.trim() === initial} className={buttonClass}>
@@ -154,7 +154,7 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
             <label className="block text-xs font-semibold text-gray-300 mb-1">Reply length</label>
             <OptionSelect ariaLabel="Reply length" value={length.global} options={LENGTHS}
               onChange={(v) => setLength((c) => ({ ...c, global: v }))} />
-            <span className="text-[10px] text-gray-500 block mt-1">{LENGTHS.find((o) => o.id === length.global)?.hint}</span>
+            <span className="text-xs text-gray-400 block mt-1">{LENGTHS.find((o) => o.id === length.global)?.hint}</span>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-300 mb-1 flex items-center gap-1">
@@ -163,7 +163,7 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
             </label>
             <OptionSelect ariaLabel="Formatting" value={format.global} options={FORMATS}
               onChange={(v) => setFormat((c) => ({ ...c, global: v }))} />
-            <span className="text-[10px] text-gray-500 block mt-1">{FORMATS.find((o) => o.id === format.global)?.hint}</span>
+            <span className="text-xs text-gray-400 block mt-1">{FORMATS.find((o) => o.id === format.global)?.hint}</span>
           </div>
         </div>
 
@@ -181,7 +181,7 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
             <div className="mt-3 overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="text-left text-gray-500">
+                  <tr className="text-left text-gray-400">
                     <th className="font-medium pb-2 pr-3">App</th>
                     <th className="font-medium pb-2 pr-3">Reply length</th>
                     <th className="font-medium pb-2 pr-3">Formatting</th>
@@ -206,10 +206,10 @@ function ReplyStyleSection({ profile, channels, onSaved }) {
                               options={FORMATS} inheritLabel={`Default (${label(FORMATS, format.global)})`}
                               onChange={(v) => setChannel(setFormat)(ch.id, v)} />
                           ) : (
-                            <span className="text-gray-500 px-1">Markdown (always)</span>
+                            <span className="text-gray-400 px-1">Markdown (always)</span>
                           )}
                         </td>
-                        <td className="py-2 text-gray-500 whitespace-nowrap">
+                        <td className="py-2 text-gray-400 whitespace-nowrap">
                           {label(LENGTHS, l).toLowerCase()}, {formatResult(ch, f)}
                         </td>
                       </tr>
@@ -243,7 +243,7 @@ function sampleHealth(count) {
 
 function HealthChip({ count }) {
   const h = sampleHealth(count)
-  return <span className={`text-[10px] px-1.5 py-0.5 rounded border ${h.cls} whitespace-nowrap`}>{h.label}</span>
+  return <span className={`text-xs px-1.5 py-0.5 rounded border ${h.cls} whitespace-nowrap`}>{h.label}</span>
 }
 
 function NewVoiceForm({ limits, onCreated, onCancel, isFirst }) {
@@ -309,12 +309,12 @@ function SampleRow({ voiceId, sample, onDelete }) {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs font-medium text-gray-200 truncate">{sample.title}</div>
-          <div className="text-[10px] text-gray-500">
+          <div className="text-xs text-gray-400">
             {sample.word_count.toLocaleString()} words
             {sample.source_url && <> · <a href={sample.source_url} target="_blank" rel="noreferrer noopener"
               className="text-brand-400 hover:underline">source</a></>}
           </div>
-          {!open && <p className="text-[11px] text-gray-400 mt-1 line-clamp-2">{sample.preview}</p>}
+          {!open && <p className="text-xs text-gray-400 mt-1 line-clamp-2">{sample.preview}</p>}
         </div>
         <div className="flex gap-1 flex-shrink-0">
           <button onClick={toggle} className={smallButtonClass} aria-label={open ? 'Hide sample' : 'Show sample'}>
@@ -326,7 +326,7 @@ function SampleRow({ voiceId, sample, onDelete }) {
         </div>
       </div>
       {open && content !== null && (
-        <pre className="mt-2 text-[11px] text-gray-300 whitespace-pre-wrap font-sans max-h-80 overflow-y-auto scrollbar-thin">
+        <pre className="mt-2 text-xs text-gray-300 whitespace-pre-wrap font-sans max-h-80 overflow-y-auto scrollbar-thin">
           {content}
         </pre>
       )}
@@ -366,7 +366,7 @@ function AddSampleForm({ voiceId, limits, onAdded }) {
       <input value={url} onChange={(e) => setUrl(e.target.value)}
         placeholder="Link to where it was published (optional)" className={inputClass} />
       <div className="flex items-center justify-between">
-        <span className={`text-[11px] ${words > 0 && words < 200 ? 'text-amber-400' : 'text-gray-500'}`}>
+        <span className={`text-xs ${words > 0 && words < 200 ? 'text-amber-400' : 'text-gray-400'}`}>
           {words.toLocaleString()} words{words > 0 && words < 200 ? ' — samples of 200+ words work best' : ''}
         </span>
         <button onClick={add} disabled={saving || !content.trim()} className={buttonClass}>
@@ -398,7 +398,7 @@ function VoiceEditor({ voiceId, limits, onBack, onChanged }) {
 
   useEffect(() => { load() }, [load])
 
-  if (!voice) return <div className="text-xs text-gray-500">Loading voice...</div>
+  if (!voice) return <div className="text-xs text-gray-400">Loading voice...</div>
 
   const dirty = name.trim() !== voice.name || notes.trim() !== voice.notes
   const refresh = async () => { await load(); onChanged() }
@@ -455,7 +455,7 @@ function VoiceEditor({ voiceId, limits, onBack, onChanged }) {
           <div className="flex items-center gap-2">
             <HealthChip count={voice.sample_count} />
             {voice.is_default
-              ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-brand-600/60 text-brand-300">Default</span>
+              ? <span className="text-xs px-1.5 py-0.5 rounded border border-brand-600/60 text-brand-300">Default</span>
               : <button onClick={makeDefault} className={smallButtonClass}><Star className="w-3.5 h-3.5" /> Make default</button>}
           </div>
           <button onClick={remove} className={`${smallButtonClass} hover:text-red-300 hover:border-red-800`}>
@@ -472,7 +472,7 @@ function VoiceEditor({ voiceId, limits, onBack, onChanged }) {
             placeholder={'Describe the style, e.g. "Conversational, first person, short paragraphs, dry humour. ' +
               'Never use: delve, leverage, game-changer, em-dashes."'}
             className={`${inputClass} resize-y`} />
-          <span className="text-[10px] text-gray-500 block mt-1">The agent treats anything you say to avoid here as a hard rule.</span>
+          <span className="text-xs text-gray-400 block mt-1">The agent treats anything you say to avoid here as a hard rule.</span>
         </div>
         <div className="flex justify-end">
           <button onClick={save} disabled={saving || !dirty || !name.trim()} className={buttonClass}>
@@ -482,13 +482,13 @@ function VoiceEditor({ voiceId, limits, onBack, onChanged }) {
 
         <div className="border-t border-gray-700/50 pt-4 space-y-2">
           <div className="text-xs font-semibold text-gray-300">
-            Samples <span className="font-normal text-gray-500">({voice.total_words.toLocaleString()} words)</span>
+            Samples <span className="font-normal text-gray-400">({voice.total_words.toLocaleString()} words)</span>
           </div>
           {voice.samples.length === 0
-            ? <p className="text-[11px] text-gray-500">No samples yet. Three to five pieces of 200+ words each, on different topics, work best.</p>
+            ? <p className="text-xs text-gray-400">No samples yet. Three to five pieces of 200+ words each, on different topics, work best.</p>
             : <ul className="space-y-2">{voice.samples.map((s) => (
                 <SampleRow key={s.id} voiceId={voiceId} sample={s} onDelete={removeSample} />))}</ul>}
-          <p className="text-[10px] text-gray-500">The agent reads excerpts of the three newest samples when it writes in this voice.</p>
+          <p className="text-xs text-gray-400">The agent reads excerpts of the three newest samples when it writes in this voice.</p>
         </div>
 
         {voice.sample_count < limits.samples_per_voice && (
@@ -525,7 +525,7 @@ function WritingVoicesSection({ limits }) {
         "in my Blog voice", or just ask for a post or email and it uses your default voice.
       </SectionHeading>
       {voices === null ? (
-        <div className="text-xs text-gray-500">Loading voices...</div>
+        <div className="text-xs text-gray-400">Loading voices...</div>
       ) : openId ? (
         <VoiceEditor voiceId={openId} limits={limits} onBack={back} onChanged={load} />
       ) : (
@@ -545,7 +545,7 @@ function WritingVoicesSection({ limits }) {
                       </span>
                       <HealthChip count={v.sample_count} />
                     </div>
-                    {v.notes && <p className="text-[11px] text-gray-500 mt-1 line-clamp-1">{v.notes}</p>}
+                    {v.notes && <p className="text-xs text-gray-400 mt-1 line-clamp-1">{v.notes}</p>}
                   </button>
                 </li>
               ))}
@@ -580,7 +580,7 @@ export default function AboutYouSettings() {
   }, [])
 
   if (error) return <div className="text-xs text-red-400">Could not load About you: {error}</div>
-  if (!data) return <div className="text-xs text-gray-500">Loading About you...</div>
+  if (!data) return <div className="text-xs text-gray-400">Loading About you...</div>
 
   const onSaved = (profile) => setData((d) => ({ ...d, ...profile }))
 

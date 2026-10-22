@@ -18,7 +18,7 @@ export default function InfoTooltip({ text, placement = 'top', size = 14 }) {
         type="button"
         aria-label={text}
         onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
-        className="text-gray-500 hover:text-gray-300 inline-flex items-center align-middle ml-1"
+        className="text-gray-400 hover:text-gray-300 inline-flex items-center align-middle ml-1"
       >
         <HelpCircle width={size} height={size} aria-hidden="true" />
       </button>

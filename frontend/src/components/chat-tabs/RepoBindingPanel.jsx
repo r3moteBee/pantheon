@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Github, Check, RefreshCw, AlertTriangle, GitBranch, Loader,
+  Github, Check, RefreshCw, AlertTriangle, GitBranch, Loader, X,
 } from 'lucide-react'
 import { connectionsApi, projectRepoApi } from '../../api/client'
+import Time from '../Time'
+import { primaryButton, secondaryButton } from '../PageHeader'
 
 /**
  * Per-project repo binding flow.
@@ -83,14 +85,14 @@ export default function RepoBindingPanel({ projectId }) {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 max-w-3xl mx-auto">
+    <div className="h-full overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto">
       <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
         <Github className="w-5 h-5" /> Repository
-        <button onClick={refresh} className="ml-auto text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
+        <button onClick={refresh} className="ml-auto text-xs text-gray-300 hover:text-gray-100 flex items-center gap-1 whitespace-nowrap">
           <RefreshCw className="w-3 h-3" /> Refresh
         </button>
       </h2>
-      {loading && <div className="text-xs text-gray-500">Loading…</div>}
+      {loading && <div className="text-xs text-gray-400">Loading…</div>}
       {error && (
         <div className="mb-4 p-3 rounded-md border border-red-700 bg-red-950 text-red-300 text-sm flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" /> {error}
@@ -129,7 +131,7 @@ export default function RepoBindingPanel({ projectId }) {
       {/* Connections list */}
       <h3 className="text-sm font-semibold text-gray-300 mb-2">Connected accounts</h3>
       {connections.length === 0 && (
-        <div className="text-xs text-gray-500">
+        <div className="text-xs text-gray-400">
           No GitHub accounts connected.{' '}
           <a href="/connections" className="text-brand-400 underline">Add one</a> in Connections.
         </div>
@@ -138,25 +140,23 @@ export default function RepoBindingPanel({ projectId }) {
         const isActivePicker = picker?.connection?.id === c.id
         return (
           <div key={c.id} className="mb-2 rounded-md border border-gray-800 bg-gray-900">
-            <div className="p-3 flex items-center justify-between">
-              <div>
+            <div className="p-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
                 <div className="text-sm text-gray-200 flex items-center gap-2">
                   <Github className="w-4 h-4 text-brand-400" />
                   {c.account_login ? `@${c.account_login}` : 'GitHub'}
                 </div>
-                <div className="text-[10px] text-gray-500">
-                  added {c.created_at?.slice(0, 10)}
+                <div className="text-xs text-gray-400">
+                  added <Time value={c.created_at} />
                 </div>
               </div>
+              {/* Same place, same button shape in both states (UI review #30). */}
               {isActivePicker ? (
-                <button onClick={() => setPicker(null)} className="text-xs text-gray-400 hover:text-gray-200">
-                  Cancel
+                <button onClick={() => setPicker(null)} aria-expanded="true" className={`${secondaryButton} min-w-[8.5rem] justify-center`}>
+                  <X className="w-3.5 h-3.5" aria-hidden="true" /> Close
                 </button>
               ) : (
-                <button
-                  onClick={() => startPicker(c)}
-                  className="text-xs px-2 py-1 rounded bg-brand-600 hover:bg-brand-500 text-white"
-                >
+                <button onClick={() => startPicker(c)} aria-expanded="false" className={`${primaryButton} min-w-[8.5rem] justify-center`}>
                   Browse repos
                 </button>
               )}
@@ -169,7 +169,7 @@ export default function RepoBindingPanel({ projectId }) {
                   <div className="text-xs text-red-400">{picker.error}</div>
                 )}
                 {picker.loading && (
-                  <div className="text-xs text-gray-500 flex items-center gap-2">
+                  <div className="text-xs text-gray-400 flex items-center gap-2">
                     <Loader className="w-3 h-3 animate-spin" /> Loading repos…
                   </div>
                 )}
@@ -196,7 +196,7 @@ export default function RepoBindingPanel({ projectId }) {
                     <button
                       onClick={bind}
                       disabled={!picker.selectedBranch}
-                      className="text-xs px-3 py-1.5 rounded bg-brand-600 hover:bg-brand-500 text-white disabled:opacity-50"
+                      className={`${primaryButton} max-w-full truncate`}
                     >
                       Bind {picker.repo.full_name} @ {picker.selectedBranch || '?'}
                     </button>
@@ -228,25 +228,25 @@ function RepoList({ repos, activeRepo, onPick }) {
         onChange={(e) => setFilter(e.target.value)}
         className="w-full px-2 py-1 text-xs bg-gray-800 border border-gray-700 rounded"
       />
-      <div className="max-h-72 overflow-y-auto rounded border border-gray-800 divide-y divide-gray-800">
+      <div className="max-h-[min(60vh,32rem)] overflow-y-auto overflow-x-hidden rounded border border-gray-800 divide-y divide-gray-800">
         {visible.length === 0 && (
-          <div className="p-3 text-xs text-gray-500 italic">No repos match.</div>
+          <div className="p-3 text-xs text-gray-400 italic">No repos match.</div>
         )}
         {visible.map((r) => (
           <button
             key={r.full_name}
             onClick={() => onPick(r)}
-            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-gray-800 ${
+            className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between gap-3 hover:bg-gray-800 ${
               activeRepo?.full_name === r.full_name ? 'bg-brand-950' : ''
             }`}
           >
-            <div>
-              <div className="font-medium text-gray-200">{r.full_name}</div>
-              {r.description && <div className="text-gray-500 text-[10px] truncate">{r.description}</div>}
+            <div className="min-w-0 flex-1">
+              <div className="font-medium text-gray-200 truncate" title={r.full_name}>{r.full_name}</div>
+              {r.description && <div className="text-gray-400 text-xs truncate" title={r.description}>{r.description}</div>}
             </div>
-            <div className="text-gray-500 flex items-center gap-2">
-              {r.private && <span className="px-1 bg-gray-800 rounded text-[10px]">private</span>}
-              <span className="text-[10px]">{r.default_branch}</span>
+            <div className="text-gray-400 flex flex-shrink-0 items-center gap-2 whitespace-nowrap">
+              {r.private && <span className="px-1 bg-gray-800 rounded text-xs">private</span>}
+              <span className="text-xs">{r.default_branch}</span>
               {activeRepo?.full_name === r.full_name && <Check className="w-3 h-3 text-brand-400" />}
             </div>
           </button>
@@ -264,7 +264,7 @@ function BranchPicker({ repo, branches, branchesLoading, branchesError, selected
         <GitBranch className="w-3 h-3" /> Branch for <code className="text-brand-300">{repo.full_name}</code>
       </div>
       {branchesLoading && (
-        <div className="text-xs text-gray-500 flex items-center gap-2">
+        <div className="text-xs text-gray-400 flex items-center gap-2">
           <Loader className="w-3 h-3 animate-spin" /> Loading branches…
         </div>
       )}

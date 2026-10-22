@@ -63,13 +63,13 @@ export default function SkillOverridePassword() {
   return (
     <div>
       <h2 className="text-lg font-semibold text-gray-100 mb-1">Skill Security Override</h2>
-      <p className="text-sm text-gray-500 mb-4">
+      <p className="text-sm text-gray-400 mb-4">
         Set a password to allow force-enabling skills that failed a security scan.
         This password is stored encrypted in the vault and required each time an override is used.
       </p>
 
       {loading ? (
-        <p className="text-xs text-gray-600">Loading...</p>
+        <p className="text-xs text-gray-400">Loading...</p>
       ) : isSet ? (
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
           <div className="flex items-center justify-between">
@@ -84,7 +84,7 @@ export default function SkillOverridePassword() {
               <Trash2 className="w-3 h-3" /> Remove
             </button>
           </div>
-          <p className="text-xs text-gray-600">
+          <p className="text-xs text-gray-400">
             To change the password, remove the current one and set a new one.
           </p>
         </div>
@@ -98,12 +98,14 @@ export default function SkillOverridePassword() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Minimum 8 characters"
-                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 pr-10"
+                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500 pr-10"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -116,13 +118,13 @@ export default function SkillOverridePassword() {
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Re-enter password"
-              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
             />
           </div>
           <button
             onClick={handleSave}
             disabled={!password.trim() || !confirmPassword.trim()}
-            className="flex items-center justify-center gap-2 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50 w-full"
+            className="flex items-center justify-center gap-2 px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded disabled:opacity-50 w-full"
           >
             <Save className="w-4 h-4" /> Set Override Password
           </button>

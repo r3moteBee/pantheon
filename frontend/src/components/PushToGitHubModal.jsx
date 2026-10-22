@@ -104,7 +104,7 @@ export default function PushToGitHubModal({ projectId, pathPrefix, artifactIds, 
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
           <div className="flex items-center gap-2 text-sm font-semibold"><Github className="w-4 h-4" /> Push {name} to GitHub</div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="text-gray-400 hover:text-gray-200"><X className="w-4 h-4" /></button>
         </div>
 
         {result ? (
@@ -192,7 +192,7 @@ export default function PushToGitHubModal({ projectId, pathPrefix, artifactIds, 
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={onClose} className="px-3 py-1 rounded bg-gray-800 hover:bg-gray-700">Cancel</button>
               <button onClick={push} disabled={!canPush}
-                      className="px-3 py-1 rounded bg-brand-600 hover:bg-brand-500 disabled:opacity-50 flex items-center gap-1">
+                      className="px-3 py-1 rounded bg-brand-700 hover:bg-brand-600 disabled:opacity-50 flex items-center gap-1">
                 {busy && <Loader className="w-3 h-3 animate-spin" />} {repoChoice === '__new__' ? 'Create and push' : 'Push'}
               </button>
             </div>

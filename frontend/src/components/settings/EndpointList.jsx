@@ -40,7 +40,7 @@ export default function EndpointList({ onChange }) {
     <section className='space-y-3'>
       <header className='flex items-center justify-between'>
         <h3 className='text-sm font-semibold text-gray-200'>Endpoints</h3>
-        <span className='text-xs text-gray-500'>
+        <span className='text-xs text-gray-400'>
           {loading ? '…' : `${endpoints.length} configured`}
         </span>
       </header>
@@ -49,7 +49,7 @@ export default function EndpointList({ onChange }) {
           <EndpointCard key={e.name} endpoint={e} onChange={handleChange} />
         ))}
         {!loading && endpoints.length === 0 && (
-          <div className='text-xs text-gray-500 italic'>
+          <div className='text-xs text-gray-400 italic'>
             No endpoints yet. Add one below.
           </div>
         )}
@@ -62,7 +62,7 @@ export default function EndpointList({ onChange }) {
         </p>
         <div className='overflow-x-auto'>
           <table className='w-full text-xs'>
-            <thead className='text-gray-500'>
+            <thead className='text-gray-400'>
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Provider</th>
                 <th className='text-left font-normal pb-1 pr-3'>API type</th>
@@ -76,14 +76,14 @@ export default function EndpointList({ onChange }) {
                     <button
                       type='button'
                       onClick={() => useProvider(p)}
-                      className='text-left text-brand-400 hover:underline focus:outline-none focus:underline'
+                      className='text-left text-brand-400 hover:underline focus:underline'
                       title={`Pre-fill form with ${p.base_url}`}
                     >
                       {p.name}
                     </button>
                   </td>
                   <td className='py-1.5 pr-3'>
-                    <code className='font-mono text-[11px] text-gray-400'>{p.api_type}</code>
+                    <code className='font-mono text-xs text-gray-400'>{p.api_type}</code>
                   </td>
                   <td className='py-1.5'>
                     <a
@@ -95,7 +95,7 @@ export default function EndpointList({ onChange }) {
                       {p.signup_label}
                     </a>
                     {p.signup_note && (
-                      <span className='text-gray-500 ml-1'>· {p.signup_note}</span>
+                      <span className='text-gray-400 ml-1'>· {p.signup_note}</span>
                     )}
                   </td>
                 </tr>
