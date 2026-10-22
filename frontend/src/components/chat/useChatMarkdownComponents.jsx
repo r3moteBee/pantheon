@@ -9,6 +9,30 @@ const workspaceFilePath = (url) => decodeURIComponent(url.replace(/^workspace:\/
 const imageExts = /\.(png|jpe?g|gif|webp|bmp|svg)$/i
 const pdfExt = /\.pdf$/i
 
+// Defense in depth for zero-click exfiltration: the backend already turns
+// external images in replies into text (agent/output_filter.py), but if one
+// slips through, the browser must not fetch it. Only same-origin http(s)
+// images load (relative paths, /api/... artifact and file URLs); anything
+// else (other hosts, //host, data:, blob:) is shown as a link instead.
+export const isSameOriginImage = (src) => {
+  if (!src || typeof src !== 'string') return false
+  try {
+    const u = new URL(src, window.location.href)
+    return (u.protocol === 'http:' || u.protocol === 'https:') && u.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+const externalImageLabel = (src) => {
+  try {
+    const u = new URL(src, window.location.href)
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.host : u.protocol.replace(/:$/, '') + ' URL'
+  } catch {
+    return 'external URL'
+  }
+}
+
 // Chat's element overrides for the shared <Markdown>: workspace:// images
 // and PDFs render inline, workspace:// links open the file, external links
 // open in a new tab.
@@ -31,7 +55,7 @@ export default function useChatMarkdownComponents() {
         </pre>
       )
     },
-    img: ({ src, alt, ...props }) => {
+    img: ({ src, alt, node, ...props }) => {
       if (isWorkspacePath(src)) {
         const url = resolveUrl(src)
         const path = workspaceFilePath(src)
@@ -54,7 +78,13 @@ export default function useChatMarkdownComponents() {
           )
         }
       }
-      return <img src={src} alt={alt} {...props} />
+      if (isSameOriginImage(src)) return <img src={src} alt={alt} {...props} />
+      let isWeb = false
+      try { isWeb = !!src && /^https?:$/.test(new URL(src, window.location.href).protocol) } catch { /* not a URL */ }
+      const label = src ? `image not loaded: ${alt || 'image'} (${externalImageLabel(src)})` : `image not loaded: ${alt || 'image'}`
+      return isWeb
+        ? <a href={src} target="_blank" rel="noopener noreferrer nofollow" className="italic text-gray-400 underline">{label}</a>
+        : <span className="italic text-gray-400">{label}</span>
     },
     a: ({ href, children, ...props }) => {
       if (isWorkspacePath(href)) {

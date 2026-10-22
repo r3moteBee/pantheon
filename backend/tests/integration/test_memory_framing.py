@@ -30,7 +30,8 @@ def test_items_are_labelled_by_provenance():
     assert "[note] User's dog is called Rufus" in out
     assert "[user said] our Q3 budget is 42,000 euros" in out
     assert "[your earlier reply] The latest Python is 3.12.7" in out
-    assert "[graph] [graph:vendor] Acme" in out
+    # graph nodes are built from ingested files, so they are fenced as data
+    assert '[graph] <untrusted_content source="memory">\n[graph:vendor] Acme\n</untrusted_content>' in out
 
 
 def test_guidance_keeps_corpus_authority_but_not_over_tools():
