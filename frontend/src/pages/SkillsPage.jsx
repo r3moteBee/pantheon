@@ -3,6 +3,7 @@ import { Zap, ShieldCheck, Globe } from 'lucide-react'
 import Skills from '../components/Skills'
 import SkillScanDashboard from '../components/SkillScanDashboard'
 import SkillHubsSettings from '../components/settings/SkillHubsSettings'
+import TabStrip from '../components/TabStrip'
 import { useUrlParam } from '../hooks/useUrlState'
 import usePageTitle from '../hooks/usePageTitle'
 
@@ -19,32 +20,13 @@ export default function SkillsPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div
-        role="tablist"
-        aria-label="Skills sections"
-        className="flex items-center border-b border-gray-800 px-2 sm:px-6 pt-4 overflow-x-auto scrollbar-thin"
-      >
-        {TABS.map((t) => {
-          const Icon = t.icon
-          const active = tab === t.id
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(t.id)}
-              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-                active
-                  ? 'border-brand-400 text-brand-300'
-                  : 'border-transparent text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
-              {t.label}
-            </button>
-          )
-        })}
-      </div>
+      <TabStrip
+        tabs={TABS}
+        value={tab}
+        onChange={setTab}
+        label="Skills sections"
+        className="border-b border-gray-800 px-2 sm:px-6 pt-4"
+      />
       <div className="flex-1 overflow-hidden">
         {tab === 'library' && <Skills />}
         {tab === 'security' && <SkillScanDashboard />}

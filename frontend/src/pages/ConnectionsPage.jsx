@@ -4,6 +4,8 @@ import { connectionsApi } from '../api/client'
 import MCPConnections from '../components/MCPConnections'
 import HelpDrawer from '../components/help/HelpDrawer'
 import SearchProvidersTab from '../components/connections/SearchProvidersTab'
+import PageHeader from '../components/PageHeader'
+import TabStrip from '../components/TabStrip'
 import Time from '../components/Time'
 import { useUrlParam } from '../hooks/useUrlState'
 import usePageTitle from '../hooks/usePageTitle'
@@ -20,36 +22,39 @@ export default function ConnectionsPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <div
-        role="tablist"
-        aria-label="Connection types"
-        className="border-b border-gray-800 px-2 sm:px-6 pt-4 flex items-center gap-1 overflow-x-auto scrollbar-thin"
-      >
-        {TABS.map((t) => {
-          const Icon = t.icon
-          const active = tab === t.id
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(t.id)}
-              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-                active
-                  ? 'border-brand-400 text-brand-300'
-                  : 'border-transparent text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
-              {t.label}
-            </button>
-          )
-        })}
-      </div>
+      <TabStrip
+        tabs={TABS}
+        value={tab}
+        onChange={setTab}
+        label="Connection types"
+        className="border-b border-gray-800 px-2 sm:px-6 pt-4"
+      />
       <div className="flex-1 overflow-hidden">
         {tab === 'github' && <GitHubAccountsTab />}
         {tab === 'mcp'    && <MCPTab />}
-        {tab === 'search' && <SearchProvidersTab />}
+        {tab === 'search' && (
+          <ConnectionsFrame title="Web search providers">
+            <SearchProvidersTab />
+          </ConnectionsFrame>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The one frame every Connections tab shares (UI review N1/#17): the scroll
+ * container, the shared PageHeader (title, optional description, right-hand
+ * actions) and the max-w-3xl column with the page gutter. The tab bodies
+ * (MCPConnections, GitHub accounts, SearchProvidersTab) render no heading,
+ * scroll area or gutter of their own.
+ */
+export function ConnectionsFrame({ title, description, actions, children }) {
+  return (
+    <div className="h-full overflow-y-auto scrollbar-thin">
+      <PageHeader title={title} description={description} actions={actions} />
+      <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-4">
+        {children}
       </div>
     </div>
   )
@@ -97,31 +102,25 @@ function GitHubAccountsTab() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <h2 className="text-xl font-semibold flex items-center gap-2">
-          <Github className="w-5 h-5" aria-hidden="true" /> GitHub accounts
-        </h2>
-        <div className="flex gap-2">
-          <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 whitespace-nowrap">
-            <RefreshCw className="w-3 h-3" aria-hidden="true" /> Refresh
+    <ConnectionsFrame
+      title="GitHub accounts"
+      description={<>System-wide PATs. Bind a specific repo to a project on its
+        <span className="text-gray-300"> Workspace → Repository </span>tab.</>}
+      actions={<>
+        <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1 whitespace-nowrap">
+          <RefreshCw className="w-3 h-3" aria-hidden="true" /> Refresh
+        </button>
+        {!showAdd && (
+          <button
+            onClick={() => setShowAdd(true)}
+            className="text-xs px-3 py-1.5 rounded-md bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 whitespace-nowrap"
+          >
+            <Plus className="w-3 h-3" aria-hidden="true" /> Add account
           </button>
-          {!showAdd && (
-            <button
-              onClick={() => setShowAdd(true)}
-              className="text-xs px-3 py-1.5 rounded-md bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 whitespace-nowrap"
-            >
-              <Plus className="w-3 h-3" /> Add account
-            </button>
-          )}
-        </div>
-      </div>
-      <p className="text-xs text-gray-400 mb-4">
-        System-wide PATs. Bind a specific repo to a project on its
-        <span className="text-gray-300"> Workspace → Repository </span>tab.
-      </p>
-
-      <div className='mb-4'>
+        )}
+      </>}
+    >
+      <div>
         <HelpDrawer title='About GitHub Personal Access Tokens' storageKey='help.github-pat'>
           <p className='text-xs text-gray-400 mb-3'>
             Pantheon uses a PAT to read repositories and open pull requests on
@@ -174,13 +173,13 @@ function GitHubAccountsTab() {
       </div>
 
       {error && (
-        <div className="mb-4 p-3 rounded-md border border-red-700 bg-red-950 text-red-300 text-sm flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" /> {error}
+        <div className="p-3 rounded-md border border-red-700 bg-red-950 text-red-300 text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" aria-hidden="true" /> {error}
         </div>
       )}
 
       {showAdd && (
-        <div className="mb-6 p-4 rounded-lg border border-gray-700 bg-gray-900 space-y-3">
+        <div className="p-4 rounded-lg border border-gray-700 bg-gray-900 space-y-3">
           <div className="text-sm font-semibold">Add GitHub account</div>
           <p className="text-xs text-gray-400">
             Personal Access Token (classic or fine-grained) with{' '}
@@ -262,16 +261,19 @@ function GitHubAccountsTab() {
           ))}
         </div>
       )}
-    </div>
+    </ConnectionsFrame>
   )
 }
 
 
 function MCPTab() {
-  // MCPConnections brings its own scroll area, heading and description. The
-  // frame used to add a second, differently indented "MCP servers" header
-  // whose note pointed at per-project toggles on Project Settings that no
-  // longer exist (per-project MCP enablement was retired: every enabled
-  // server is available to every project).
-  return <MCPConnections />
+  // MCPConnections renders only its toolbar, description and list; the page
+  // title, scroll container and gutter come from the shared frame, the same
+  // one the GitHub and Web search tabs use (UI review N1: the MCP tab had
+  // lost both after round 1).
+  return (
+    <ConnectionsFrame title="MCP servers">
+      <MCPConnections />
+    </ConnectionsFrame>
+  )
 }

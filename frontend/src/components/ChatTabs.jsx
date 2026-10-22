@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { Suspense, lazy, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import Chat from './Chat'
 import ChatActions from './ChatActions'
+import TabStrip from './TabStrip'
 // Lazy so d3 / CodeMirror stay out of the /chat landing chunk.
 const MemoryPage = lazy(() => import('../pages/MemoryPage'))
 const ArtifactsPage = lazy(() => import('../pages/ArtifactsPage'))
@@ -27,8 +28,10 @@ export const TABS = [
 ]
 const TAB_IDS = TABS.map((t) => t.id)
 
-// Query parameters that belong to one tab only; dropped when leaving it.
-const TAB_PARAMS = ['id', 'scope']
+// The only query parameters that mean the same thing on every tab: the
+// tab itself and the open conversation. Everything else (mem=, id=, job=,
+// scope=, …) belongs to one tab and is dropped when leaving it (UI review N7).
+const SHARED_PARAMS = ['tab', 'c']
 
 // Short conversation title for document.title: the first user message.
 const conversationTitle = (messages) => {
@@ -45,7 +48,6 @@ export default function ChatTabs() {
   const activeProject = useStore((s) => s.activeProject)
   const projectId = activeProject?.id || 'default'
   const chatTitle = useStore((s) => conversationTitle(s.messages))
-  const tabsRef = useRef(null)
 
   useConversationPersistence()
 
@@ -54,56 +56,38 @@ export default function ChatTabs() {
 
   const setTab = (id) => {
     setParams((prev) => {
-      const p = new URLSearchParams(prev)
-      if (id !== tab) TAB_PARAMS.forEach((k) => p.delete(k))
+      const p = new URLSearchParams()
+      for (const k of SHARED_PARAMS) if (prev.has(k)) p.set(k, prev.get(k))
       if (id === 'chat') p.delete('tab')
       else p.set('tab', id)
       return p
     })
   }
 
-  // Keep the active tab visible when the strip scrolls (narrow screens).
-  useEffect(() => {
-    const el = tabsRef.current?.querySelector('[aria-current="page"]')
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [tab])
-
   return (
     <div className="h-full flex flex-col">
       {/* Unified top bar: project switcher (fixed width) · tabs · chat actions.
-          Tabs never move: the switcher has a fixed width and the right-hand
-          area only grows into the spacer. On narrow screens the tabs get
-          their own scrollable row. */}
+          One height on every tab (UI review N2/#2): every child is h-7, the
+          tab strip never scrolls (tabs that don't fit go into "More"), and
+          the chat actions sit in a fixed-width area that is reserved on the
+          other tabs too, so the same tabs are visible everywhere. Below sm
+          the strip gets its own row. */}
       <div data-shell className="border-b border-gray-800 bg-gray-950 px-3 py-1.5 flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5">
         <ProjectPickerPill activeProject={activeProject} />
 
-        <nav
-          ref={tabsRef}
-          aria-label="Project sections"
-          className="order-last sm:order-none basis-full sm:basis-auto flex-1 min-w-0 flex items-center gap-0.5 overflow-x-auto scrollbar-thin"
-        >
-          {TABS.map((t) => {
-            const Icon = t.icon
-            const active = tab === t.id
-            return (
-              <button
-                key={t.id}
-                onClick={() => setTab(t.id)}
-                aria-current={active ? 'page' : undefined}
-                className={`flex flex-shrink-0 items-center gap-1.5 px-2.5 py-1 text-xs rounded-md transition-colors whitespace-nowrap ${
-                  active ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-900'
-                }`}
-              >
-                <Icon className="w-3 h-3" aria-hidden="true" />
-                {t.label}
-              </button>
-            )
-          })}
-        </nav>
+        <TabStrip
+          tabs={TABS}
+          value={tab}
+          onChange={setTab}
+          variant="pill"
+          role="nav"
+          label="Project sections"
+          className="order-last sm:order-none basis-full sm:basis-auto flex-1 h-7"
+        />
 
-        {/* Right-hand area: chat-only actions. Same height as the switcher so
-            the bar keeps its height on every tab. */}
-        <div className="ml-auto flex h-7 flex-shrink-0 items-center">
+        {/* Chat-only actions. The width is the actions' own width (icons +
+            "Options" from md up), kept on every tab. */}
+        <div className="ml-auto flex h-7 flex-shrink-0 items-center justify-end sm:min-w-[9.25rem] md:min-w-[12.5rem]">
           {tab === 'chat' && <ChatActions />}
         </div>
       </div>
@@ -163,7 +147,7 @@ function ProjectPickerPill({ activeProject }) {
       <button
         ref={triggerRef}
         onClick={() => setOpen(!open)}
-        className="flex h-7 w-36 sm:w-52 flex-shrink-0 items-center gap-1.5 px-2 rounded-md bg-gray-900 border border-gray-800 hover:bg-gray-800 hover:border-gray-700 transition-colors whitespace-nowrap"
+        className="flex h-7 w-36 sm:w-44 flex-shrink-0 items-center gap-1.5 px-2 rounded-md bg-gray-900 border border-gray-800 hover:bg-gray-800 hover:border-gray-700 transition-colors whitespace-nowrap"
         title={`Project: ${name} (click to switch)`}
         aria-label={`Project: ${name}. Switch project`}
         aria-haspopup="menu"

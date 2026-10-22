@@ -3,12 +3,33 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    /* Native scrollbars, form controls and the page canvas in their dark
+       variants (UI review N5): the UI is dark-only. */
+    color-scheme: dark;
+  }
   body {
     @apply bg-gray-950 text-gray-100 font-sans;
   }
 }
 
 @layer components {
+  /* One content column for the chat tab (UI review #16): the message list
+     and the composer share it, see src/components/layout/columns.js. */
+  .content-column {
+    width: 100%;
+    max-width: 56rem;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  /* Scrollable rows that must not show a scrollbar (tab strips, chip rows). */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: #374151 transparent;
