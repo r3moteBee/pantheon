@@ -61,10 +61,10 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
             <Trash2 className="w-5 h-5 text-red-400" />
             <div>
               <h2 className="text-lg font-semibold text-gray-100">Delete project</h2>
-              <p className="text-xs text-gray-500">{project.name}</p>
+              <p className="text-xs text-gray-400">{project.name}</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 text-gray-500 hover:text-gray-300" aria-label="Close">
+          <button onClick={onClose} className="p-1 text-gray-400 hover:text-gray-300" aria-label="Close">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -76,7 +76,7 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
           </p>
 
           {!preview && !error && (
-            <div className="flex items-center gap-2 text-gray-500 text-xs">
+            <div className="flex items-center gap-2 text-gray-400 text-xs">
               <Loader2 className="w-4 h-4 animate-spin" /> Counting what the project contains…
             </div>
           )}
@@ -85,7 +85,7 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
             <div className="bg-gray-800 rounded-lg p-3">
               <div className="text-xs font-semibold text-gray-300 mb-2">What will be deleted</div>
               {items.length === 0 ? (
-                <div className="text-xs text-gray-500">Nothing besides the project itself.</div>
+                <div className="text-xs text-gray-400">Nothing besides the project itself.</div>
               ) : (
                 <ul className="text-xs text-gray-400 space-y-1">
                   {items.map(([label, n]) => (
@@ -96,7 +96,7 @@ export default function DeleteProjectModal({ project, onClose, onDeleted }) {
                   ))}
                 </ul>
               )}
-              <div className="text-[11px] text-gray-500 mt-3">
+              <div className="text-xs text-gray-400 mt-3">
                 Also removed: its scheduled tasks and job history, project settings, repo binding, and
                 chat-channel mappings to it. Files that other projects also use are kept.
               </div>

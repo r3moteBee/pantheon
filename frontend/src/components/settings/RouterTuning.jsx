@@ -78,7 +78,7 @@ export default function RouterTuning({ onApplied }) {
       </header>
 
       {recs.length === 0 && data && (
-        <div className='text-xs text-gray-500 italic'>No suggestions — routing looks healthy for this window.</div>
+        <div className='text-xs text-gray-400 italic'>No suggestions — routing looks healthy for this window.</div>
       )}
 
       <div className='space-y-2'>
@@ -115,7 +115,7 @@ export default function RouterTuning({ onApplied }) {
                         {Object.keys(pv.moves || {}).length > 0 && ` (${Object.entries(pv.moves).map(([k, v]) => `${k}: ${v}`).join(', ')})`}.
                       </div>
                       {(pv.examples || []).slice(0, 5).map((ex, i) => (
-                        <div key={i} className='truncate text-gray-500' title={ex.text}>
+                        <div key={i} className='truncate text-gray-400' title={ex.text}>
                           {ex.from}→{ex.to}: “{ex.text}”
                         </div>
                       ))}

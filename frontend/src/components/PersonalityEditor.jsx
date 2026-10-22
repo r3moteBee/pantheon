@@ -5,21 +5,24 @@ import { useStore } from '../store'
 import { personalityApi, personasApi, projectsApi } from '../api/client'
 import CoreEditor from './CoreEditor'
 
+// react-markdown 9 dropped the `inline` prop, so every code span rendered as a
+// block. Block code is the one wrapped in <pre>: the pre override styles the
+// block, and `code` only ever styles inline code.
 const PERSONALITY_MD_COMPONENTS = {
-  code: ({ node, inline, className, children, ...props }) => {
-    if (inline) {
-      return (
-        <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
-          {children}
-        </code>
-      )
-    }
+  pre: ({ node, children, ...props }) => {
+    const child = React.Children.toArray(children)[0]
+    const inner = React.isValidElement(child) ? child.props.children : children
     return (
-      <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto">
-        <code className="text-green-300 text-xs font-mono" {...props}>{children}</code>
+      <pre className="bg-gray-950 rounded-lg p-3 overflow-x-auto" {...props}>
+        <code className="text-green-300 text-xs font-mono">{inner}</code>
       </pre>
     )
   },
+  code: ({ node, className, children, ...props }) => (
+    <code className="bg-gray-800 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+      {children}
+    </code>
+  ),
 }
 
 // Extract the first heading or "You are X" line from soul.md as the agent name
@@ -266,7 +269,7 @@ export default function PersonalityEditor() {
                 <span className="ml-2 text-brand-400">{agentName}</span>
               )}
             </h1>
-            <p className="text-sm text-gray-500 mt-0.5">
+            <p className="text-sm text-gray-400 mt-0.5">
               Configure the agent's identity and behavioral rules. Changes apply on the next chat.
             </p>
           </div>
@@ -283,7 +286,7 @@ export default function PersonalityEditor() {
             <select
               value={selectedProjectId || '__global__'}
               onChange={(e) => setSelectedProjectId(e.target.value === '__global__' ? null : e.target.value)}
-              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
             >
               <option value="__global__">Global (all projects)</option>
               {projects.map((p) => (
@@ -306,7 +309,7 @@ export default function PersonalityEditor() {
                   value={selectedPersonaId}
                   onChange={(e) => setSelectedPersonaId(e.target.value)}
                   disabled={applyingPersona}
-                  className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500 disabled:opacity-50"
+                  className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500 disabled:opacity-50"
                 >
                   <option value="">Choose a preset…</option>
                   {personas.map((p) => (
@@ -319,7 +322,7 @@ export default function PersonalityEditor() {
                   onClick={() => applyPersona(selectedPersonaId)}
                   disabled={!selectedPersonaId || applyingPersona}
                   title="Use this preset's voice for this project (the global Key Commitments are kept)"
-                  className="px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50 flex-shrink-0"
+                  className="px-3 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded disabled:opacity-50 flex-shrink-0"
                 >
                   {applyingPersona ? '...' : 'Apply'}
                 </button>
@@ -336,7 +339,7 @@ export default function PersonalityEditor() {
               {(() => {
                 const p = personas.find((x) => x.id === selectedPersonaId)
                 return p ? (
-                  <p className="mt-1 text-[11px] text-gray-500">
+                  <p className="mt-1 text-xs text-gray-400">
                     {p.best_for || p.description || p.tagline}
                   </p>
                 ) : null
@@ -358,7 +361,7 @@ export default function PersonalityEditor() {
 
         {/* Context banners */}
         {!projectId && (
-          <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
+          <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
             <Globe className="w-3 h-3 flex-shrink-0" />
             Editing the <span className="text-gray-300 font-medium">global</span> personality used by all projects without an override.
           </div>
@@ -400,7 +403,7 @@ export default function PersonalityEditor() {
             }`}
           >
             <span>{tab.label}</span>
-            <span className="ml-2 text-xs font-mono text-gray-600">{tab.file}</span>
+            <span className="ml-2 text-xs font-mono text-gray-400">{tab.file}</span>
           </button>
         ))}
       </div>
@@ -414,7 +417,7 @@ export default function PersonalityEditor() {
             <p className="text-sm font-medium text-gray-300">
               {viewMode === 'edit' ? 'Editing' : 'Preview'}
             </p>
-            <p className="text-xs text-gray-600">{activeTabDef?.file}</p>
+            <p className="text-xs text-gray-400">{activeTabDef?.file}</p>
           </div>
           <button
             onClick={() => setViewMode(viewMode === 'edit' ? 'preview' : 'edit')}
@@ -448,10 +451,10 @@ export default function PersonalityEditor() {
             <div className="h-full overflow-y-auto scrollbar-thin p-6">
               {loading ? (
                 <div className="flex items-center justify-center h-full">
-                  <RefreshCw className="w-5 h-5 text-gray-600 animate-spin" />
+                  <RefreshCw className="w-5 h-5 text-gray-400 animate-spin" />
                 </div>
               ) : isEmpty ? (
-                <p className="text-sm text-gray-600 italic">No content — apply a preset or restore the defaults, then click Edit to author it.</p>
+                <p className="text-sm text-gray-400 italic">No content — apply a preset or restore the defaults, then click Edit to author it.</p>
               ) : (
                 <Markdown
                   className="prose prose-invert prose-sm max-w-3xl mx-auto"
@@ -490,7 +493,7 @@ export default function PersonalityEditor() {
           )}
 
           {savedAt && (
-            <span className="text-xs text-gray-600 ml-1">
+            <span className="text-xs text-gray-400 ml-1">
               Saved {savedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
@@ -498,7 +501,7 @@ export default function PersonalityEditor() {
           <button
             onClick={save}
             disabled={loading || saving || !currentContent.trim()}
-            className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded-lg disabled:opacity-50 ml-auto"
+            className="flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded-lg disabled:opacity-50 ml-auto"
           >
             <Save className="w-4 h-4" />
             {saving ? 'Saving…' : `Save ${projectId ? 'Project' : 'Global'}`}
@@ -511,7 +514,7 @@ export default function PersonalityEditor() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowSaveAsPersona(false)}>
           <div className="bg-gray-800 rounded-lg border border-gray-700 p-5 w-full max-w-md mx-4 space-y-3" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-sm font-semibold text-gray-200">Save as preset</h3>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-gray-400">
               Save the current soul content as a preset you can apply to other projects. It's a snapshot — later edits here don't change it.
             </p>
             <div>
@@ -521,7 +524,7 @@ export default function PersonalityEditor() {
                 value={savePersonaName}
                 onChange={(e) => setSavePersonaName(e.target.value)}
                 placeholder="My Custom Agent"
-                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
                 autoFocus
               />
             </div>
@@ -532,7 +535,7 @@ export default function PersonalityEditor() {
                 value={savePersonaTagline}
                 onChange={(e) => setSavePersonaTagline(e.target.value)}
                 placeholder="Short description..."
-                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+                className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
@@ -545,7 +548,7 @@ export default function PersonalityEditor() {
               <button
                 onClick={saveAsPersona}
                 disabled={savingAsPersona || !savePersonaName.trim()}
-                className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm rounded disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white text-sm rounded disabled:opacity-50"
               >
                 <BookOpen className="w-4 h-4" />
                 {savingAsPersona ? 'Saving...' : 'Save preset'}

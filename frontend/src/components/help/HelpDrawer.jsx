@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { HelpCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { Info, ChevronDown, ChevronRight } from 'lucide-react'
 
 /**
  * Collapsible inline help panel. Header bar is a clickable button
@@ -44,19 +44,20 @@ export default function HelpDrawer({
   const Chevron = open ? ChevronDown : ChevronRight
 
   return (
-    <div className="border border-amber-900/40 rounded-md bg-amber-950/40 overflow-hidden">
+    // Help is information, not a warning (UI review #13): same neutral blue as InfoBox variant="info".
+    <div className="border border-sky-800/50 rounded-lg bg-sky-950/30 overflow-hidden">
       <button
         type="button"
         onClick={toggle}
         aria-expanded={open}
-        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-amber-100/90 hover:bg-amber-900/30"
+        className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-200 hover:bg-sky-900/30"
       >
-        <Chevron className="w-4 h-4 text-amber-500/70" aria-hidden="true" />
-        <HelpCircle className="w-4 h-4 text-amber-500/70" aria-hidden="true" />
+        <Chevron className="w-4 h-4 text-sky-400" aria-hidden="true" />
+        <Info className="w-4 h-4 text-sky-400" aria-hidden="true" />
         <span className="flex-1 text-left">{title}</span>
       </button>
       {open && (
-        <div className="px-3 py-3 border-t border-amber-900/30">
+        <div className="px-3 py-3 border-t border-sky-900/40">
           {children}
         </div>
       )}

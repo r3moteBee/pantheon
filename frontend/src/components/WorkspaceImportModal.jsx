@@ -49,7 +49,7 @@ export default function WorkspaceImportModal({ projectId, onClose, onDone }) {
            onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
           <div className="flex items-center gap-2 text-sm font-semibold"><HardDriveDownload className="w-4 h-4" /> Import from workspace</div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200"><X className="w-4 h-4" /></button>
+          <button aria-label="Close" onClick={onClose} className="text-gray-400 hover:text-gray-200"><X className="w-4 h-4" /></button>
         </div>
         <div className="px-4 pt-3 text-xs text-gray-400">
           Files the agent wrote to the project workspace. Copy a folder to make it an artifact folder you can download, build and push.
@@ -60,9 +60,9 @@ export default function WorkspaceImportModal({ projectId, onClose, onDone }) {
           {path && <span className="ml-auto">{copyBtn(path)}</span>}
         </div>
         <div className="px-2 pb-3 overflow-y-auto text-xs">
-          {!listing && !error && <div className="px-2 py-2 text-gray-500">Loading…</div>}
+          {!listing && !error && <div className="px-2 py-2 text-gray-400">Loading…</div>}
           {listing && listing.directories.length === 0 && listing.files.length === 0 &&
-            <div className="px-2 py-2 text-gray-500">The workspace is empty here.</div>}
+            <div className="px-2 py-2 text-gray-400">The workspace is empty here.</div>}
           {(listing?.directories || []).map((d) => (
             <div key={d.path} className={row}>
               <button onClick={() => setPath(d.path)} className="flex items-center gap-1 text-gray-200"><Folder className="w-3 h-3" /> {d.name}/</button>

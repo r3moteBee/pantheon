@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowUp, ArrowDown, X, Plus } from 'lucide-react'
 import { llmApi } from '../../api/client'
 import InfoTooltip from '../help/InfoTooltip'
+import { primaryButton } from '../PageHeader'
 
 // Capability flags shown as badges; `requires` on a task class names one.
 const CAPS = [
@@ -58,8 +59,11 @@ export default function ModelRouting({ refreshKey, onSaved }) {
 
   const fetchModels = async (endpoint) => {
     if (!endpoint || models[endpoint]) return
-    const r = await llmApi.probe({ endpoint_name: endpoint })
-    setModels((prev) => ({ ...prev, [endpoint]: r.ok ? r.models : [] }))
+    setModels((prev) => ({ ...prev, [endpoint]: [] }))   // one probe per endpoint
+    try {
+      const r = await llmApi.probe({ endpoint_name: endpoint })
+      setModels((prev) => ({ ...prev, [endpoint]: r.ok ? r.models : [] }))
+    } catch { /* suggestions are optional; free text still works */ }
   }
 
   const save = async () => {
@@ -90,7 +94,7 @@ export default function ModelRouting({ refreshKey, onSaved }) {
           Model routing
           <InfoTooltip text='Each kind of work (task class) uses an ordered list of models. The first is used normally; the rest are tried in order when it is rate-limited, down, or missing. Empty classes inherit from another class where noted.' />
         </h3>
-        <span className='text-xs text-gray-500'>{endpoints.length} endpoints available</span>
+        <span className='text-xs text-gray-400'>{endpoints.length} endpoints available</span>
       </header>
 
       <div className='border border-gray-700 rounded-md bg-gray-900/40 divide-y divide-gray-800'>
@@ -122,7 +126,7 @@ export default function ModelRouting({ refreshKey, onSaved }) {
           type='button'
           onClick={save}
           disabled={saving || !dirty}
-          className='text-xs px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50'
+          className={primaryButton}
         >
           {saving ? 'Saving…' : 'Save routing'}
         </button>
@@ -159,7 +163,7 @@ function ClassRow({
       <div className='flex items-baseline justify-between gap-2'>
         <div>
           <span className='text-sm text-gray-200'>{tc.label}</span>
-          <span className='ml-2 text-xs text-gray-500'>{tc.description}</span>
+          <span className='ml-2 text-xs text-gray-400'>{tc.description}</span>
         </div>
         {canAdd && (
           <button
@@ -173,7 +177,7 @@ function ClassRow({
       </div>
 
       {entries.length === 0 && (
-        <div className='text-xs text-gray-500 italic'>
+        <div className='text-xs text-gray-400 italic'>
           {parentLabel ? `Not set — uses ${parentLabel}` : 'Not configured'}
         </div>
       )}
@@ -204,13 +208,15 @@ function EntryRow({
   onFetchModels, onChange, onMove, onRemove, onProfileSaved,
 }) {
   const [editing, setEditing] = useState(false)
+  const listId = `models-${entry.endpoint || 'none'}`.replace(/[^\w-]/g, '_')
   const missing = requires && profile && !profile[requires]
 
   return (
     <div className='space-y-1'>
-      <div className='flex items-center gap-2'>
-        <span className='text-[10px] w-14 text-gray-500 uppercase'>{index === 0 ? 'primary' : `fallback ${index}`}</span>
+      <div className='flex flex-wrap items-center gap-2'>
+        <span className='text-xs w-20 text-gray-400 whitespace-nowrap'>{index === 0 ? 'Primary' : `Fallback ${index}`}</span>
         <select
+          aria-label={`${index === 0 ? 'Primary' : `Fallback ${index}`} endpoint`}
           value={entry.endpoint}
           onChange={(ev) => { onChange({ endpoint: ev.target.value, model: '' }); onFetchModels(ev.target.value) }}
           className='w-40 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs'
@@ -218,48 +224,46 @@ function EntryRow({
           <option value=''>— endpoint —</option>
           {endpoints.map((ep) => <option key={ep.name} value={ep.name}>{ep.name}</option>)}
         </select>
-        {modelList && modelList.length > 0 ? (
-          <select
-            value={entry.model}
-            onChange={(ev) => onChange({ model: ev.target.value })}
-            className='flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs'
-          >
-            <option value=''>— model —</option>
-            {modelList.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-        ) : (
-          <input
-            type='text'
-            value={entry.model}
-            onChange={(ev) => onChange({ model: ev.target.value })}
-            onFocus={() => onFetchModels(entry.endpoint)}
-            placeholder='model id'
-            disabled={!entry.endpoint}
-            className='flex-1 min-w-0 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs disabled:opacity-50'
-          />
+        {/* Free text with the endpoint's probed models as suggestions (UI review #35):
+            a saved model that the probe doesn't list stays editable. */}
+        <input
+          type='text'
+          value={entry.model}
+          onChange={(ev) => onChange({ model: ev.target.value })}
+          onFocus={() => onFetchModels(entry.endpoint)}
+          list={modelList?.length ? listId : undefined}
+          placeholder={modelList?.length ? `pick or type (${modelList.length} found)` : 'model id'}
+          aria-label={`${index === 0 ? 'Primary' : `Fallback ${index}`} model`}
+          disabled={!entry.endpoint}
+          className='flex-1 min-w-[10rem] bg-gray-800 border border-gray-600 rounded px-2 py-1 text-xs disabled:opacity-50'
+        />
+        {modelList?.length > 0 && (
+          <datalist id={listId}>
+            {modelList.map((m) => <option key={m} value={m} />)}
+          </datalist>
         )}
-        <button type='button' title='Move up' disabled={index === 0} onClick={() => onMove(-1)}
+        <button type='button' title='Move up' aria-label='Move up' disabled={index === 0} onClick={() => onMove(-1)}
           className='p-1 text-gray-400 hover:text-gray-200 disabled:opacity-30'><ArrowUp className='w-3 h-3' /></button>
-        <button type='button' title='Move down' disabled={index === count - 1} onClick={() => onMove(1)}
+        <button type='button' title='Move down' aria-label='Move down' disabled={index === count - 1} onClick={() => onMove(1)}
           className='p-1 text-gray-400 hover:text-gray-200 disabled:opacity-30'><ArrowDown className='w-3 h-3' /></button>
-        <button type='button' title='Remove' onClick={onRemove}
+        <button type='button' title='Remove' aria-label='Remove this model' onClick={onRemove}
           className='p-1 text-gray-400 hover:text-red-300'><X className='w-3 h-3' /></button>
       </div>
 
       {profile && (
-        <div className='flex items-center gap-1 flex-wrap pl-16'>
-          <span className={`text-[10px] px-1.5 rounded ${tierColor(profile.tier)}`}>{profile.tier}</span>
+        <div className='flex items-center gap-1 flex-wrap sm:pl-[5.5rem]'>
+          <span className={`text-xs px-1.5 rounded ${tierColor(profile.tier)}`}>{profile.tier}</span>
           {profile.context_window && (
-            <span className='text-[10px] px-1.5 rounded bg-gray-800 text-gray-400'>{fmtCtx(profile.context_window)} ctx</span>
+            <span className='text-xs px-1.5 rounded bg-gray-800 text-gray-400'>{fmtCtx(profile.context_window)} ctx</span>
           )}
           {CAPS.filter((c) => profile[c.key]).map((c) => (
-            <span key={c.key} className='text-[10px] px-1.5 rounded bg-gray-800 text-gray-300'>{c.label}</span>
+            <span key={c.key} className='text-xs px-1.5 rounded bg-gray-800 text-gray-300'>{c.label}</span>
           ))}
-          {missing && <span className='text-[10px] text-amber-300'>missing {requires.replace('_', ' ')}</span>}
-          <span className='text-[10px] text-gray-600'>
+          {missing && <span className='text-xs text-amber-300'>missing {requires.replace('_', ' ')}</span>}
+          <span className='text-xs text-gray-400'>
             {profile.source === 'user' ? 'edited' : profile.source === 'endpoint' ? 'from endpoint' : profile.source === 'known' ? 'guessed from name' : 'unknown model'}
           </span>
-          <button type='button' onClick={() => setEditing((v) => !v)} className='text-[10px] text-brand-400 hover:text-brand-300'>
+          <button type='button' onClick={() => setEditing((v) => !v)} className='text-xs text-brand-300 hover:text-brand-200'>
             {editing ? 'close' : 'edit'}
           </button>
         </div>
@@ -291,7 +295,7 @@ function ProfileEditor({ entry, profile, onSaved }) {
   }
 
   return (
-    <div className='ml-16 p-2 rounded border border-gray-700 bg-gray-900 flex flex-wrap items-center gap-3 text-xs'>
+    <div className='sm:ml-[5.5rem] p-2 rounded border border-gray-700 bg-gray-900 flex flex-wrap items-center gap-3 text-xs'>
       <label className='flex items-center gap-1'>tier
         <select value={p.tier} onChange={(e) => set('tier', e.target.value)}
           className='bg-gray-800 border border-gray-600 rounded px-1 py-0.5'>
@@ -311,7 +315,7 @@ function ProfileEditor({ entry, profile, onSaved }) {
       <input type='text' value={p.notes || ''} onChange={(e) => set('notes', e.target.value)}
         placeholder='notes' className='flex-1 min-w-[8rem] bg-gray-800 border border-gray-600 rounded px-1 py-0.5' />
       <button type='button' disabled={busy} onClick={save}
-        className='px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50'>Save</button>
+        className='px-2 py-0.5 rounded bg-brand-700 hover:bg-brand-600 text-white disabled:opacity-50'>Save</button>
       {profile.source === 'user' && (
         <button type='button' disabled={busy} onClick={reset}
           className='px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50'>Reset to auto</button>

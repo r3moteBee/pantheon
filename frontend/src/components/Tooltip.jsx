@@ -82,7 +82,7 @@ export default function Tooltip({ children, label, placement = 'bottom', delay =
       {visible && label && createPortal(
         <span
           ref={tipRef}
-          className="pointer-events-none rounded bg-gray-950 border border-gray-700 px-2 py-1 text-[11px] text-gray-200 shadow-lg"
+          className="pointer-events-none rounded bg-gray-950 border border-gray-700 px-2 py-1 text-xs text-gray-200 shadow-lg"
           role="tooltip"
           style={{
             position: 'fixed',

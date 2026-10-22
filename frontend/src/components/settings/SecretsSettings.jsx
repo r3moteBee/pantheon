@@ -67,7 +67,7 @@ export default function SecretsSettings() {
               value={newKey}
               onChange={(e) => setNewKey(e.target.value)}
               placeholder="telegram_bot_token"
-              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
             />
           </div>
           <div>
@@ -77,7 +77,7 @@ export default function SecretsSettings() {
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
               placeholder="***"
-              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-brand-500"
+              className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-gray-100 focus:border-brand-500"
             />
           </div>
           <button
@@ -94,17 +94,19 @@ export default function SecretsSettings() {
       {/* Secrets list */}
       <div className="space-y-2">
         {secrets.length === 0 ? (
-          <p className="text-sm text-gray-600 text-center py-4">No secrets configured</p>
+          <p className="text-sm text-gray-400 text-center py-4">No secrets configured</p>
         ) : (
           secrets.map((secret) => (
             <div key={secret.key} className="bg-gray-800 rounded-lg p-3 border border-gray-700 flex items-center justify-between">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-mono text-gray-300">{secret.key}</p>
-                <span className="text-xs text-gray-600">************</span>
+                <span className="text-xs text-gray-400">************</span>
               </div>
               <button
                 onClick={() => deleteSecret(secret.key)}
-                className="ml-2 p-1 text-gray-500 hover:text-red-400 hover:bg-gray-700 rounded"
+                title="Delete secret"
+                aria-label={`Delete secret ${secret.key}`}
+                className="ml-2 p-1 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded"
               >
                 <Trash2 className="w-4 h-4" />
               </button>

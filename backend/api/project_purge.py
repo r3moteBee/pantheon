@@ -341,7 +341,7 @@ def purge(project_id: str) -> dict[str, int]:
         js = get_jobs()
         for job in _jobs(project_id):
             if job["status"] == "queued":
-                js.cancel(job["id"])
+                js.cancel(job["id"], reason="Its project was deleted")
     except Exception as e:
         logger.warning("Project delete: queued jobs not cancelled: %s", e)
     add("background jobs", _sql_delete("jobs.db", "jobs", project_id))

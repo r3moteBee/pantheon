@@ -49,7 +49,7 @@ export default function RoutingUsage() {
       </header>
 
       {rows.length === 0 ? (
-        <div className='text-xs text-gray-500 italic'>No routed calls in this window yet.</div>
+        <div className='text-xs text-gray-400 italic'>No routed calls in this window yet.</div>
       ) : (
         <div className='overflow-x-auto border border-gray-700 rounded-md'>
           <table className='w-full text-xs'>
@@ -65,8 +65,8 @@ export default function RoutingUsage() {
                 <tr key={`${r.task_class}|${r.endpoint}|${r.model}`} className='text-gray-300'>
                   <td className='px-2 py-1'>{r.task_class}</td>
                   <td className='px-2 py-1'>
-                    <span className='text-gray-500'>{r.endpoint}/</span>{r.model}
-                    {r.last_error && <div className='text-[10px] text-red-300 truncate max-w-xs' title={r.last_error}>{r.last_error}</div>}
+                    <span className='text-gray-400'>{r.endpoint}/</span>{r.model}
+                    {r.last_error && <div className='text-xs text-red-300 truncate max-w-xs' title={r.last_error}>{r.last_error}</div>}
                   </td>
                   <td className='px-2 py-1'>{r.calls}</td>
                   <td className={`px-2 py-1 ${r.errors ? 'text-red-300' : ''}`}>{r.errors}</td>

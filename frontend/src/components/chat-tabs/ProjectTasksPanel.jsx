@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import {
   ListTodo, RefreshCw, X, Check, Clock, AlertTriangle, RotateCcw, Trash2,
-  ExternalLink, FileText, Play, Repeat, Zap, ClipboardCheck, Pencil,
+  ExternalLink, FileText, Play, Repeat, Zap, ClipboardCheck, Pencil, Plus,
 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { jobsApi, tasksApi } from '../../api/client'
 import HelpDrawer from '../help/HelpDrawer'
 import Markdown from '../Markdown'
 import { useStore } from '../../store'
+import Time from '../Time'
+import { primaryButton, secondaryButton } from '../PageHeader'
+import useProjectNames from '../settings/useProjectNames'
 
 const toastError = (message) => useStore.getState().addNotification({ type: 'error', message })
 
@@ -50,6 +53,15 @@ const STATUS_BADGE = {
   cancelled: 'bg-amber-950 text-amber-300',
 }
 
+// What the end of a run is called, per status (UI review #32: a cancelled
+// job is not "Completed").
+const END_LABEL = {
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  stalled: 'Ended',
+}
+
 const SYSTEM_TYPES = new Set(['extraction', 'file_indexing'])
 
 function fmtDuration(ms) {
@@ -74,6 +86,7 @@ export default function ProjectTasksPanel({ projectId }) {
   const [includeSystem, setIncludeSystem] = useState(false)
   const [selectedJob, setSelectedJob] = useState(null)
   const [planEditing, setPlanEditing] = useState(null)   // { schedule object } when reviewing a proposed plan
+  const [creating, setCreating] = useState(false)        // "New schedule" form open
 
   const refresh = async () => {
     setLoading(true)
@@ -96,6 +109,20 @@ export default function ProjectTasksPanel({ projectId }) {
   }
 
   useEffect(() => { refresh() }, [projectId, statusFilter, includeSystem])
+
+  // Deep link from chat status chips: /chat?tab=tasks&job=<full id or 8-char prefix>.
+  const [params] = useSearchParams()
+  const jobParam = params.get('job')
+  const [openedJobParam, setOpenedJobParam] = useState(null)
+  useEffect(() => {
+    if (!jobParam || loading || openedJobParam === jobParam) return
+    setOpenedJobParam(jobParam)
+    const hit = jobs.find((j) => j.id === jobParam || j.id.startsWith(jobParam))
+    if (hit) { setSelectedJob(hit); return }
+    jobsApi.get(jobParam)
+      .then((res) => setSelectedJob(res.data))
+      .catch(() => toastError(`Job ${jobParam} not found in this project's recent runs`))
+  }, [jobParam, loading, jobs, openedJobParam])
 
   const cancel = async (id) => {
     if (!confirm('Cancel this job?')) return
@@ -121,15 +148,16 @@ export default function ProjectTasksPanel({ projectId }) {
   return (
     <div className="h-full flex">
       {/* Main column */}
-      <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
+      <div className="flex-1 min-w-0 overflow-y-auto p-4 sm:p-6 max-w-4xl mx-auto">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
           <h2 className="text-lg font-semibold flex items-center gap-2">
-            <ListTodo className="w-5 h-5" /> Tasks
+            <ListTodo className="w-5 h-5" aria-hidden="true" /> Tasks
           </h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <select
               value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-              className="text-xs bg-gray-900 border border-gray-800 rounded px-2 py-1"
+              aria-label="Filter job runs by status"
+              className="text-xs bg-gray-900 border border-gray-700 rounded px-2 py-1"
             >
               <option value="">All statuses</option>
               <option value="queued">Queued</option>
@@ -139,13 +167,18 @@ export default function ProjectTasksPanel({ projectId }) {
               <option value="stalled">Stalled</option>
               <option value="cancelled">Cancelled</option>
             </select>
-            <label className="text-xs text-gray-400 flex items-center gap-1" title="Show extraction/file_indexing rows">
+            <label className="text-xs text-gray-300 flex items-center gap-1 whitespace-nowrap" title="Show extraction/file_indexing rows">
               <input type="checkbox" checked={includeSystem}
                      onChange={(e) => setIncludeSystem(e.target.checked)} />
               system jobs
             </label>
-            <button onClick={refresh} className="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1">
-              <RefreshCw className="w-3 h-3" /> Refresh
+            <button onClick={refresh} className="text-xs text-gray-300 hover:text-gray-100 flex items-center gap-1 whitespace-nowrap">
+              <RefreshCw className="w-3 h-3" aria-hidden="true" /> Refresh
+            </button>
+            <button onClick={() => setCreating((v) => !v)} aria-expanded={creating}
+                    className={creating ? secondaryButton : primaryButton}>
+              {creating ? <X className="w-3.5 h-3.5" aria-hidden="true" /> : <Plus className="w-3.5 h-3.5" aria-hidden="true" />}
+              {creating ? 'Close' : 'New schedule'}
             </button>
           </div>
         </div>
@@ -155,51 +188,59 @@ export default function ProjectTasksPanel({ projectId }) {
             A <strong>schedule</strong> is a recurring or one-shot trigger.
             Each firing produces a <strong>job run</strong> listed below.
             Schedules can be proposed by the agent and wait for your
-            <span className='text-amber-200/90'> Approve</span> /
-            <span className='text-amber-200/90'> Review</span> before activating.
+            <span className='text-gray-100'> Approve</span> /
+            <span className='text-gray-100'> Review</span> before activating.
           </p>
           <table className='w-full text-xs mb-3'>
-            <thead className='text-gray-500'>
+            <thead className='text-gray-400'>
               <tr>
                 <th className='text-left font-normal pb-1 pr-3'>Status</th>
                 <th className='text-left font-normal pb-1'>Meaning</th>
               </tr>
             </thead>
             <tbody className='text-gray-300'>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300'>queued</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300'>queued</span></td>
                 <td className='py-1'>Waiting for a worker</td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-200'>running</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-blue-900 text-blue-200'>running</span></td>
                 <td className='py-1'>Executing now</td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-200'>completed</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-green-900 text-green-200'>completed</span></td>
                 <td className='py-1'>Finished successfully</td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-red-900 text-red-200'>failed</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-red-900 text-red-200'>failed</span></td>
                 <td className='py-1'>Errored — Retry or Rerun from the detail panel</td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-200'>stalled</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-amber-900 text-amber-200'>stalled</span></td>
                 <td className='py-1'>No heartbeat for 5+ min — watchdog killed it</td>
               </tr>
-              <tr className='border-t border-amber-900/30'>
-                <td className='py-1 pr-3'><span className='text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300'>cancelled</span></td>
+              <tr className='border-t border-sky-900/40'>
+                <td className='py-1 pr-3'><span className='text-xs px-1.5 py-0.5 rounded bg-amber-950 text-amber-300'>cancelled</span></td>
                 <td className='py-1'>Cancelled manually, or a one-shot replaced by Run Now</td>
               </tr>
             </tbody>
           </table>
           <p className='text-xs text-gray-400'>
-            Cadence syntax: <code className='text-amber-200/80'>now</code>,
-            <code className='text-amber-200/80 ml-1'>delay:N</code> (once after N min),
-            <code className='text-amber-200/80 ml-1'>interval:N</code> (every N min),
+            Cadence syntax: <code className='text-sky-200'>now</code>,
+            <code className='text-sky-200 ml-1'>delay:N</code> (once after N min),
+            <code className='text-sky-200 ml-1'>interval:N</code> (every N min),
             or 5-field cron. Toggle <strong>system jobs</strong> to also see
             extraction and file-indexing runs.
           </p>
         </HelpDrawer>
+
+        {creating && (
+          <NewScheduleForm
+            projectId={projectId}
+            onCancel={() => setCreating(false)}
+            onCreated={async () => { setCreating(false); await refresh() }}
+          />
+        )}
 
         {/* Schedules section */}
         <section className="mb-6 mt-4">
@@ -207,8 +248,16 @@ export default function ProjectTasksPanel({ projectId }) {
             <Clock className="w-3 h-3" /> Schedules ({schedules.length})
           </h3>
           {schedules.length === 0 && (
-            <div className="text-xs text-gray-500 italic">
-              No scheduled tasks for this project. Schedule one with the agent or via /api/tasks/create.
+            <div className="flex flex-wrap items-center gap-3 rounded border border-dashed border-gray-700 p-3 text-xs text-gray-300">
+              <span className="flex-1 min-w-[12rem]">
+                No schedules for this project yet. Ask the agent in chat (it proposes a plan for you
+                to approve), or create one yourself.
+              </span>
+              {!creating && (
+                <button onClick={() => setCreating(true)} className={primaryButton}>
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" /> New schedule
+                </button>
+              )}
             </div>
           )}
           {schedules.map((sch) => {
@@ -224,10 +273,10 @@ export default function ProjectTasksPanel({ projectId }) {
                     : 'border-gray-800 bg-gray-900 hover:bg-gray-800'
                 }`}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {proposed && (
                     <span
-                      className="text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 bg-amber-900 text-amber-100"
+                      className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1 bg-amber-900 text-amber-100"
                       title="Proposed — paused, waiting for approval"
                     >
                       <ClipboardCheck className="w-3 h-3" />
@@ -235,7 +284,7 @@ export default function ProjectTasksPanel({ projectId }) {
                     </span>
                   )}
                   <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                    className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1 ${
                       recurring
                         ? 'bg-brand-900 text-brand-200'
                         : 'bg-gray-800 text-gray-400'
@@ -248,11 +297,11 @@ export default function ProjectTasksPanel({ projectId }) {
                   <span className="font-medium text-gray-200 truncate flex-1">
                     {sch.name || '(untitled schedule)'}
                   </span>
-                  <span className="text-gray-500 truncate" title={sch.schedule || sch.trigger}>
+                  <span className="text-gray-400 truncate" title={sch.schedule || sch.trigger}>
                     {renderCadence(sch.schedule || sch.trigger)}
                   </span>
-                  <span className="text-gray-500">
-                    next: {proposed ? '(awaiting approval)' : (sch.next_run?.slice(0,16).replace('T',' ') || '(none)')}
+                  <span className="text-gray-400">
+                    next: {proposed ? '(awaiting approval)' : (sch.next_run ? <Time value={sch.next_run} /> : '(none)')}
                   </span>
                   {proposed ? (
                     <>
@@ -288,6 +337,7 @@ export default function ProjectTasksPanel({ projectId }) {
                       }
                     }}
                     className="text-gray-400 hover:text-brand-300"
+                    aria-label={`Run ${sch.name || 'schedule'} now`}
                     title={recurring
                       ? 'Run now (in addition to the recurring schedule)'
                       : 'Run now and remove this one-shot schedule'}
@@ -301,14 +351,15 @@ export default function ProjectTasksPanel({ projectId }) {
                       try { await tasksApi.cancel(sch.id); await refresh() }
                       catch (err) { toastError(err.message) }
                     }}
-                    className="text-gray-500 hover:text-red-400"
+                    className="text-gray-400 hover:text-red-400"
                     title="Cancel schedule"
+                    aria-label={`Cancel schedule ${sch.name || sch.id}`}
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
                 {sch.description && (
-                  <div className="text-[11px] text-gray-400 mt-1 truncate" title={sch.description}>
+                  <div className="text-xs text-gray-400 mt-1 truncate" title={sch.description}>
                     {sch.description}
                   </div>
                 )}
@@ -322,9 +373,9 @@ export default function ProjectTasksPanel({ projectId }) {
           <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2">
             Job runs ({jobs.length})
           </h3>
-          {loading && <div className="text-xs text-gray-500">Loading…</div>}
+          {loading && <div className="text-xs text-gray-400">Loading…</div>}
           {!loading && jobs.length === 0 && (
-            <div className="text-sm text-gray-500 italic">No job runs in this project yet.</div>
+            <div className="text-sm text-gray-400 italic">No job runs in this project yet.</div>
           )}
           <div className="space-y-1">
             {jobs.map((j) => {
@@ -339,21 +390,21 @@ export default function ProjectTasksPanel({ projectId }) {
                   } hover:bg-gray-800`}
                 >
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
                       {j.status}
                     </span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">
                       {j.job_type}
                     </span>
                     {SYSTEM_TYPES.has(j.job_type) && (
-                      <span className="text-[10px] text-gray-600">system</span>
+                      <span className="text-xs text-gray-400">system</span>
                     )}
                     <span className="text-sm font-medium text-gray-200 truncate flex-1">
                       {j.title || '(untitled)'}
                     </span>
-                    <span className="text-[10px] text-gray-500">{j.started_at?.slice(0,16).replace('T',' ')}</span>
+                    {j.started_at && <Time value={j.started_at} className="text-xs text-gray-400 whitespace-nowrap" />}
                     {dur != null && j.status !== 'running' && (
-                      <span className="text-[10px] text-gray-500">· {fmtDuration(dur)}</span>
+                      <span className="text-xs text-gray-400">· {fmtDuration(dur)}</span>
                     )}
                   </div>
                   {j.progress && j.status === 'running' && (
@@ -361,13 +412,17 @@ export default function ProjectTasksPanel({ projectId }) {
                       {j.progress}
                     </div>
                   )}
-                  {j.error && (
-                    <div className="text-xs text-red-400 mt-1 truncate flex items-start gap-1">
-                      <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" /> {j.error}
+                  {j.status === 'cancelled' && (j.cancel_reason || j.error) ? (
+                    <div className="text-xs text-amber-200 mt-1 truncate">
+                      Cancelled: {j.cancel_reason || j.error}
+                    </div>
+                  ) : j.error && (
+                    <div className="text-xs text-red-300 mt-1 truncate flex items-start gap-1">
+                      <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" aria-hidden="true" /> {j.error}
                     </div>
                   )}
                   {j.pr_url && (
-                    <div className="text-[10px] text-brand-300 mt-1 truncate">{j.pr_url}</div>
+                    <div className="text-xs text-brand-300 mt-1 truncate">{j.pr_url}</div>
                   )}
                 </button>
               )
@@ -401,9 +456,19 @@ export default function ProjectTasksPanel({ projectId }) {
 }
 
 
+// Side panels: beside the list on wide screens, a full-screen overlay on phones.
+const DRAWER = 'fixed inset-0 z-30 w-full md:static md:inset-auto md:z-auto md:flex-shrink-0 border-l border-gray-800 bg-gray-950 overflow-y-auto p-4 text-xs'
+
 function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefresh }) {
   const [fresh, setFresh] = useState(job)
+  const projectName = useProjectNames()
   useEffect(() => { setFresh(job) }, [job?.id])
+  // The list rows lack project_name / the latest cancel reason; fetch the detail once.
+  useEffect(() => {
+    let live = true
+    jobsApi.get(job.id).then((res) => { if (live) setFresh(res.data) }).catch(() => {})
+    return () => { live = false }
+  }, [job?.id])
   const reload = async () => {
     const res = await jobsApi.get(job.id)
     setFresh(res.data)
@@ -413,29 +478,36 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
   const j = fresh || job
   const result = j.result && Object.keys(j.result).length > 0 ? j.result : null
 
+  const ended = END_LABEL[j.status]
+  const isCancelled = j.status === 'cancelled'
+  const reason = isCancelled ? (j.cancel_reason || j.error) : j.error
+
   return (
-    <div className="w-96 border-l border-gray-800 bg-gray-950 overflow-y-auto p-4 text-xs">
+    <div className={`${DRAWER} md:w-96`}>
       <div className="flex items-center justify-between mb-2">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
           {j.status}
         </span>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-200" title="Close" aria-label="Close job details">
           <X className="w-4 h-4" />
         </button>
       </div>
       <h3 className="text-sm font-medium text-gray-100 mb-1">{j.title || '(untitled)'}</h3>
-      <div className="text-[10px] text-gray-500 font-mono break-all mb-3">
+      <div className="text-xs text-gray-400 font-mono break-all mb-3">
         {j.id}  · {j.job_type}
       </div>
 
-      <KV label="Project" value={j.project_id} />
-      <KV label="Created" value={j.created_at?.replace('T', ' ').slice(0, 19)} />
-      <KV label="Started" value={j.started_at?.replace('T', ' ').slice(0, 19) || '(not yet)'} />
-      <KV label="Completed" value={j.completed_at?.replace('T', ' ').slice(0, 19) || '(running)'} />
+      <KV label="Project" value={<span title={j.project_id}>{j.project_name || projectName(j.project_id)}</span>} />
+      <KV label="Created" value={<Time value={j.created_at} relative={false} seconds />} />
+      <KV label="Started" value={j.started_at ? <Time value={j.started_at} relative={false} seconds /> : '(not yet)'} />
+      <KV label={ended || 'Ended'} value={j.completed_at ? <Time value={j.completed_at} relative={false} seconds /> : '(running)'} />
       <KV label="Attempts" value={`${j.attempts} / ${j.max_attempts}`} />
       {j.timeout_seconds && <KV label="Timeout" value={`${j.timeout_seconds}s`} />}
       {j.last_heartbeat_at && (
-        <KV label="Last heartbeat" value={j.last_heartbeat_at.replace('T',' ').slice(0,19)} />
+        <KV label="Last heartbeat" value={<Time value={j.last_heartbeat_at} seconds />} />
+      )}
+      {j.cancel_requested && !isCancelled && (
+        <KV label="Cancel" value={<span className="text-amber-200">requested{j.cancel_reason ? ` — ${j.cancel_reason}` : ''}</span>} />
       )}
 
       {j.progress && (
@@ -444,9 +516,18 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
         </Section>
       )}
 
-      {j.error && (
-        <Section title="Error" tone="danger">
-          <pre className="whitespace-pre-wrap text-red-300 break-words">{j.error}</pre>
+      {reason && (isCancelled ? (
+        <Section title="Why it was cancelled">
+          <p className="whitespace-pre-wrap text-amber-100 break-words">{reason}</p>
+        </Section>
+      ) : (
+        <Section title={j.status === 'stalled' ? 'Why it ended' : 'Failure reason'} tone="danger">
+          <pre className="whitespace-pre-wrap text-red-300 break-words">{reason}</pre>
+        </Section>
+      ))}
+      {isCancelled && !reason && (
+        <Section title="Why it was cancelled">
+          <p className="text-gray-300">No reason was recorded (cancelled before reasons were stored).</p>
         </Section>
       )}
 
@@ -475,29 +556,36 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
       </Section>
 
       <div className="flex gap-2 pt-3 border-t border-gray-800 mt-3 flex-wrap">
-        <button onClick={reload} className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1">
+        <button onClick={reload} className="px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-300 flex items-center gap-1 whitespace-nowrap">
           <RefreshCw className="w-3 h-3" /> Reload
         </button>
         {(j.status === 'queued' || j.status === 'running') && (
-          <button onClick={onCancel} className="px-2 py-1 rounded bg-amber-900 hover:bg-amber-800 text-amber-100">
+          <button onClick={onCancel} className="px-2 py-1 rounded bg-amber-900 hover:bg-amber-800 text-amber-100 whitespace-nowrap">
             Cancel
           </button>
         )}
+        {/* Retry and Rerun do the same thing (queue a copy of this job with the
+            same payload; this record stays as history) - one button, named for
+            the situation, with the explanation on hover (UI review #32). */}
         {(j.status === 'failed' || j.status === 'stalled' || j.status === 'cancelled') && (
-          <button onClick={onRetry} className="px-2 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1">
-            <RotateCcw className="w-3 h-3" /> Retry
+          <button
+            onClick={onRetry}
+            title="Retry: queue a new run of this job with the same task, payload and timeout. This record stays as history; the new run appears at the top of the list."
+            className="px-2 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 whitespace-nowrap"
+          >
+            <RotateCcw className="w-3 h-3" aria-hidden="true" /> Retry
           </button>
         )}
-        {(j.status === 'completed' || j.status === 'failed' || j.status === 'stalled' || j.status === 'cancelled') && (
+        {j.status === 'completed' && (
           <button
             onClick={onRerun}
-            title="Re-run this exact job with the same payload, even if it succeeded. Useful for re-ingesting after upstream content changes or after a skill update."
-            className="px-2 py-1 rounded bg-emerald-800 hover:bg-emerald-700 text-emerald-100 flex items-center gap-1"
+            title="Rerun: run this finished job again with the same payload, e.g. after upstream content or a skill changed. This record stays as history."
+            className="px-2 py-1 rounded bg-emerald-800 hover:bg-emerald-700 text-emerald-100 flex items-center gap-1 whitespace-nowrap"
           >
-            <RotateCcw className="w-3 h-3" /> Rerun
+            <RotateCcw className="w-3 h-3" aria-hidden="true" /> Rerun
           </button>
         )}
-        <button onClick={onDelete} className="ml-auto px-2 py-1 rounded text-gray-500 hover:text-red-400 flex items-center gap-1">
+        <button onClick={onDelete} className="ml-auto px-2 py-1 rounded text-gray-400 hover:text-red-400 flex items-center gap-1 whitespace-nowrap">
           <Trash2 className="w-3 h-3" /> Delete record
         </button>
       </div>
@@ -509,7 +597,7 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
 function KV({ label, value }) {
   return (
     <div className="flex items-start gap-2 mb-1">
-      <span className="text-gray-500 w-20 flex-shrink-0">{label}</span>
+      <span className="text-gray-400 w-28 flex-shrink-0 whitespace-nowrap">{label}</span>
       <span className="text-gray-300 break-words flex-1 min-w-0">{value}</span>
     </div>
   )
@@ -520,7 +608,7 @@ function Section({ title, children, tone }) {
   const ring = tone === 'danger' ? 'border-red-900/50' : 'border-gray-800'
   return (
     <div className={`mt-3 pt-2 border-t ${ring}`}>
-      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{title}</div>
+      <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">{title}</div>
       {children}
     </div>
   )
@@ -563,23 +651,23 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
   }
 
   return (
-    <div className="w-[28rem] border-l border-gray-800 bg-gray-950 overflow-y-auto p-4 text-xs">
+    <div className={`${DRAWER} md:w-[28rem]`}>
       <div className="flex items-center justify-between mb-2">
         {schedule.plan_status === 'proposed' ? (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 flex items-center gap-1">
+          <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900 text-amber-100 flex items-center gap-1">
             <ClipboardCheck className="w-3 h-3" /> pending approval
           </span>
         ) : (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-900 text-green-100 flex items-center gap-1">
+          <span className="text-xs px-1.5 py-0.5 rounded bg-green-900 text-green-100 flex items-center gap-1">
             <Check className="w-3 h-3" /> approved
           </span>
         )}
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-200" title="Close" aria-label="Close plan review">
           <X className="w-4 h-4" />
         </button>
       </div>
       <h3 className="text-sm font-medium text-gray-100 mb-1">{schedule.name}</h3>
-      <div className="text-[10px] text-gray-500 mb-3">
+      <div className="text-xs text-gray-400 mb-3">
         {renderCadence(schedule.schedule)} · {schedule.is_recurring ? 'recurring' : 'one-shot'}
       </div>
       {schedule.description && (
@@ -589,7 +677,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
       )}
 
       <div className="flex items-center justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wide text-gray-500">Plan</div>
+        <div className="text-xs uppercase tracking-wide text-gray-400">Plan</div>
         {!editing ? (
           <button onClick={() => setEditing(true)} className="text-gray-400 hover:text-gray-200 flex items-center gap-1">
             <Pencil className="w-3 h-3" /> Edit
@@ -618,7 +706,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
         />
       ) : (
         <div className="prose prose-invert prose-sm max-w-none p-2 rounded bg-gray-900 border border-gray-800">
-          {plan ? <Markdown>{plan}</Markdown> : <span className="text-gray-500 italic">(no plan supplied)</span>}
+          {plan ? <Markdown>{plan}</Markdown> : <span className="text-gray-400 italic">(no plan supplied)</span>}
         </div>
       )}
 
@@ -629,7 +717,7 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
           <button
             onClick={approve}
             disabled={saving}
-            className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+            className="px-3 py-1.5 text-xs rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 disabled:opacity-50"
           >
             <Check className="w-3 h-3" /> {saving ? 'Saving…' : (dirty ? 'Save & Approve' : 'Approve')}
           </button>
@@ -638,17 +726,124 @@ function PlanReviewDrawer({ schedule, onClose, onApproved }) {
             <button
               onClick={savePlan}
               disabled={saving}
-              className="px-3 py-1.5 text-xs rounded bg-brand-600 hover:bg-brand-500 text-white flex items-center gap-1 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs rounded bg-brand-700 hover:bg-brand-600 text-white flex items-center gap-1 disabled:opacity-50"
             >
               <Pencil className="w-3 h-3" /> {saving ? 'Saving…' : 'Save plan'}
             </button>
           )
         )}
         <button onClick={discard} disabled={saving}
-                className="ml-auto text-gray-500 hover:text-red-400 flex items-center gap-1">
+                className="ml-auto text-gray-400 hover:text-red-400 flex items-center gap-1">
           <Trash2 className="w-3 h-3" /> {schedule.plan_status === 'proposed' ? 'Discard' : 'Cancel schedule'}
         </button>
       </div>
     </div>
+  )
+}
+
+
+// "New schedule" (UI review #31). Uses POST /api/tasks, which schedules the
+// task as approved: the user writing it here IS the approval, so unlike an
+// agent proposal it does not wait in "pending approval". The instructions
+// are what the task agent works from.
+const WHEN_OPTIONS = [
+  { id: 'now', label: 'Run once, now' },
+  { id: 'delay', label: 'Run once, later' },
+  { id: 'interval', label: 'Repeat every…' },
+  { id: 'daily', label: 'Every day at…' },
+  { id: 'cron', label: 'Cron expression' },
+]
+
+function NewScheduleForm({ projectId, onCancel, onCreated }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [when, setWhen] = useState('now')
+  const [minutes, setMinutes] = useState(60)
+  const [time, setTime] = useState('09:00')
+  const [cron, setCron] = useState('0 9 * * 1-5')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState(null)
+
+  const schedule = (() => {
+    if (when === 'delay') return `delay:${Math.max(1, Number(minutes) || 1)}`
+    if (when === 'interval') return `interval:${Math.max(1, Number(minutes) || 1)}`
+    if (when === 'daily') {
+      const [h, m] = (time || '09:00').split(':')
+      return `${Number(m)} ${Number(h)} * * *`
+    }
+    if (when === 'cron') return cron.trim()
+    return 'now'
+  })()
+  const valid = name.trim() && description.trim() && schedule
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!valid) return
+    setSaving(true); setError(null)
+    try {
+      await tasksApi.create({ name: name.trim(), description: description.trim(), schedule, project_id: projectId })
+      onCreated?.()
+    } catch (err) {
+      setError(err.message)
+    } finally { setSaving(false) }
+  }
+
+  const field = 'w-full bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-100 focus:border-brand-500'
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-3 rounded-lg border border-gray-700 bg-gray-900/60 p-4">
+      <h3 className="text-sm font-semibold text-gray-100">New schedule</h3>
+      <div>
+        <label htmlFor="ns-name" className="block text-xs text-gray-300 mb-1">Name</label>
+        <input id="ns-name" value={name} onChange={(e) => setName(e.target.value)}
+               placeholder="e.g. Weekly dependency check" className={field} />
+      </div>
+      <div>
+        <label htmlFor="ns-desc" className="block text-xs text-gray-300 mb-1">What should the agent do?</label>
+        <textarea id="ns-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
+                  placeholder="Instructions for the task agent: what to do, which tools or skills to use, and where to save the result."
+                  className={`${field} resize-y`} />
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="ns-when" className="block text-xs text-gray-300 mb-1">When</label>
+          <select id="ns-when" value={when} onChange={(e) => setWhen(e.target.value)} className={field}>
+            {WHEN_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </div>
+        {(when === 'delay' || when === 'interval') && (
+          <div>
+            <label htmlFor="ns-min" className="block text-xs text-gray-300 mb-1">
+              {when === 'delay' ? 'After (minutes)' : 'Every (minutes)'}
+            </label>
+            <input id="ns-min" type="number" min={1} value={minutes}
+                   onChange={(e) => setMinutes(e.target.value)} className={`${field} w-28`} />
+          </div>
+        )}
+        {when === 'daily' && (
+          <div>
+            <label htmlFor="ns-time" className="block text-xs text-gray-300 mb-1">Time (server time zone)</label>
+            <input id="ns-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} className={`${field} w-32`} />
+          </div>
+        )}
+        {when === 'cron' && (
+          <div className="flex-1 min-w-[10rem]">
+            <label htmlFor="ns-cron" className="block text-xs text-gray-300 mb-1">Cron (5 fields, server time zone)</label>
+            <input id="ns-cron" value={cron} onChange={(e) => setCron(e.target.value)} className={`${field} font-mono`} />
+          </div>
+        )}
+        <span className="pb-2 text-xs text-gray-400">= {renderCadence(schedule)}</span>
+      </div>
+      <p className="text-xs text-gray-400">
+        A schedule you create here is approved by you and starts on its own; schedules the agent
+        proposes wait for your approval instead.
+      </p>
+      {error && <div className="text-xs text-red-300">{error}</div>}
+      <div className="flex gap-2">
+        <button type="submit" disabled={!valid || saving} className={primaryButton}>
+          {saving ? 'Creating…' : 'Create schedule'}
+        </button>
+        <button type="button" onClick={onCancel} className={secondaryButton}>Cancel</button>
+      </div>
+    </form>
   )
 }

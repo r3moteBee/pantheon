@@ -3,6 +3,7 @@ import { Plug, Plus, Trash2, RefreshCw, CheckCircle, XCircle, ChevronDown, Chevr
 import { useStore } from '../store'
 import { mcpApi } from '../api/client'
 import HelpDrawer from './help/HelpDrawer'
+import { primaryButton, secondaryButton } from './PageHeader'
 import { MCP_PROVIDERS } from './help/mcpProviders'
 
 
@@ -25,14 +26,14 @@ function Meter({ label, used, limit, unit, onReset }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] text-gray-500">{label}</span>
+        <span className="text-xs text-gray-400">{label}</span>
         <div className="flex items-center gap-1.5">
           <span className="text-xs font-mono text-gray-300">
-            {used.toFixed(0)}{limit > 0 ? ` / ${limit}` : ''} <span className="text-gray-600">{unit}</span>
+            {used.toFixed(0)}{limit > 0 ? ` / ${limit}` : ''} <span className="text-gray-400">{unit}</span>
           </span>
           {used > 0 && onReset && (
-            <button onClick={onReset} title={`Reset ${label.toLowerCase()} usage`} className="text-gray-600 hover:text-gray-400">
-              <RotateCcw className="w-2.5 h-2.5" />
+            <button aria-label={`Reset ${label.toLowerCase()} usage`} onClick={onReset} title={`Reset ${label.toLowerCase()} usage`} className="text-gray-400 hover:text-gray-200">
+              <RotateCcw className="w-3 h-3" />
             </button>
           )}
         </div>
@@ -42,7 +43,7 @@ function Meter({ label, used, limit, unit, onReset }) {
           <div className={`h-1.5 rounded-full transition-all ${barColor(pct)}`} style={{ width: `${pct}%` }} />
         </div>
       ) : (
-        <p className="text-[10px] text-gray-600">No {label.toLowerCase()} limit</p>
+        <p className="text-xs text-gray-400">No {label.toLowerCase()} limit</p>
       )}
     </div>
   )
@@ -76,7 +77,7 @@ function ConnectionBudgetPanel({ conn }) {
 
   useEffect(() => { load() }, [conn.name])
 
-  if (loading) return <p className="text-[10px] text-gray-600 py-1">Loading usage…</p>
+  if (loading) return <p className="text-xs text-gray-400 py-1">Loading usage…</p>
   if (!status) return null
 
   const unit = status.unit || 'calls'
@@ -123,11 +124,11 @@ function ConnectionBudgetPanel({ conn }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setEditing(!editing)}
-            className="text-[10px] px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition-colors"
+            className="text-xs px-2 py-0.5 rounded bg-gray-700 hover:bg-gray-600 text-gray-400 transition-colors"
           >
             {editing ? 'Cancel' : 'Set limits'}
           </button>
-          <button onClick={load} title="Refresh" className="text-gray-500 hover:text-gray-300 transition-colors">
+          <button aria-label="Refresh" onClick={load} title="Refresh" className="text-gray-400 hover:text-gray-300 transition-colors">
             <RefreshCw className="w-3 h-3" />
           </button>
         </div>
@@ -147,32 +148,32 @@ function ConnectionBudgetPanel({ conn }) {
       </div>
 
       {status.by_tool?.length > 0 && (
-        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-gray-600">
+        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-400">
           {status.by_tool.slice(0, 6).map((t) => (
             <span key={t.tool}>{t.tool}: {t.used.toFixed(0)}{unit === 'calls' ? '' : ` (${t.calls} calls)`}</span>
           ))}
-          <span className="text-gray-700">this month</span>
+          <span className="text-gray-400">this month</span>
         </div>
       )}
 
-      <p className="text-[10px] text-gray-600">
+      <p className="text-xs text-gray-400">
         {status.note ? `${status.note} ` : ''}Over a limit, calls are refused and search tools fall back to built-in web search.
       </p>
 
       {editing && (
         <div className="pt-2 border-t border-gray-700 flex items-end gap-3">
           <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Daily limit ({unit}, 0 = none)</label>
+            <label className="block text-xs text-gray-400 mb-1">Daily limit ({unit}, 0 = none)</label>
             <input type="number" min="0" value={dailyLimit} onChange={(e) => setDailyLimit(e.target.value)}
-              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-brand-500" />
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:border-brand-500" />
           </div>
           <div>
-            <label className="block text-[10px] text-gray-500 mb-1">Monthly limit ({unit}, 0 = none)</label>
+            <label className="block text-xs text-gray-400 mb-1">Monthly limit ({unit}, 0 = none)</label>
             <input type="number" min="0" value={monthlyLimit} onChange={(e) => setMonthlyLimit(e.target.value)}
-              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:border-brand-500" />
+              className="w-24 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:border-brand-500" />
           </div>
           <button onClick={save} disabled={saving}
-            className="px-3 py-1 rounded bg-brand-600 hover:bg-brand-700 text-white text-xs disabled:opacity-50 transition-colors">
+            className="px-3 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white text-xs disabled:opacity-50 transition-colors">
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
@@ -227,7 +228,7 @@ function DevRateLimitControl({ conn, onUpdate }) {
   return (
     <div className="flex items-center justify-between pt-2 border-t border-gray-700">
       <div className="flex items-center gap-2">
-        <ShieldAlert className={`w-3.5 h-3.5 ${isDevMode ? 'text-amber-400' : 'text-gray-600'}`} />
+        <ShieldAlert className={`w-3.5 h-3.5 ${isDevMode ? 'text-amber-400' : 'text-gray-400'}`} />
         <div>
           <span className="text-xs text-gray-300">Dev rate limiting</span>
           <div className="flex items-center gap-1.5 mt-0.5">
@@ -243,28 +244,31 @@ function DevRateLimitControl({ conn, onUpdate }) {
                   onBlur={handleSecondsBlur}
                   onKeyDown={(e) => e.key === 'Enter' && handleSecondsBlur()}
                   autoFocus
-                  className="w-14 bg-gray-900 border border-amber-600 rounded px-1.5 py-0.5 text-[10px] font-mono text-amber-400 focus:outline-none"
+                  className="w-14 bg-gray-900 border border-amber-600 rounded px-1.5 py-0.5 text-xs font-mono text-amber-400"
                 />
               ) : (
                 <button
                   onClick={() => setEditing(true)}
-                  className="text-[10px] font-mono text-amber-400 hover:text-amber-300 underline decoration-dotted"
+                  className="text-xs font-mono text-amber-400 hover:text-amber-300 underline decoration-dotted"
                   title="Click to edit interval"
                 >
                   {seconds}s
                 </button>
               )
             ) : (
-              <span className="text-[10px] text-gray-600">Off (1s default)</span>
+              <span className="text-xs text-gray-400">Off (1s default)</span>
             )}
             {isDevMode && !editing && (
-              <span className="text-[10px] text-gray-600">between requests</span>
+              <span className="text-xs text-gray-400">between requests</span>
             )}
           </div>
         </div>
       </div>
       <button
         onClick={handleToggle}
+        role="switch"
+        aria-checked={isDevMode}
+        aria-label="Dev rate limiting"
         className={`relative w-9 h-5 rounded-full transition-colors ${
           isDevMode ? 'bg-amber-600' : 'bg-gray-600'
         }`}
@@ -320,15 +324,15 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
       </h4>
 
       <div>
-        <label className="block text-[10px] text-gray-400 mb-1">Server URL</label>
+        <label className="block text-xs text-gray-400 mb-1">Server URL</label>
         <input
           type="text"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500"
         />
         {isOAuth && urlChanged && (
-          <p className="text-[10px] text-amber-400 mt-1">
+          <p className="text-xs text-amber-400 mt-1">
             Changing the URL on an OAuth connection may invalidate the
             current token. Click <b>Re-auth</b> after saving if requests
             start returning 401.
@@ -338,8 +342,8 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
 
       {!isOAuth && (
         <div>
-          <label className="block text-[10px] text-gray-400 mb-1">
-            API Key <span className="text-gray-600">(leave empty to keep current)</span>
+          <label className="block text-xs text-gray-400 mb-1">
+            API Key <span className="text-gray-400">(leave empty to keep current)</span>
           </label>
           <div className="flex gap-2">
             <input
@@ -347,12 +351,12 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={conn.has_api_key ? '••• current key set, leave empty to keep' : 'No API key set'}
-              className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500"
             />
             <button
               type="button"
               onClick={() => setShowKey(!showKey)}
-              className="px-2 text-gray-500 hover:text-gray-300"
+              className="px-2 text-gray-400 hover:text-gray-300"
             >
               {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
             </button>
@@ -362,7 +366,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Power className={`w-3.5 h-3.5 ${enabled ? 'text-emerald-400' : 'text-gray-600'}`} />
+          <Power className={`w-3.5 h-3.5 ${enabled ? 'text-emerald-400' : 'text-gray-400'}`} />
           <span className="text-xs text-gray-300">
             {enabled ? 'Enabled — connects on startup' : 'Disabled — skipped on startup'}
           </span>
@@ -382,7 +386,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
       </div>
 
       {error && (
-        <p className="text-[10px] text-red-400 bg-red-950/40 border border-red-900 rounded px-2 py-1">
+        <p className="text-xs text-red-400 bg-red-950/40 border border-red-900 rounded px-2 py-1">
           {error}
         </p>
       )}
@@ -392,7 +396,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
           type="button"
           onClick={handleSave}
           disabled={!hasChanges || saving}
-          className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-medium disabled:opacity-40 flex items-center gap-1"
+          className="px-3 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-40 flex items-center gap-1"
         >
           <Save className="w-3 h-3" /> {saving ? 'Saving…' : 'Save'}
         </button>
@@ -400,12 +404,12 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
           type="button"
           onClick={onCancel}
           disabled={saving}
-          className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 text-[11px] flex items-center gap-1"
+          className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs flex items-center gap-1"
         >
           <X className="w-3 h-3" /> Cancel
         </button>
         {!hasChanges && (
-          <span className="text-[10px] text-gray-500 self-center">No changes to save</span>
+          <span className="text-xs text-gray-400 self-center">No changes to save</span>
         )}
       </div>
     </div>
@@ -464,19 +468,19 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
             <h3 className="text-sm font-semibold text-white">{conn.name}</h3>
             {statusIcon}
             {conn.tools_count > 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
+              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900 text-blue-300">
                 {conn.tools_count} tools
               </span>
             )}
             {budgeted && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-400"
+              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-400"
                 title="Has a call budget or metered pricing">
                 {conn.budget?.unit === 'credits' ? 'metered' : 'budget'}
               </span>
             )}
           </div>
-          <p className="text-xs text-gray-500 mt-0.5 truncate">{conn.url}</p>
-          <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-600">
+          <p className="text-xs text-gray-400 mt-0.5 truncate">{conn.url}</p>
+          <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
             {conn.auth_type === 'oauth2' ? (
               conn.oauth_status === 'ok' ? (
                 <span className="flex items-center gap-0.5 text-emerald-500">
@@ -497,7 +501,7 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
             <button
               onClick={() => onAuthorize(conn.name)}
               title="Open authorization in browser"
-              className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-semibold"
+              className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold"
             >
               Authorize
             </button>
@@ -506,12 +510,12 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
             <button
               onClick={() => onAuthorize(conn.name)}
               title="Re-authorize (e.g., after revocation)"
-              className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-[10px]"
+              className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs"
             >
               Re-auth
             </button>
           )}
-          <button
+          <button aria-label="Test connection"
             onClick={handleTest}
             disabled={testing}
             title="Test connection"
@@ -526,7 +530,7 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
           >
             <Plug className="w-3.5 h-3.5" />
           </button>
-          <button
+          <button aria-label="Edit connection"
             onClick={openEditor}
             title="Edit connection"
             className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
@@ -536,13 +540,13 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
           <button
             onClick={() => onRemove(conn.name)}
             title="Remove"
-            className="p-1.5 rounded hover:bg-red-900 text-gray-500 hover:text-red-400 transition-colors"
+            className="p-1.5 rounded hover:bg-red-900 text-gray-400 hover:text-red-400 transition-colors"
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setExpanded(!expanded)}
-            className="p-1.5 rounded hover:bg-gray-700 text-gray-500 hover:text-gray-300 transition-colors"
+            className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-300 transition-colors"
           >
             {expanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
           </button>
@@ -574,8 +578,8 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
                 {connTools.map((tool) => (
                   <div key={tool.name} className="flex items-center justify-between gap-2 group">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <Zap className={`w-3 h-3 flex-shrink-0 ${tool.excluded ? 'text-gray-600' : 'text-yellow-400'}`} />
-                      <span className={`text-xs font-mono truncate ${tool.excluded ? 'text-gray-600 line-through' : 'text-yellow-300'}`}>
+                      <Zap className={`w-3 h-3 flex-shrink-0 ${tool.excluded ? 'text-gray-400' : 'text-yellow-400'}`} />
+                      <span className={`text-xs font-mono truncate ${tool.excluded ? 'text-gray-400 line-through' : 'text-yellow-300'}`}>
                         {tool.name}
                       </span>
                     </div>
@@ -603,9 +607,9 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
               </div>
             </div>
           ) : conn.connected ? (
-            <p className="text-xs text-gray-500">No tools discovered from this server.</p>
+            <p className="text-xs text-gray-400">No tools discovered from this server.</p>
           ) : (
-            <p className="text-xs text-gray-500">Not connected — click the test button to connect.</p>
+            <p className="text-xs text-gray-400">Not connected — click the test button to connect.</p>
           )}
 
           {/* Dev rate limiting */}
@@ -661,7 +665,7 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g., tavily"
-          className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 focus:border-blue-500"
         />
       </div>
       <div>
@@ -671,7 +675,7 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="e.g., https://mcp.tavily.com/mcp/"
-          className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 focus:border-blue-500"
         />
       </div>
       <div>
@@ -701,7 +705,7 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
           </label>
         </div>
         {authType === 'oauth2' && (
-          <p className="text-[10px] text-gray-500 mt-1.5">
+          <p className="text-xs text-gray-400 mt-1.5">
             After adding, click <b>Authorize</b> on the connection card —
             a browser tab will open for sign-in.
           </p>
@@ -716,12 +720,12 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Server API key"
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 placeholder-gray-600 focus:outline-none focus:border-blue-500"
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 focus:border-blue-500"
             />
             <button
               type="button"
               onClick={() => setShowKey(!showKey)}
-              className="px-2 text-gray-500 hover:text-gray-300"
+              className="px-2 text-gray-400 hover:text-gray-300"
             >
               {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -732,7 +736,7 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
         <button
           type="submit"
           disabled={!name.trim() || !url.trim() || submitting}
-          className="px-4 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium disabled:opacity-50 transition-colors"
+          className="px-4 py-1.5 rounded-md bg-brand-700 hover:bg-brand-600 text-white text-xs font-medium disabled:opacity-50 transition-colors"
         >
           {submitting
             ? (authType === 'oauth2' ? 'Adding...' : 'Connecting...')
@@ -967,15 +971,16 @@ export default function MCPConnections() {
   }
 
   return (
-    <div className="h-full overflow-y-auto p-6 scrollbar-thin">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Plug className="w-5 h-5 text-blue-400" />
-            <h1 className="text-lg font-semibold text-white">MCP Connections</h1>
-            <span className="text-xs text-gray-500">{connections.length} configured</span>
+    // Rendered inside the Connections page's MCP tab, which already provides the
+    // scroll container, padding and the "MCP servers" heading (UI review #17) -
+    // so no second page title here, just the toolbar.
+    <div>
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+            <span className="text-gray-300">{connections.length} configured</span>
             {allTools.length > 0 && (
-              <span className="text-xs text-blue-400">
+              <span className="text-sky-300">
                 {allTools.filter((t) => !t.excluded).length} tools active
                 {allTools.some((t) => t.excluded) && ` (${allTools.filter((t) => t.excluded).length} disabled)`}
               </span>
@@ -985,28 +990,33 @@ export default function MCPConnections() {
             <button
               onClick={handleScan}
               disabled={scanning}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-gray-800 hover:bg-gray-700 text-xs text-gray-300 font-medium transition-colors border border-gray-700 disabled:opacity-50"
+              className={secondaryButton}
             >
-              <Search className={`w-3 h-3 ${scanning ? 'animate-spin text-blue-400' : ''}`} />
+              <Search className={`w-3.5 h-3.5 ${scanning ? 'animate-spin text-sky-400' : ''}`} aria-hidden="true" />
               {scanning ? 'Scanning...' : 'Scan Local Ports'}
             </button>
-            {!showAdd && (
-              <button
-                onClick={() => {
-                  setPrefill(null)
-                  setShowAdd(true)
-                }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-xs text-white font-medium transition-colors"
-              >
-                <Plus className="w-3 h-3" /> Add Connection
-              </button>
-            )}
+            {/* Stays in place and toggles (UI review #7): removing it slid
+                "Scan Local Ports" under the cursor. */}
+            <button
+              onClick={() => {
+                if (showAdd) { setShowAdd(false); return }
+                setPrefill(null)
+                setShowAdd(true)
+              }}
+              aria-expanded={showAdd}
+              className={`${showAdd ? secondaryButton : primaryButton} min-w-[10rem] justify-center`}
+            >
+              {showAdd ? <X className="w-3.5 h-3.5" aria-hidden="true" /> : <Plus className="w-3.5 h-3.5" aria-hidden="true" />}
+              {showAdd ? 'Close' : 'Add Connection'}
+            </button>
           </div>
         </div>
 
         <p className="text-sm text-gray-400 mb-6">
           Connect to external MCP servers to give the agent access to additional tools.
-          Tools discovered from connected servers are automatically available to the agent alongside built-in tools.
+          MCP servers are global: tools from every connected server are available to the
+          agent in all projects, alongside built-in tools. Disable individual tools on a
+          server&apos;s card below.
         </p>
 
         {scannedPorts.length > 0 && (
@@ -1014,7 +1024,7 @@ export default function MCPConnections() {
             <h4 className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
               <Plug className="w-3.5 h-3.5 text-blue-400" /> Discovered Local MCP Servers
             </h4>
-            <p className="text-[11px] text-gray-400">
+            <p className="text-xs text-gray-400">
               The following running servers were found on your machine. Click to add them instantly:
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1022,7 +1032,7 @@ export default function MCPConnections() {
                 <div key={server.port} className="flex items-center justify-between p-2 rounded bg-gray-800/80 border border-gray-700/80 text-xs">
                   <div>
                     <span className="font-medium text-white block">{server.name}</span>
-                    <span className="font-mono text-[10px] text-gray-500">{server.url}</span>
+                    <span className="font-mono text-xs text-gray-400">{server.url}</span>
                   </div>
                   <button
                     onClick={() => {
@@ -1034,7 +1044,7 @@ export default function MCPConnections() {
                       })
                       setShowAdd(true)
                     }}
-                    className="px-2.5 py-1 rounded bg-blue-600/90 hover:bg-blue-600 text-white text-[10px] font-medium transition-all"
+                    className="whitespace-nowrap px-2.5 py-1 rounded bg-brand-700 hover:bg-brand-600 text-white text-xs font-medium transition-all"
                   >
                     Use
                   </button>
@@ -1055,75 +1065,75 @@ export default function MCPConnections() {
           </div>
         )}
 
+        <div className="mb-6">
+          <HelpDrawer title="Popular MCP Presets Helper" storageKey="help.mcp-presets">
+            <p className="text-xs text-gray-400 mb-3">
+              Select one of these popular hosted MCP servers to pre-fill the form fields.
+              Click the links on the right to sign up for accounts/keys where required.
+              For MCP servers running on this machine, use <b>Scan Local Ports</b> instead.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs text-left">
+                <thead className="text-gray-400 uppercase tracking-wider text-xs">
+                  <tr className="border-b border-gray-800">
+                    <th className="pb-2 font-medium">Server Preset</th>
+                    <th className="pb-2 font-medium">Default URL</th>
+                    <th className="pb-2 font-medium">Description</th>
+                    <th className="pb-2 font-medium">Resources</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-300 divide-y divide-gray-800">
+                  {MCP_PROVIDERS.map((p) => (
+                    <tr key={p.name} className="hover:bg-gray-850/30">
+                      <td className="py-2.5 pr-4">
+                        <button
+                          type="button"
+                          onClick={() => useProvider(p)}
+                          className="text-left text-sky-300 hover:text-sky-200 font-semibold hover:underline"
+                        >
+                          {p.name}
+                        </button>
+                      </td>
+                      <td className="py-2.5 pr-4 font-mono text-xs text-gray-400">
+                        {p.url}
+                      </td>
+                      <td className="py-2.5 pr-4 text-gray-400">
+                        {p.description}
+                      </td>
+                      <td className="py-2.5">
+                        {p.signup_url ? (
+                          <a
+                            href={p.signup_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:underline"
+                          >
+                            {p.signup_label}
+                          </a>
+                        ) : (
+                          <span className="text-gray-400 italic">Self-contained</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </HelpDrawer>
+        </div>
+
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-gray-500">
+          <div className="flex items-center gap-2 text-sm text-gray-400">
             <RefreshCw className="w-4 h-4 animate-spin" /> Loading connections...
           </div>
         ) : connections.length === 0 && !showAdd ? (
-          <div className="text-center py-12 text-gray-600">
+          <div className="text-center py-12 text-gray-400">
             <Plug className="w-8 h-8 mx-auto mb-3 opacity-50" />
             <p className="text-sm">No MCP connections configured.</p>
             <p className="text-xs mt-1">Add a connection to integrate external tools like Tavily search, database access, and more.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="mb-6">
-              <HelpDrawer title="Popular MCP Presets Helper" storageKey="help.mcp-presets">
-                <p className="text-xs text-gray-400 mb-3">
-                  Select one of these popular hosted MCP servers to pre-fill the form fields.
-                  Click the links on the right to sign up for accounts/keys where required.
-                  For MCP servers running on this machine, use <b>Scan Local Ports</b> instead.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="text-gray-500 uppercase tracking-wider text-[10px]">
-                      <tr className="border-b border-gray-800">
-                        <th className="pb-2 font-medium">Server Preset</th>
-                        <th className="pb-2 font-medium">Default URL</th>
-                        <th className="pb-2 font-medium">Description</th>
-                        <th className="pb-2 font-medium">Resources</th>
-                      </tr>
-                    </thead>
-                    <tbody className="text-gray-300 divide-y divide-gray-800">
-                      {MCP_PROVIDERS.map((p) => (
-                        <tr key={p.name} className="hover:bg-gray-850/30">
-                          <td className="py-2.5 pr-4">
-                            <button
-                              type="button"
-                              onClick={() => useProvider(p)}
-                              className="text-left text-blue-400 hover:text-blue-300 font-semibold focus:outline-none hover:underline"
-                            >
-                              {p.name}
-                            </button>
-                          </td>
-                          <td className="py-2.5 pr-4 font-mono text-[10px] text-gray-500">
-                            {p.url}
-                          </td>
-                          <td className="py-2.5 pr-4 text-gray-400">
-                            {p.description}
-                          </td>
-                          <td className="py-2.5">
-                            {p.signup_url ? (
-                              <a
-                                href={p.signup_url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-400 hover:underline"
-                              >
-                                {p.signup_label}
-                              </a>
-                            ) : (
-                              <span className="text-gray-500 italic">Self-contained</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </HelpDrawer>
-            </div>
-
             {connections.map((conn) => (
               <ConnectionCard
                 key={conn.name}
@@ -1153,9 +1163,9 @@ export default function MCPConnections() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-mono font-medium text-yellow-300">{tool.name}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-500">{tool.connection}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{tool.connection}</span>
                     </div>
-                    <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-1">{tool.description}</p>
+                    <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{tool.description}</p>
                   </div>
                 </div>
               ))}
