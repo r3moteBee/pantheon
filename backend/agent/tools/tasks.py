@@ -17,6 +17,7 @@ SCHEMAS: list[dict[str, Any]] = [
                 "PAUSED as a proposal; it runs only after the user approves it in the chat's Tasks tab. "
                 "For a schedule the user asked for, show them the plan in chat first and call this with "
                 "skip_review=true once they approve. "
+                "Work you can do in this turn (one image, one lookup) is not a task - do it now. "
                 "In the plan, name the exact tools each step uses (look at the tools you actually have — "
                 "mcp_*, github, save_to_artifact, ingest_source…); if a step needs a tool you lack, "
                 "say so in the plan rather than pretending."
@@ -370,6 +371,11 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
     session_id = ctx.session_id
     interactive = ctx.interactive
     effective_project = ctx.effective_project
+    # A job type given as a skill ("research_batch") is the job type: told the skill was not
+    # registered and to create it, the agent made a skill named research_batch (2026-10-08).
+    _as_job = (tool_args.get("skill_name") or "").strip().lower().replace("-", "_")
+    if _as_job in ("autonomous_task", "iteration_loop", "research_batch", "coding_task"):
+        tool_args = {**tool_args, "job_type": _as_job, "skill_name": None}
     if tool_args.get("job_type") == "coding_task":
         # Coding work goes straight to the coding agent (what
         # start_coding_task always did); the plan joins the brief.
@@ -416,6 +422,18 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             "them). They now use save_to_artifact - keep every file of the project under one artifact "
             "folder. Tell the user about this change when you describe the plan."
         )
+    # A repeating schedule nobody asked for runs forever: asked to research something "in the
+    # background", the agent scheduled it interval:60 (2026-10-08). ctx.user_message holds the
+    # user's recent messages, so the request is still seen on the turn that approves the plan.
+    from tasks.scheduler import is_recurring_schedule
+    sched = (tool_args.get("schedule") or "now").strip()
+    if interactive and ctx.user_message and is_recurring_schedule(sched):
+        from agent.task_intent import asks_to_repeat
+        if not asks_to_repeat(ctx.user_message):
+            return (f"create_task rejected: schedule {sched!r} repeats, but the user did not ask for anything "
+                    "recurring. For a single background run use 'now'; for one run later use 'delay:N' (N minutes "
+                    "from now). Call create_task again with that schedule.")
+
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
     if not skill_name:
@@ -448,7 +466,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             return (
                 f"create_task rejected: skill {tool_args.get('skill_name')!r} "
                 f"is not registered. Pick a slug from the available-skills list in "
-                f"your instructions (or create it with create_skill), then retry."
+                f"your instructions, or leave skill_name out (the plan alone drives the task). "
+                f"Do not create a skill just to make this call work."
             )
         skill_name = resolved
     timeout_seconds = tool_args.get("timeout_seconds")
