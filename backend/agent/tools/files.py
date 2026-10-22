@@ -477,6 +477,8 @@ def _mirror_to_artifact(ctx: ToolContext, safe_path: Path, content: str) -> str 
         return None
     project = ctx.effective_project
     store, apath = get_store(), f"{project_slug(project)}/{rel}"
+    from artifacts.normalize import resolve_agent_path
+    apath, _note = resolve_agent_path(apath, store.paths(project))
     existing = store.get_by_path(project, apath)
     if existing:
         if existing.get("content") == content:

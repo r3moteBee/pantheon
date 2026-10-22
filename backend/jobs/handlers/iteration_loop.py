@@ -400,7 +400,7 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
                 content=turn_md,
                 content_type="text/markdown",
                 title=f"Iteration {topic} — turn {turn}",
-                tags=["iteration", topic.lower().replace(" ", "-")[:40]],
+                tags=_turn_tags(artifact_store, ctx.project_id, topic),
                 source={"job_id": ctx.job_id, "kind": "iteration_turn",
                         "turn": turn},
             )
@@ -476,3 +476,14 @@ async def handle_iteration_loop(ctx: JobContext) -> dict[str, Any]:
         "turns_completed": len(turn_results),
         "turns": turn_results,
     }
+
+
+def _turn_tags(store, project_id: str, topic: str) -> list[str]:
+    """"iteration" + the loop's topic as a tag, reusing the project's existing spelling
+    (two loops named "Enhance MarbleMaze Game" / "Enhance Marble Maze Game" share one)."""
+    from artifacts.normalize import canonical_tags
+    try:
+        existing = store.tag_counts(project_id)
+    except Exception:
+        existing = {}
+    return canonical_tags(["iteration", topic], existing)

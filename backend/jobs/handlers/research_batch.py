@@ -109,7 +109,7 @@ async def handle_research_batch(ctx: JobContext) -> dict[str, Any]:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         content = (f"# {item}\n\n_Question: {question}_  \n_Researched {stamp} by job `{ctx.job_id[:8]}`._\n\n{reply}\n")
         store.create(project_id=ctx.project_id, path=path, content_type="text/markdown", content=content,
-                     title=f"{topic}: {item}", tags=["research", _slug(topic, 40)],
+                     title=f"{topic}: {item}", tags=_research_tags(store, ctx.project_id, topic),
                      source={"kind": "research_batch", "job_id": ctx.job_id})
         notes[item] = content
         written += 1
@@ -128,7 +128,7 @@ async def handle_research_batch(ctx: JobContext) -> dict[str, Any]:
         art = store.create(project_id=ctx.project_id, path=f"{folder}/summary.md", content_type="text/markdown",
                            content=f"# {topic} - summary\n\n{summary.strip()}\n\n_Built from {len(notes)} notes in "
                                    f"`{folder}/` by job `{ctx.job_id[:8]}`._\n",
-                           title=f"{topic}: summary", tags=["research", _slug(topic, 40)],
+                           title=f"{topic}: summary", tags=_research_tags(store, ctx.project_id, topic),
                            source={"kind": "research_batch", "job_id": ctx.job_id})
         summary_id = art["id"]
 
@@ -146,3 +146,13 @@ async def handle_research_batch(ctx: JobContext) -> dict[str, Any]:
             logger.debug("research_batch completion notice failed", exc_info=True)
     return {"status": "completed", "folder": folder, "items": len(items), "notes_written": written,
             "notes_reused": skipped, "nothing_found": empty, "summary_artifact_id": summary_id}
+
+
+def _research_tags(store, project_id: str, topic: str) -> list[str]:
+    """"research" + the topic as a tag, reusing the project's existing spelling."""
+    from artifacts.normalize import canonical_tags
+    try:
+        existing = store.tag_counts(project_id)
+    except Exception:
+        existing = {}
+    return canonical_tags(["research", topic], existing)
