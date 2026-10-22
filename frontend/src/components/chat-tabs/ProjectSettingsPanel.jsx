@@ -37,7 +37,7 @@ export default function ProjectSettingsPanel({ projectId }) {
   // Chat defaults
   // '' = inherit the global value (Settings); anything else overrides it here.
   const [chatDefaults, setChatDefaults] = useState({
-    tone_weight: '', context_focus: '', memory_recall: '', skill_discovery: 'off',
+    tone_weight: '', context_focus: '', memory_recall: '', skill_discovery: '',
   })
   const [globals, setGlobals] = useState({})
   const [chatDirty, setChatDirty] = useState(false)
@@ -76,7 +76,7 @@ export default function ProjectSettingsPanel({ projectId }) {
         tone_weight:     ov.tone_weight || '',
         context_focus:   ov.context_focus || '',
         memory_recall:   ov.memory_recall === undefined ? '' : (ov.memory_recall ? 'on' : 'off'),
-        skill_discovery: cd.effective?.skill_discovery || 'off',
+        skill_discovery: ov.skill_discovery || '',
       })
       setChatDirty(false)
 
@@ -281,13 +281,14 @@ export default function ProjectSettingsPanel({ projectId }) {
             </Field>
             <Field
               label={CHAT_SETTINGS.skill_discovery.label}
-              tooltip={`${CHAT_SETTINGS.skill_discovery.help} Set per project only: there is no global value to inherit.`}
+              tooltip={CHAT_SETTINGS.skill_discovery.help}
             >
               <select
                 value={chatDefaults.skill_discovery}
                 onChange={(e) => updateChat('skill_discovery', e.target.value)}
                 className="w-full px-3 py-2 rounded bg-gray-900 border border-gray-800 text-sm"
               >
+                <option value="">Global ({globals.skill_discovery || 'off'})</option>
                 {SKILLS.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </Field>

@@ -16,6 +16,13 @@ import { createChatSocket } from '../../api/client'
 //   acceptSuggestion()     / declineSuggestion()
 //   modelClass, setModelClass   chat mode = router pin ('auto' = unpinned),
 //                               remembered per project in localStorage
+// The tool calls a finished turn keeps. `context_loaded` is AgentCore's
+// synthetic "corpus context loaded" pre-recall event: the backend doesn't
+// store it with the message, so a reloaded conversation never has it. It
+// shows only while the reply streams, so the live transcript and the one
+// you get back from history look the same (UI review N10).
+export const persistedToolCalls = (toolCalls) => (toolCalls || []).filter((tc) => tc.name !== 'context_loaded')
+
 const modeKey = (projectId) => `pantheon_chat_mode_${projectId}`
 const loadMode = (projectId) => {
   try { return localStorage.getItem(modeKey(projectId)) || 'auto' } catch { return 'auto' }
@@ -111,12 +118,12 @@ export default function useChatSocket() {
           break
         case 'done': {
           const finalContent = useStore.getState().streamingContent
-          const finalToolCalls = useStore.getState().currentToolCalls
+          const finalToolCalls = persistedToolCalls(useStore.getState().currentToolCalls)
           if (finalContent || finalToolCalls.length > 0) {
             addMessage({
               role: 'assistant',
               content: finalContent,
-              toolCalls: [...finalToolCalls],
+              toolCalls: finalToolCalls,
               route: event.route || liveRouteRef.current,
               timestamp: new Date().toISOString(),
             })

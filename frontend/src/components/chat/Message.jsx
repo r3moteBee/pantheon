@@ -207,7 +207,7 @@ export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, conte
 
         {content && (
           <div className="px-4 py-3 rounded-2xl rounded-bl-sm bg-gray-800 text-gray-100 text-sm leading-relaxed break-words">
-            <Markdown className="prose prose-invert prose-sm max-w-none" components={mdComponents}>
+            <Markdown className="prose prose-invert prose-sm max-w-none" components={mdComponents} streaming>
               {content}
             </Markdown>
           </div>

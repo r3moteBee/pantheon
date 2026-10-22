@@ -175,11 +175,6 @@ export default function ProjectTasksPanel({ projectId }) {
             <button onClick={refresh} className="text-xs text-gray-300 hover:text-gray-100 flex items-center gap-1 whitespace-nowrap">
               <RefreshCw className="w-3 h-3" aria-hidden="true" /> Refresh
             </button>
-            <button onClick={() => setCreating((v) => !v)} aria-expanded={creating}
-                    className={creating ? secondaryButton : primaryButton}>
-              {creating ? <X className="w-3.5 h-3.5" aria-hidden="true" /> : <Plus className="w-3.5 h-3.5" aria-hidden="true" />}
-              {creating ? 'Close' : 'New schedule'}
-            </button>
           </div>
         </div>
 
@@ -234,19 +229,26 @@ export default function ProjectTasksPanel({ projectId }) {
           </p>
         </HelpDrawer>
 
-        {creating && (
-          <NewScheduleForm
-            projectId={projectId}
-            onCancel={() => setCreating(false)}
-            onCreated={async () => { setCreating(false); await refresh() }}
-          />
-        )}
-
-        {/* Schedules section */}
+        {/* Schedules section. One "New schedule" button (UI review N8): in the
+            empty state it sits in the placeholder, otherwise in this header. */}
         <section className="mb-6 mt-4">
-          <h3 className="text-xs font-semibold text-gray-400 uppercase mb-2 flex items-center gap-2">
-            <Clock className="w-3 h-3" /> Schedules ({schedules.length})
-          </h3>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold text-gray-400 uppercase flex items-center gap-2">
+              <Clock className="w-3 h-3" aria-hidden="true" /> Schedules ({schedules.length})
+            </h3>
+            {schedules.length > 0 && !creating && (
+              <button onClick={() => setCreating(true)} className={primaryButton}>
+                <Plus className="w-3.5 h-3.5" aria-hidden="true" /> New schedule
+              </button>
+            )}
+          </div>
+          {creating && (
+            <NewScheduleForm
+              projectId={projectId}
+              onCancel={() => setCreating(false)}
+              onCreated={async () => { setCreating(false); await refresh() }}
+            />
+          )}
           {schedules.length === 0 && (
             <div className="flex flex-wrap items-center gap-3 rounded border border-dashed border-gray-700 p-3 text-xs text-gray-300">
               <span className="flex-1 min-w-[12rem]">
@@ -273,34 +275,37 @@ export default function ProjectTasksPanel({ projectId }) {
                     : 'border-gray-800 bg-gray-900 hover:bg-gray-800'
                 }`}
               >
-                <div className="flex flex-wrap items-center gap-2">
-                  {proposed && (
-                    <span
-                      className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1 bg-amber-900 text-amber-100"
-                      title="Proposed — paused, waiting for approval"
-                    >
-                      <ClipboardCheck className="w-3 h-3" />
-                      pending approval
-                    </span>
-                  )}
-                  <span
-                    className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1 ${
-                      recurring
-                        ? 'bg-brand-900 text-brand-200'
-                        : 'bg-gray-800 text-gray-400'
-                    }`}
-                    title={recurring ? 'Recurring schedule' : 'One-shot task'}
-                  >
-                    {recurring ? <Repeat className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
-                    {recurring ? 'recurring' : 'one-shot'}
-                  </span>
-                  <span className="font-medium text-gray-200 truncate flex-1">
+                {/* Name first and it gets the space; the badge/cadence group
+                    wraps under it when the row is narrow (UI review N8). */}
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="min-w-[12rem] flex-1 truncate font-medium text-gray-200" title={sch.name || undefined}>
                     {sch.name || '(untitled schedule)'}
                   </span>
-                  <span className="text-gray-400 truncate" title={sch.schedule || sch.trigger}>
+                  <span className="flex flex-wrap items-center gap-2">
+                    {proposed && (
+                      <span
+                        className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1 whitespace-nowrap bg-amber-900 text-amber-100"
+                        title="Proposed — paused, waiting for approval"
+                      >
+                        <ClipboardCheck className="w-3 h-3" />
+                        pending approval
+                      </span>
+                    )}
+                    <span
+                      className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1 whitespace-nowrap ${
+                        recurring
+                          ? 'bg-brand-900 text-brand-200'
+                          : 'bg-gray-800 text-gray-400'
+                      }`}
+                      title={recurring ? 'Recurring schedule' : 'One-shot task'}
+                    >
+                      {recurring ? <Repeat className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+                      {recurring ? 'recurring' : 'one-shot'}
+                  </span>
+                  <span className="text-gray-400 whitespace-nowrap" title={sch.schedule || sch.trigger}>
                     {renderCadence(sch.schedule || sch.trigger)}
                   </span>
-                  <span className="text-gray-400">
+                  <span className="text-gray-400 whitespace-nowrap">
                     next: {proposed ? '(awaiting approval)' : (sch.next_run ? <Time value={sch.next_run} /> : '(none)')}
                   </span>
                   {proposed ? (
@@ -357,6 +362,7 @@ export default function ProjectTasksPanel({ projectId }) {
                   >
                     <X className="w-3 h-3" />
                   </button>
+                  </span>
                 </div>
                 {sch.description && (
                   <div className="text-xs text-gray-400 mt-1 truncate" title={sch.description}>
@@ -389,23 +395,28 @@ export default function ProjectTasksPanel({ projectId }) {
                     isActive ? 'border-brand-700 bg-brand-950' : 'border-gray-800 bg-gray-900'
                   } hover:bg-gray-800`}
                 >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
-                      {j.status}
-                    </span>
-                    <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300">
-                      {j.job_type}
-                    </span>
-                    {SYSTEM_TYPES.has(j.job_type) && (
-                      <span className="text-xs text-gray-400">system</span>
-                    )}
-                    <span className="text-sm font-medium text-gray-200 truncate flex-1">
+                  {/* Title first and it gets the space; the badges wrap under
+                      it when the row is narrow, e.g. with the detail panel
+                      open at 1100px (UI review N8). */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="min-w-[12rem] flex-1 truncate text-sm font-medium text-gray-200" title={j.title || undefined}>
                       {j.title || '(untitled)'}
                     </span>
-                    {j.started_at && <Time value={j.started_at} className="text-xs text-gray-400 whitespace-nowrap" />}
-                    {dur != null && j.status !== 'running' && (
-                      <span className="text-xs text-gray-400">· {fmtDuration(dur)}</span>
-                    )}
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${STATUS_BADGE[j.status] || STATUS_BADGE.queued}`}>
+                        {j.status}
+                      </span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 whitespace-nowrap">
+                        {j.job_type}
+                      </span>
+                      {SYSTEM_TYPES.has(j.job_type) && (
+                        <span className="text-xs text-gray-400">system</span>
+                      )}
+                      {j.started_at && <Time value={j.started_at} className="text-xs text-gray-400 whitespace-nowrap" />}
+                      {dur != null && j.status !== 'running' && (
+                        <span className="text-xs text-gray-400 whitespace-nowrap">· {fmtDuration(dur)}</span>
+                      )}
+                    </span>
                   </div>
                   {j.progress && j.status === 'running' && (
                     <div className="text-xs text-gray-400 mt-1 truncate">
@@ -493,8 +504,11 @@ function JobDetail({ job, onClose, onCancel, onRetry, onRerun, onDelete, onRefre
         </button>
       </div>
       <h3 className="text-sm font-medium text-gray-100 mb-1">{j.title || '(untitled)'}</h3>
-      <div className="text-xs text-gray-400 font-mono break-all mb-3">
-        {j.id}  · {j.job_type}
+      {/* Type as a badge, id on its own line: break-all applies to the id only,
+          so the type never breaks mid-word ("autonomou s_task", UI review N12). */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className="whitespace-nowrap rounded bg-gray-800 px-1.5 py-0.5 text-gray-300">{j.job_type}</span>
+        <code className="break-all font-mono text-gray-400" title="Job id">{j.id}</code>
       </div>
 
       <KV label="Project" value={<span title={j.project_id}>{j.project_name || projectName(j.project_id)}</span>} />
@@ -790,7 +804,7 @@ function NewScheduleForm({ projectId, onCancel, onCreated }) {
 
   const field = 'w-full bg-gray-900 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-100 focus:border-brand-500'
   return (
-    <form onSubmit={submit} className="mt-4 space-y-3 rounded-lg border border-gray-700 bg-gray-900/60 p-4">
+    <form onSubmit={submit} className="mb-3 space-y-3 rounded-lg border border-gray-700 bg-gray-900/60 p-4">
       <h3 className="text-sm font-semibold text-gray-100">New schedule</h3>
       <div>
         <label htmlFor="ns-name" className="block text-xs text-gray-300 mb-1">Name</label>

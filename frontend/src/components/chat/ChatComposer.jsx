@@ -3,19 +3,29 @@ import { Send, Square, Paperclip } from 'lucide-react'
 import { llmApi } from '../../api/client'
 import SkillPicker from '../SkillPicker'
 import { AttachmentPill } from './Attachments'
+import { CHAT_COLUMN } from '../layout/columns'
 
-// Below the sm breakpoint the long placeholder hint gets cut off mid-word.
-function useNarrow() {
-  const q = '(max-width: 639px)'
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(q).matches)
+function useMediaQuery(q) {
+  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && !!window.matchMedia?.(q).matches)
   useEffect(() => {
     const m = window.matchMedia?.(q)
     if (!m) return
-    const on = () => setNarrow(m.matches)
+    const on = () => setMatches(m.matches)
     m.addEventListener?.('change', on)
     return () => m.removeEventListener?.('change', on)
-  }, [])
-  return narrow
+  }, [q])
+  return matches
+}
+// Below the sm breakpoint the long placeholder hint gets cut off mid-word.
+const useNarrow = () => useMediaQuery('(max-width: 639px)')
+// Phone width: the mode picker shows abbreviated labels so "Quick chat"
+// isn't clipped to "Quick ch" (UI review N9); the full label stays in the
+// control's title / aria-label.
+const usePhone = () => useMediaQuery('(max-width: 479px)')
+
+const shortLabel = (label) => {
+  const first = String(label || '').split(/[\s/–-]+/)[0] || label
+  return first.length > 7 ? first.slice(0, 6) + '…' : first
 }
 
 // Attachment tray + input row: model picker, attach button, skill picker,
@@ -34,6 +44,7 @@ export default function ChatComposer({
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const narrow = useNarrow()
+  const phone = usePhone()
 
   useEffect(() => {
     llmApi.getRouter()
@@ -69,8 +80,8 @@ export default function ChatComposer({
     <>
       {/* Attachment preview bar */}
       {attachments.length > 0 && (
-        <div className="px-4 py-2 bg-gray-850 border-t border-gray-800">
-          <div className="flex flex-wrap gap-2 max-w-4xl mx-auto">
+        <div className="py-2 bg-gray-850 border-t border-gray-800">
+          <div className={`flex flex-wrap gap-2 ${CHAT_COLUMN}`}>
             {attachments.map((file, i) => (
               <AttachmentPill key={i} file={file} onRemove={() => onRemoveAttachment(i)} />
             ))}
@@ -79,25 +90,27 @@ export default function ChatComposer({
       )}
 
       {/* Input area */}
-      <div className="p-4 bg-gray-900 border-t border-gray-800">
-        <div className="flex gap-2 items-end max-w-4xl mx-auto">
+      <div className="py-4 bg-gray-900 border-t border-gray-800">
+        <div data-chat-column="composer" className={`flex gap-2 items-end ${CHAT_COLUMN}`}>
           {/* Model picker — only when the router has somewhere else to send turns */}
-          {routeOptions.length > 0 && (
-            <select
-              value={modelClass}
-              onChange={(e) => setModelClass(e.target.value)}
-              disabled={isStreaming}
-              title="Chat mode (remembered per project). Auto lets the chat router pick per turn; /model <class> works too."
-              aria-label="Chat mode"
-              className="flex-shrink-0 h-12 max-w-[5.5rem] sm:max-w-none bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-200 focus:border-brand-500 disabled:opacity-40"
-            >
-              <option value="auto">Auto</option>
-              <option value="agent">Agent</option>
-              {routeOptions.map((c) => (
-                <option key={c.name} value={c.name}>{c.label}</option>
-              ))}
-            </select>
-          )}
+          {routeOptions.length > 0 && (() => {
+            const modes = [['auto', 'Auto'], ['agent', 'Agent'], ...routeOptions.map((c) => [c.name, c.label || c.name])]
+            const current = (modes.find(([v]) => v === modelClass) || modes[0])[1]
+            return (
+              <select
+                value={modelClass}
+                onChange={(e) => setModelClass(e.target.value)}
+                disabled={isStreaming}
+                title={`Chat mode: ${current} (remembered per project). Auto lets the chat router pick per turn; /model <class> works too.`}
+                aria-label={`Chat mode: ${current}`}
+                className="flex-shrink-0 h-12 max-w-[4.5rem] sm:max-w-none bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-200 focus:border-brand-500 disabled:opacity-40"
+              >
+                {modes.map(([value, label]) => (
+                  <option key={value} value={value} title={label}>{phone ? shortLabel(label) : label}</option>
+                ))}
+              </select>
+            )
+          })()}
           {/* Attach button */}
           <button
             type="button"

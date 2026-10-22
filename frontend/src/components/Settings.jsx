@@ -11,6 +11,7 @@ import TasksSettings from './settings/TasksSettings'
 import SecuritySettings from './settings/SecuritySettings'
 import SecretsSettings from './settings/SecretsSettings'
 import SystemUpdate from './settings/SystemUpdate'
+import TabStrip from './TabStrip'
 import { useUrlParam } from '../hooks/useUrlState'
 import usePageTitle from '../hooks/usePageTitle'
 
@@ -54,32 +55,13 @@ export default function Settings() {
 
   return (
     <div className="h-full flex flex-col">
-      <div
-        role="tablist"
-        aria-label="Settings sections"
-        className="flex items-center border-b border-gray-800 px-2 sm:px-6 pt-4 overflow-x-auto scrollbar-thin"
-      >
-        {TABS.map((t) => {
-          const Icon = t.icon
-          const active = tab === t.id
-          return (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={active}
-              onClick={() => setTab(t.id)}
-              className={`flex flex-shrink-0 items-center gap-1.5 px-4 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
-                active
-                  ? 'border-brand-400 text-brand-300'
-                  : 'border-transparent text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" aria-hidden="true" />
-              {t.label}
-            </button>
-          )
-        })}
-      </div>
+      <TabStrip
+        tabs={TABS}
+        value={tab}
+        onChange={setTab}
+        label="Settings sections"
+        className="border-b border-gray-800 px-2 sm:px-6 pt-4"
+      />
       <div className="flex-1 overflow-hidden">
         {tab === 'llms' && <Section><LlmSettings /></Section>}
         {tab === 'rag' && <Section><RagSettings /></Section>}

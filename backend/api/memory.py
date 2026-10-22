@@ -100,11 +100,38 @@ async def list_messages(
     project_id: str = Query(default="default"),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> dict[str, Any]:
-    """List recent episodic messages across all sessions."""
+    """List recent episodic messages across all sessions.
+
+    Each message also carries its session's title (``session_title``: the
+    stored conversation title, else the first user message, the same rule the
+    conversations list / history drawer use) and the raw
+    ``session_first_user_message`` so job sessions can be labelled by kind.
+    """
     from memory.episodic import EpisodicMemory
     ep = EpisodicMemory()
     messages = await ep.get_recent_messages(project_id=project_id, limit=limit)
+    sessions = {
+        s["session_id"]: s
+        for s in await ep.get_sessions(project_id=project_id, limit=500)
+    }
+    for m in messages:
+        s = sessions.get(m.get("session_id")) or {}
+        m["session_title"] = session_title(m.get("session_id") or "", s)
+        m["session_first_user_message"] = s.get("first_user_message")
     return {"messages": messages, "count": len(messages)}
+
+
+def session_title(session_id: str, session: dict[str, Any]) -> str:
+    """Title for a session row from ``EpisodicMemory.get_sessions``: the stored
+    title when the user set one, else the first user message (same helper the
+    chat export uses), else ``Chat <id>``."""
+    from api.conversations import _auto_title_from_messages
+    stored = (session.get("title") or "").strip()
+    if stored and stored != "New Chat":
+        return stored
+    first = session.get("first_user_message") or ""
+    msgs = [{"role": "user", "content": first}] if first.strip() else []
+    return _auto_title_from_messages(msgs, session_id)
 
 
 @router.put("/memory/episodic/notes/{note_id}")
@@ -146,12 +173,60 @@ async def list_semantic(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    """List semantic memories."""
+    """List semantic memories. Every item carries the normalized fields from
+    ``semantic_entry_summary`` next to its raw ``metadata``."""
     from memory.semantic import SemanticMemory
     sem = SemanticMemory(project_id=project_id)
     items = await sem.list_memories(limit=limit, offset=offset)
+    for item in items:
+        item.update(semantic_entry_summary(item.get("metadata") or {}))
     count = await sem.count()
     return {"items": items, "total": count, "limit": limit, "offset": offset}
+
+
+def semantic_entry_summary(md: dict[str, Any]) -> dict[str, Any]:
+    """Normalize the metadata the different writers attach to a semantic
+    entry (artifact embedder, workspace file indexer, conversation/artifact
+    extraction, the remember tool / store API) into one shape for the UI:
+
+    kind          artifact | workspace | fact | preference | image | topic |
+                  <source> (discord_note, ...) | remembered
+    created_at    when it was stored (created_at, else indexed_at/embedded_at)
+    source_path   artifact path or workspace file path, when there is one
+    source_title  artifact title / heading, when there is one
+    session_id    the chat session (or "artifact:<id>") a fact was extracted from
+    """
+    src = str(md.get("source") or "")
+    typ = str(md.get("type") or "")
+    path = title = None
+    if src == "artifact" or md.get("artifact_id"):
+        kind = "artifact"
+        path, title = md.get("path"), md.get("title")
+    elif md.get("fm_artifact_id") or str(md.get("source_path") or "").startswith("artifact://"):
+        # MemoryManager.index_artifact chunks: frontmatter fields, artifact:// path.
+        kind = "artifact"
+        path = md.get("fm_artifact_path") or md.get("source_path")
+        title = md.get("fm_title") or md.get("heading")
+    elif md.get("source_path") or md.get("source_file") or md.get("fm_artifact_path"):
+        kind = "image" if typ == "image_description" else "workspace"
+        path = md.get("source_path") or md.get("fm_artifact_path") or md.get("source_file")
+        title = md.get("fm_title") or md.get("heading")
+    elif src == "auto_extraction" or typ in ("extracted_fact", "user_preference"):
+        kind = "preference" if typ == "user_preference" else "fact"
+    elif md.get("kind") == "topic_node":
+        kind = "topic"
+    elif src:
+        kind = src
+    else:
+        kind = "remembered"
+    created = md.get("created_at") or md.get("indexed_at") or md.get("extracted_at") or md.get("embedded_at")
+    return {
+        "kind": kind,
+        "created_at": created or None,
+        "source_path": path or None,
+        "source_title": title or None,
+        "session_id": md.get("session_id") or None,
+    }
 
 
 @router.delete("/memory/semantic/{doc_id}")

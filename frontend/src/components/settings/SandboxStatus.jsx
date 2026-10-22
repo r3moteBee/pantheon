@@ -37,6 +37,12 @@ export default function SandboxStatus() {
     : status === 'degraded'
       ? 'bg-amber-900/60 text-amber-200'
       : 'bg-gray-800 text-gray-300'
+  // The backend reports "healthy" for any sandbox that answers, including the
+  // subprocess one that offers no isolation - shown next to the "No isolation"
+  // warning that read as a contradiction (UI review #5). The chip says what
+  // the backend is actually reporting: that the sandbox is running.
+  const STATUS_LABEL = { healthy: 'Running', degraded: 'Degraded', unknown: 'Unknown' }
+  const statusLabel = STATUS_LABEL[status] || status
 
   return (
     <div className="space-y-3">
@@ -64,8 +70,11 @@ export default function SandboxStatus() {
                 <AlertTriangle className="w-3 h-3" aria-hidden="true" /> No isolation
               </span>
             )}
-            <span className={`ml-auto whitespace-nowrap rounded-full px-2 py-0.5 ${statusBadge}`}>
-              Status: {status}
+            <span
+              className={`ml-auto whitespace-nowrap rounded-full px-2 py-0.5 ${statusBadge}`}
+              title={`Sandbox backend "${backend}" reports status "${status}"`}
+            >
+              {statusLabel}
             </span>
           </div>
           {!isFirecracker ? (

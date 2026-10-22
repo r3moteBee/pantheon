@@ -971,9 +971,11 @@ export default function MCPConnections() {
   }
 
   return (
-    // Rendered inside the Connections page's MCP tab, which already provides the
-    // scroll container, padding and the "MCP servers" heading (UI review #17) -
-    // so no second page title here, just the toolbar.
+    // Rendered inside the Connections page, which provides the page header
+    // (title), the scroll container, the gutter and the max width for every
+    // tab (UI review #17 / N1) - same inner layout as SearchProvidersTab: a
+    // plain block with no own padding, max-width, negative margins or page
+    // title; just the toolbar and the content.
     <div>
       <div>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">

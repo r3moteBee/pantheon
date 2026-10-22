@@ -10,7 +10,9 @@ A project override lives in phase_g.db ``project_settings`` (NULL = inherit);
 the global value is the vault key Settings writes (``personality_weight``,
 ``context_focus``, ``memory_recall_enabled``). skill_discovery has always
 been per project in the vault (``skill_discovery_<project>``) and stays
-there, so the chat header, Project Settings and the skills API agree.
+there, so the chat header, Project Settings and the skills API agree; its
+global value is the vault key ``skill_discovery`` (Settings API), used when
+a project has no value of its own - the same inherit rule as the other knobs.
 
 Chat (AgentCore) reads ``effective(project_id)``; the chat header and
 Project Settings write ``set_overrides``.
@@ -32,6 +34,8 @@ KNOBS: dict[str, dict[str, Any]] = {
     "memory_recall": {"global_key": "memory_recall_enabled", "default": True, "choices": (True, False)},
 }
 SKILL_DISCOVERY_CHOICES = ("off", "suggest", "auto")
+SKILL_DISCOVERY_GLOBAL_KEY = "skill_discovery"
+SKILL_DISCOVERY_DEFAULT = "off"
 
 _ready: set[str] = set()
 # Created by early versions of 002_phase_g.sql and never read or written; dropped
@@ -85,13 +89,15 @@ def overrides(project_id: str) -> dict[str, Any]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM project_settings WHERE project_id = ?",
                            (project_id,)).fetchone()
-    if not row:
-        return {}
-    out = {}
-    for knob in KNOBS:
-        v = _valid(knob, row[knob] if knob in row.keys() else None)
-        if v is not None:
-            out[knob] = v
+    out: dict[str, Any] = {}
+    if row:
+        for knob in KNOBS:
+            v = _valid(knob, row[knob] if knob in row.keys() else None)
+            if v is not None:
+                out[knob] = v
+    sd = skill_discovery_override(project_id)
+    if sd is not None:
+        out["skill_discovery"] = sd
     return out
 
 
@@ -102,21 +108,48 @@ def global_values() -> dict[str, Any]:
     for knob, spec in KNOBS.items():
         v = _valid(knob, vault.get_secret(spec["global_key"]))
         out[knob] = spec["default"] if v is None else v
+    out["skill_discovery"] = skill_discovery_global()
     return out
 
 
-def skill_discovery(project_id: str) -> str:
+def _sd_valid(value: Any) -> str | None:
+    return value if value in SKILL_DISCOVERY_CHOICES else None
+
+
+def skill_discovery_global() -> str:
+    """The global skill-discovery mode (vault ``skill_discovery``), default off."""
     from secrets.vault import get_vault
-    mode = get_vault().get_secret(f"skill_discovery_{project_id}") or "off"
-    return mode if mode in SKILL_DISCOVERY_CHOICES else "off"
+    return _sd_valid(get_vault().get_secret(SKILL_DISCOVERY_GLOBAL_KEY)) or SKILL_DISCOVERY_DEFAULT
+
+
+def set_skill_discovery_global(value: Any) -> str:
+    """Write the global mode. Raises ValueError on a bad value."""
+    from secrets.vault import get_vault
+    v = _sd_valid(str(value or "").lower().strip())
+    if v is None:
+        raise ValueError(f"skill_discovery must be one of {', '.join(SKILL_DISCOVERY_CHOICES)}")
+    get_vault().set_secret(SKILL_DISCOVERY_GLOBAL_KEY, v)
+    return v
+
+
+def skill_discovery_override(project_id: str) -> str | None:
+    """The project's own mode (vault ``skill_discovery_<project>``), or None
+    when the project inherits the global value."""
+    from secrets.vault import get_vault
+    return _sd_valid(get_vault().get_secret(f"skill_discovery_{project_id}"))
+
+
+def skill_discovery(project_id: str) -> str:
+    """Effective mode for a project: its own value, else the global one."""
+    own = skill_discovery_override(project_id)
+    return own if own is not None else skill_discovery_global()
 
 
 def effective(project_id: str | None) -> dict[str, Any]:
     g = global_values()
     o = overrides(project_id) if project_id else {}
     eff = {**g, **o}
-    eff["skill_discovery"] = skill_discovery(project_id or "default")
-    eff["source"] = {k: ("project" if k in o else "global") for k in KNOBS}
+    eff["source"] = {k: ("project" if k in o else "global") for k in (*KNOBS, "skill_discovery")}
     return eff
 
 
