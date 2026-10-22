@@ -18,7 +18,7 @@ from sandbox.backend import (
     SandboxBackend,
     SandboxConfig,
     SandboxResult,
-    language_to_default_filename,
+    safe_script_filename,
     language_to_interpreter,
 )
 
@@ -37,7 +37,7 @@ class SubprocessSandbox(SandboxBackend):
         config: SandboxConfig | None = None,
     ) -> SandboxResult:
         cfg = config or SandboxConfig()
-        filename = filename or language_to_default_filename(language)
+        filename = safe_script_filename(filename, language)
         interp = language_to_interpreter(language)
 
         tmpdir = tempfile.mkdtemp(prefix="pantheon_inline_")
@@ -57,10 +57,14 @@ class SubprocessSandbox(SandboxBackend):
                 env["WORKSPACE_DIR"] = str(cfg.workspace_dir)
             env.update(cfg.extra_env or {})
 
-            # Resource limits via ulimit prefix (Linux only; harmless on macOS)
+            # Resource limits via ulimit prefix (Linux only; harmless on macOS).
+            # RLIMIT_DATA (-d), not address space (-v): V8 reserves far more
+            # virtual memory than it uses, so node aborted at start under -v
+            # 256 MB. Since Linux 4.7 -d also counts private anonymous mmaps,
+            # so heaps (malloc, Python, V8) are still bounded.
             mem_kb = cfg.max_memory_mb * 1024
             quoted_cmd = " ".join(_shquote(c) for c in cmd)
-            shell_cmd = f"ulimit -v {mem_kb} 2>/dev/null; exec {quoted_cmd}"
+            shell_cmd = f"ulimit -d {mem_kb} 2>/dev/null; exec {quoted_cmd}"
 
             cwd = str(cfg.workspace_dir) if cfg.workspace_dir else tmpdir
 

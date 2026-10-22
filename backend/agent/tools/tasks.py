@@ -287,6 +287,11 @@ SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+# Job types whose handler runs host commands (coding_task: run_command/git_*,
+# autoresearch: the benchmark command).
+HOST_EXEC_JOB_TYPES = frozenset({"coding_task", "autoresearch"})
+
+
 @tool('rerun_job')
 async def _tool_rerun_job(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     from jobs.store import get_store
@@ -294,16 +299,24 @@ async def _tool_rerun_job(ctx: ToolContext, tool_name: str, tool_args: dict[str,
     if not jid:
         return "rerun_job rejected: job_id is required."
     store = get_store()
+    project = ctx.effective_project
     target = store.get_or_none(jid)
+    if target and (target.get("project_id") or "default") != project:
+        target = None  # only this project's jobs
     # Allow 8-char prefix.
     if not target and len(jid) >= 4:
-        cand = [r for r in store.list(limit=200) if r["id"].startswith(jid)]
+        cand = [r for r in store.list(project_id=project, limit=200) if r["id"].startswith(jid)]
         if len(cand) == 1:
             target = cand[0]
         elif len(cand) > 1:
             return f"rerun_job: prefix {jid!r} matches {len(cand)} jobs; provide more characters."
     if not target:
-        return f"rerun_job: no job with id {jid!r}."
+        return f"rerun_job: no job with id {jid!r} in this project."
+    # Same rule as start_coding_task / start_autoresearch: these job types run
+    # commands on the host, so only a person in the web chat may queue them.
+    if target.get("job_type") in HOST_EXEC_JOB_TYPES and not ctx.interactive:
+        return (f"rerun_job refused: {target['job_type']} jobs run commands on the host and can only be "
+                "rerun from the web chat (or the Tasks tab). Tell the user which job to rerun.")
     try:
         new_job = store.rerun(target["id"])
     except ValueError as e:

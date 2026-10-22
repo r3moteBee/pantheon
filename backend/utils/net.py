@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 import socket
 from urllib.parse import urljoin, urlparse
 
@@ -22,6 +23,47 @@ _DEFAULT_UA = "Pantheon/1.0"
 
 class UnsafeURLError(ValueError):
     """URL scheme or destination address is not allowed."""
+
+
+class ResponseTooLargeError(ValueError):
+    """The response body is over the caller's byte cap."""
+
+
+def _env_bytes(name: str, default_mb: int) -> int:
+    try:
+        return max(1, int(float(os.getenv(name, "") or default_mb) * 1024 * 1024))
+    except ValueError:
+        return default_mb * 1024 * 1024
+
+
+def default_fetch_max_bytes() -> int:
+    """Cap on any safe_http_get body (FETCH_MAX_MB, default 200)."""
+    return _env_bytes("FETCH_MAX_MB", 200)
+
+
+def download_max_bytes() -> int:
+    """Cap on download_file (DOWNLOAD_MAX_MB, default 50)."""
+    return _env_bytes("DOWNLOAD_MAX_MB", 50)
+
+
+async def _read_capped(resp: httpx.Response, max_bytes: int) -> None:
+    """Read a streamed response into ``resp.content``, refusing more than
+    ``max_bytes`` (decoded) without buffering the rest."""
+    try:
+        declared = int(resp.headers.get("content-length") or -1)
+    except ValueError:
+        declared = -1
+    if declared > max_bytes:
+        raise ResponseTooLargeError(
+            f"response is {declared} bytes, over the {max_bytes}-byte limit")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in resp.aiter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise ResponseTooLargeError(f"response is over the {max_bytes}-byte limit")
+        chunks.append(chunk)
+    resp._content = b"".join(chunks)  # what Response.aread() sets
 
 
 def _private_fetch_allowed() -> bool:
@@ -102,8 +144,14 @@ async def safe_http_get(
     timeout: float = 60.0,
     headers: dict[str, str] | None = None,
     client: httpx.AsyncClient | None = None,
+    max_bytes: int | None = None,
 ) -> httpx.Response:
-    """GET with SSRF checks on the URL and on every redirect hop."""
+    """GET with SSRF checks on the URL and on every redirect hop.
+
+    The body is streamed and capped at ``max_bytes`` (default
+    ``default_fetch_max_bytes()``); a bigger one raises
+    ResponseTooLargeError. The returned response is fully read."""
+    cap = max_bytes if max_bytes is not None else default_fetch_max_bytes()
     hdrs = {"User-Agent": _DEFAULT_UA, **(headers or {})}
     own = client is None
     client = client or httpx.AsyncClient(timeout=timeout, follow_redirects=False)
@@ -115,16 +163,19 @@ async def safe_http_get(
             # there's nothing to pin (and many proxies refuse IP targets).
             if ips and not _proxied(current):
                 target, extra_headers, ext = _pinned_request_args(current, ips[0])
-                resp = await client.get(
-                    target, headers={**hdrs, **extra_headers},
-                    follow_redirects=False, extensions=ext,
-                )
+                req = client.build_request("GET", target, headers={**hdrs, **extra_headers},
+                                           extensions=ext)
             else:  # ALLOW_PRIVATE_FETCH — plain request
-                resp = await client.get(current, headers=hdrs, follow_redirects=False)
-            if resp.is_redirect and resp.headers.get("location"):
-                # Join against the hostname URL, not the pinned IP URL.
-                current = urljoin(current, resp.headers["location"])
-                continue
+                req = client.build_request("GET", current, headers=hdrs)
+            resp = await client.send(req, stream=True, follow_redirects=False)
+            try:
+                if resp.is_redirect and resp.headers.get("location"):
+                    # Join against the hostname URL, not the pinned IP URL.
+                    current = urljoin(current, resp.headers["location"])
+                    continue
+                await _read_capped(resp, cap)
+            finally:
+                await resp.aclose()
             return resp
         raise httpx.TooManyRedirects(f"More than {_MAX_REDIRECTS} redirects", request=resp.request)
     finally:

@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 import httpx
-from utils.paths import is_within, safe_filename
+from utils.paths import is_within, iter_files_within, safe_filename
 from artifacts.conversions import save_converted_artifact
 from agent.tools.registry import ToolContext, tool
 from agent.tools import workspace as _ws
@@ -209,11 +209,14 @@ async def _tool_download_file(ctx: ToolContext, tool_name: str, tool_args: dict[
         safe_path = safe_path / safe_filename(url_name)
 
     try:
-        from utils.net import UnsafeURLError, safe_http_get
+        from utils.net import ResponseTooLargeError, UnsafeURLError, download_max_bytes, safe_http_get
         try:
-            resp = await safe_http_get(url, timeout=60.0)
+            resp = await safe_http_get(url, timeout=60.0, max_bytes=download_max_bytes())
         except UnsafeURLError as e:
             return f"Download refused: {e}"
+        except ResponseTooLargeError as e:
+            return (f"Download refused: {e} (DOWNLOAD_MAX_MB={download_max_bytes() // 1048576}). "
+                    "Nothing was saved.")
         resp.raise_for_status()
         # Still no extension — try Content-Disposition. The header
         # is server-controlled, so keep only its basename.
@@ -333,9 +336,7 @@ async def _tool_batch_convert_documents(ctx: ToolContext, tool_name: str, tool_a
                 if target.is_file():
                     expanded_paths.append(target)
                 elif target.is_dir():
-                    for p in target.rglob("*"):
-                        if p.is_file():
-                            expanded_paths.append(p)
+                    expanded_paths.extend(iter_files_within(target, base))
                 else:
                     return f"Error: Path not found: {pattern}"
 

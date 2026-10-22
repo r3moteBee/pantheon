@@ -157,10 +157,31 @@ SCHEMAS: list[dict[str, Any]] = [
 ]
 
 
+def _bad_branch(name: str) -> str | None:
+    """Error text when ``name`` isn't a valid git branch name (also keeps
+    '-'-prefixed names from being read as git options)."""
+    from integrations.github import GitHubInvalidName, validate_ref_name
+    try:
+        validate_ref_name(name)
+    except GitHubInvalidName as e:
+        return str(e)
+    return None
+
+
+NEEDS_CHECKOUT = frozenset({"git_status", "git_create_branch", "git_merge", "git_commit", "git_push_pr"})
+
+
 @tool(prefix='git_')
 async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str, Any]) -> Any:
     effective_project = ctx.effective_project
-    cwd = _ws._resolve_repo_checkout(effective_project) or _ws._get_workspace_base(effective_project)
+    # Only ever the bound repo's checkout. Falling back to the workspace
+    # root used to `git init` it, and git_commit / git_push_pr then added
+    # and pushed the whole workspace (2026-10-22 review).
+    cwd = _ws._resolve_repo_checkout(effective_project)
+    if cwd is None and tool_name in NEEDS_CHECKOUT:
+        return (f"{tool_name}: there is no local checkout of this project's repo yet. "
+                "Run git_sync_repo first (it clones the bound GitHub repo into "
+                "repos/<owner>__<repo>/); git tools only work inside that checkout.")
 
     if tool_name == "git_sync_repo":
         import shutil
@@ -173,7 +194,12 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
         token = get_token(spec["connection_id"])  # None is fine for public repos
         owner, repo = spec["owner"], spec["repo"]
         branch = tool_args.get("branch") or spec["default_branch"] or "main"
-        dest = _ws._repo_checkout_dir(effective_project, owner, repo)
+        if (bad := _bad_branch(branch)):
+            return f"git_sync_repo: {bad}"
+        try:
+            dest = _ws._repo_checkout_dir(effective_project, owner, repo)
+        except ValueError as e:
+            return f"git_sync_repo: {e}. Re-bind the repository on the Connections page."
         clean_url = f"https://github.com/{owner}/{repo}.git"
         auth_env = _ws._git_auth_env(token)
 
@@ -181,6 +207,8 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
             return s.replace(token, "********") if token else s
 
         if tool_args.get("fresh") and dest.exists():
+            if dest.is_symlink() or not _ws.is_within(dest, _ws._get_workspace_base(effective_project) / "repos"):
+                return f"git_sync_repo: refusing to delete {dest.name}: it is not inside the workspace's repos/ folder."
             shutil.rmtree(dest, ignore_errors=True)
 
         if (dest / ".git").exists():
@@ -253,6 +281,8 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
 
     elif tool_name == "git_create_branch":
         branch_name = tool_args["branch_name"]
+        if (bad := _bad_branch(branch_name)):
+            return f"git_create_branch: {bad}"
         code, stdout, stderr = await _ws._run_git_cmd(["checkout", "-b", branch_name], cwd)
         if code != 0:
             # Switch to existing branch if branch already exists
@@ -273,6 +303,8 @@ async def _tool_git_tools(ctx: ToolContext, tool_name: str, tool_args: dict[str,
         branch = (tool_args.get("branch") or "").strip()
         if not branch:
             return "git_merge: 'branch' is required (or pass abort=true)."
+        if (bad := _bad_branch(branch)):
+            return f"git_merge: {bad}"
 
         # Resolve the ref: as-given first, then origin/<branch>
         ref = branch

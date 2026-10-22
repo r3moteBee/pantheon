@@ -338,6 +338,15 @@ async def bind_project_repo(project_id: str, req: BindRepoRequest) -> dict[str, 
     if not conn_row:
         raise HTTPException(status_code=404, detail="connection not found")
     default_branch = req.default_branch or "main"
+    # owner/repo become a workspace path (repos/<owner>__<repo>, which
+    # git_sync_repo(fresh=true) deletes) and GitHub API URLs.
+    from integrations.github import GitHubInvalidName, validate_owner, validate_ref_name, validate_repo_name
+    try:
+        validate_owner(req.owner)
+        validate_repo_name(req.repo)
+        validate_ref_name(default_branch, "default branch")
+    except GitHubInvalidName as e:
+        raise HTTPException(status_code=400, detail=str(e))
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         conn.execute(

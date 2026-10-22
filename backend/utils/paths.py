@@ -1,6 +1,8 @@
 """Path-safety helpers shared by the files API and agent tools."""
 from __future__ import annotations
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 
@@ -14,6 +16,25 @@ def is_within(target: Path, base: Path) -> bool:
         return target.resolve().is_relative_to(base.resolve())
     except (OSError, ValueError):
         return False
+
+
+def iter_files_within(root: Path, base: Path | None = None) -> Iterator[Path]:
+    """Regular files under ``root``, recursively, for exporting/copying.
+
+    Use instead of ``root.rglob("*")`` on workspace folders: rglob yields
+    symlinked files (``x -> /etc/passwd``) whose content then leaves the
+    workspace. Symlinks (files and directories) are skipped, and so is
+    anything whose resolved path is not inside ``base`` (default ``root``).
+    """
+    base = base if base is not None else root
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        d = Path(dirpath)
+        dirnames[:] = sorted(n for n in dirnames if not (d / n).is_symlink())
+        for name in sorted(filenames):
+            p = d / name
+            if p.is_symlink() or not p.is_file() or not is_within(p, base):
+                continue
+            yield p
 
 
 class InvalidProjectId(ValueError):

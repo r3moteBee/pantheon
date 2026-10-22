@@ -285,5 +285,5 @@ async def test_update_without_content_says_so_instead_of_not_found(tools):
     assert "needs `content`" in out and "not found" not in out
     assert store.get(a["id"])["content"] == "- [pending] a"
     assert (await run("update_artifact", id=a["id"], content="- [done] a")).startswith("Updated artifact")
-    assert (await run("update_artifact", id="nope", content="x")) == "Artifact nope not found."
+    assert (await run("update_artifact", id="nope", content="x")) == "Artifact nope not found in this project."
     assert "needs the artifact's id" in await run("update_artifact", content="x")

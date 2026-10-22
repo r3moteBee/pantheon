@@ -447,6 +447,12 @@ class AgentCore:
                 continue
             seen_files.add(filename)
             candidate = base / "uploads" / filename
+            # The name comes from message text: "uploads/../../x.png" must
+            # not read images from elsewhere on the host.
+            from utils.paths import is_within
+            if not is_within(candidate, base / "uploads"):
+                logger.debug("Skipping upload path outside uploads/: %s", filename)
+                continue
             if candidate.exists() and candidate.stat().st_size <= _MAX_IMAGE_SIZE:
                 try:
                     raw = candidate.read_bytes()

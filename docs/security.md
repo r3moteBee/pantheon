@@ -29,6 +29,7 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 ## Outbound fetches (SSRF)
 
 - `utils.net.safe_http_get` resolves the host, blocks non-public addresses on **every redirect hop**, and connects to the IP it validated. The Host header and TLS SNI keep the real name, so DNS rebinding between check and connect doesn't work. Behind an HTTP(S) proxy it skips pinning. `ALLOW_PRIVATE_FETCH=true` opts out.
+- **Size caps:** `safe_http_get` streams the body and raises `ResponseTooLargeError` past `max_bytes` (default `FETCH_MAX_MB`, 200). `download_file` passes `DOWNLOAD_MAX_MB` (50) and saves nothing when the file is bigger.
 - **Browser tools** (`BROWSER_ENABLED=true`): `browser_tools._guard_route` runs on every Playwright request. It aborts any request to a non-public host and fetches navigations without following redirects. Tools re-check the page's final URL before returning content.
 
 ## Agent tool gating
@@ -40,6 +41,9 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
   Autonomous jobs, scheduled runs, iteration loops and messaging bots are background contexts.
 - **Task review:** `create_task(skip_review=true)` is honoured only in interactive web chat. Tasks created from jobs or bots always land as proposals that need approval. Coding tasks (`create_task(job_type="coding_task")`, `start_coding_task`) run with host exec and have no proposal state, so they can only be started from the web chat; from jobs or bots they are refused.
 - **Job creation:** `POST /api/jobs` accepts only `autonomous_task`, `iteration_loop` and `coding_task`.
+- **GitHub writes:** `github(action="merge_pr")` and `delete_branch` run only in interactive chat, like `push_artifacts`. `create_branch`, `write_files` and `create_pr` stay available to jobs, because `iteration_loop` and `coding_task` (plans the user approved) commit through them.
+- **Reruns:** `rerun_job` only sees the current project's jobs, and refuses `coding_task` / `autoresearch` jobs (they run host commands) outside interactive chat, the same rule as starting them.
+- **Git tools need a checkout.** `git_status`, `git_create_branch`, `git_merge`, `git_commit` and `git_push_pr` refuse to run until `git_sync_repo` has cloned the bound repo; `_run_git_cmd` never runs `git init` (it used to initialise the workspace root, which `git_commit` + `git_push_pr` then pushed whole). Branch names given to the git tools must pass git's ref-name rules, so a `-`-prefixed name can't become an option.
 - **Git credentials** are never put in URLs. `_git_auth_env(token)` sets `http.extraheader` through `GIT_CONFIG_*` environment variables.
 
 ## Code sandbox (`backend/sandbox/`)
@@ -48,14 +52,14 @@ To change the vault key, run `scripts/rotate_vault_key.py` with the backend stop
 
 | `PANTHEON_SANDBOX` | Backend | Isolation |
 |---|---|---|
-| `subprocess` (default) | `SubprocessSandbox` | **None beyond limits.** Runs through `ulimit -v`. The environment is filtered to `PATH HOME USER LANG LC_ALL PYTHONPATH NODE_PATH TERM`. Output is capped at 1 MB. Timeouts kill the whole process group. |
+| `subprocess` (default) | `SubprocessSandbox` | **None beyond limits.** Runs through `ulimit -d` (data segment; Linux ≥ 4.7 counts anonymous mmaps too — `-v` made V8/node abort at start). The environment is filtered to `PATH HOME USER LANG LC_ALL PYTHONPATH NODE_PATH TERM`. Output is capped at 1 MB. Timeouts kill the whole process group. |
 | `firecracker` | `FirecrackerSandbox` | A fresh microVM per run (Linux+KVM; set up with `scripts/setup_firecracker.sh`; `FIRECRACKER_DIR`/`FC_DIR`). No jailer. If init fails it falls back to subprocess and logs an error. |
 
 Limits:
 
-- `code_execute`: 30s default (max 300), 256 MB.
+- `code_execute`: 30s default (max 300), 256 MB. The script name (`filename`) is reduced to a bare `[A-Za-z0-9._-]` basename (`sandbox.backend.safe_script_filename`); anything else gets the language's default name.
 - `run_command`: 120s default (max 1800), 4 GB. It runs in the project's repo checkout or workspace, and `workdir` may not escape it.
-- With Firecracker, `run_command`'s working directory (the repo checkout) is packed into a second ext4 disk (`mkfs.ext4 -d`), mounted at `/workspace` in the VM, and mirrored back afterwards (`debugfs rdump`). The mirror deletes only files that existed before the run. The VM has no network, so package installs fail there. `FC_MEM_MIB` (default 1024), `FC_VCPUS` and `FC_WORKSPACE_HEADROOM_MB` tune it.
+- With Firecracker, `run_command`'s working directory (the repo checkout) is packed into a second ext4 disk (`mkfs.ext4 -d`), mounted at `/workspace` in the VM, and mirrored back afterwards (`debugfs rdump`). The mirror deletes only files that existed before the run, and never recreates a guest symlink that is absolute or resolves outside the workspace (nor writes through a host path that does); skipped paths are reported in stderr. The VM has no network, so package installs fail there. `FC_MEM_MIB` (default 1024), `FC_VCPUS` and `FC_WORKSPACE_HEADROOM_MB` tune it.
 
 `GET /api/system/sandbox` reports the backend's health.
 
@@ -66,6 +70,10 @@ Limits:
 ## Paths and rendering
 
 - **Untrusted names become paths only through `utils.paths`:** `is_within`, `check_project_id` (raises `InvalidProjectId`, returned as 400) and `safe_filename`. Document conversion formats go through `document_converter.validate_format`.
+- **Folder walks don't follow symlinks out.** Recursive workspace walks that copy or export files (`batch_convert_documents`, `/api/files/download-zip`, `/api/files/to-artifacts`, `/api/files/batch-convert`) use `utils.paths.iter_files_within`, which skips symlinks and anything resolving outside the workspace — not `rglob`.
+- **GitHub API URLs** are built only by `integrations.github.repo_path`: owner/repo must match GitHub's name rules (`validate_owner`, `validate_repo_name`), branch/ref names git's ref rules (`validate_ref_name`), and repo file paths are quoted per segment with `.`/`..` refused (`quote_repo_file_path`). `GitHubClient._request` also refuses any path with a dot segment (even percent-encoded) and pagination URLs off `api.github.com`. The repo binding (`POST /api/projects/{id}/repo`) validates owner/repo/default branch (400), and `_repo_checkout_dir` checks them again before building `repos/<owner>__<repo>` (and before `git_sync_repo(fresh=true)` deletes it).
+- **Artifacts by id are project-scoped:** `read_artifact`, `update_artifact`, `delete_artifact`, `index(target="artifact", id=…)` and `generate_image(source_image=…)` answer "not found in this project" for another project's id.
+- **Legacy `uploads/…png` references** in chat messages are inlined only when they resolve inside the workspace's `uploads/`.
 - **Workspace HTML** renders in `SandboxedHtml`: `srcDoc` with `sandbox="allow-scripts"`, no same-origin. Any HTML set via `innerHTML` goes through DOMPurify; Mermaid SVG relies on mermaid's `securityLevel: 'strict'` instead.
 
 ## Messaging bots
