@@ -17,7 +17,8 @@ from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
 from agent.prompts import build_system_prompt, render_turn_context
-from agent.tools import BOT_BLOCKED_TOOLS, HOST_EXEC_TOOLS, execute_tool, get_all_tool_schemas, is_bot_channel
+from agent.tools import (BOT_BLOCKED_TOOLS, HOST_EXEC_TOOLS, REPO_TOOLS, execute_tool, get_all_tool_schemas,
+                         is_bot_channel, repo_bound)
 from agent.text_tool_calls import might_be_tool_call, recover as recover_tool_calls
 from agent import context_fit, tool_results
 from config import get_settings
@@ -797,6 +798,8 @@ class AgentCore:
             if is_bot_channel(self.channel):
                 all_tools = [t for t in all_tools
                              if t.get("function", {}).get("name") not in BOT_BLOCKED_TOOLS]
+            if not repo_bound(self.project_id):
+                all_tools = [t for t in all_tools if t.get("function", {}).get("name") not in REPO_TOOLS]
             if self.only_tools is not None:
                 all_tools = [t for t in all_tools if t.get("function", {}).get("name") in self.only_tools]
 
@@ -976,9 +979,10 @@ class AgentCore:
                 self._progress()
                 if ctx_window:
                     fit = context_fit.fit_messages(messages, ctx_window, all_tools, calibration=ctx_calibration)
-                    if fit["trimmed"]:
-                        logger.info("Context fit: shrank %d tool result(s), ~%d -> ~%d tokens (budget %d)",
-                                    fit["trimmed"], fit["before"], fit["after"], fit["budget"])
+                    if fit["trimmed"] or fit.get("dropped"):
+                        logger.info("Context fit: shrank %d tool result(s), dropped %d old round(s), "
+                                    "~%d -> ~%d tokens (budget %d)", fit["trimmed"], fit.get("dropped", 0),
+                                    fit["before"], fit["after"], fit["budget"])
                 ctx_overflow = None
                 tool_calls_this_round: list[dict] = []
                 current_text = ""

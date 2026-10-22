@@ -272,3 +272,52 @@ async def test_tools_see_the_recent_user_messages_on_the_approval_turn():
          patch("agent.context_fit.context_window", return_value=None):
         [e async for e in agent.chat("yes, go ahead")]
     assert "Every morning at 8" in seen[0] and seen[0].endswith("yes, go ahead")
+
+
+# ---- long-jobs (#46): timeouts, delays, no polling -------------------------------------------
+
+@pytest.mark.parametrize("given,expected", [(600, None), ("300", None), (3600, 3600), (None, None)])
+@pytest.mark.asyncio
+async def test_short_timeouts_the_model_picks_get_the_default(given, expected):
+    """Two research jobs were killed at 600 s, a limit the model chose (2026-10-08)."""
+    from agent.tools import execute_tool
+    sched = AsyncMock(return_value="sched-1")
+    args = {"name": "Research", "description": "d", "schedule": "now", "plan": "1. web_search"}
+    if given is not None:
+        args["timeout_seconds"] = given
+    with patch("tasks.scheduler.schedule_agent_task", sched):
+        await execute_tool("create_task", args, memory_manager=None, project_id="p", session_id="s",
+                           interactive=True, channel="web", user_message="Research this in the background.")
+    assert sched.call_args.kwargs["timeout_seconds"] == expected
+
+
+@pytest.mark.asyncio
+async def test_a_delay_nobody_asked_for_runs_now():
+    """'In the background' became delay:60, reported to the user as '~60 seconds' (it is minutes)."""
+    result, scheduled = await _create_sched("Research the transformers changes in the background.", "delay:60")
+    assert scheduled and "= runs now" in result and "changed to 'now'" in result
+
+
+@pytest.mark.asyncio
+async def test_a_requested_delay_is_kept_on_the_approval_turn_and_spelled_out():
+    result, scheduled = await _create_sched("In 15 minutes, check the releases page.\nyes, go ahead", "delay:15")
+    assert scheduled and "runs once in 15 minutes" in result and "changed to 'now'" not in result
+
+
+@pytest.mark.asyncio
+async def test_job_status_of_a_running_job_says_not_to_poll():
+    from agent.tools import execute_tool
+    job = {"id": "j1", "job_type": "autonomous_task", "status": "running", "progress": "step 2", "error": None,
+           "pr_url": None, "artifact_id": None, "session_id": None, "result": None, "title": "t",
+           "project_id": "p", "created_at": "", "started_at": "", "completed_at": None}
+    with patch("jobs.store.get_store") as gs:
+        gs.return_value.get_or_none.return_value = job
+        out = await execute_tool("get_job_status", {"job_id": "j1"}, memory_manager=None, project_id="p",
+                                 interactive=True, channel="web")
+    assert "Do not wait for it" in out
+    job["status"] = "completed"
+    with patch("jobs.store.get_store") as gs:
+        gs.return_value.get_or_none.return_value = job
+        out = await execute_tool("get_job_status", {"job_id": "j1"}, memory_manager=None, project_id="p",
+                                 interactive=True, channel="web")
+    assert "Do not wait" not in out

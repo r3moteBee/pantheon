@@ -69,6 +69,24 @@ def bot_refusal(tool_name: str, tool_args: dict[str, Any] | None, channel: str |
             "can do it there.")
 
 
+# Tools that act on the project's bound GitHub repo. A project without one isn't shown them (~1.3K prompt
+# tokens per model call); see repo_bound(). Hiding never grants anything: the tools refuse unbound projects.
+REPO_TOOLS = frozenset({
+    "github", "git_sync_repo", "git_status", "git_create_branch", "git_merge", "git_commit", "git_push_pr",
+})
+
+
+def repo_bound(project_id: str | None) -> bool:
+    """Whether the project has a GitHub repo for the REPO_TOOLS to work on. A failed lookup counts as
+    bound, so a broken lookup never hides tools."""
+    try:
+        from api.connections import get_project_repo_for_tools
+        return get_project_repo_for_tools(project_id or "default") is not None
+    except Exception:
+        logger.debug("repo binding lookup failed for %s", project_id, exc_info=True)
+        return True
+
+
 # The order the model sees the tools in (kept stable across refactors).
 _ORDER = ['remember', 'recall', 'create_graph_node', 'link_concepts', 'read_file', 'write_file', 'list_workspace_files', 'web_search', 'web_fetch', 'create_task', 'send_telegram', 'index', 'link_topic_similarity', 'merge_topics', 'rerun_job', 'get_self_documentation', 'create_skill', 'list_source_adapters', 'ingest_source', 'batch_ingest_sources', 'extract_topics', 'save_last_response', 'show_file', 'download_file', 'generate_image', 'get_job_status', 'list_recent_jobs', 'consolidate_memory', 'code_execute', 'run_command', 'run_build', 'github', 'save_to_artifact', 'update_artifact', 'read_artifact', 'list_artifacts', 'delete_artifact', 'batch_convert_documents', 'git_sync_repo', 'git_status', 'git_create_branch', 'git_merge', 'git_commit', 'git_push_pr', 'analyze_company_financials', 'compare_company_strategy_and_risks', 'analyze_earnings_call', 'start_autoresearch', 'writing_voice']
 

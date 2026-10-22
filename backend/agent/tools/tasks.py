@@ -6,6 +6,7 @@ import re
 from typing import Any
 from agent.tools.registry import ToolContext, tool
 
+MIN_TASK_TIMEOUT = 1800   # seconds; a create_task timeout below this is replaced by the job type's default
 
 SCHEMAS: list[dict[str, Any]] = [
     {
@@ -434,6 +435,16 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
                     "recurring. For a single background run use 'now'; for one run later use 'delay:N' (N minutes "
                     "from now). Call create_task again with that schedule.")
 
+    # A delay nobody asked for: told to research something "in the background", the agent picked
+    # delay:60 and told the user "in ~60 seconds" - it runs in 60 MINUTES (2026-10-08).
+    delay_note = ""
+    if interactive and ctx.user_message and re.fullmatch(r"delay:\s*\d+", sched):
+        from agent.task_intent import future_timing
+        if not future_timing(ctx.user_message):
+            delay_note = f"  (schedule {sched!r} was changed to 'now': the user did not ask for a later time.)\n"
+            sched = "now"
+            tool_args = {**tool_args, "schedule": "now"}
+
     plan_status = "approved" if skip_review else "proposed"
     skill_name = (tool_args.get("skill_name") or "").strip().lower() or None
     if not skill_name:
@@ -476,6 +487,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             timeout_seconds = int(timeout_seconds)
         except (TypeError, ValueError):
             timeout_seconds = None
+    # The model guesses short limits (600 s twice in the 2026-10-08 research runs, both jobs killed
+    # mid-research); anything under MIN_TASK_TIMEOUT gets the job type's own default instead.
+    if timeout_seconds is not None and timeout_seconds < MIN_TASK_TIMEOUT:
+        timeout_seconds = None
     max_iterations = tool_args.get("max_iterations")
     if max_iterations is not None:
         try:
@@ -497,7 +512,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         question = (tool_args.get("item_question") or "").strip()
         if not items or not isinstance(items, list) or not question:
             return ("create_task rejected: research_batch needs items (a list, e.g. the state names) and "
-                    "item_question (with {item} where each item goes).")
+                    "item_question (with {item} where each item goes). For one topic with no list of items, use "
+                    "job_type autonomous_task.")
         if "{item}" not in question:
             question += " ({item})"
         try:
@@ -551,8 +567,10 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
             f"  schedule_id: {task_id}  (SCHEDULE id, not a "
             f"job run id)\n"
             f"  name: {tool_args.get('name')}\n"
-            f"  schedule: {tool_args.get('schedule')}\n\n"
-            f"To check whether the schedule actually fired, "
+            f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))}\n{delay_note}\n"
+            f"Tell the user in one line what was scheduled and when it runs, then end your reply: do not "
+            f"wait for it or poll get_job_status - it runs on its own and posts its result into this chat.\n\n"
+            f"To check later whether the schedule actually fired, "
             f"call list_recent_jobs() or "
             f"get_job_status(job_id={task_id!r}) — that "
             f"resolves the schedule to its most recent job "
@@ -566,7 +584,8 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         f"  schedule_id: {task_id}  (this is the SCHEDULE id, "
         f"not a job run id)\n"
         f"  name: {tool_args.get('name')}\n"
-        f"  schedule: {tool_args.get('schedule')}\n\n"
+        f"  schedule: {tool_args.get('schedule')} = {_runs_when(tool_args.get('schedule'))} once approved\n"
+        f"{delay_note}\n"
         f"NOTE: Each time the schedule fires it produces a "
         f"separate JOB with its own UUID. To check whether it "
         f"actually ran, call list_recent_jobs() or "
@@ -575,6 +594,22 @@ async def _tool_create_task(ctx: ToolContext, tool_name: str, tool_args: dict[st
         + PROPOSED_NEXT_STEP + plan_note
     )
 
+
+
+def _runs_when(schedule: str | None) -> str:
+    """The schedule in words, so the reply to the user gets the time right (delay:N is minutes, not seconds)."""
+    from datetime import datetime, timedelta, timezone
+    s = (schedule or "now").strip()
+    m = re.fullmatch(r"delay:\s*(\d+)", s)
+    if m:
+        at = datetime.now(timezone.utc) + timedelta(minutes=int(m.group(1)))
+        return f"runs once in {int(m.group(1))} minutes (about {at:%H:%M} UTC)"
+    m = re.fullmatch(r"interval:\s*(\d+)", s)
+    if m:
+        return f"runs every {int(m.group(1))} minutes until cancelled"
+    if s == "now":
+        return "runs now"
+    return f"runs on the cron schedule {s!r} until cancelled"
 
 
 @tool('send_telegram')
@@ -646,6 +681,11 @@ async def _tool_get_job_status(ctx: ToolContext, tool_name: str, tool_args: dict
         summary = (j["result"] or {}).get("summary") if isinstance(j["result"], dict) else None
         if summary:
             lines.append(f"summary: {summary[:500]}")
+    # Right after create_task the agent polled this 36 times and wrote the job's summary itself, holding
+    # the chat turn for six minutes (2026-10-09). A job runs on its own; the turn should end.
+    if str(j["status"]).lower() in ("queued", "running"):
+        lines.append("\nThe job is still working in the background. Do not wait for it or check again in this "
+                     "reply - tell the user it is running and end your turn; they can ask for the result later.")
     return "\n".join(lines)
 
 

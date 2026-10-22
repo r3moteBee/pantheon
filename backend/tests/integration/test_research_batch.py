@@ -104,7 +104,7 @@ async def test_create_task_research_batch_payload():
     assert "PROPOSED" in out and captured["job_type"] == "research_batch"
     assert captured["extras"] == {"topic": "2026 Senate", "items": ["Ohio", "Utah"],
                                   "item_question": "Who runs in {item}?", "lookups_per_item": 6}
-    assert "needs items" in bad
+    assert "needs items" in bad and "autonomous_task" in bad      # one topic, no list: the other job type
 
 
 def test_only_tools_restricts_what_the_agent_is_offered():
