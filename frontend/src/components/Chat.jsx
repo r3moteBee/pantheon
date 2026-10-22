@@ -164,11 +164,13 @@ export default function Chat() {
       {/* Messages */}
       <div className="relative flex-1 min-h-0 flex flex-col">
       <div ref={scrollRef} onScroll={updateAtBottom} className="flex-1 overflow-y-auto p-4 scrollbar-thin">
+        {/* One centered column, the composer's width (max-w-4xl). */}
+        <div className={`max-w-4xl mx-auto ${messages.length === 0 ? 'h-full' : ''}`}>
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <Brain className="w-12 h-12 text-gray-700 mb-4" />
-            <h2 className="text-xl font-semibold text-gray-400 mb-2">Start a conversation</h2>
-            <p className="text-sm text-gray-600 max-w-sm">
+            <Brain className="w-12 h-12 text-gray-600 mb-4" aria-hidden="true" />
+            <h2 className="text-xl font-semibold text-gray-200 mb-2">Start a conversation</h2>
+            <p className="text-sm text-gray-400 max-w-sm">
               Your agent has access to memory, files, web search, and autonomous task scheduling.
               Attach documents with the clip icon or drag and drop.
             </p>
@@ -196,7 +198,7 @@ export default function Chat() {
             onDecline={socket.declineSuggestion}
           />
         )}
-
+        </div>
       </div>
       {!atBottom && messages.length > 0 && (
         <button

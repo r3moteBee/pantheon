@@ -2,6 +2,9 @@ import React from 'react'
 import { Brain, Zap, Check, Copy, Bookmark, ThumbsUp, ThumbsDown } from 'lucide-react'
 import Markdown from '../Markdown'
 import { llmApi } from '../../api/client'
+import { useStore } from '../../store'
+import { formatClock, formatTitle, toDate } from '../../utils/time'
+import JobStatusChips from './JobStatusChips'
 import ToolCallBlock from './ToolCallBlock'
 import { AttachmentPill } from './Attachments'
 import useChatMarkdownComponents from './useChatMarkdownComponents'
@@ -16,22 +19,24 @@ function MessageActions({ content, onSaveMessage }) {
     } catch {}
   }
   return (
-    <div className="mt-1 flex items-center gap-0.5 opacity-60 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+    <div className="mt-1 flex items-center gap-0.5 opacity-70 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
       <button
+        type="button"
         onClick={handleCopy}
-        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors rounded"
-        title="Copy message"
-        aria-label="Copy message"
+        className="p-1.5 text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors rounded"
+        title={copied ? 'Copied' : 'Copy message'}
+        aria-label={copied ? 'Copied' : 'Copy message'}
       >
-        {copied ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+        {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
       </button>
       <button
+        type="button"
         onClick={onSaveMessage}
-        className="p-1.5 text-gray-500 hover:text-gray-300 transition-colors rounded"
+        className="p-1.5 text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors rounded"
         title="Save message as artifact"
         aria-label="Save message as artifact"
       >
-        <Bookmark className="w-3 h-3" />
+        <Bookmark className="w-4 h-4" />
       </button>
     </div>
   )
@@ -55,22 +60,24 @@ function RouteBadge({ route, rateable = false }) {
     }
   }
   return (
-    <span className='flex items-center gap-1'>
+    <span className='flex items-center gap-1 min-w-0'>
       <span
-        className='text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700'
+        className='text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-300 border border-gray-700 truncate max-w-[14rem] sm:max-w-xs'
         title={`${route.rule}: ${route.reason}${fellBack ? ` — primary ${route.model} failed, answered by fallback` : ''}`}
       >
         {route.task_class}{model ? ` · ${model}` : ''}{fellBack ? ' ↩' : ''}
       </span>
       {rateable && route.decision_id && (
-        <span className={`flex items-center ${rating ? '' : 'opacity-60 lg:opacity-0 lg:group-hover:opacity-100'} transition-opacity`}>
-          <button onClick={() => rate(1)} title='Good answer for this model' aria-label='Good answer'
-            className={`p-0.5 rounded ${rating > 0 ? 'text-emerald-400' : 'text-gray-500 hover:text-gray-300'}`}>
-            <ThumbsUp className='w-3 h-3' />
+        <span className={`flex items-center ${rating ? '' : 'opacity-70 group-hover:opacity-100 focus-within:opacity-100'} transition-opacity`}>
+          <button type='button' onClick={() => rate(1)} title='Good answer for this model' aria-label='Good answer'
+            aria-pressed={rating > 0}
+            className={`p-1 rounded hover:bg-gray-800 ${rating > 0 ? 'text-emerald-400' : 'text-gray-400 hover:text-gray-100'}`}>
+            <ThumbsUp className='w-4 h-4' />
           </button>
-          <button onClick={() => rate(-1)} title='Wrong model / bad answer' aria-label='Bad answer'
-            className={`p-0.5 rounded ${rating < 0 ? 'text-red-400' : 'text-gray-500 hover:text-gray-300'}`}>
-            <ThumbsDown className='w-3 h-3' />
+          <button type='button' onClick={() => rate(-1)} title='Wrong model / bad answer' aria-label='Bad answer'
+            aria-pressed={rating < 0}
+            className={`p-1 rounded hover:bg-gray-800 ${rating < 0 ? 'text-red-400' : 'text-gray-400 hover:text-gray-100'}`}>
+            <ThumbsDown className='w-4 h-4' />
           </button>
         </span>
       )}
@@ -78,22 +85,40 @@ function RouteBadge({ route, rateable = false }) {
   )
 }
 
+// Bubble time: short clock, full local date/time with zone on hover.
+function ClockTime({ value }) {
+  const d = toDate(value)
+  if (!d) return null
+  return (
+    <time dateTime={d.toISOString()} title={formatTitle(d)} className="text-xs text-gray-400 whitespace-nowrap">
+      {formatClock(d)}
+    </time>
+  )
+}
+
+const toolText = (toolCalls) => (toolCalls || [])
+  .map((tc) => (typeof tc.result === 'string' ? tc.result : tc.result ? JSON.stringify(tc.result) : ''))
+  .join('\n')
+
 export default function Message({ msg, onSaveMessage }) {
   const isUser = msg.role === 'user'
   const mdComponents = useChatMarkdownComponents()
+  const projectId = useStore((s) => s.activeProject?.id || 'default')
+  const jobText = React.useMemo(
+    () => (isUser ? '' : `${msg.content || ''}\n${toolText(msg.toolCalls)}`),
+    [isUser, msg.content, msg.toolCalls],
+  )
   return (
     <div className={`group flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-      <div className={`max-w-3xl ${isUser ? 'order-2' : 'order-1'}`}>
+      <div className={isUser ? 'max-w-[85%] min-w-0' : 'w-full min-w-0'}>
         {!isUser && (
-          <div className="flex items-center gap-2 mb-1">
-            <div className="w-6 h-6 rounded-full bg-brand-600 flex items-center justify-center">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+            <div className="w-6 h-6 rounded-full bg-brand-600 flex items-center justify-center" aria-hidden="true">
               <Brain className="w-3.5 h-3.5 text-white" />
             </div>
-            <span className="text-xs text-gray-500">Agent</span>
+            <span className="text-xs text-gray-300">Agent</span>
             <RouteBadge route={msg.route} rateable />
-            {msg.timestamp && (
-              <span className="text-xs text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
-            )}
+            {msg.timestamp && <ClockTime value={msg.timestamp} />}
           </div>
         )}
 
@@ -118,9 +143,9 @@ export default function Message({ msg, onSaveMessage }) {
         {/* Message content */}
         <div
           className={`
-            px-4 py-3 rounded-2xl text-sm leading-relaxed
+            px-4 py-3 rounded-2xl text-sm leading-relaxed break-words
             ${isUser
-              ? 'bg-brand-600 text-white rounded-br-sm'
+              ? 'bg-brand-700 text-white rounded-br-sm'
               : 'bg-gray-800 text-gray-100 rounded-bl-sm'
             }
           `}
@@ -134,13 +159,15 @@ export default function Message({ msg, onSaveMessage }) {
           )}
         </div>
 
+        {!isUser && <JobStatusChips text={jobText} projectId={projectId} />}
+
         {!isUser && msg.content && onSaveMessage && (
           <MessageActions content={msg.content} onSaveMessage={() => onSaveMessage(msg.content)} />
         )}
 
         {isUser && msg.timestamp && (
           <div className="flex justify-end mt-1">
-            <span className="text-xs text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
+            <ClockTime value={msg.timestamp} />
           </div>
         )}
       </div>
@@ -154,20 +181,20 @@ export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, conte
   const mdComponents = useChatMarkdownComponents()
   return (
     <div className="flex justify-start mb-4">
-      <div className="max-w-3xl">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-6 h-6 rounded-full bg-brand-600 flex items-center justify-center">
+      <div className="w-full min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1">
+          <div className="w-6 h-6 rounded-full bg-brand-600 flex items-center justify-center" aria-hidden="true">
             <Brain className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="text-xs text-gray-500">Agent</span>
+          <span className="text-xs text-gray-300">Agent</span>
           <RouteBadge route={liveRoute} />
           {activeSkillBadge && (
-            <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-brand-900 text-brand-300">
-              <Zap className="w-2.5 h-2.5" />
+            <span className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-brand-900 text-brand-200">
+              <Zap className="w-3 h-3" aria-hidden="true" />
               {activeSkillBadge}
             </span>
           )}
-          <div className="flex gap-1 ml-1">
+          <div className="flex gap-1 ml-1" role="status" aria-label="Agent is replying">
             <div className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
             <div className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
             <div className="w-1.5 h-1.5 bg-brand-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
@@ -179,7 +206,7 @@ export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, conte
         ))}
 
         {content && (
-          <div className="px-4 py-3 rounded-2xl rounded-bl-sm bg-gray-800 text-gray-100 text-sm leading-relaxed">
+          <div className="px-4 py-3 rounded-2xl rounded-bl-sm bg-gray-800 text-gray-100 text-sm leading-relaxed break-words">
             <Markdown className="prose prose-invert prose-sm max-w-none" components={mdComponents}>
               {content}
             </Markdown>

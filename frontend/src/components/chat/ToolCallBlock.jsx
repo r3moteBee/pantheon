@@ -78,7 +78,7 @@ function FilePreview({ filePath, caption }) {
         </div>
         <div className="bg-gray-900 px-4 py-3 max-h-96 overflow-y-auto">
           {loading ? (
-            <div className="text-gray-500 text-sm">Loading...</div>
+            <div className="text-gray-400 text-sm">Loading...</div>
           ) : textContent !== null ? (
             (ext === 'md' || ext === 'markdown') ? (
               <Markdown className="prose prose-invert prose-sm max-w-none">
@@ -153,6 +153,7 @@ export default function ToolCallBlock({ toolCall }) {
       <button
         className={`w-full flex items-center gap-2 px-3 py-2 text-left ${isContextLoad ? 'bg-brand-900 hover:bg-brand-800' : 'bg-gray-800 hover:bg-gray-750'}`}
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
       >
         {isContextLoad
           ? <Brain className="w-3 h-3 text-brand-400 flex-shrink-0" />
@@ -162,13 +163,13 @@ export default function ToolCallBlock({ toolCall }) {
             ? `corpus context loaded (${toolCall.args?.sources || 0} results from ${(toolCall.args?.tiers || []).join(', ')})`
             : toolCall.name}
         </span>
-        {expanded ? <ChevronDown className="w-3 h-3 ml-auto text-gray-500" /> : <ChevronRight className="w-3 h-3 ml-auto text-gray-500" />}
+        {expanded ? <ChevronDown className="w-3 h-3 ml-auto text-gray-400" /> : <ChevronRight className="w-3 h-3 ml-auto text-gray-400" />}
       </button>
       {expanded && (
         <div className="px-3 py-2 bg-gray-900 space-y-2">
           {!isContextLoad && toolCall.args && Object.keys(toolCall.args).length > 0 && (
             <div>
-              <div className="text-gray-500 mb-1">Args:</div>
+              <div className="text-gray-400 mb-1">Args:</div>
               <pre className="text-green-300 whitespace-pre-wrap break-all">
                 {JSON.stringify(toolCall.args, null, 2)}
               </pre>
@@ -176,7 +177,7 @@ export default function ToolCallBlock({ toolCall }) {
           )}
           {toolCall.result && (
             <div>
-              <div className="text-gray-500 mb-1">{isContextLoad ? 'Injected context:' : 'Result:'}</div>
+              <div className="text-gray-400 mb-1">{isContextLoad ? 'Injected context:' : 'Result:'}</div>
               <pre className={`whitespace-pre-wrap break-all ${isContextLoad ? 'text-brand-200' : 'text-blue-300'}`}>{toolCall.result}</pre>
             </div>
           )}

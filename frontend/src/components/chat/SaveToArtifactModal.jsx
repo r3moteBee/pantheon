@@ -62,7 +62,7 @@ export default function SaveToArtifactModal({ defaultPath, content, projectId, o
           value={path}
           onChange={(e) => setPath(e.target.value)}
           placeholder="responses/note.md"
-          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white font-mono focus:outline-none focus:ring-1 focus:ring-brand-600"
+          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white font-mono focus:ring-1 focus:ring-brand-600"
           onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
         />
         <label className="block text-xs text-gray-400 mt-3 mb-1">Tags (comma-separated)</label>
@@ -70,9 +70,9 @@ export default function SaveToArtifactModal({ defaultPath, content, projectId, o
           type="text"
           value={tagsInput}
           onChange={(e) => setTagsInput(e.target.value)}
-          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white focus:outline-none focus:ring-1 focus:ring-brand-600"
+          className="w-full px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded-md text-white focus:ring-1 focus:ring-brand-600"
         />
-        <p className="text-[11px] text-gray-500 mt-2">
+        <p className="text-xs text-gray-400 mt-2">
           {content.length.toLocaleString()} characters · markdown
         </p>
         {error && (
