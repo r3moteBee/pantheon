@@ -280,6 +280,7 @@ class MCPManager:
                     "client_id": oc.get("client_id"),
                     "scopes": oc.get("scopes", []),
                 }
+            live = self._clients.get(name)
             entry = {
                 "name": name,
                 "url": mask_url(cfg["url"]),
@@ -289,8 +290,13 @@ class MCPManager:
                 "oauth_status": oauth_status,
                 "oauth": oauth_meta,
                 "headers": {k: MASK for k in cfg.get("headers", {})},
-                "connected": name in self._clients,
-                "tools_count": len(self._clients[name].tools) if name in self._clients else 0,
+                "connected": live is not None,
+                "tools_count": len(live.tools) if live else 0,
+                # Which MCP revision the live client speaks: "modern"
+                # (2026-07-28, stateless) or "legacy" (handshake + session).
+                "protocol_version": live.protocol_version if live else None,
+                "protocol_era": live.era if live else None,
+                "server": dict(live.server_info) if live and live.server_info else None,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
                 "excluded_tools": cfg.get("excluded_tools", []),
                 "budget": {**budget.limits(cfg), "unit": budget.unit(cfg),
@@ -488,14 +494,35 @@ class MCPManager:
         issuer = prm.authorization_servers[0]
         as_meta = await oauth_mod.fetch_auth_server_metadata(issuer)
 
-        client = await oauth_mod.register_client(
-            as_meta=as_meta,
-            redirect_uri=redirect_uri,
-            client_name=f"Pantheon ({name})",
-            scopes=prm.scopes_supported or as_meta.scopes_supported,
-        )
-        if client.client_secret:
-            oauth_mod.save_client_secret(name, client.client_secret)
+        # Client credentials are bound to the AS that issued them (spec
+        # 2026-07-28 "Authorization Server Binding"): reuse the stored
+        # client_id only for the same issuer + redirect, re-register when the
+        # PRM now points at a different authorization server.
+        prior = cfg.get("oauth") or {}
+        reuse = bool(prior.get("client_id")) and prior.get("issuer") == as_meta.issuer \
+            and prior.get("redirect_uri") == redirect_uri
+        if reuse:
+            logger.info("MCP '%s' reusing OAuth client %s registered with %s",
+                        name, prior["client_id"], as_meta.issuer)
+            client = oauth_mod.RegisteredClient(
+                client_id=prior["client_id"],
+                client_secret=oauth_mod.load_client_secret(name),
+                token_endpoint_auth_method=prior.get("token_endpoint_auth_method", "none"),
+                raw={},
+            )
+        else:
+            if prior.get("client_id"):
+                logger.info("MCP '%s' authorization server changed (%s → %s): re-registering",
+                            name, prior.get("issuer"), as_meta.issuer)
+                oauth_mod.delete_tokens(name)
+            client = await oauth_mod.register_client(
+                as_meta=as_meta,
+                redirect_uri=redirect_uri,
+                client_name=f"Pantheon ({name})",
+                scopes=prm.scopes_supported or as_meta.scopes_supported,
+            )
+            if client.client_secret:
+                oauth_mod.save_client_secret(name, client.client_secret)
 
         resource = prm.resource or oauth_mod._resource_id_for(cfg["url"])
         scopes = prm.scopes_supported or as_meta.scopes_supported
@@ -517,6 +544,7 @@ class MCPManager:
             "token_endpoint": as_meta.token_endpoint,
             "registration_endpoint": as_meta.registration_endpoint,
             "client_id": client.client_id,
+            "token_endpoint_auth_method": client.token_endpoint_auth_method,
             "scopes": scopes,
             "resource": resource,
             "prm_url": prm_url,
@@ -527,8 +555,12 @@ class MCPManager:
 
         return {"name": name, "authorize_url": auth_url}
 
-    async def complete_oauth(self, code: str, state: str) -> dict[str, Any]:
-        """Finish the OAuth dance after the browser redirects to our callback."""
+    async def complete_oauth(self, code: str, state: str, iss: str | None = None) -> dict[str, Any]:
+        """Finish the OAuth dance after the browser redirects to our callback.
+
+        ``iss`` is the RFC 9207 issuer parameter from the redirect; when
+        present it must match the AS the flow started with (mix-up defence).
+        """
         from mcp_client import oauth as oauth_mod
 
         pending = oauth_mod.take_pending(state)
@@ -536,6 +568,7 @@ class MCPManager:
             raise RuntimeError(
                 "Unknown or expired OAuth state. Restart the Authorize flow."
             )
+        oauth_mod.verify_issuer(pending, iss)
 
         cfg = self._get_cfg(pending.name)
         if not cfg:

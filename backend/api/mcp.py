@@ -351,6 +351,9 @@ async def debug_connection(name: str) -> dict[str, Any]:
         "api_key_suffix": "set" if api_key else "(none)",
         "session_id": active_client.session_id if active_client else None,
         "is_initialized": active_client._initialized if active_client else False,
+        "protocol_era": active_client.era if active_client else None,
+        "protocol_version": active_client.protocol_version if active_client else None,
+        "server_supported_versions": active_client.supported_versions if active_client else [],
         "tools_count": len(active_client.tools) if active_client else 0,
         "url_has_trailing_slash": cfg["url"].endswith("/"),
         "url_contains_apikey_param": "tavilyApiKey" in cfg["url"],
@@ -373,8 +376,35 @@ async def _scan_port(port: int) -> dict[str, Any] | None:
     except Exception:
         return None
 
-    # Probe via HTTP to extract metadata/SSE
+    # A modern (2026-07-28) server answers a stateless server/discover and
+    # 405s a bare GET, so ask that first; the GET probe below stays for
+    # legacy servers.
     import httpx
+    from mcp_client.client import MODERN_PROTOCOL_VERSIONS, META_SERVER_INFO, META_VERSION, META_CLIENT_CAPS
+    version = MODERN_PROTOCOL_VERSIONS[0]
+    for endpoint in (url, f"{url}/mcp"):  # the SDKs' default endpoint path is /mcp
+        try:
+            async with httpx.AsyncClient(timeout=0.4) as client:
+                resp = await client.post(endpoint, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "server/discover",
+                    "params": {"_meta": {META_VERSION: version, META_CLIENT_CAPS: {}}},
+                }, headers={"Accept": "application/json, text/event-stream",
+                            "MCP-Protocol-Version": version, "Mcp-Method": "server/discover"})
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                result = data.get("result") if isinstance(data, dict) else None
+                if isinstance(result, dict) and "supportedVersions" in result:
+                    info = (result.get("_meta") or {}).get(META_SERVER_INFO) or {}
+                    return {
+                        "port": port, "url": endpoint, "status": "open",
+                        "content_type": resp.headers.get("content-type", ""),
+                        "is_sse": False, "protocol_era": "modern",
+                        "protocol_versions": result.get("supportedVersions"),
+                        "name": info.get("name") or f"Local MCP (Port {port})",
+                    }
+        except Exception:
+            continue
     try:
         async with httpx.AsyncClient(timeout=0.4) as client:
             resp = await client.get(url)

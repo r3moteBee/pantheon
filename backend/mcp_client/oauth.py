@@ -148,6 +148,9 @@ class PendingAuth:
     scopes: list[str]
     resource: str  # canonical resource identifier from PRM
     created_at: float
+    # RFC 9207: the AS said it sends `iss` on the redirect, so a redirect
+    # without one is rejected too (not only a mismatching one).
+    iss_required: bool = False
 
 
 # Pending-auth registry keyed by `state` param.
@@ -331,20 +334,34 @@ async def register_client(
         # us to a confidential client and return a client_secret regardless,
         # which we handle in the response.
         "token_endpoint_auth_method": "none",
-        "application_type": "native",
+        # MCP 2026-07-28: say what kind of app we are, or an OIDC AS applies
+        # "web" rules to a localhost redirect (or "native" rules to our https
+        # tailnet one) and rejects it. Retry once with the other kind.
+        "application_type": application_type_for(redirect_uri),
     }
     if scopes:
         body["scope"] = " ".join(scopes)
 
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-        resp = await client.post(
-            as_meta.registration_endpoint,
-            json=body,
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
-        )
-        if resp.status_code not in (200, 201):
+        tried: list[str] = []
+        while True:
+            tried.append(body["application_type"])
+            resp = await client.post(
+                as_meta.registration_endpoint,
+                json=body,
+                headers={"Content-Type": "application/json", "Accept": "application/json"},
+            )
+            if resp.status_code in (200, 201):
+                break
+            other = "web" if body["application_type"] == "native" else "native"
+            if resp.status_code == 400 and other not in tried:
+                logger.info("DCR rejected application_type=%s (%s); retrying as %s",
+                            body["application_type"], resp.text[:120], other)
+                body["application_type"] = other
+                continue
             raise RuntimeError(
-                f"DCR failed: HTTP {resp.status_code} — {resp.text[:300]}"
+                f"DCR failed: HTTP {resp.status_code} — {resp.text[:300]} "
+                f"(redirect_uri {redirect_uri}, application_type tried: {', '.join(tried)})"
             )
         raw = resp.json()
 
@@ -384,6 +401,7 @@ def build_authorize_url(
         scopes=scopes,
         resource=resource,
         created_at=time.time(),
+        iss_required=bool((as_meta.raw or {}).get("authorization_response_iss_parameter_supported")),
     )
 
     params = {
@@ -408,6 +426,36 @@ def take_pending(state: str) -> Optional[PendingAuth]:
     """Pop a pending-auth entry by state. None if expired/unknown."""
     _sweep_pending()
     return _pending.pop(state, None)
+
+
+def verify_issuer(pending: PendingAuth, iss: Optional[str]) -> None:
+    """RFC 9207 (MCP 2026-07-28): a present ``iss`` on the authorization
+    response must equal the issuer the flow started with, and an AS that
+    advertised the parameter must send it. Raises RuntimeError otherwise."""
+    if iss is None or iss == "":
+        if pending.iss_required:
+            raise RuntimeError(
+                "Authorization response is missing the `iss` parameter the "
+                f"authorization server ({pending.issuer}) said it sends; refusing the code."
+            )
+        return
+    if iss.rstrip("/") != pending.issuer.rstrip("/"):
+        raise RuntimeError(
+            f"Authorization response came from issuer {iss!r}, but this flow was started "
+            f"with {pending.issuer!r} (possible mix-up attack); refusing the code."
+        )
+
+
+def application_type_for(redirect_uri: str) -> str:
+    """OIDC `application_type` for a redirect URI: "native" for loopback /
+    localhost callbacks, "web" for anything served from a real host."""
+    try:
+        host = (urlparse(redirect_uri).hostname or "").lower()
+    except ValueError:
+        host = ""
+    if host in ("localhost", "127.0.0.1", "::1", "[::1]") or host.endswith(".localhost"):
+        return "native"
+    return "web"
 
 
 async def exchange_code(

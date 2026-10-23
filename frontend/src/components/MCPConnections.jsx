@@ -481,6 +481,15 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
           </div>
           <p className="text-xs text-gray-400 mt-0.5 truncate">{conn.url}</p>
           <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
+            {conn.protocol_version && (
+              <span
+                title={conn.protocol_era === 'modern'
+                  ? `Stateless MCP revision ${conn.protocol_version}`
+                  : `Handshake-era MCP revision ${conn.protocol_version} (the server does not speak 2026-07-28 yet)`}
+              >
+                MCP {conn.protocol_version}{conn.protocol_era === 'legacy' ? ' · legacy' : ''}
+              </span>
+            )}
             {conn.auth_type === 'oauth2' ? (
               conn.oauth_status === 'ok' ? (
                 <span className="flex items-center gap-0.5 text-emerald-500">
@@ -556,7 +565,7 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
       {testResult && (
         <div className={`px-4 py-2 text-xs border-t ${testResult.status === 'ok' ? 'bg-green-900/30 border-green-800 text-green-300' : 'bg-red-900/30 border-red-800 text-red-300'}`}>
           {testResult.status === 'ok'
-            ? `Connected — ${testResult.tools_count} tools: ${testResult.tool_names?.join(', ')}`
+            ? `Connected (MCP ${testResult.protocol_version || '?'}${testResult.protocol_era === 'legacy' ? ', legacy' : ''}) — ${testResult.tools_count} tools: ${testResult.tool_names?.join(', ')}`
             : `Error: ${testResult.message}`
           }
         </div>

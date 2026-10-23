@@ -52,6 +52,7 @@ async def revoke_oauth(name: str) -> dict:
 async def oauth_callback(
     code: str | None = Query(default=None),
     state: str | None = Query(default=None),
+    iss: str | None = Query(default=None),
     error: str | None = Query(default=None),
     error_description: str | None = Query(default=None),
 ) -> HTMLResponse:
@@ -82,7 +83,7 @@ async def oauth_callback(
 
     mgr = get_mcp_manager()
     try:
-        result = await mgr.complete_oauth(code=code, state=state)
+        result = await mgr.complete_oauth(code=code, state=state, iss=iss)
     except Exception as e:
         logger.warning("OAuth callback exchange failed: %s", e)
         return _result_page(
