@@ -25,7 +25,7 @@ backend/
 ├── integrations/       GitHub API client, server-side artifact push (github_push.py)
 ├── jobs/               JobStore, JobWorker, watchdog, orphan recovery, handlers/
 ├── llm_config/         Named endpoints, task-class routes, model profiles, probe, chat router, usage log, tuning
-├── mcp_client/         MCP client (protocol 2025-11-25), connection manager, OAuth 2.1
+├── mcp_client/         MCP client (2026-07-28 stateless + 2025-11-25 handshake), connection manager, OAuth 2.1
 ├── memory/             Episodic, semantic, graph, file index, archival, topic embeddings, merge proposals
 ├── messaging/          Bot gateway + adapters (Telegram, Slack, Discord, Matrix, Mattermost)
 ├── models/             ModelProvider / RoutedProvider; get_provider_for(<task class>)

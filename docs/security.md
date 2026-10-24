@@ -92,6 +92,12 @@ Allowlists are deny-by-default. An empty `telegram_allowed_chat_ids`, `slack_all
 
 MCP servers can use OAuth 2.1: discovery through Protected Resource Metadata, dynamic client registration and PKCE S256 with a `resource` indicator. Pending `state` expires after 10 min. Tokens are stored in the vault as `mcp_oauth_tokens__<name>`, plus `mcp_oauth_client_secret__<name>` when the server requires a confidential client.
 
+The authorization response is checked against the issuer the flow started with (RFC 9207): a redirect whose `iss` names another authorization server is refused, and so is one without `iss` when the server's metadata said it sends one. Registered client ids are bound to that issuer; when a server's Protected Resource Metadata starts pointing at a different authorization server, the stored tokens are dropped and Pantheon registers afresh instead of presenting the old client id there.
+
+## MCP protocol revisions
+
+The client speaks the stateless `2026-07-28` revision and the `2025-11-25` handshake. It never sends a session id to a modern server, mirrors the method and tool name into the `Mcp-Method` / `Mcp-Name` headers, and mirrors only the tool parameters the server annotated with `x-mcp-header` into `Mcp-Param-*` headers, after validating the annotations and dropping any tool whose annotations break the rules. Tool `inputSchema` `$ref`s that point at the network are never fetched.
+
 The `redirect_uri` is `PUBLIC_BASE_URL` + `/api/mcp/oauth/callback` when set; otherwise the request that starts the flow decides: its `Origin` if that passes the origin check, else its own origin (above), else `http://localhost:8000`. It is stored with the pending state, so the code exchange sends the same value.
 
 Connection listings and `GET /api/mcp/debug/{name}` mask secrets: every custom header value is `***`, and URLs lose their userinfo and every query-string value (`?tavilyApiKey=***`). A masked URL sent back on update gets its real values restored (`restore_masked_url`).
