@@ -48,12 +48,20 @@ class _Prov:
         yield {"type": "done"}
 
 
-async def _run(msg, first_tool=None, force=True, pre=False):
+WEATHER_TOOL = {"type": "function", "function": {
+    "name": "mcp_Xweather_xweather_get_forecast_weather", "parameters": {},
+    "description": "Get a daily or hourly weather forecast for a location from the Xweather API."}}
+JIRA_TOOL = {"type": "function", "function": {
+    "name": "mcp_jira_search_issues", "parameters": {}, "description": "Search Jira issues with JQL."}}
+
+
+async def _run(msg, first_tool=None, force=True, pre=False, extra_tools=()):
     from agent.core import AgentCore
     from config import get_settings
     prov = _Prov(first_tool)
     agent = AgentCore(provider=prov, memory_manager=None, project_id="p", session_id="s")
     tools = [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("web_search", "recall")]
+    tools += list(extra_tools)
     calls = []
 
     async def fake_exec(**kw):
@@ -147,6 +155,46 @@ async def test_pre_search_uses_the_name_for_unknown_entities_and_skips_other_tur
     _, calls, _ = await _run("Write a haiku about autumn", pre=True)
     assert calls == []
 
+
+
+# ── Connected MCP tools that cover the question (2026-10-25: Xweather) ───────
+
+def _searched_before_round_one(prov) -> bool:
+    """A pre-search leaves a web_search tool call ahead of the first model
+    reply (the messages list is shared across rounds, so look for the
+    synthetic auto-search id, not the last message)."""
+    return any(mc.get("id", "").startswith("auto-search-") for m in prov.seen[0] for mc in (m.get("tool_calls") or []))
+
+
+def test_mcp_tools_for_matches_on_distinctive_words_only():
+    from agent.freshness import mcp_tools_for
+    tools = [WEATHER_TOOL, JIRA_TOOL, {"type": "function", "function": {"name": "web_search", "description": "weather"}}]
+    assert mcp_tools_for("can you tell me the weather in Raleigh NC for the next 5 days", tools) == [WEATHER_TOOL["function"]["name"]]
+    assert mcp_tools_for("what is the forecast for tomorrow?", tools) == [WEATHER_TOOL["function"]["name"]]
+    assert mcp_tools_for("who is the current Pope?", tools) == []
+    assert mcp_tools_for("what are the latest results today?", tools) == []     # stopwords never match
+    assert mcp_tools_for("", tools) == [] and mcp_tools_for("weather", []) == []
+
+
+@pytest.mark.asyncio
+async def test_a_covering_mcp_tool_gets_the_first_shot_and_satisfies_the_guard():
+    q = "What's the weather in Raleigh for the next 5 days?"
+    # Round 1 calls the weather tool: no pre-search, no forced web search.
+    _, calls, prov = await _run(q, first_tool=WEATHER_TOOL["function"]["name"], pre=True, extra_tools=[WEATHER_TOOL])
+    assert [c[0] for c in calls] == [WEATHER_TOOL["function"]["name"]]
+    assert not _searched_before_round_one(prov)          # no pre-search
+    # Round 1 answers from memory instead: the guard still adds the web search.
+    text, calls, _ = await _run(q, pre=True, extra_tools=[WEATHER_TOOL])
+    assert [c[0] for c in calls] == ["web_search"] and "Francis" not in text
+    # An unrelated MCP tool changes nothing: the pre-search runs as before.
+    _, calls, prov = await _run(q, pre=True, extra_tools=[JIRA_TOOL])
+    assert calls[0][0] == "web_search" and _searched_before_round_one(prov)
+
+
+@pytest.mark.asyncio
+async def test_any_mcp_call_counts_as_a_lookup_for_the_guard():
+    _, calls, _ = await _run("Who is the current Pope?", first_tool=JIRA_TOOL["function"]["name"], extra_tools=[JIRA_TOOL])
+    assert [c[0] for c in calls] == [JIRA_TOOL["function"]["name"]]
 
 
 @pytest.mark.asyncio
