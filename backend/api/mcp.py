@@ -22,6 +22,10 @@ class AddConnectionRequest(BaseModel):
     enabled: bool = True
     request_interval_ms: int = 1000  # Throttle between requests (ms). Use ~3000 for dev-tier API keys.
     auth_type: str = "api_key"  # "api_key" or "oauth2"
+    # OAuth pre-registration: a client id (and secret) the user registered
+    # with the authorization server by hand; used before CIMD / DCR.
+    oauth_client_id: str | None = None
+    oauth_client_secret: str | None = None
 
 
 class UpdateConnectionRequest(BaseModel):
@@ -30,6 +34,8 @@ class UpdateConnectionRequest(BaseModel):
     headers: dict[str, str] | None = None
     enabled: bool | None = None
     request_interval_ms: int | None = None
+    oauth_client_id: str | None = None      # "" clears the pre-registered client
+    oauth_client_secret: str | None = None  # "" clears the secret
 
 
 class ToolToggleRequest(BaseModel):
@@ -72,6 +78,8 @@ async def add_connection(req: AddConnectionRequest) -> dict[str, Any]:
             enabled=req.enabled,
             request_interval_ms=req.request_interval_ms,
             auth_type=req.auth_type,
+            oauth_client_id=req.oauth_client_id,
+            oauth_client_secret=req.oauth_client_secret,
         )
         return result
     except ValueError as e:
@@ -102,6 +110,8 @@ async def update_connection(name: str, req: UpdateConnectionRequest) -> dict[str
             headers=req.headers,
             enabled=req.enabled,
             request_interval_ms=req.request_interval_ms,
+            oauth_client_id=req.oauth_client_id,
+            oauth_client_secret=req.oauth_client_secret,
         )
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
