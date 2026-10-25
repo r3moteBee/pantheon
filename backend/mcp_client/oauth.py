@@ -37,6 +37,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -214,6 +215,69 @@ def _resource_id_for(url: str) -> str:
     return f"{p.scheme}://{netloc}{path}" if path else f"{p.scheme}://{netloc}"
 
 
+@dataclass
+class BearerChallenge:
+    """A parsed ``WWW-Authenticate: Bearer ...`` header (RFC 6750 §3)."""
+    resource_metadata: Optional[str] = None
+    scopes: list[str] = field(default_factory=list)
+    error: Optional[str] = None
+    error_description: Optional[str] = None
+    raw: dict[str, str] = field(default_factory=dict)
+
+
+_CHALLENGE_PARAM_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))')
+
+
+def parse_bearer_challenge(header: str) -> BearerChallenge:
+    """Parse the parameters of a Bearer challenge; other schemes are ignored."""
+    ch = BearerChallenge()
+    if not header:
+        return ch
+    text = header.strip()
+    idx = text.lower().find("bearer")
+    if idx < 0:
+        return ch
+    text = text[idx + len("bearer"):]
+    params: dict[str, str] = {}
+    for m in _CHALLENGE_PARAM_RE.finditer(text):
+        key = m.group(1).lower()
+        value = m.group(2) if m.group(2) is not None else m.group(3)
+        params.setdefault(key, (value or "").replace('\\"', '"'))
+    ch.raw = params
+    ch.resource_metadata = params.get("resource_metadata") or None
+    ch.scopes = [sc for sc in (params.get("scope") or "").split() if sc]
+    ch.error = params.get("error") or None
+    ch.error_description = params.get("error_description") or None
+    return ch
+
+
+def well_known_prm_urls(mcp_url: str) -> list[str]:
+    """Where RFC 9728 metadata lives when the 401 names no resource_metadata:
+    the path-qualified well-known URL first, then the root one."""
+    p = urlparse(mcp_url)
+    base = f"{p.scheme}://{p.netloc}"
+    path = (p.path or "").rstrip("/")
+    out = []
+    if path and path != "/":
+        out.append(f"{base}/.well-known/oauth-protected-resource{path}")
+    out.append(f"{base}/.well-known/oauth-protected-resource")
+    return out
+
+
+def select_scopes(*, challenge: list[str] | None, prm: list[str] | None, as_meta: list[str] | None,
+                  required: list[str] | None = None) -> list[str]:
+    """Scope selection (spec 2026-07-28): the 401 challenge's scopes are
+    authoritative; else the PRM's ``scopes_supported``; else (leniently) the
+    AS's. Scopes a 403 step-up challenge asked for earlier are always kept,
+    so a re-authorization never loses permissions another operation needs."""
+    base = list(challenge or []) or list(prm or []) or list(as_meta or [])
+    seen: list[str] = []
+    for sc in list(required or []) + base:
+        if sc and sc not in seen:
+            seen.append(sc)
+    return seen
+
+
 def parse_www_authenticate(header: str) -> Optional[str]:
     """Extract resource_metadata URL from `WWW-Authenticate: Bearer ...`.
 
@@ -240,6 +304,31 @@ def parse_www_authenticate(header: str) -> Optional[str]:
         if value:
             return value
     return None
+
+
+async def probe_challenge(mcp_url: str, timeout: float = 10.0) -> Optional[BearerChallenge]:
+    """Send an unauth'd request to the MCP server; return its Bearer
+    challenge (resource_metadata, scopes) on a 401, None when no auth is
+    required."""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "pantheon", "version": "1.0.0"},
+        },
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        resp = await client.post(mcp_url, json=payload, headers=headers)
+    if resp.status_code != 401:
+        return None
+    return parse_bearer_challenge(resp.headers.get("WWW-Authenticate", ""))
 
 
 async def probe_for_oauth(mcp_url: str, timeout: float = 10.0) -> Optional[str]:

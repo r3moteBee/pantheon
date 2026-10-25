@@ -241,7 +241,7 @@ class MCPManager:
             oauth_cfg = cfg.get("oauth") or {}
             token_getter = _make_oauth_token_getter(name, oauth_cfg)
 
-        return MCPClient(
+        client = MCPClient(
             name=cfg["name"],
             url=cfg["url"],
             api_key=cfg.get("api_key", ""),
@@ -250,6 +250,23 @@ class MCPManager:
             request_interval_ms=cfg.get("request_interval_ms", 1000),
             token_getter=token_getter,
         )
+        if token_getter is not None:
+            client.on_insufficient_scope = lambda scopes, why: self._note_insufficient_scope(cfg, scopes, why)
+        return client
+
+    def _note_insufficient_scope(self, cfg: dict[str, Any], scopes: list[str], why: str | None) -> None:
+        """A 403 insufficient_scope: remember the union of scopes asked for so
+        far (step-up keeps earlier grants) and flag the connection as needing
+        re-authorization; the UI shows what the server wants."""
+        from mcp_client import oauth as oauth_mod
+        oc = cfg.setdefault("oauth", {})
+        merged = oauth_mod.select_scopes(challenge=scopes, prm=None, as_meta=None,
+                                         required=(oc.get("scopes") or []) + (oc.get("required_scopes") or []))
+        oc["required_scopes"] = merged
+        oc["step_up"] = {"scopes": scopes, "reason": (why or "")[:300]}
+        self._save_configs()
+        oauth_mod.mark_refresh_failed(cfg["name"], f"insufficient_scope: {' '.join(scopes) or '?'}")
+        logger.info("MCP '%s' needs re-authorization with scopes %s", cfg["name"], merged)
 
     # ── Connection CRUD ──────────────────────────────────────────────────
 
@@ -284,6 +301,7 @@ class MCPManager:
                     "registration": oc.get("registration") or (oauth_mod.REG_DCR if oc.get("client_id") else None),
                     "redirect_uri": oc.get("redirect_uri"),
                     "cimd_rejected": bool(oc.get("cimd_rejected_issuer")),
+                    "step_up": oc.get("step_up"),
                     "preregistered_client_id": pre.get("client_id"),
                     "has_preregistered_secret": bool(pre.get("client_id")) and bool(oauth_mod.load_preregistered_secret(name)),
                 }
@@ -520,14 +538,27 @@ class MCPManager:
         # in the pending state so the code exchange uses the same value.
         redirect_uri = redirect_uri or oauth_mod.callback_url_for(None)
 
-        prm_url = await oauth_mod.probe_for_oauth(cfg["url"])
-        if not prm_url:
+        challenge = await oauth_mod.probe_challenge(cfg["url"])
+        if challenge is None:
             raise RuntimeError(
                 f"MCP server at {cfg['url']} did not advertise OAuth "
                 "(no 401 + WWW-Authenticate). Use api_key auth instead."
             )
-
-        prm = await oauth_mod.fetch_resource_metadata(prm_url)
+        # resource_metadata from the challenge, else the well-known URLs
+        # (path-qualified first, then root) - clients must support both.
+        prm = None
+        prm_url = challenge.resource_metadata
+        candidates = [prm_url] if prm_url else oauth_mod.well_known_prm_urls(cfg["url"])
+        last: Exception | None = None
+        for cand in candidates:
+            try:
+                prm = await oauth_mod.fetch_resource_metadata(cand)
+                prm_url = cand
+                break
+            except Exception as e:
+                last = e
+        if prm is None:
+            raise RuntimeError(f"No Protected Resource Metadata at {candidates}: {last}")
         if not prm.authorization_servers:
             raise RuntimeError(f"PRM at {prm_url} listed no authorization_servers")
 
@@ -535,10 +566,13 @@ class MCPManager:
         issuer = prm.authorization_servers[0]
         as_meta = await oauth_mod.fetch_auth_server_metadata(issuer)
 
-        client = await self._resolve_oauth_client(cfg, as_meta, redirect_uri, prm.scopes_supported or as_meta.scopes_supported)
+        prior_oauth = cfg.get("oauth") or {}
+        scopes = oauth_mod.select_scopes(
+            challenge=challenge.scopes, prm=prm.scopes_supported, as_meta=as_meta.scopes_supported,
+            required=prior_oauth.get("required_scopes"))
+        client = await self._resolve_oauth_client(cfg, as_meta, redirect_uri, scopes)
 
         resource = prm.resource or oauth_mod._resource_id_for(cfg["url"])
-        scopes = prm.scopes_supported or as_meta.scopes_supported
 
         auth_url = oauth_mod.build_authorize_url(
             name=name,
@@ -555,7 +589,7 @@ class MCPManager:
         prior = dict(cfg.get("oauth") or {})
         cfg["auth_type"] = "oauth2"
         cfg["oauth"] = {
-            **{k: v for k, v in prior.items() if k.startswith("cimd_rejected")},
+            **{k: v for k, v in prior.items() if k.startswith("cimd_rejected") or k == "required_scopes"},
             "issuer": as_meta.issuer,
             "authorization_endpoint": as_meta.authorization_endpoint,
             "token_endpoint": as_meta.token_endpoint,
@@ -704,6 +738,8 @@ class MCPManager:
             client_secret=client_secret,
         )
         oauth_mod.save_tokens(pending.name, token_response)
+        if (cfg.get("oauth") or {}).pop("step_up", None) is not None:
+            self._save_configs()
 
         # Reconnect using the freshly-issued token.
         self._clients.pop(pending.name, None)

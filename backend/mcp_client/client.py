@@ -128,6 +128,14 @@ class MCPClient:
         # static api_key (if any).
         self._token_getter = token_getter
         self._cached_bearer: str | None = None
+        # OAuth step-up (spec 2026-07-28 "Scope Challenge Handling"): called
+        # with the scopes a 403 insufficient_scope challenge asked for; the
+        # manager records them and flags the connection for re-authorization.
+        self.on_insufficient_scope: Callable[[list[str], str | None], None] | None = None
+        # Legacy (2025-11-25) servers elicit mid-call on the tools/call
+        # response stream; notes on what the user answered collect here.
+        self._legacy_notes: list[str] = []
+        self._legacy_tool: str | None = None
 
         # Era + version. `era` is None until the probe ran; a client used
         # before that (tests poke `_initialized`/`session_id` directly)
@@ -300,6 +308,7 @@ class MCPClient:
         param_headers: dict[str, str] | None = None,
         probe: bool = False,
         elicitation: bool = False,
+        elicit: elicit_mod.Elicitor | None = None,
     ) -> dict[str, Any]:
         """Send a JSON-RPC 2.0 request and return the result.
 
@@ -307,7 +316,9 @@ class MCPClient:
         ``probe=True`` sends a modern request whatever the era and raises
         ``_LegacyServer`` instead of failing when the reply is not a modern
         one (the era detection). ``elicitation=True`` declares the
-        elicitation capability in ``_meta`` (modern only).
+        elicitation capability in ``_meta`` (modern only). ``elicit`` answers
+        a legacy server's mid-call ``elicitation/create`` on the response
+        stream (legacy tools/call only).
         """
         modern = self.is_modern or probe
         request_id = self._next_id()
@@ -364,7 +375,20 @@ class MCPClient:
             await self._throttle()
 
             async with pooled_client(timeout=self.timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers, follow_redirects=True)
+                streamed: dict[str, Any] | None = None
+                if not modern and method == "tools/call":
+                    # A legacy server may interleave server->client requests
+                    # (elicitation/create, ping) on the SSE response before
+                    # the result: read it as it arrives and answer them.
+                    async with client.stream("POST", url, json=payload, headers=headers,
+                                             follow_redirects=True) as sresp:
+                        if sresp.status_code == 200 and "text/event-stream" in sresp.headers.get("content-type", ""):
+                            streamed = await self._read_legacy_stream(sresp, request_id, elicit, client, url)
+                        else:
+                            await sresp.aread()
+                        resp = sresp
+                else:
+                    resp = await client.post(url, json=payload, headers=headers, follow_redirects=True)
 
                 # Log response details
                 logger.info(
@@ -374,7 +398,7 @@ class MCPClient:
                     method,
                     resp.headers.get("content-type", "?"),
                     resp.headers.get("mcp-session-id", "none"),
-                    resp.text[:500] if resp.status_code != 200 or method == "tools/call" else "(ok)",
+                    self._body_preview(resp) if resp.status_code != 200 or method == "tools/call" else "(ok)",
                 )
 
                 # Log redirect history if any
@@ -401,6 +425,25 @@ class MCPClient:
                     await self._resolve_bearer(force_refresh=True)
                     headers = self._build_headers(method, tool_name=tool_name, param_headers=param_headers, modern=modern)
                     continue
+
+                # Insufficient scope (403 + WWW-Authenticate error="insufficient_scope"):
+                # the token is valid but too narrow. Record the scopes the
+                # server wants so the next Authorize asks for them, and tell
+                # the caller (spec: step-up needs the user, so no silent retry).
+                if resp.status_code == 403 and self._token_getter is not None:
+                    from mcp_client import oauth as oauth_mod
+                    ch = oauth_mod.parse_bearer_challenge(resp.headers.get("WWW-Authenticate", ""))
+                    if ch.error == "insufficient_scope":
+                        if self.on_insufficient_scope is not None:
+                            try:
+                                self.on_insufficient_scope(ch.scopes, ch.error_description)
+                            except Exception:
+                                logger.debug("insufficient_scope hook failed", exc_info=True)
+                        raise MCPError(
+                            f"the server needs more permissions than the current token grants"
+                            f"{' (' + ' '.join(ch.scopes) + ')' if ch.scopes else ''}"
+                            f"{': ' + ch.error_description if ch.error_description else ''}. "
+                            "Re-authorize the connection in Connections → MCP servers.", code=403)
 
                 # Legacy spec: a 404 on a request carrying Mcp-Session-Id means
                 # the session is gone (e.g. server restarted). Start a new one
@@ -485,7 +528,12 @@ class MCPClient:
                     if new_session:
                         self.session_id = new_session
 
-                if "text/event-stream" in content_type:
+                if streamed is not None:
+                    if "error" in streamed:
+                        raise MCPError(streamed["error"].get("message", "Unknown MCP error"),
+                                       code=streamed["error"].get("code", -1))
+                    result = streamed.get("result", {})
+                elif "text/event-stream" in content_type:
                     try:
                         result = self._parse_sse_response(resp.text, request_id)
                     except MCPError as e:
@@ -511,6 +559,85 @@ class MCPClient:
 
         # Should not reach here, but just in case
         raise MCPError("Max retries exceeded", code=429)
+
+    @staticmethod
+    def _body_preview(resp: Any) -> str:
+        try:
+            return resp.text[:500]
+        except Exception:
+            return "(streamed)"
+
+    async def _read_legacy_stream(self, resp: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
+                                  client: Any, url: str) -> dict[str, Any]:
+        """Read a legacy tools/call SSE response as it arrives, answering the
+        server's requests on it (``elicitation/create`` through ``elicit``,
+        ``ping``), until the message that answers ``request_id``."""
+        buf: list[str] = []
+        async for raw in resp.aiter_lines():
+            line = raw.rstrip("\r\n")
+            if line.startswith("data:"):
+                buf.append(line[5:].lstrip())
+                continue
+            if line != "":
+                continue   # event:/id:/retry: fields and comments
+            data = "\n".join(buf)
+            buf = []
+            if not data:
+                continue
+            try:
+                msg = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            report_progress()
+            done = await self._legacy_stream_message(msg, request_id, elicit, client, url)
+            if done is not None:
+                return done
+        raise MCPError("the server closed the stream before answering the tool call", code=-32000)
+
+    async def _legacy_stream_message(self, msg: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
+                                     client: Any, url: str) -> dict[str, Any] | None:
+        if not isinstance(msg, dict):
+            return None
+        if msg.get("id") == request_id and ("result" in msg or "error" in msg):
+            return msg
+        method = msg.get("method")
+        if not method or "id" not in msg:
+            return None   # our own echo, or a notification (progress, logging)
+        reply: dict[str, Any] = {"jsonrpc": "2.0", "id": msg["id"]}
+        if method == "ping":
+            reply["result"] = {}
+        elif method == "elicitation/create":
+            reply["result"] = await self._answer_legacy_elicitation(msg.get("params") or {}, elicit)
+        else:
+            reply["error"] = {"code": ERR_METHOD_NOT_FOUND, "message": f"{method} is not supported by this client"}
+        try:
+            await client.post(url, json=reply, headers=self._build_headers(None, modern=False),
+                              follow_redirects=True)
+        except Exception as e:
+            logger.warning("MCP '%s' could not answer the server's %s request: %s", self.name, method, e)
+        return None
+
+    async def _answer_legacy_elicitation(self, params: dict[str, Any], elicit: elicit_mod.Elicitor | None) -> dict[str, Any]:
+        """One legacy elicitation/create: show it like a modern one and return
+        the ElicitResult; cancel when there is nobody to ask."""
+        try:
+            parsed = elicit_mod.parse_requests({"elicitation": {"method": "elicitation/create", "params": params}})
+        except elicit_mod.UnsupportedInputRequest as why:
+            logger.info("MCP '%s' legacy elicitation refused: %s", self.name, why)
+            self._legacy_notes.append(f"could not be shown the server's request ({why}); it was dismissed")
+            return {"action": "cancel"}
+        what = elicit_mod.describe_requests(parsed)
+        if elicit is None:
+            self._legacy_notes.append(f"could not be asked to {what} (forms can't be shown here; it was dismissed)")
+            return {"action": "cancel"}
+        prompt = elicit_mod.ElicitationPrompt(connection=self.name, tool=self._legacy_tool or "?",
+                                              requests=parsed, round=len(self._legacy_notes) + 1)
+        logger.info("MCP '%s' legacy elicitation for %s: %s", self.name, prompt.tool, what)
+        responses = await elicit(prompt)
+        if responses is None:
+            responses = elicit_mod.cancel_all(prompt)
+        self._legacy_notes.append(elicit_mod.summarize_answers(prompt, responses))
+        return responses.get("elicitation") or {"action": "cancel"}
 
     def _parse_sse_response(self, body: str, request_id: int) -> dict[str, Any]:
         """Parse an SSE response body and extract the JSON-RPC result."""
@@ -583,7 +710,10 @@ class MCPClient:
         self.era = ERA_LEGACY
         result = await self._send_jsonrpc("initialize", {
             "protocolVersion": LEGACY_PROTOCOL_VERSION,
-            "capabilities": {},
+            # Session-wide (not per request): a form or link the server asks
+            # for mid-call is shown when the call came from the web chat and
+            # cancelled otherwise.
+            "capabilities": {"elicitation": json.loads(json.dumps(elicit_mod.ELICITATION_CAPABILITY))},
             "clientInfo": dict(CLIENT_INFO),
         })
 
@@ -644,7 +774,7 @@ class MCPClient:
         """
         await self._ensure_ready()
 
-        result = await self._send_jsonrpc("tools/list", elicitation=True)
+        result = await self._list_pages("tools/list", "tools", elicitation=True)
         tools = [t for t in result.get("tools", []) if isinstance(t, dict)]
         header_params: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
         kept: list[dict[str, Any]] = []
@@ -671,6 +801,34 @@ class MCPClient:
             [t.get("name") for t in self.tools],
         )
         return self.tools
+
+    async def _list_pages(self, method: str, key: str, *, elicitation: bool = False,
+                          max_pages: int = 100) -> dict[str, Any]:
+        """A paginated list (tools/list, resources/list, prompts/list, ...):
+        follows ``nextCursor`` until the server stops sending one. Returns
+        the first page's envelope (ttlMs, cacheScope) with ``key`` holding
+        every item."""
+        items: list[dict[str, Any]] = []
+        first: dict[str, Any] | None = None
+        cursor: str | None = None
+        for _page in range(max_pages):
+            params = {"cursor": cursor} if cursor else None
+            res = await self._send_jsonrpc(method, params, elicitation=elicitation)
+            if not isinstance(res, dict):
+                break
+            if first is None:
+                first = res
+            items.extend(i for i in (res.get(key) or []) if isinstance(i, dict))
+            nxt = res.get("nextCursor")
+            if not isinstance(nxt, str) or not nxt or nxt == cursor:
+                break
+            cursor = nxt
+        else:
+            logger.warning("MCP '%s' %s: stopped after %d pages", self.name, method, max_pages)
+        merged = dict(first or {})
+        merged[key] = items
+        merged.pop("nextCursor", None)
+        return merged
 
     @property
     def tools_stale(self) -> bool:
@@ -747,12 +905,15 @@ class MCPClient:
             param_headers = None
             if self.is_modern and self._header_params.get(tool_name):
                 param_headers = schema_mod.mirrored_headers(self._header_params[tool_name], arguments)
+            self._legacy_notes = []
+            self._legacy_tool = tool_name
             try:
                 result = await self._send_jsonrpc(
                     "tools/call", params, retry_on_429=True,
                     tool_name=tool_name if self.is_modern else None,
                     param_headers=param_headers,
                     elicitation=elicit is not None,
+                    elicit=elicit,
                 )
             except MCPError as e:
                 # The server's tool definition changed under us (new or
@@ -765,6 +926,9 @@ class MCPClient:
                     continue
                 raise
 
+            if self._legacy_notes:
+                answered.extend(self._legacy_notes)
+                self._legacy_notes = []
             rtype = result.get("resultType") if isinstance(result, dict) else None
             if rtype == "input_required":
                 requests = result.get("inputRequests") or {}
