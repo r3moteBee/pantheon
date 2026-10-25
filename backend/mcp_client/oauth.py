@@ -758,6 +758,17 @@ def delete_preregistered(name: str) -> None:
     get_vault().delete_secret(_prereg_secret_key(name))
 
 
+def client_secret_for(name: str, registration: str | None) -> Optional[str]:
+    """The secret to authenticate the token endpoint with, by how the
+    client id was obtained: a pre-registered client's own secret, a DCR
+    client's issued secret, never one for a CIMD client (public, PKCE)."""
+    if registration == REG_PREREGISTERED:
+        return load_preregistered_secret(name)
+    if registration == REG_CIMD:
+        return None
+    return load_client_secret(name)
+
+
 def save_client_secret(name: str, secret: str) -> None:
     from secrets.vault import get_vault
     get_vault().set_secret(_client_secret_key(name), secret)

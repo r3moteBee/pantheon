@@ -280,6 +280,33 @@ def test_revoke_keeps_the_registration():
     assert calls == ["mcp_oauth_tokens__n", "mcp_oauth_client_secret__n", "mcp_oauth_prereg_secret__n"]
 
 
+def test_client_secret_follows_the_registration():
+    with patch.object(oauth, "load_preregistered_secret", return_value="pre"), \
+         patch.object(oauth, "load_client_secret", return_value="dcr"):
+        assert oauth.client_secret_for("n", "preregistered") == "pre"
+        assert oauth.client_secret_for("n", "dcr") == "dcr"
+        assert oauth.client_secret_for("n", None) == "dcr"      # pre-2026 configs
+        assert oauth.client_secret_for("n", "cimd") is None
+
+
+@pytest.mark.asyncio
+async def test_complete_oauth_uses_the_preregistered_secret():
+    cfg = _oauth_cfg(oauth_client={"client_id": "my-id", "issuer": "https://as.example"})
+    mgr = _mgr(cfg)
+    with patch("config.get_settings", return_value=_settings()):
+        url = oauth.build_authorize_url(name="n", as_meta=_as(), client_id="my-id", redirect_uri=CB,
+                                        scopes=[], resource="r", registration="preregistered")
+    state = url.split("state=")[1].split("&")[0]
+    exchange = AsyncMock(return_value={"access_token": "a", "expires_in": 60})
+    with patch.object(oauth, "load_preregistered_secret", return_value="pre-secret"), \
+         patch.object(oauth, "load_client_secret", return_value="WRONG"), \
+         patch.object(oauth, "exchange_code", exchange), \
+         patch.object(oauth, "save_tokens", return_value={}), \
+         patch.object(mgr, "_create_client", side_effect=RuntimeError("no server in this test")):
+        await mgr.complete_oauth(code="c", state=state)
+    assert exchange.call_args.kwargs["client_secret"] == "pre-secret"
+
+
 # ── The hosted document ──────────────────────────────────────────────────────
 
 def _app():

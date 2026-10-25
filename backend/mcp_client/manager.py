@@ -113,7 +113,7 @@ def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
                         refresh_token=refresh,
                         resource=oauth_cfg.get("resource", ""),
                         scopes=oauth_cfg.get("scopes") or None,
-                        client_secret=oauth_mod.load_client_secret(name),
+                        client_secret=oauth_mod.client_secret_for(name, oauth_cfg.get("registration")),
                     )
                     tokens = oauth_mod.save_tokens(name, new_raw)
                 except Exception as e:
@@ -697,7 +697,7 @@ class MCPManager:
         if not cfg:
             raise RuntimeError(f"Connection '{pending.name}' disappeared during auth")
 
-        client_secret = oauth_mod.load_client_secret(pending.name)
+        client_secret = oauth_mod.client_secret_for(pending.name, pending.registration)
         token_response = await oauth_mod.exchange_code(
             pending=pending,
             code=code,
