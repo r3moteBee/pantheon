@@ -1019,7 +1019,11 @@ class MCPClient:
                 p["requestState"] = state
             if responses is not None:
                 p["inputResponses"] = responses
-            res = await self._send_jsonrpc(method, p, retry_on_429=True, elicitation=elicit is not None)
+            # Streamable HTTP header mirroring: Mcp-Name carries the resource
+            # uri / prompt name the way it carries a tool name on tools/call.
+            name_hdr = p.get("uri") if method == "resources/read" else p.get("name")
+            res = await self._send_jsonrpc(method, p, retry_on_429=True, elicitation=elicit is not None,
+                                           tool_name=str(name_hdr) if self.is_modern and name_hdr else None)
             if not isinstance(res, dict) or res.get("resultType") != "input_required":
                 return (res if isinstance(res, dict) else {}), notes
             state = res.get("requestState")
