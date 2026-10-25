@@ -1,6 +1,6 @@
 {
   "name": "task-breakdown",
-  "version": "2026-04-05",
+  "version": "2026-10-25",
   "description": "Break a complex goal or project into actionable steps with effort estimates. Use when the user asks to plan a task, break something down, create a roadmap, figure out steps to accomplish a goal, or needs help scoping work.",
   "author": "pantheon",
   "license": "MIT",
@@ -14,29 +14,62 @@
     "task breakdown"
   ],
   "parameters": [
-    { "name": "goal", "type": "string", "required": true, "description": "The goal or task to break down" },
-    { "name": "granularity", "type": "string", "required": false, "description": "How fine-grained: high-level, standard, or detailed" }
+    {
+      "name": "goal",
+      "type": "string",
+      "required": true,
+      "description": "The goal or task to break down"
+    },
+    {
+      "name": "granularity",
+      "type": "string",
+      "required": false,
+      "description": "How fine-grained: high-level, standard, or detailed"
+    }
   ],
   "capabilities_required": [],
   "dependencies": {},
-  "tags": ["planning", "tasks", "project-management", "roadmap"],
+  "tags": [
+    "planning",
+    "tasks",
+    "project-management",
+    "roadmap"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
-      "reads": ["semantic"],
-      "writes": ["semantic"],
+      "reads": [
+        "semantic"
+      ],
+      "writes": [
+        "semantic"
+      ],
       "auto_store": true
     },
     "project_aware": true,
-    "schedulable": { "enabled": false },
+    "schedulable": {
+      "enabled": false
+    },
     "permissions": {
       "network_domains": [],
-      "file_paths": ["workspace/**"],
+      "file_paths": [
+        "workspace/**"
+      ],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "rw", "episodic": "none", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "rw",
+        "episodic": "none",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "summarize-conversation",
-  "version": "2026-04-05",
+  "version": "2026-10-25",
   "description": "Summarize the current conversation or recent session into key points, decisions, and action items. Use when the user asks for a summary, recap, meeting notes, or wants to capture what was discussed.",
   "author": "pantheon",
   "license": "MIT",
@@ -13,28 +13,57 @@
     "capture this discussion"
   ],
   "parameters": [
-    { "name": "format", "type": "string", "required": false, "description": "Output format: brief, detailed, or action-items" }
+    {
+      "name": "format",
+      "type": "string",
+      "required": false,
+      "description": "Output format: brief, detailed, or action-items"
+    }
   ],
   "capabilities_required": [],
   "dependencies": {},
-  "tags": ["summary", "notes", "conversation", "recap", "meeting"],
+  "tags": [
+    "summary",
+    "notes",
+    "conversation",
+    "recap",
+    "meeting"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
-      "reads": ["episodic"],
-      "writes": ["semantic"],
+      "reads": [
+        "episodic"
+      ],
+      "writes": [
+        "semantic"
+      ],
       "auto_store": true
     },
     "project_aware": true,
-    "schedulable": { "enabled": false },
+    "schedulable": {
+      "enabled": false
+    },
     "permissions": {
       "network_domains": [],
-      "file_paths": ["workspace/**"],
+      "file_paths": [
+        "workspace/**"
+      ],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "w", "episodic": "r", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "w",
+        "episodic": "r",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }

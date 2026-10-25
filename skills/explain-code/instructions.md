@@ -4,7 +4,12 @@ Explain what code does in plain language, adapted to the user's level.
 
 ## Procedure
 
-1. **Get the code.** If a file path was given, read it. If code was shared in conversation, use that. If neither, ask what to explain.
+1. **Get the code.** In this order:
+   - Code pasted in the conversation — use it as is.
+   - A file the user attached to the chat — it is an artifact under `chat-attachments/`: `read_artifact`.
+   - A path — an artifact the project produced (`read_artifact`), a workspace or repo-checkout file (`read_file`), or a file in the bound GitHub repo (`github`).
+   - An error message or stack trace — explain that; read the file it names if you can.
+   If neither code nor a path was given, ask what to explain.
 
 2. **Gauge the audience.** Use context clues to set the right level:
    - **beginner** — Assume no programming background. Explain what variables, functions, and loops are. Use analogies.
@@ -21,13 +26,14 @@ Explain what code does in plain language, adapted to the user's level.
 5. **Highlight the interesting parts.** Don't explain every line — focus on:
    - Non-obvious logic or clever tricks
    - Potential gotchas or easy-to-miss behavior
-   - Connections to other parts of the codebase (if project context is available)
+   - Connections to other parts of the codebase (read the neighbouring files when the project is bound or in the workspace, rather than guessing)
 
 6. **Offer to go deeper.** End with something like "Want me to explain [specific part] in more detail?" if there are complex sections you glossed over.
 
 ## Important
 
 - Use the user's language. If they asked "what does this do" casually, don't respond with a formal technical document.
-- When explaining errors: explain what went wrong, why, and how to fix it.
+- When explaining errors: explain what went wrong, why, and how to fix it. If the fix is small, show the corrected lines.
 - Reference line numbers when explaining specific parts of longer files.
-- If the code has bugs or issues, mention them naturally as part of the explanation — don't ignore them.
+- If the code has bugs or issues, mention them naturally as part of the explanation — don't ignore them. For a full review, the `/code-review` skill is the right tool.
+- Explain only what the code says. If a library call's behaviour matters and you are not certain of it, say so or look it up (`web_fetch` on its documentation) rather than assert it.
