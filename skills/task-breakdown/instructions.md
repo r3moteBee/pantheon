@@ -4,9 +4,9 @@ Break a complex goal into actionable, ordered steps with effort estimates.
 
 ## Procedure
 
-1. **Understand the goal.** Restate what the user wants to accomplish in one sentence. If the goal is ambiguous, clarify the scope before proceeding.
+1. **Understand the goal.** Restate what the user wants to accomplish in one sentence. If the goal is ambiguous, clarify the scope before proceeding — one question, not a questionnaire.
 
-2. **Check for context.** Use `recall` and `list_artifacts` for relevant prior work, and the bound repo (`github`) or the workspace for existing architecture, constraints and conventions.
+2. **Check for context.** Use `recall` and `list_artifacts` for relevant prior work (an earlier plan under `plans/`, research under `research/`), and the bound repo (`github`, `git_status`) or the workspace (`list_workspace_files`) for existing architecture, constraints and conventions. Don't plan work that is already done.
 
 3. **Identify the major phases.** Every complex task has natural phases — setup, core work, integration, testing, cleanup. Identify 3-6 phases.
 
@@ -39,4 +39,5 @@ Break a complex goal into actionable, ordered steps with effort estimates.
 - Order matters. Present steps in the order they should be done, not the order you thought of them.
 - Call out the critical path — which sequence of tasks determines the minimum total time.
 - If the task involves code, reference actual files/components from the project when possible.
-- Offer to save the breakdown with `save_to_artifact` (e.g. `plans/<goal>.md`) so it can be found in future conversations ("what was the plan for X?"). If the user wants it run in the background, `create_task` takes the steps as its plan.
+- Mark which steps Pantheon could do itself (research, drafting, code in artifacts, a build check) and which need the user (accounts, purchases, decisions, anything on their machine).
+- Offer to save the breakdown with `save_to_artifact` (e.g. `plans/<goal>.md`) so it can be found in future conversations ("what was the plan for X?"). If the user wants Pantheon to run it in the background, `create_task` takes the steps as its plan; it is proposed, not started — the user approves it in the Tasks tab.

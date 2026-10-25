@@ -1,6 +1,6 @@
 {
   "name": "daily-digest",
-  "version": "2026-04-05",
+  "version": "2026-10-25",
   "description": "Generate a digest of recent project activity from conversations, artifacts and background jobs, saved as an artifact. Use when the user asks for a daily summary, status update, what happened recently, or wants a catch-up on project activity. Can also be scheduled to run automatically.",
   "author": "pantheon",
   "license": "MIT",
@@ -14,17 +14,35 @@
     "project summary"
   ],
   "parameters": [
-    { "name": "period", "type": "string", "required": false, "description": "Time period: today, yesterday, this-week, or a specific date" }
+    {
+      "name": "period",
+      "type": "string",
+      "required": false,
+      "description": "Time period: today, yesterday, this-week, or a specific date"
+    }
   ],
-  "capabilities_required": ["file_read"],
+  "capabilities_required": [
+    "file_read"
+  ],
   "dependencies": {},
-  "tags": ["digest", "summary", "status", "daily", "activity"],
+  "tags": [
+    "digest",
+    "summary",
+    "status",
+    "daily",
+    "activity"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
-      "reads": ["episodic", "semantic"],
-      "writes": ["semantic"],
+      "reads": [
+        "episodic",
+        "semantic"
+      ],
+      "writes": [
+        "semantic"
+      ],
       "auto_store": true
     },
     "project_aware": true,
@@ -35,11 +53,23 @@
     },
     "permissions": {
       "network_domains": [],
-      "file_paths": ["workspace/**"],
+      "file_paths": [
+        "workspace/**"
+      ],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "rw", "episodic": "r", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "rw",
+        "episodic": "r",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }

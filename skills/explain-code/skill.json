@@ -1,6 +1,6 @@
 {
   "name": "explain-code",
-  "version": "2026-04-05",
+  "version": "2026-10-25",
   "description": "Explain what code does in plain language. Use when the user asks to explain, walk through, or help understand a piece of code, function, file, or error message. Adapts explanation depth to the user's apparent level.",
   "author": "pantheon",
   "license": "MIT",
@@ -13,12 +13,29 @@
     "break down this function"
   ],
   "parameters": [
-    { "name": "file_path", "type": "string", "required": false, "description": "Path to the file to explain" },
-    { "name": "level", "type": "string", "required": false, "description": "Explanation level: beginner, intermediate, or expert" }
+    {
+      "name": "file_path",
+      "type": "string",
+      "required": false,
+      "description": "Path to the file to explain"
+    },
+    {
+      "name": "level",
+      "type": "string",
+      "required": false,
+      "description": "Explanation level: beginner, intermediate, or expert"
+    }
   ],
-  "capabilities_required": ["file_read"],
+  "capabilities_required": [
+    "file_read"
+  ],
   "dependencies": {},
-  "tags": ["code", "explain", "learning", "documentation"],
+  "tags": [
+    "code",
+    "explain",
+    "learning",
+    "documentation"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
@@ -28,14 +45,28 @@
       "auto_store": false
     },
     "project_aware": true,
-    "schedulable": { "enabled": false },
+    "schedulable": {
+      "enabled": false
+    },
     "permissions": {
       "network_domains": [],
-      "file_paths": ["workspace/**"],
+      "file_paths": [
+        "workspace/**"
+      ],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "none", "episodic": "none", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "none",
+        "episodic": "none",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }

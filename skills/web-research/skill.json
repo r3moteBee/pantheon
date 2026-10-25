@@ -1,7 +1,7 @@
 {
   "name": "web-research",
-  "version": "2026-04-05",
-  "description": "Research a topic using web search and produce a structured summary with sources. Use when the user asks to research something, find information about a topic, compare options, or investigate a question that requires up-to-date web knowledge.",
+  "version": "2026-10-25",
+  "description": "Research a topic using a connected search service when one exists (else the built-in web search), read the best pages, and produce a structured summary with sources. Use when the user asks to research something, find information about a topic, compare options, or wants a sourced answer.",
   "author": "pantheon",
   "license": "MIT",
   "triggers": [
@@ -14,29 +14,64 @@
     "find out about"
   ],
   "parameters": [
-    { "name": "topic", "type": "string", "required": true, "description": "The topic or question to research" },
-    { "name": "depth", "type": "string", "required": false, "description": "How deep to go: quick, standard, or thorough" }
+    {
+      "name": "topic",
+      "type": "string",
+      "required": true,
+      "description": "The topic or question to research"
+    },
+    {
+      "name": "depth",
+      "type": "string",
+      "required": false,
+      "description": "How deep to go: quick, standard, or thorough"
+    }
   ],
-  "capabilities_required": ["network"],
+  "capabilities_required": [
+    "network"
+  ],
   "dependencies": {},
-  "tags": ["research", "search", "information", "web"],
+  "tags": [
+    "research",
+    "search",
+    "information",
+    "web"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
       "reads": [],
-      "writes": ["semantic"],
+      "writes": [
+        "semantic"
+      ],
       "auto_store": true
     },
     "project_aware": false,
-    "schedulable": { "enabled": false },
-    "permissions": {
-      "network_domains": ["*"],
-      "file_paths": ["workspace/**"],
-      "vault_secrets": [],
-      "memory_tiers": { "semantic": "w", "episodic": "none", "graph": "none" }
+    "schedulable": {
+      "enabled": false
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "permissions": {
+      "network_domains": [
+        "*"
+      ],
+      "file_paths": [
+        "workspace/**"
+      ],
+      "vault_secrets": [],
+      "memory_tiers": {
+        "semantic": "w",
+        "episodic": "none",
+        "graph": "none"
+      }
+    },
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }

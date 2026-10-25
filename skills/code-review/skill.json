@@ -1,7 +1,7 @@
 {
   "name": "code-review",
-  "version": "2026-04-05",
-  "description": "Review code files for bugs, security issues, performance problems, and style. Use when the user asks to review code, check for issues, audit a file, or wants feedback on implementation quality. Works with any programming language.",
+  "version": "2026-10-25",
+  "description": "Review code - pasted, attached, in the artifacts, workspace or bound repo - for bugs, security issues, performance problems and style, with verified findings. Use when the user asks to review code, check for issues, audit a file, or wants feedback before merging.",
   "author": "pantheon",
   "license": "MIT",
   "triggers": [
@@ -13,29 +13,63 @@
     "look for problems in"
   ],
   "parameters": [
-    { "name": "file_path", "type": "string", "required": false, "description": "Path to the file to review (relative to workspace)" },
-    { "name": "focus", "type": "string", "required": false, "description": "What to focus on: bugs, security, performance, style, or all" }
+    {
+      "name": "file_path",
+      "type": "string",
+      "required": false,
+      "description": "Path to the file to review (relative to workspace)"
+    },
+    {
+      "name": "focus",
+      "type": "string",
+      "required": false,
+      "description": "What to focus on: bugs, security, performance, style, or all"
+    }
   ],
-  "capabilities_required": ["file_read"],
+  "capabilities_required": [
+    "file_read"
+  ],
   "dependencies": {},
-  "tags": ["code", "review", "quality", "security", "bugs"],
+  "tags": [
+    "code",
+    "review",
+    "quality",
+    "security",
+    "bugs"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
-      "reads": ["semantic"],
+      "reads": [
+        "semantic"
+      ],
       "writes": [],
       "auto_store": false
     },
     "project_aware": true,
-    "schedulable": { "enabled": false },
+    "schedulable": {
+      "enabled": false
+    },
     "permissions": {
       "network_domains": [],
-      "file_paths": ["workspace/**"],
+      "file_paths": [
+        "workspace/**"
+      ],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "r", "episodic": "none", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "r",
+        "episodic": "none",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }
