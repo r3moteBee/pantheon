@@ -572,14 +572,35 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
                 tasks
               </span>
             )}
+            {conn.resources_count > 0 && (
+              <span title="The server publishes resources; the agent reads them through the read_resource / list_resources tools">
+                {conn.resources_count} resources
+              </span>
+            )}
+            {conn.prompts_count > 0 && (
+              <span title="The server offers prompt templates; the agent fetches them through get_prompt / list_prompts">
+                {conn.prompts_count} prompts
+              </span>
+            )}
+            {conn.listening && (
+              <span title="Subscribed to the server's change notifications (tools, prompts or resources are re-listed when they change)">
+                live
+              </span>
+            )}
             {conn.auth_type === 'oauth2' ? (
               conn.oauth_status === 'ok' ? (
                 <span className="flex items-center gap-0.5 text-emerald-500" title={registrationTitle(conn.oauth)}>
                   <CheckCircle className="w-2.5 h-2.5" /> OAuth authorized{registrationLabel(conn.oauth)}
                 </span>
               ) : (
-                <span className="flex items-center gap-0.5 text-amber-500">
-                  <ShieldAlert className="w-2.5 h-2.5" /> OAuth — needs sign-in
+                <span
+                  className="flex items-center gap-0.5 text-amber-500"
+                  title={conn.oauth?.step_up
+                    ? `The server asked for more permissions (${(conn.oauth.step_up.scopes || []).join(' ') || 'unspecified'})${conn.oauth.step_up.reason ? `: ${conn.oauth.step_up.reason}` : ''}. Authorize again to grant them.`
+                    : undefined}
+                >
+                  <ShieldAlert className="w-2.5 h-2.5" />
+                  {conn.oauth?.step_up ? 'OAuth — needs more permissions' : 'OAuth — needs sign-in'}
                 </span>
               )
             ) : (

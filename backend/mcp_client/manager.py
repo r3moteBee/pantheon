@@ -136,6 +136,16 @@ def _make_oauth_token_getter(name: str, oauth_cfg: dict[str, Any]):
     return getter
 
 
+def _synthetic_tools(client: Any) -> dict[str, dict[str, Any]]:
+    """The client's resource/prompt tools (empty for stand-ins without them)."""
+    fn = getattr(client, "synthetic_tools", None)
+    try:
+        out = fn() if callable(fn) else {}
+    except Exception:
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
 def _format_tool_result(call_result: dict[str, Any]) -> str:
     """Render an MCP call_tool dict as a single string for the LLM.
 
@@ -228,6 +238,79 @@ class MCPManager:
                 logger.warning("MCP '%s' failed to connect: %s", cfg.get("name", "?"), e)
 
         logger.info("MCP manager: %d/%d connections active", connected, len(self._configs))
+        try:
+            await self.resume_tasks()
+        except Exception:
+            logger.warning("MCP task resumption failed", exc_info=True)
+
+    async def _drop_client(self, name: str) -> None:
+        """Forget a live client and stop its background streams."""
+        old = self._clients.pop(name, None)
+        if old is not None:
+            try:
+                await old.close()
+            except Exception:
+                logger.debug("closing MCP client %s failed", name, exc_info=True)
+
+    def _adopt(self, name: str, client: MCPClient) -> None:
+        """Make a connected client live and start its list_changed listener."""
+        self._clients[name] = client
+        try:
+            client.start_listener()
+        except Exception:
+            logger.debug("MCP '%s' listener not started", name, exc_info=True)
+
+    async def shutdown(self) -> None:
+        for name in list(self._clients):
+            await self._drop_client(name)
+
+    async def resume_tasks(self) -> None:
+        """Pick up MCP background tasks a tool call was waiting on when the
+        process stopped (task_store): poll each to its end in the background
+        and drop the result into the conversation it came from."""
+        from mcp_client import task_store
+        from utils.background import spawn
+        for rec in task_store.pending():
+            client = self._clients.get(rec.get("connection", ""))
+            if client is None or not client.is_modern:
+                logger.info("MCP task %s on '%s' cannot be resumed (connection gone); forgetting it",
+                            rec.get("task_id"), rec.get("connection"))
+                task_store.forget(rec["task_id"])
+                continue
+            spawn(self._resume_task(client, rec), name=f"mcp-resume-{rec['task_id'][:8]}")
+
+    async def _resume_task(self, client: MCPClient, rec: dict[str, Any]) -> None:
+        from datetime import datetime, timezone
+        from mcp_client import task_store
+        task_id, tool = rec["task_id"], rec.get("tool", "?")
+        created_iso = datetime.fromtimestamp(float(rec.get("created_at") or 0), tz=timezone.utc).isoformat()
+        seed = {"taskId": task_id, "status": "working", "createdAt": created_iso, "lastUpdatedAt": created_iso,
+                "ttlMs": None}
+        logger.info("MCP '%s' resuming task %s for tool %s after restart", client.name, task_id, tool)
+        try:
+            outcome = await client._run_task(tool, seed, elicit=None, notify=None, cancel_event=None, max_wait_s=None)
+        except Exception as e:
+            outcome = f"[The background task for '{tool}' could not be resumed after the restart: {e}]"
+        finally:
+            task_store.forget(task_id)
+        if isinstance(outcome, str):
+            text = outcome
+        else:
+            res, notes = outcome
+            text = _format_tool_result(client._parse_call_result(res))
+        ctx = rec.get("context") or {}
+        note = (f"[While Pantheon was restarting, the background task from MCP server '{client.name}' "
+                f"for tool {ctx.get('tool') or tool} finished.]\n\n{text}")
+        session_id = ctx.get("session_id")
+        if not session_id:
+            logger.info("MCP task %s finished after restart (no conversation to post to): %s", task_id, text[:200])
+            return
+        try:
+            from memory.episodic import EpisodicMemory
+            await EpisodicMemory().save_message(session_id=session_id, project_id=ctx.get("project_id") or "default",
+                                                role="assistant", content=note, metadata={"mcp_task": task_id})
+        except Exception:
+            logger.warning("MCP task %s result could not be saved to session %s", task_id, session_id, exc_info=True)
 
     def _create_client(self, cfg: dict[str, Any]) -> MCPClient:
         """Create an MCPClient from a config dict.
@@ -322,6 +405,9 @@ class MCPManager:
                 "protocol_version": live.protocol_version if live else None,
                 "protocol_era": live.era if live else None,
                 "extensions": list(live.server_extensions) if live else [],
+                "resources_count": len(live.resources) + len(live.resource_templates) if live else 0,
+                "prompts_count": len(live.prompts) if live else 0,
+                "listening": bool(live and live._listener is not None),
                 "server": dict(live.server_info) if live and live.server_info else None,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
                 "excluded_tools": cfg.get("excluded_tools", []),
@@ -380,7 +466,7 @@ class MCPManager:
                 client = self._create_client(cfg)
                 test = await client.test_connection()
                 if test["status"] == "ok":
-                    self._clients[name] = client
+                    self._adopt(name, client)
                     result["status"] = "connected"
                     result["tools"] = test.get("tool_names", [])
                 else:
@@ -454,17 +540,17 @@ class MCPManager:
         # Reconnect if enabled
         if cfg.get("enabled", True):
             # Disconnect existing
-            self._clients.pop(name, None)
+            await self._drop_client(name)
             try:
                 client = self._create_client(cfg)
                 await client.initialize()
                 await client.discover_tools()
-                self._clients[name] = client
+                self._adopt(name, client)
                 return {"name": name, "status": "reconnected", "tools_count": len(client.tools)}
             except Exception as e:
                 return {"name": name, "status": "updated_but_connection_failed", "error": str(e)}
         else:
-            self._clients.pop(name, None)
+            await self._drop_client(name)
             return {"name": name, "status": "disabled"}
 
     def set_budget(self, name: str, *, daily: int | None = None, monthly: int | None = None,
@@ -490,7 +576,7 @@ class MCPManager:
         """Remove an MCP connection and any associated OAuth tokens."""
         from mcp_client import oauth as oauth_mod
 
-        self._clients.pop(name, None)
+        await self._drop_client(name)
         self._configs = [c for c in self._configs if c["name"] != name]
         self._save_configs()
         try:
@@ -742,12 +828,12 @@ class MCPManager:
             self._save_configs()
 
         # Reconnect using the freshly-issued token.
-        self._clients.pop(pending.name, None)
+        await self._drop_client(pending.name)
         try:
             client = self._create_client(cfg)
             await client.initialize()
             await client.discover_tools()
-            self._clients[pending.name] = client
+            self._adopt(pending.name, client)
             return {
                 "name": pending.name,
                 "status": "connected",
@@ -769,7 +855,7 @@ class MCPManager:
         from mcp_client import oauth as oauth_mod
 
         oauth_mod.delete_tokens(name)
-        self._clients.pop(name, None)
+        await self._drop_client(name)
         return {"name": name, "status": "tokens_revoked"}
 
     def _get_cfg(self, name: str) -> dict[str, Any] | None:
@@ -788,12 +874,12 @@ class MCPManager:
         if not cfg:
             raise ValueError(f"Connection '{name}' not found")
 
-        self._clients.pop(name, None)
+        await self._drop_client(name)
         try:
             client = self._create_client(cfg)
             await client.initialize()
             await client.discover_tools()
-            self._clients[name] = client
+            self._adopt(name, client)
             return {"name": name, "status": "connected", "tools_count": len(client.tools)}
         except Exception as e:
             return {"name": name, "status": "error", "message": str(e)}
@@ -806,6 +892,12 @@ class MCPManager:
         for client in self._clients.values():
             excluded = self._get_excluded_tools(client.name)
             schemas.extend(client.get_openai_tool_schemas(excluded_tools=excluded))
+            for bare, fn in _synthetic_tools(client).items():
+                if bare in excluded:
+                    continue
+                schemas.append({"type": "function", "function": {
+                    "name": tool_function_name(client.name, bare), "description": fn["description"],
+                    "parameters": fn["parameters"]}})
         return schemas
 
     def _get_excluded_tools(self, connection_name: str) -> set[str]:
@@ -829,6 +921,9 @@ class MCPManager:
                 original_name = tool.get("name", "")
                 if tool_function_name(client.name, original_name) == prefixed_name:
                     return None if original_name in excluded else (client, original_name)
+            for bare in _synthetic_tools(client):
+                if tool_function_name(client.name, bare) == prefixed_name:
+                    return None if bare in excluded else (client, bare)
         return None
 
     async def _search_fallback(self, tool_name: str, arguments: dict[str, Any], why: str) -> str | None:
@@ -875,8 +970,11 @@ class MCPManager:
             )
 
         try:
-            call_result = await client.call_tool(tool_name, arguments, elicit=elicit, notify=notify,
-                                                 cancel_event=cancel_event)
+            if tool_name in _synthetic_tools(client):
+                call_result = await client.call_synthetic(tool_name, arguments, elicit=elicit)
+            else:
+                call_result = await client.call_tool(tool_name, arguments, elicit=elicit, notify=notify,
+                                                     cancel_event=cancel_event)
         except Exception as e:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"
@@ -903,7 +1001,10 @@ class MCPManager:
         over = budget.check(cfg, call_cost)
         if over:
             raise RuntimeError(over)
-        result = await client.call_tool(tool_name, arguments)
+        if tool_name in _synthetic_tools(client):
+            result = await client.call_synthetic(tool_name, arguments)
+        else:
+            result = await client.call_tool(tool_name, arguments)
         budget.record(client.name, tool_name, call_cost)
         if result.get("is_error"):
             raise RuntimeError(f"MCP tool {prefixed_name} reported an error: {(result.get('text') or '')[:500]}")
@@ -952,6 +1053,14 @@ class MCPManager:
                     # future adapter use; the LLM tool schema doesn't need it.
                     "output_schema": tool.get("outputSchema") or None,
                     "excluded": tool_name in excluded,
+                })
+            for bare, fn in _synthetic_tools(client).items():
+                result.append({
+                    "connection": client.name, "name": bare,
+                    "prefixed_name": tool_function_name(client.name, bare),
+                    "description": fn["description"].split("\n")[0],
+                    "input_schema": fn["parameters"], "output_schema": None,
+                    "excluded": bare in excluded, "synthetic": True,
                 })
         return result
 
