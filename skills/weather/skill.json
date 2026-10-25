@@ -1,7 +1,7 @@
 {
   "name": "weather",
-  "version": "2026-04-05",
-  "description": "Get a weather forecast formatted as a clean, readable daily breakdown. Use when the user asks about the weather, forecast, temperature, whether to bring an umbrella, what to wear, or anything related to current or upcoming weather conditions for a location. Also triggers for questions like 'will it rain tomorrow' or 'is it going to be cold this week'.",
+  "version": "2026-10-25",
+  "description": "Get a weather forecast formatted as a clean, readable daily breakdown, from a connected weather service (an MCP weather server) when one is available and from a web search otherwise. Use when the user asks about the weather, forecast, temperature, whether to bring an umbrella, what to wear, or anything related to current or upcoming weather conditions for a location. Also triggers for questions like 'will it rain tomorrow' or 'is it going to be cold this week'.",
   "author": "pantheon",
   "license": "MIT",
   "triggers": [
@@ -17,17 +17,36 @@
     "how hot is it"
   ],
   "parameters": [
-    { "name": "location", "type": "string", "required": false, "description": "City, zip code, or location. Uses the user's default location if not specified." },
-    { "name": "days", "type": "integer", "required": false, "description": "Number of days to forecast (default: 5)" }
+    {
+      "name": "location",
+      "type": "string",
+      "required": false,
+      "description": "City, zip code, or location. Uses the user's default location if not specified."
+    },
+    {
+      "name": "days",
+      "type": "integer",
+      "required": false,
+      "description": "Number of days to forecast (default: 5)"
+    }
   ],
-  "capabilities_required": ["network"],
+  "capabilities_required": [
+    "network"
+  ],
   "dependencies": {},
-  "tags": ["weather", "forecast", "temperature", "conditions"],
+  "tags": [
+    "weather",
+    "forecast",
+    "temperature",
+    "conditions"
+  ],
   "source_hub": null,
   "security_scan": null,
   "pantheon": {
     "memory": {
-      "reads": ["semantic"],
+      "reads": [
+        "semantic"
+      ],
       "writes": [],
       "auto_store": false
     },
@@ -38,12 +57,24 @@
       "description": "Send a daily weather forecast via Telegram"
     },
     "permissions": {
-      "network_domains": ["*"],
+      "network_domains": [
+        "*"
+      ],
       "file_paths": [],
       "vault_secrets": [],
-      "memory_tiers": { "semantic": "r", "episodic": "none", "graph": "none" }
+      "memory_tiers": {
+        "semantic": "r",
+        "episodic": "none",
+        "graph": "none"
+      }
     },
-    "telemetry": { "track_usage": true, "auto_disable_threshold": 5 },
-    "evolution": { "enabled": false, "locked": false }
+    "telemetry": {
+      "track_usage": true,
+      "auto_disable_threshold": 5
+    },
+    "evolution": {
+      "enabled": false,
+      "locked": false
+    }
   }
 }
