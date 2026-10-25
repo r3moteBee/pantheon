@@ -1015,7 +1015,8 @@ class MCPManager:
         client, tool_name = resolved
         from mcp_client import budget
         cfg = self._get_cfg(client.name) or {"name": client.name}
-        if client.needs_confirmation(tool_name, self.confirm_policy(client.name)):
+        needs = getattr(client, "needs_confirmation", None)
+        if callable(needs) and needs(tool_name, self.confirm_policy(client.name)):
             from mcp_client import elicitation as elicit_mod
             tdef = client.tool_definition(tool_name) or {}
             if confirm is None:
