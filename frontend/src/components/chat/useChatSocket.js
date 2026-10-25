@@ -14,6 +14,9 @@ import { createChatSocket } from '../../api/client'
 //   activeSkillBadge       skill name while a skill turn streams
 //   pendingSuggestion      { skill, description, reason, suggestionId } | null
 //   acceptSuggestion()     / declineSuggestion()
+//   pendingElicitation     an MCP server's mid-call request for input (form
+//                          or link) the running turn waits on, or null
+//   answerElicitation(responses) / declineElicitation() / cancelElicitation()
 //   modelClass, setModelClass   chat mode = router pin ('auto' = unpinned),
 //                               remembered per project in localStorage
 // The tool calls a finished turn keeps. `context_loaded` is AgentCore's
@@ -37,6 +40,7 @@ const saveMode = (projectId, mode) => {
 export default function useChatSocket() {
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
   const [pendingSuggestion, setPendingSuggestion] = useState(null)
+  const [pendingElicitation, setPendingElicitation] = useState(null)
   // Chat router: the chat mode ("auto" = let the router pick), sent with
   // every message so the backend pins the conversation to it, and the
   // current turn's route.
@@ -68,6 +72,7 @@ export default function useChatSocket() {
     if (socketRef.current?.readyState === WebSocket.OPEN) return
 
     const handleClose = (code, reason) => {
+      setPendingElicitation(null)
       if (useStore.getState().isStreaming) {
         useStore.getState().setIsStreaming(false)
         useStore.getState().setStreamingContent('')
@@ -103,6 +108,28 @@ export default function useChatSocket() {
             suggestionId: event.suggestion_id,
           })
           break
+        case 'elicitation_request':
+          // The turn is paused on this until answered (or it times out).
+          setPendingElicitation({
+            elicitationId: event.elicitation_id,
+            connection: event.connection,
+            tool: event.tool,
+            round: event.round,
+            requests: event.requests || [],
+            timeoutS: event.timeout_s,
+            errors: null,
+          })
+          break
+        case 'elicitation_invalid':
+          setPendingElicitation((cur) =>
+            cur && cur.elicitationId === event.elicitation_id ? { ...cur, errors: event.errors || {} } : cur)
+          break
+        case 'elicitation_closed':
+          setPendingElicitation((cur) => (cur && cur.elicitationId === event.elicitation_id ? null : cur))
+          if (event.reason === 'timeout') {
+            addNotification({ type: 'error', message: 'The MCP server\'s request for input timed out; the tool call was cancelled.' })
+          }
+          break
         case 'text_delta':
           appendStreamingContent(event.content)
           break
@@ -132,15 +159,22 @@ export default function useChatSocket() {
           clearToolCalls()
           setIsStreaming(false)
           setActiveSkillBadge(null)
+          setPendingElicitation(null)
           liveRouteRef.current = null
           setLiveRoute(null)
           break
         }
+        case 'warning':
+          // Something was refused (a second message while a turn runs, an
+          // expired form id); the turn that is streaming goes on.
+          addNotification({ type: 'error', message: event.message })
+          break
         case 'error':
           addNotification({ type: 'error', message: event.message })
           setIsStreaming(false)
           setStreamingContent('')
           clearToolCalls()
+          setPendingElicitation(null)
           break
       }
     }, handleClose)
@@ -170,6 +204,28 @@ export default function useChatSocket() {
   const acceptSuggestion = useCallback(() => answerSuggestion('skill_accept'), [answerSuggestion])
   const declineSuggestion = useCallback(() => answerSuggestion('skill_decline'), [answerSuggestion])
 
+  // Answer the open elicitation: `responses` is {key: {action, content?}}.
+  // The card stays up until the backend accepts it (it may bounce it with
+  // elicitation_invalid) and disappears when the turn moves on.
+  const answerElicitation = useCallback((responses) => {
+    if (!pendingElicitation) return
+    send(JSON.stringify({
+      type: 'elicitation_response',
+      elicitation_id: pendingElicitation.elicitationId,
+      responses,
+    }))
+    setPendingElicitation((cur) => (cur ? { ...cur, errors: null } : cur))
+  }, [pendingElicitation, send])
+  const answerAllWith = useCallback((action) => {
+    if (!pendingElicitation) return
+    const responses = {}
+    for (const r of pendingElicitation.requests) responses[r.key] = { action }
+    answerElicitation(responses)
+    setPendingElicitation(null)
+  }, [pendingElicitation, answerElicitation])
+  const declineElicitation = useCallback(() => answerAllWith('decline'), [answerAllWith])
+  const cancelElicitation = useCallback(() => answerAllWith('cancel'), [answerAllWith])
+
   return {
     send,
     close,
@@ -178,6 +234,10 @@ export default function useChatSocket() {
     pendingSuggestion,
     acceptSuggestion,
     declineSuggestion,
+    pendingElicitation,
+    answerElicitation,
+    declineElicitation,
+    cancelElicitation,
     modelClass,
     setModelClass,
   }

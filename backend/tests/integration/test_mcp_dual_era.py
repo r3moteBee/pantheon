@@ -201,7 +201,10 @@ async def test_modern_server_no_handshake_and_mirrored_headers():
         meta = b["params"]["_meta"]
         assert meta["io.modelcontextprotocol/protocolVersion"] == MODERN
         assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "pantheon"
-        assert meta["io.modelcontextprotocol/clientCapabilities"] == {}
+        # Elicitation is declared where a person could answer (discover,
+        # list) and on a tools/call only when the caller passed an elicitor.
+        caps = meta["io.modelcontextprotocol/clientCapabilities"]
+        assert caps == ({} if method == "tools/call" else {"elicitation": {"form": {}, "url": {}}})
         assert h["mcp-protocol-version"] == MODERN and h["mcp-method"] == method
         assert "mcp-session-id" not in h
     assert srv.requests[-1][1]["mcp-name"] == "echo"

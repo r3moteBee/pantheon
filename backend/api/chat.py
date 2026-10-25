@@ -4,6 +4,7 @@ Enhanced with automatic memory extraction after conversations and
 file attachment support with semantic indexing.
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import uuid
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from agent import tool_results
 from agent.core import AgentCore
 from config import get_settings
+from mcp_client.elicitation import ElicitationBroker
 from memory.manager import create_memory_manager
 from models.provider import get_provider_for
 from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
@@ -63,8 +65,12 @@ async def _build_agent(
     session_id,
     skill_context=None,
     active_skill_name=None,
+    elicit=None,
 ):
     """Pick AgentCore() vs AgentCore.from_session() based on history.
+
+    ``elicit`` (mcp_client.elicitation.Elicitor) is how an MCP server asks
+    the user for input mid-call; only the WebSocket chat can pass one.
 
     First turn: empty working_memory.
     Resume / subsequent turns: rehydrate working_memory from messages table
@@ -88,6 +94,7 @@ async def _build_agent(
             host_exec=host_exec,
             interactive=True,
             channel="web",
+            elicit=elicit,
         )
     return AgentCore(
         provider=provider,
@@ -99,6 +106,7 @@ async def _build_agent(
         host_exec=host_exec,
         interactive=True,
         channel="web",
+        elicit=elicit,
     )
 
 
@@ -411,288 +419,65 @@ async def websocket_chat(websocket: WebSocket) -> None:
     _active_connections[connection_id] = websocket
     logger.info(f"WebSocket connected: {connection_id}")
 
-    try:
-        while True:
-            raw = await websocket.receive_text()
+    broker = ElicitationBroker(_send, timeout=float(settings.mcp_elicitation_timeout_seconds))
+    turn: asyncio.Task | None = None
+
+    async def _handle(data: dict[str, Any]) -> None:
+        """One chat frame: a message, a skill accept/decline or a model pin."""
+
+        message = data.get("message", "")
+        session_id = data.get("session_id") or str(uuid.uuid4())
+        project_id = data.get("project_id", "default")
+
+
+        # ── Skill accept / decline from interactive suggestion ───
+        if data.get("type") == "skill_accept":
+            suggestion_id = data.get("suggestion_id")
+            pending = _pending_suggestions.pop(suggestion_id, None)
+            if not pending:
+                await _send({"type": "error", "message": "Suggestion expired or not found"})
+                return
+            # Re-use the original message, session, and project but now with skill context
+            message = pending["message"]
+            session_id = pending["session_id"]
+            project_id = pending["project_id"]
+            skill_name = pending["skill"]
+            registry = get_skill_registry()
+            skill = registry.get(skill_name)
+            skill_context = build_skill_context(skill, project_id=project_id) if skill else None
+            active_skill_name = skill_name if skill else None
             try:
-                data = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
-                continue
-
-            message = data.get("message", "")
-            session_id = data.get("session_id") or str(uuid.uuid4())
-            project_id = data.get("project_id", "default")
-
-            # Handle keepalive pings from the frontend
-            if data.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-                continue
-
-            # ── Skill accept / decline from interactive suggestion ───
-            if data.get("type") == "skill_accept":
-                suggestion_id = data.get("suggestion_id")
-                pending = _pending_suggestions.pop(suggestion_id, None)
-                if not pending:
-                    await websocket.send_json({"type": "error", "message": "Suggestion expired or not found"})
-                    continue
-                # Re-use the original message, session, and project but now with skill context
-                message = pending["message"]
-                session_id = pending["session_id"]
-                project_id = pending["project_id"]
-                skill_name = pending["skill"]
-                registry = get_skill_registry()
-                skill = registry.get(skill_name)
-                skill_context = build_skill_context(skill, project_id=project_id) if skill else None
-                active_skill_name = skill_name if skill else None
-                try:
-                    from skills import analytics as _sa
-                    _sa.record_fire(skill_name, source="suggest_accepted")
-                except Exception:
-                    pass
-                await websocket.send_json({"type": "session_start", "session_id": session_id})
-                if skill:
-                    await websocket.send_json({
-                        "type": "skill_active",
-                        "skill": skill_name,
-                        "description": skill.manifest.description,
-                    })
-
-                provider = get_provider_for("agent")
-                memory = create_memory_manager(
-                    project_id=project_id, session_id=session_id, provider=provider,
-                )
-                # Jump straight to agent run with skill context
-                agent = await _build_agent(
-                    provider=provider,
-                    memory_manager=memory,
-                    project_id=project_id,
-                    session_id=session_id,
-                                        skill_context=skill_context,
-                                        active_skill_name=active_skill_name,
-                )
-
-                try:
-                    await memory.episodic.save_message(
-                        session_id=session_id, project_id=project_id,
-                        role="user", content=message,
-                    )
-                except Exception as e:
-                    logger.warning("Failed to save user message to episodic: %s", e)
-
-                full_response, route = await _stream_turn(
-                    agent, message, session_id, _send, skill_name=active_skill_name,
-                )
-
-                if full_response:
-                    try:
-                        await memory.episodic.save_message(
-                            session_id=session_id, project_id=project_id,
-                            role="assistant", content=full_response,
-                            metadata={"route": route} if route else None,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to save assistant message to episodic: %s", e)
-
-                extraction_interval = settings.extraction_interval
-                if extraction_interval > 0 and memory:
-                    count = _session_message_counts.get(session_id, 0) + 2
-                    _session_message_counts[session_id] = count
-                    if count >= extraction_interval:
-                        _session_message_counts[session_id] = 0
-                        spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
-                continue
-
-            if data.get("type") == "skill_decline":
-                suggestion_id = data.get("suggestion_id")
-                pending = _pending_suggestions.pop(suggestion_id, None)
-                if not pending:
-                    await websocket.send_json({"type": "error", "message": "Suggestion expired or not found"})
-                    continue
-                # Run the original message WITHOUT skill context
-                message = pending["message"]
-                session_id = pending["session_id"]
-                project_id = pending["project_id"]
-                skill_context = None
-                active_skill_name = None
-                try:
-                    from skills import analytics as _sa
-                    _sa.record_suggestion(pending["skill"], declined=True)
-                except Exception:
-                    pass
-                await websocket.send_json({"type": "session_start", "session_id": session_id})
-
-                provider = get_provider_for("agent")
-                memory = create_memory_manager(
-                    project_id=project_id, session_id=session_id, provider=provider,
-                )
-                agent = await _build_agent(
-                    provider=provider,
-                    memory_manager=memory,
-                    project_id=project_id,
-                    session_id=session_id,
-                )
-
-                try:
-                    await memory.episodic.save_message(
-                        session_id=session_id, project_id=project_id,
-                        role="user", content=message,
-                    )
-                except Exception as e:
-                    logger.warning("Failed to save user message to episodic: %s", e)
-
-                full_response, route = await _stream_turn(
-                    agent, message, session_id, _send, skill_name=active_skill_name,
-                )
-
-                if full_response:
-                    try:
-                        await memory.episodic.save_message(
-                            session_id=session_id, project_id=project_id,
-                            role="assistant", content=full_response,
-                            metadata={"route": route} if route else None,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to save assistant message to episodic: %s", e)
-
-                extraction_interval = settings.extraction_interval
-                if extraction_interval > 0 and memory:
-                    count = _session_message_counts.get(session_id, 0) + 2
-                    _session_message_counts[session_id] = count
-                    if count >= extraction_interval:
-                        _session_message_counts[session_id] = 0
-                        spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
-                continue
-
-            # Model pin from the chat UI's picker ("auto" clears it).
-            if data.get("model_class") is not None:
-                from llm_config import router as chat_router
-                try:
-                    chat_router.set_override(session_id, data.get("model_class"))
-                except ValueError as e:
-                    await websocket.send_json({"type": "error", "message": str(e)})
-                    continue
-
-            # "/model <class> [message]" — pin this conversation to a class.
-            reply, message, pinned = _model_command_reply(session_id, message)
-            if reply is not None:
-                await websocket.send_json({"type": "session_start", "session_id": session_id})
-                await websocket.send_json({"type": "model_pin", "task_class": pinned})
-                if not message:
-                    await websocket.send_json({"type": "text_delta", "content": reply})
-                    await websocket.send_json({"type": "done", "full_response": reply})
-                    continue
-
-            if not message:
-                await websocket.send_json({"type": "error", "message": "Empty message"})
-                continue
-
-            # Send session_id back to client
-            await websocket.send_json({"type": "session_start", "session_id": session_id})
+                from skills import analytics as _sa
+                _sa.record_fire(skill_name, source="suggest_accepted")
+            except Exception:
+                pass
+            await _send({"type": "session_start", "session_id": session_id})
+            if skill:
+                await _send({
+                    "type": "skill_active",
+                    "skill": skill_name,
+                    "description": skill.manifest.description,
+                })
 
             provider = get_provider_for("agent")
             memory = create_memory_manager(
-                project_id=project_id,
-                session_id=session_id,
-                provider=provider,
+                project_id=project_id, session_id=session_id, provider=provider,
             )
-
-            # ── Skill resolution ─────────────────────────────────────
-            skill_context = None
-            active_skill_name = None
-
-            # 1. Check for explicit /skill-name invocation
-            explicit_skill, remaining_message = resolve_explicit(message)
-            if explicit_skill:
-                registry = get_skill_registry()
-                skill = registry.get(explicit_skill)
-                if skill:
-                    active_skill_name = explicit_skill
-                    skill_context = build_skill_context(skill, project_id=project_id)
-                    message = remaining_message or message
-                    try:
-                        from skills import analytics as _sa
-                        _sa.record_fire(explicit_skill, source="explicit")
-                    except Exception:
-                        pass
-                    await websocket.send_json({
-                        "type": "skill_active",
-                        "skill": explicit_skill,
-                        "description": skill.manifest.description,
-                    })
-            else:
-                # 2. Check for auto-discovery if enabled
-                try:
-                    from utils.chat_settings import skill_discovery as _sd
-                    discovery_mode = _sd(project_id)
-                except Exception:
-                    discovery_mode = "off"
-
-                if discovery_mode in ("suggest", "auto"):
-                    matches = resolve_auto(
-                        message,
-                        project_id=project_id,
-                        mode=SkillDiscoveryMode(discovery_mode),
-                        top_k=1,
-                    )
-                    if matches and matches[0]["score"] >= 3.0:
-                        best = matches[0]
-                        skill = best["skill"]
-                        if discovery_mode == "auto":
-                            active_skill_name = skill.name
-                            skill_context = build_skill_context(skill, project_id=project_id)
-                            try:
-                                from skills import analytics as _sa
-                                _sa.record_fire(skill.name, source="auto")
-                            except Exception:
-                                pass
-                            await websocket.send_json({
-                                "type": "skill_active",
-                                "skill": skill.name,
-                                "description": skill.manifest.description,
-                                "auto": True,
-                            })
-                        else:
-                            # suggest mode — pause and wait for accept/decline
-                            suggestion_id = str(uuid.uuid4())
-                            _pending_suggestions[suggestion_id] = {
-                                "message": message,
-                                "session_id": session_id,
-                                "project_id": project_id,
-                                "skill": skill.name,
-                            }
-                            try:
-                                from skills import analytics as _sa
-                                _sa.record_suggestion(skill.name)
-                            except Exception:
-                                pass
-                            await websocket.send_json({
-                                "type": "skill_suggestion",
-                                "skill": skill.name,
-                                "description": skill.manifest.description,
-                                "score": best["score"],
-                                "reason": best["reason"],
-                                "suggestion_id": suggestion_id,
-                            })
-                            # Don't run agent yet — wait for skill_accept or skill_decline
-                            continue
-
+            # Jump straight to agent run with skill context
             agent = await _build_agent(
+                elicit=broker.ask,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
                 session_id=session_id,
-                skill_context=skill_context,
-                active_skill_name=active_skill_name,
+                                    skill_context=skill_context,
+                                    active_skill_name=active_skill_name,
             )
 
-            # Save user message to episodic memory
             try:
                 await memory.episodic.save_message(
-                    session_id=session_id,
-                    project_id=project_id,
-                    role="user",
-                    content=message,
+                    session_id=session_id, project_id=project_id,
+                    role="user", content=message,
                 )
             except Exception as e:
                 logger.warning("Failed to save user message to episodic: %s", e)
@@ -701,28 +486,284 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 agent, message, session_id, _send, skill_name=active_skill_name,
             )
 
-            # Save assistant response to episodic memory
             if full_response:
                 try:
                     await memory.episodic.save_message(
-                        session_id=session_id,
-                        project_id=project_id,
-                        role="assistant",
-                        content=full_response,
+                        session_id=session_id, project_id=project_id,
+                        role="assistant", content=full_response,
                         metadata={"route": route} if route else None,
                     )
                 except Exception as e:
                     logger.warning("Failed to save assistant message to episodic: %s", e)
 
-            # Track messages and trigger extraction if interval is set
             extraction_interval = settings.extraction_interval
             if extraction_interval > 0 and memory:
-                count = _session_message_counts.get(session_id, 0) + 2  # user + assistant
+                count = _session_message_counts.get(session_id, 0) + 2
                 _session_message_counts[session_id] = count
                 if count >= extraction_interval:
                     _session_message_counts[session_id] = 0
-                    # Fire-and-forget extraction
                     spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
+            return
+
+        if data.get("type") == "skill_decline":
+            suggestion_id = data.get("suggestion_id")
+            pending = _pending_suggestions.pop(suggestion_id, None)
+            if not pending:
+                await _send({"type": "error", "message": "Suggestion expired or not found"})
+                return
+            # Run the original message WITHOUT skill context
+            message = pending["message"]
+            session_id = pending["session_id"]
+            project_id = pending["project_id"]
+            skill_context = None
+            active_skill_name = None
+            try:
+                from skills import analytics as _sa
+                _sa.record_suggestion(pending["skill"], declined=True)
+            except Exception:
+                pass
+            await _send({"type": "session_start", "session_id": session_id})
+
+            provider = get_provider_for("agent")
+            memory = create_memory_manager(
+                project_id=project_id, session_id=session_id, provider=provider,
+            )
+            agent = await _build_agent(
+                elicit=broker.ask,
+                provider=provider,
+                memory_manager=memory,
+                project_id=project_id,
+                session_id=session_id,
+            )
+
+            try:
+                await memory.episodic.save_message(
+                    session_id=session_id, project_id=project_id,
+                    role="user", content=message,
+                )
+            except Exception as e:
+                logger.warning("Failed to save user message to episodic: %s", e)
+
+            full_response, route = await _stream_turn(
+                agent, message, session_id, _send, skill_name=active_skill_name,
+            )
+
+            if full_response:
+                try:
+                    await memory.episodic.save_message(
+                        session_id=session_id, project_id=project_id,
+                        role="assistant", content=full_response,
+                        metadata={"route": route} if route else None,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to save assistant message to episodic: %s", e)
+
+            extraction_interval = settings.extraction_interval
+            if extraction_interval > 0 and memory:
+                count = _session_message_counts.get(session_id, 0) + 2
+                _session_message_counts[session_id] = count
+                if count >= extraction_interval:
+                    _session_message_counts[session_id] = 0
+                    spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
+            return
+
+        # Model pin from the chat UI's picker ("auto" clears it).
+        if data.get("model_class") is not None:
+            from llm_config import router as chat_router
+            try:
+                chat_router.set_override(session_id, data.get("model_class"))
+            except ValueError as e:
+                await _send({"type": "error", "message": str(e)})
+                return
+
+        # "/model <class> [message]" — pin this conversation to a class.
+        reply, message, pinned = _model_command_reply(session_id, message)
+        if reply is not None:
+            await _send({"type": "session_start", "session_id": session_id})
+            await _send({"type": "model_pin", "task_class": pinned})
+            if not message:
+                await _send({"type": "text_delta", "content": reply})
+                await _send({"type": "done", "full_response": reply})
+                return
+
+        if not message:
+            await _send({"type": "error", "message": "Empty message"})
+            return
+
+        # Send session_id back to client
+        await _send({"type": "session_start", "session_id": session_id})
+
+        provider = get_provider_for("agent")
+        memory = create_memory_manager(
+            project_id=project_id,
+            session_id=session_id,
+            provider=provider,
+        )
+
+        # ── Skill resolution ─────────────────────────────────────
+        skill_context = None
+        active_skill_name = None
+
+        # 1. Check for explicit /skill-name invocation
+        explicit_skill, remaining_message = resolve_explicit(message)
+        if explicit_skill:
+            registry = get_skill_registry()
+            skill = registry.get(explicit_skill)
+            if skill:
+                active_skill_name = explicit_skill
+                skill_context = build_skill_context(skill, project_id=project_id)
+                message = remaining_message or message
+                try:
+                    from skills import analytics as _sa
+                    _sa.record_fire(explicit_skill, source="explicit")
+                except Exception:
+                    pass
+                await _send({
+                    "type": "skill_active",
+                    "skill": explicit_skill,
+                    "description": skill.manifest.description,
+                })
+        else:
+            # 2. Check for auto-discovery if enabled
+            try:
+                from utils.chat_settings import skill_discovery as _sd
+                discovery_mode = _sd(project_id)
+            except Exception:
+                discovery_mode = "off"
+
+            if discovery_mode in ("suggest", "auto"):
+                matches = resolve_auto(
+                    message,
+                    project_id=project_id,
+                    mode=SkillDiscoveryMode(discovery_mode),
+                    top_k=1,
+                )
+                if matches and matches[0]["score"] >= 3.0:
+                    best = matches[0]
+                    skill = best["skill"]
+                    if discovery_mode == "auto":
+                        active_skill_name = skill.name
+                        skill_context = build_skill_context(skill, project_id=project_id)
+                        try:
+                            from skills import analytics as _sa
+                            _sa.record_fire(skill.name, source="auto")
+                        except Exception:
+                            pass
+                        await _send({
+                            "type": "skill_active",
+                            "skill": skill.name,
+                            "description": skill.manifest.description,
+                            "auto": True,
+                        })
+                    else:
+                        # suggest mode — pause and wait for accept/decline
+                        suggestion_id = str(uuid.uuid4())
+                        _pending_suggestions[suggestion_id] = {
+                            "message": message,
+                            "session_id": session_id,
+                            "project_id": project_id,
+                            "skill": skill.name,
+                        }
+                        try:
+                            from skills import analytics as _sa
+                            _sa.record_suggestion(skill.name)
+                        except Exception:
+                            pass
+                        await _send({
+                            "type": "skill_suggestion",
+                            "skill": skill.name,
+                            "description": skill.manifest.description,
+                            "score": best["score"],
+                            "reason": best["reason"],
+                            "suggestion_id": suggestion_id,
+                        })
+                        # Don't run agent yet — wait for skill_accept or skill_decline
+                        return
+
+        agent = await _build_agent(
+            elicit=broker.ask,
+            provider=provider,
+            memory_manager=memory,
+            project_id=project_id,
+            session_id=session_id,
+            skill_context=skill_context,
+            active_skill_name=active_skill_name,
+        )
+
+        # Save user message to episodic memory
+        try:
+            await memory.episodic.save_message(
+                session_id=session_id,
+                project_id=project_id,
+                role="user",
+                content=message,
+            )
+        except Exception as e:
+            logger.warning("Failed to save user message to episodic: %s", e)
+
+        full_response, route = await _stream_turn(
+            agent, message, session_id, _send, skill_name=active_skill_name,
+        )
+
+        # Save assistant response to episodic memory
+        if full_response:
+            try:
+                await memory.episodic.save_message(
+                    session_id=session_id,
+                    project_id=project_id,
+                    role="assistant",
+                    content=full_response,
+                    metadata={"route": route} if route else None,
+                )
+            except Exception as e:
+                logger.warning("Failed to save assistant message to episodic: %s", e)
+
+        # Track messages and trigger extraction if interval is set
+        extraction_interval = settings.extraction_interval
+        if extraction_interval > 0 and memory:
+            count = _session_message_counts.get(session_id, 0) + 2  # user + assistant
+            _session_message_counts[session_id] = count
+            if count >= extraction_interval:
+                _session_message_counts[session_id] = 0
+                # Fire-and-forget extraction
+                spawn(_run_background_extraction(memory, project_id, session_id), name="extraction")
+
+
+    async def _turn(data: dict[str, Any]) -> None:
+        try:
+            await _handle(data)
+        except Exception as e:
+            logger.error(f"WebSocket turn error: {e}", exc_info=True)
+            await _send({"type": "error", "message": str(e)})
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                await _send({"type": "error", "message": "Invalid JSON"})
+                continue
+            kind = data.get("type")
+
+            # Handle keepalive pings from the frontend
+            if kind == "ping":
+                await _send({"type": "pong"})
+                continue
+
+            # The user answered an MCP server's request for input (a form or
+            # a link) raised by the turn that is running.
+            if kind == "elicitation_response":
+                await broker.answer(data.get("elicitation_id"), data.get("responses"))
+                continue
+
+            # The turn runs as a task so this loop keeps receiving while it
+            # streams: pings, and elicitation answers the turn is waiting for.
+            # The UI sends one message at a time; refuse a second one.
+            if turn is not None and not turn.done():
+                await _send({"type": "warning", "message": "A reply is still in progress."})
+                continue
+            turn = spawn(_turn(data), name="chat-turn")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {connection_id}")
@@ -733,6 +774,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
         except Exception:
             pass
     finally:
+        client_gone = True
+        broker.close()   # a turn waiting on a form gets None -> cancel
         _active_connections.pop(connection_id, None)
 
 

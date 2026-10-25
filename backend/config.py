@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     # https://pantheon.example.com:8443. Used for the MCP OAuth redirect_uri.
     # Empty = taken from the request that starts the OAuth flow.
     public_base_url: str = ""
+    # How long the chat waits for the user to answer an MCP server's request
+    # for input (a form or a link to open) before the call is cancelled.
+    mcp_elicitation_timeout_seconds: int = 600
 
     # Telegram
     telegram_bot_token: str = ""

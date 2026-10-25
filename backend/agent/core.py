@@ -287,8 +287,13 @@ class AgentCore:
         only_tools: set[str] | None = None,
         web_budget: int | None = None,
         channel: str | None = None,
+        elicit: Any = None,
     ):
         self.provider = provider
+        # How an MCP server asks the user for input mid-call
+        # (mcp_client.elicitation.Elicitor). Only a person at the web UI can
+        # answer a form, so it is dropped for bots and background turns.
+        self.elicit = elicit if (interactive and not is_bot_channel(channel)) else None
         # Where replies are shown: "web" (chat UI) or a messaging adapter's
         # name; None for background jobs. Picks the user's reply style
         # (Settings → About you, utils/user_profile).
@@ -330,6 +335,7 @@ class AgentCore:
         host_exec: bool = False,
         interactive: bool = False,
         channel: str | None = None,
+        elicit: Any = None,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -352,6 +358,7 @@ class AgentCore:
             host_exec=host_exec,
             interactive=interactive,
             channel=channel,
+            elicit=elicit,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -1219,6 +1226,7 @@ class AgentCore:
                             host_exec=self.host_exec,
                             channel=self.channel,
                             user_message=recent_user_text,
+                            elicit=self.elicit,
                         )
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
