@@ -220,6 +220,13 @@ async def lifespan(app: FastAPI):
     # Stop all messaging adapters cleanly
     await messaging_gw.shutdown()
 
+    # Close MCP subscription streams
+    try:
+        from mcp_client.manager import get_mcp_manager
+        await get_mcp_manager().shutdown()
+    except Exception:
+        logger.debug("MCP shutdown swallowed", exc_info=True)
+
     # Stop the task scheduler cleanly
     if scheduler.running:
         scheduler.shutdown(wait=False)

@@ -189,10 +189,18 @@ async def execute_tool(
         # Route MCP tool calls through the MCP manager
         if tool_name.startswith("mcp_"):
             try:
+                from mcp_client import task_store
                 from mcp_client.manager import get_mcp_manager
                 mgr = get_mcp_manager()
-                return await mgr.execute_tool(tool_name, tool_args, elicit=elicit, notify=notify,
-                                              cancel_event=cancel_event)
+                # Where a background task's result belongs if Pantheon
+                # restarts before it finishes (task_store / resume_tasks).
+                ctx = {"session_id": session_id, "project_id": project_id, "tool": tool_name} if session_id else None
+                token = task_store.CALL_CONTEXT.set(ctx)
+                try:
+                    return await mgr.execute_tool(tool_name, tool_args, elicit=elicit, notify=notify,
+                                                  cancel_event=cancel_event)
+                finally:
+                    task_store.CALL_CONTEXT.reset(token)
             except Exception as e:
                 logger.error("MCP tool dispatch failed for '%s': %s", tool_name, e)
                 return f"MCP tool error: {e}"
