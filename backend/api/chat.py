@@ -95,6 +95,8 @@ async def _build_agent(
             interactive=True,
             channel="web",
             elicit=elicit,
+            tool_status=tool_status,
+            cancel_events=cancel_events,
         )
     return AgentCore(
         provider=provider,
@@ -107,6 +109,8 @@ async def _build_agent(
         interactive=True,
         channel="web",
         elicit=elicit,
+        tool_status=tool_status,
+        cancel_events=cancel_events,
     )
 
 
@@ -466,6 +470,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # Jump straight to agent run with skill context
             agent = await _build_agent(
                 elicit=broker.ask,
+                tool_status=broker.tool_status,
+                cancel_events=broker.cancel_events,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -530,6 +536,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             )
             agent = await _build_agent(
                 elicit=broker.ask,
+                tool_status=broker.tool_status,
+                cancel_events=broker.cancel_events,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -682,6 +690,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
         agent = await _build_agent(
             elicit=broker.ask,
+            tool_status=broker.tool_status,
+            cancel_events=broker.cancel_events,
             provider=provider,
             memory_manager=memory,
             project_id=project_id,
@@ -755,6 +765,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # a link) raised by the turn that is running.
             if kind == "elicitation_response":
                 await broker.answer(data.get("elicitation_id"), data.get("responses"))
+                continue
+
+            # The user cancelled an MCP background task a tool call is waiting on.
+            if kind == "tool_cancel":
+                await broker.cancel_tool(data.get("tool_id"))
                 continue
 
             # The turn runs as a task so this loop keeps receiving while it

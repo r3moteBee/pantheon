@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # How long the chat waits for the user to answer an MCP server's request
     # for input (a form or a link to open) before the call is cancelled.
     mcp_elicitation_timeout_seconds: int = 600
+    # Longest one tool call waits on an MCP background task (tasks extension)
+    # before cancelling it; the agent turn is blocked meanwhile.
+    mcp_task_max_wait_seconds: int = 1800
 
     # Telegram
     telegram_bot_token: str = ""

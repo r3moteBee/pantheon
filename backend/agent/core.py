@@ -288,12 +288,21 @@ class AgentCore:
         web_budget: int | None = None,
         channel: str | None = None,
         elicit: Any = None,
+        tool_status: Any = None,
+        cancel_events: dict[str, asyncio.Event] | None = None,
     ):
         self.provider = provider
         # How an MCP server asks the user for input mid-call
         # (mcp_client.elicitation.Elicitor). Only a person at the web UI can
         # answer a form, so it is dropped for bots and background turns.
-        self.elicit = elicit if (interactive and not is_bot_channel(channel)) else None
+        web_person = interactive and not is_bot_channel(channel)
+        self.elicit = elicit if web_person else None
+        # Progress of an MCP background task (tasks extension) for the UI:
+        # async (tool_id, tool_name, status) -> None. `cancel_events` is
+        # shared with the chat layer: an Event per running tool_id that the
+        # user's cancel sets (mcp_client.tasks).
+        self.tool_status = tool_status if web_person else None
+        self.cancel_events = cancel_events if (web_person and cancel_events is not None) else None
         # Where replies are shown: "web" (chat UI) or a messaging adapter's
         # name; None for background jobs. Picks the user's reply style
         # (Settings → About you, utils/user_profile).
@@ -336,6 +345,8 @@ class AgentCore:
         interactive: bool = False,
         channel: str | None = None,
         elicit: Any = None,
+        tool_status: Any = None,
+        cancel_events: dict[str, asyncio.Event] | None = None,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -359,6 +370,8 @@ class AgentCore:
             interactive=interactive,
             channel=channel,
             elicit=elicit,
+            tool_status=tool_status,
+            cancel_events=cancel_events,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -1215,19 +1228,29 @@ class AgentCore:
                             "Call it again with the arguments as a single JSON object."
                         )
                     else:
-                        result = await execute_tool(
-                            tool_name=tool_name,
-                            tool_args=tool_args,
-                            memory_manager=self.memory_manager,
-                            project_id=self.project_id,
-                            session_id=self.session_id,
-                            last_assistant_text=last_assistant_text,
-                            interactive=self.interactive,
-                            host_exec=self.host_exec,
-                            channel=self.channel,
-                            user_message=recent_user_text,
-                            elicit=self.elicit,
-                        )
+                        notify = self._tool_notifier(tool_id, tool_name)
+                        cancel_event = asyncio.Event() if self.cancel_events is not None else None
+                        if cancel_event is not None:
+                            self.cancel_events[tool_id] = cancel_event
+                        try:
+                            result = await execute_tool(
+                                tool_name=tool_name,
+                                tool_args=tool_args,
+                                memory_manager=self.memory_manager,
+                                project_id=self.project_id,
+                                session_id=self.session_id,
+                                last_assistant_text=last_assistant_text,
+                                interactive=self.interactive,
+                                host_exec=self.host_exec,
+                                channel=self.channel,
+                                user_message=recent_user_text,
+                                elicit=self.elicit,
+                                notify=notify,
+                                cancel_event=cancel_event,
+                            )
+                        finally:
+                            if self.cancel_events is not None:
+                                self.cancel_events.pop(tool_id, None)
                     self._progress()
                     if tool_name in ("web_search", "web_fetch"):
                         web_evidence.update(evidence_from(tool_name, tool_args, result))
@@ -1348,6 +1371,17 @@ class AgentCore:
         except Exception as e:
             logger.error(f"Agent error: {e}", exc_info=True)
             yield {"type": "error", "message": str(e)}
+
+    def _tool_notifier(self, tool_id: str, tool_name: str):
+        """The `notify` callback for one tool call: forwards an MCP task's
+        progress to the chat UI tagged with the call it belongs to."""
+        if self.tool_status is None:
+            return None
+        tool_status = self.tool_status
+
+        async def notify(status: dict[str, Any]) -> None:
+            await tool_status(tool_id, tool_name, status)
+        return notify
 
     @staticmethod
     def _progress() -> None:
