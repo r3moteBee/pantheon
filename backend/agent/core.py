@@ -12,7 +12,8 @@ from typing import Any, AsyncGenerator
 from agent.follow_through import (MAX_NUDGES, announced_action, follow_through_nudge, unbacked_claim,
                                   unbacked_claim_nudge)
 from agent.task_intent import IMAGE_NOTE, future_time_note, future_timing, wants_image
-from agent.freshness import followup_needs_fresh, needs_fresh_facts, unknown_entities, wants_self_description
+from agent.freshness import (followup_needs_fresh, mcp_tools_for, needs_fresh_facts, unknown_entities,
+                             wants_self_description)
 from agent.output_filter import ImageFilter, allowed_from, sanitize
 from agent.sources import evidence_from, has_url, pick_sources
 from agent.history import SESSION_RECENT_MESSAGES, budget_history, resolve_budget
@@ -260,7 +261,11 @@ def _user_urls(message: str) -> list[str]:
 
 
 def _has_web_call(calls: list[dict]) -> bool:
-    return any(c.get("name") in ("web_search", "web_fetch") for c in calls)
+    """A round that looked something up: the built-in web tools, or any MCP
+    tool (an outside service answers from live data - a weather server, a
+    quotes feed), which the freshness guard accepts instead of a web search."""
+    return any(c.get("name") in ("web_search", "web_fetch") or str(c.get("name") or "").startswith("mcp_")
+               for c in calls)
 
 
 def _auto_search_call(user_message: str) -> dict:
@@ -939,7 +944,15 @@ class AgentCore:
                 messages.append({"role": "tool", "tool_call_id": pf["id"], "content": tool_results.for_model("web_fetch", result)})
             if urls:
                 fresh_question = False      # the page is the source; no web pre-search / round-1 guard
-            if fresh_question and get_settings().agent_pre_search:
+            # A connected MCP tool that covers the question (its description shares a
+            # word with it: "weather") gets the first shot: no pre-search, round 1
+            # calls it, and the guard only adds a web search if it did not look
+            # anything up. Asked for a 5-day forecast with Xweather connected, the
+            # pre-search ran first and the forecast tool second (2026-10-25).
+            mcp_lookups = mcp_tools_for(user_message, all_tools) if fresh_question else []
+            if mcp_lookups:
+                logger.info("Time-sensitive question left to round 1: MCP tool(s) cover it: %s", mcp_lookups)
+            if fresh_question and get_settings().agent_pre_search and not mcp_lookups:
                 # Time-sensitive questions get the current month/year in the query:
                 # with the user's bare words ("Who is the current PM of the UK?")
                 # engines ranked 2024 pages first and the answer went stale (politics

@@ -358,3 +358,43 @@ def followup_needs_fresh(message: str, history: list[dict]) -> bool:
         elif about_self(p) or len(p) > FOLLOWUP_MAX_CHARS:
             live = False
     return live
+
+
+# ── Connected MCP tools that cover a time-sensitive question ──────────────────
+
+# Words too common in tool descriptions to mean the tool covers the question.
+_LOOKUP_STOPWORDS = frozenset("""
+about access after again against also always another any around available based before being between both
+called cannot comprehensive current data date details each either every first from given have here information
+into just latest like list more most next number only other over please provide provided provides query
+real realtime real-time recent request requests result results return returns same search service should since
+some specific such supports than that their them then there these this those through time today tool tools under
+until update updates upon user users using value values what when where which while will with within without would
+your yours
+""".split())
+_WORD_RE = re.compile(r"[a-z][a-z-]{3,}")
+
+
+def _lookup_words(text: str) -> set[str]:
+    return {w for w in _WORD_RE.findall((text or "").lower()) if w not in _LOOKUP_STOPWORDS}
+
+
+def mcp_tools_for(message: str, tools: list[dict]) -> list[str]:
+    """Names of the mcp_* tools whose description (or name) shares a
+    distinctive word with the question - "weather" for an Xweather forecast
+    tool. When one exists, a time-sensitive question is left to round 1 so
+    the model can call it instead of a pre-emptive web search; the round-1
+    guard still falls back to the web if the model looks nothing up."""
+    words = _lookup_words(message)
+    if not words:
+        return []
+    hits: list[str] = []
+    for t in tools or []:
+        fn = t.get("function") or {}
+        name = str(fn.get("name") or "")
+        if not name.startswith("mcp_"):
+            continue
+        haystack = _lookup_words(f"{name.replace('_', ' ')} {fn.get('description') or ''}")
+        if words & haystack:
+            hits.append(name)
+    return hits
