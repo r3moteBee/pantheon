@@ -231,7 +231,7 @@ async def test_start_oauth_records_registration_and_keeps_cimd_note():
     prm = oauth.ResourceMetadata(resource="https://mcp.example/mcp", authorization_servers=["https://as.example"])
     dcr = AsyncMock(return_value=oauth.RegisteredClient(client_id="dcr-3", client_secret=None,
                                                         token_endpoint_auth_method="none"))
-    with patch.object(oauth, "probe_for_oauth", AsyncMock(return_value="https://mcp.example/.well-known/prm")), \
+    with patch.object(oauth, "probe_challenge", AsyncMock(return_value=oauth.BearerChallenge(resource_metadata="https://mcp.example/.well-known/prm"))), \
          patch.object(oauth, "fetch_resource_metadata", AsyncMock(return_value=prm)), \
          patch.object(oauth, "fetch_auth_server_metadata", AsyncMock(return_value=_as(cimd=True))), \
          patch.object(oauth, "register_client", dcr), \

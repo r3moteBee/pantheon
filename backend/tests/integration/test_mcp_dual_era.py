@@ -565,7 +565,7 @@ async def test_start_oauth_reuses_client_for_same_issuer_and_reregisters_on_chan
         oauth.RegisteredClient(client_id="c2", client_secret=None, token_endpoint_auth_method="none"),
     ])
     with patch.object(MCPManager, "_save_configs"), \
-         patch.object(oauth, "probe_for_oauth", AsyncMock(return_value="https://mcp.example/.well-known/prm")), \
+         patch.object(oauth, "probe_challenge", AsyncMock(return_value=oauth.BearerChallenge(resource_metadata="https://mcp.example/.well-known/prm"))), \
          patch.object(oauth, "fetch_resource_metadata", AsyncMock(return_value=prm)), \
          patch.object(oauth, "fetch_auth_server_metadata", AsyncMock(side_effect=[as1, as1, as2])), \
          patch.object(oauth, "register_client", register), \
