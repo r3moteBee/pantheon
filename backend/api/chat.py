@@ -66,11 +66,15 @@ async def _build_agent(
     skill_context=None,
     active_skill_name=None,
     elicit=None,
+    tool_status=None,
+    cancel_events=None,
 ):
     """Pick AgentCore() vs AgentCore.from_session() based on history.
 
     ``elicit`` (mcp_client.elicitation.Elicitor) is how an MCP server asks
-    the user for input mid-call; only the WebSocket chat can pass one.
+    the user for input mid-call; ``tool_status`` / ``cancel_events`` carry an
+    MCP background task's progress and the user's cancel. Only the WebSocket
+    chat passes them.
 
     First turn: empty working_memory.
     Resume / subsequent turns: rehydrate working_memory from messages table
@@ -95,6 +99,8 @@ async def _build_agent(
             interactive=True,
             channel="web",
             elicit=elicit,
+            tool_status=tool_status,
+            cancel_events=cancel_events,
         )
     return AgentCore(
         provider=provider,
@@ -107,6 +113,8 @@ async def _build_agent(
         interactive=True,
         channel="web",
         elicit=elicit,
+        tool_status=tool_status,
+        cancel_events=cancel_events,
     )
 
 
@@ -466,6 +474,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # Jump straight to agent run with skill context
             agent = await _build_agent(
                 elicit=broker.ask,
+                tool_status=broker.tool_status,
+                cancel_events=broker.cancel_events,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -530,6 +540,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             )
             agent = await _build_agent(
                 elicit=broker.ask,
+                tool_status=broker.tool_status,
+                cancel_events=broker.cancel_events,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -682,6 +694,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
 
         agent = await _build_agent(
             elicit=broker.ask,
+            tool_status=broker.tool_status,
+            cancel_events=broker.cancel_events,
             provider=provider,
             memory_manager=memory,
             project_id=project_id,
@@ -755,6 +769,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # a link) raised by the turn that is running.
             if kind == "elicitation_response":
                 await broker.answer(data.get("elicitation_id"), data.get("responses"))
+                continue
+
+            # The user cancelled an MCP background task a tool call is waiting on.
+            if kind == "tool_cancel":
+                await broker.cancel_tool(data.get("tool_id"))
                 continue
 
             # The turn runs as a task so this loop keeps receiving while it

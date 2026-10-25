@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { ChevronDown, ChevronRight, Zap, Brain, FileText, File } from 'lucide-react'
+import { ChevronDown, ChevronRight, Zap, Brain, FileText, File, Loader2 } from 'lucide-react'
 import SandboxedHtml from '../SandboxedHtml'
 import Markdown from '../Markdown'
 import { useStore } from '../../store'
@@ -135,7 +135,36 @@ function GeneratedImages({ ids, caption }) {
 // is only ever rendered by the streaming turn: it is dropped from the
 // finished message (useChatSocket.persistedToolCalls) because the backend
 // doesn't store it, so history never has it either.
-export default function ToolCallBlock({ toolCall }) {
+// A tool call waiting on an MCP background task (tasks extension): the
+// server's state and message, how long it has run, and a Cancel that sends
+// tasks/cancel. Gone once the result arrives.
+function TaskStatusLine({ status, onCancel }) {
+  const label = { working: 'Running on the server', input_required: 'Waiting for your input', cancelled: 'Cancelling' }[status.state] || status.state
+  const minutes = Math.floor((status.elapsed || 0) / 60)
+  const seconds = String((status.elapsed || 0) % 60).padStart(2, '0')
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-gray-900 border-t border-gray-800 text-gray-300" role="status">
+      <span className="flex items-center gap-1.5">
+        <Loader2 className="w-3 h-3 animate-spin text-sky-400" aria-hidden="true" />
+        <span>Background task · {label}</span>
+      </span>
+      {status.message && <span className="text-gray-400 truncate max-w-[60%]" title={status.message}>{status.message}</span>}
+      <span className="text-gray-500">{minutes}:{seconds}</span>
+      {onCancel && status.state !== 'cancelled' && (
+        <button
+          type="button"
+          onClick={() => onCancel()}
+          disabled={!!status.cancelling}
+          className="ml-auto px-2 py-0.5 rounded border border-gray-700 hover:bg-gray-800 disabled:opacity-50 text-gray-300"
+        >
+          {status.cancelling ? 'Cancelling…' : 'Cancel task'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+export default function ToolCallBlock({ toolCall, onCancel }) {
   const [expanded, setExpanded] = useState(false)
   const isContextLoad = toolCall.name === 'context_loaded'
   const isShowFile = toolCall.name === 'show_file'
@@ -168,6 +197,9 @@ export default function ToolCallBlock({ toolCall }) {
         </span>
         {expanded ? <ChevronDown className="w-3 h-3 ml-auto text-gray-400" /> : <ChevronRight className="w-3 h-3 ml-auto text-gray-400" />}
       </button>
+      {toolCall.status && !toolCall.result && (
+        <TaskStatusLine status={toolCall.status} onCancel={onCancel ? () => onCancel(toolCall.id) : null} />
+      )}
       {expanded && (
         <div className="px-3 py-2 bg-gray-900 space-y-2">
           {!isContextLoad && toolCall.args && Object.keys(toolCall.args).length > 0 && (

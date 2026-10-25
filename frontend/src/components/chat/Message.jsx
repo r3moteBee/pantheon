@@ -177,7 +177,7 @@ export default function Message({ msg, onSaveMessage }) {
 
 // The in-flight assistant turn: route badge, active skill, typing dots,
 // tool calls so far and the streamed text.
-export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, content }) {
+export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, content, onCancelTool }) {
   const mdComponents = useChatMarkdownComponents()
   return (
     <div className="flex justify-start mb-4">
@@ -202,7 +202,7 @@ export function StreamingMessage({ liveRoute, activeSkillBadge, toolCalls, conte
         </div>
 
         {toolCalls.map((tc, i) => (
-          <ToolCallBlock key={i} toolCall={tc} />
+          <ToolCallBlock key={i} toolCall={tc} onCancel={onCancelTool} />
         ))}
 
         {content && (

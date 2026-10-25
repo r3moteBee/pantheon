@@ -490,6 +490,11 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
                 MCP {conn.protocol_version}{conn.protocol_era === 'legacy' ? ' · legacy' : ''}
               </span>
             )}
+            {(conn.extensions || []).includes('io.modelcontextprotocol/tasks') && (
+              <span title="The server may run tools as background tasks; Pantheon polls them and shows their progress in the chat">
+                tasks
+              </span>
+            )}
             {conn.auth_type === 'oauth2' ? (
               conn.oauth_status === 'ok' ? (
                 <span className="flex items-center gap-0.5 text-emerald-500">

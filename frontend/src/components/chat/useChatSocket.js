@@ -17,6 +17,8 @@ import { createChatSocket } from '../../api/client'
 //   pendingElicitation     an MCP server's mid-call request for input (form
 //                          or link) the running turn waits on, or null
 //   answerElicitation(responses) / declineElicitation() / cancelElicitation()
+//   cancelTool(toolId)     cancel the MCP background task a tool call waits on
+//                          (its progress arrives as tool_status on the call)
 //   modelClass, setModelClass   chat mode = router pin ('auto' = unpinned),
 //                               remembered per project in localStorage
 // The tool calls a finished turn keeps. `context_loaded` is AgentCore's
@@ -139,7 +141,17 @@ export default function useChatSocket() {
         case 'tool_result':
           useStore.setState((state) => ({
             currentToolCalls: state.currentToolCalls.map((tc) =>
-              tc.id === event.tool_id ? { ...tc, result: event.result } : tc
+              tc.id === event.tool_id ? { ...tc, result: event.result, status: null } : tc
+            ),
+          }))
+          break
+        case 'tool_status':
+          // An MCP background task behind this tool call: state, message, elapsed.
+          useStore.setState((state) => ({
+            currentToolCalls: state.currentToolCalls.map((tc) =>
+              tc.id === event.tool_id
+                ? { ...tc, status: { state: event.state, message: event.message, elapsed: event.elapsed_s, taskId: event.task_id } }
+                : tc
             ),
           }))
           break
@@ -226,7 +238,18 @@ export default function useChatSocket() {
   const declineElicitation = useCallback(() => answerAllWith('decline'), [answerAllWith])
   const cancelElicitation = useCallback(() => answerAllWith('cancel'), [answerAllWith])
 
+  // Cancel the MCP background task a running tool call is waiting on.
+  const cancelTool = useCallback((toolId) => {
+    send(JSON.stringify({ type: 'tool_cancel', tool_id: toolId }))
+    useStore.setState((state) => ({
+      currentToolCalls: state.currentToolCalls.map((tc) =>
+        tc.id === toolId && tc.status ? { ...tc, status: { ...tc.status, cancelling: true } } : tc
+      ),
+    }))
+  }, [send])
+
   return {
+    cancelTool,
     send,
     close,
     liveRoute,

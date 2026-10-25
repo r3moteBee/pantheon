@@ -75,7 +75,8 @@ async def test_form_elicitation_answered_and_retried_with_state():
     assert len(set(ids)) == 2
     for m, _h, b in srv.requests:
         caps = b["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"]
-        assert caps == {"elicitation": {"form": {}, "url": {}}}, m
+        assert caps == {"elicitation": {"form": {}, "url": {}},
+                        "extensions": {"io.modelcontextprotocol/tasks": {}}}, m
     # What the UI was asked.
     assert len(prompts) == 1 and prompts[0].connection == "t" and prompts[0].tool == "echo" and prompts[0].round == 1
     pub = prompts[0].public()
@@ -182,7 +183,8 @@ async def test_without_elicitor_capability_is_omitted_and_request_reported():
     assert res["is_error"] and len(calls) == 1
     assert "needs user input" in res["text"] and "fill in name, notify" in res["text"] and "web chat" in res["text"]
     call = [b for m, _h, b in srv.requests if m == "tools/call"][0]
-    assert call["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"] == {}
+    assert call["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"] == {
+        "extensions": {"io.modelcontextprotocol/tasks": {}}}
 
 
 @pytest.mark.asyncio

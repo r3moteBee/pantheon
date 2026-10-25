@@ -296,6 +296,7 @@ class MCPManager:
                 # (2026-07-28, stateless) or "legacy" (handshake + session).
                 "protocol_version": live.protocol_version if live else None,
                 "protocol_era": live.era if live else None,
+                "extensions": list(live.server_extensions) if live else [],
                 "server": dict(live.server_info) if live and live.server_info else None,
                 "request_interval_ms": cfg.get("request_interval_ms", 1000),
                 "excluded_tools": cfg.get("excluded_tools", []),
@@ -681,7 +682,8 @@ class MCPManager:
         return f"[{why}. Falling back to built-in web search.]\n\n{await _web_search(query)}"
 
     async def execute_tool(self, prefixed_name: str, arguments: dict[str, Any], *,
-                           elicit: Any = None) -> str:
+                           elicit: Any = None, notify: Any = None,
+                           cancel_event: Any = None) -> str:
         """Execute an MCP tool by its prefixed name, for the LLM.
 
         Every call is metered against its connection's budget
@@ -691,6 +693,8 @@ class MCPManager:
         ``elicit`` (mcp_client.elicitation.Elicitor) lets a modern server
         ask the user for input mid-call; None = the capability is not
         declared and such a request is reported to the model instead.
+        ``notify`` receives task progress and ``cancel_event`` cancels a
+        running task (tasks extension, mcp_client.tasks).
         """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
@@ -712,7 +716,8 @@ class MCPManager:
             )
 
         try:
-            call_result = await client.call_tool(tool_name, arguments, elicit=elicit)
+            call_result = await client.call_tool(tool_name, arguments, elicit=elicit, notify=notify,
+                                                 cancel_event=cancel_event)
         except Exception as e:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"

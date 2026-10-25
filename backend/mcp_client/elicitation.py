@@ -348,6 +348,10 @@ class ElicitationBroker:
         self._send = send
         self.timeout = timeout
         self._pending: dict[str, tuple[ElicitationPrompt, asyncio.Future]] = {}
+        # Tasks extension (mcp_client.tasks): one Event per tool call that
+        # is waiting on a background task, keyed by the chat's tool_id;
+        # AgentCore fills it in, cancel_tool() sets it.
+        self.cancel_events: dict[str, asyncio.Event] = {}
 
     @property
     def pending(self) -> int:
@@ -386,8 +390,24 @@ class ElicitationBroker:
             fut.set_result(clean)
         return True
 
+    async def tool_status(self, tool_id: str, tool_name: str, status: dict[str, Any]) -> None:
+        """Progress of an MCP background task behind one tool call -> UI."""
+        await self._send({"type": "tool_status", "tool_id": tool_id, "name": tool_name, **status})
+
+    async def cancel_tool(self, tool_id: Any) -> bool:
+        """The user asked to cancel the task a tool call is waiting on."""
+        ev = self.cancel_events.get(str(tool_id or ""))
+        if ev is None:
+            await self._send({"type": "warning", "message": "That tool call is no longer running."})
+            return False
+        ev.set()
+        return True
+
     def close(self) -> None:
         for _prompt, fut in list(self._pending.values()):
             if not fut.done():
                 fut.cancel()
         self._pending.clear()
+        for ev in self.cancel_events.values():
+            ev.set()   # nobody is watching: let a waiting task be cancelled
+        self.cancel_events.clear()

@@ -190,6 +190,7 @@ export default function Chat() {
             activeSkillBadge={socket.activeSkillBadge}
             toolCalls={currentToolCalls}
             content={streamingContent}
+            onCancelTool={socket.cancelTool}
           />
         )}
         {/* An MCP server's request for input: the turn waits on this form */}

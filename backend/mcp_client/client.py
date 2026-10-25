@@ -24,9 +24,12 @@ tokens come from a ``token_getter`` callback.
 Elicitation (MRTR ``input_required`` results carrying ``elicitation/create``
 requests) is answered through the ``elicit`` callback a caller passes to
 ``call_tool`` (``mcp_client/elicitation.py``); the capability is declared
-only on calls that have one. Not implemented yet: the tasks extension,
-``subscriptions/listen``, resources and prompts, and legacy (2025-11-25)
-server-initiated elicitation, which needs a listening stream.
+only on calls that have one. The tasks extension (``mcp_client/tasks.py``)
+is always declared: a ``resultType: "task"`` answer is polled to its end
+inside ``call_tool`` (progress via ``notify``, cancel via ``cancel_event``,
+task-side input through the same elicitor). Not implemented yet:
+``subscriptions/listen`` (task notifications are polled instead), resources
+and prompts, and legacy (2025-11-25) server-initiated elicitation / tasks.
 """
 from __future__ import annotations
 
@@ -39,6 +42,7 @@ from typing import Any, Awaitable, Callable
 
 from mcp_client import elicitation as elicit_mod
 from mcp_client import schema as schema_mod
+from mcp_client import tasks as tasks_mod
 from utils.http import pooled_client
 from utils.progress import report_progress
 
@@ -54,13 +58,14 @@ LEGACY_PROTOCOL_VERSION = "2025-11-25"
 MCP_PROTOCOL_VERSION = MODERN_PROTOCOL_VERSIONS[0]
 
 CLIENT_INFO = {"name": "pantheon", "version": "1.0.0"}
-# Declared on every modern request. `elicitation` (form + url) is added when
-# the request can be answered by a person - server/discover, tools/list and a
-# tools/call made with an `elicit` callback; a tools/call from a bot or a
-# background job omits it, so the server MUST NOT ask (spec: never rely on
-# undeclared capabilities). Phase 3 adds `extensions:
-# {"io.modelcontextprotocol/tasks": {}}`.
-CLIENT_CAPABILITIES: dict[str, Any] = {}
+# Declared on every modern request. The tasks extension
+# (`extensions: {"io.modelcontextprotocol/tasks": {}}`) is always declared:
+# polling is in-process, so any caller can wait on a task. `elicitation`
+# (form + url) is added only when the request can be answered by a person -
+# server/discover, tools/list and a tools/call made with an `elicit`
+# callback; a tools/call from a bot or a background job omits it, so the
+# server MUST NOT ask (spec: never rely on undeclared capabilities).
+CLIENT_CAPABILITIES: dict[str, Any] = {"extensions": {tasks_mod.TASKS_EXTENSION: {}}}
 
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_CLIENT_INFO = "io.modelcontextprotocol/clientInfo"
@@ -136,6 +141,8 @@ class MCPClient:
         self.negotiated_protocol_version: str | None = None
         self.server_info: dict[str, Any] = {}
         self.server_capabilities: dict[str, Any] = {}
+        # Extension identifiers a modern server advertised (e.g. tasks).
+        self.server_extensions: list[str] = []
         self.tools: list[dict[str, Any]] = []
         # tools/list freshness (modern: `ttlMs` on the result; 0 = no hint).
         self.tools_ttl_ms: int = 0
@@ -559,6 +566,8 @@ class MCPClient:
         self.supported_versions = [v for v in (result.get("supportedVersions") or []) if isinstance(v, str)]
         self.server_capabilities = result.get("capabilities", {}) or {}
         self.instructions = str(result.get("instructions") or "")
+        exts = self.server_capabilities.get("extensions")
+        self.server_extensions = sorted(k for k in exts) if isinstance(exts, dict) else []
         info = (result.get("_meta") or {}).get(META_SERVER_INFO)
         if isinstance(info, dict):
             self.server_info = info
@@ -686,6 +695,9 @@ class MCPClient:
     async def call_tool(
         self, tool_name: str, arguments: dict[str, Any] | None = None,
         *, elicit: elicit_mod.Elicitor | None = None,
+        notify: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        cancel_event: asyncio.Event | None = None,
+        max_wait_s: float | None = None,
     ) -> dict[str, Any]:
         """Call a tool on the remote MCP server.
 
@@ -707,8 +719,11 @@ class MCPClient:
         retried with their ``inputResponses`` (up to MAX_INPUT_ROUNDS times;
         the elicitation capability is declared on the call only when
         ``elicit`` is given). Without ``elicit`` it is reported to the model
-        as an error naming what the server asked. "task" is likewise
-        reported; any other value is invalid.
+        as an error naming what the server asked. "task" (the tasks
+        extension) is polled in ``_run_task`` until it is terminal: progress
+        goes to ``notify``, ``cancel_event`` sends ``tasks/cancel``, and a
+        task that needs input is answered through ``elicit`` + ``tasks/update``.
+        Any other value is invalid.
         """
         await self._ensure_ready()
         if self.is_modern:
@@ -800,12 +815,19 @@ class MCPClient:
                 result["content"] = [{"type": "text", "text": note}] + list(result.get("content") or [])
                 answered = []
             if rtype == "task":
-                return {
-                    "text": (f"[MCP server '{self.name}' started tool '{tool_name}' as a background task "
-                             f"(task {result.get('taskId', '?')}). This client cannot track MCP tasks yet; "
-                             "the result is not available.]"),
-                    "structured": None, "is_error": True,
-                }
+                outcome = await self._run_task(tool_name, result, elicit=elicit, notify=notify,
+                                               cancel_event=cancel_event, max_wait_s=max_wait_s)
+                if isinstance(outcome, str):
+                    note = (f"[The user {'; then '.join(answered)}.] " if answered else "")
+                    return {"text": note + outcome, "structured": None, "is_error": True}
+                result, task_notes = outcome
+                answered.extend(task_notes)
+                rtype = result.get("resultType") if isinstance(result, dict) else None
+                if answered:
+                    result = dict(result)
+                    result["content"] = [{"type": "text", "text": f"[The user {'; then '.join(answered)}.]"}] \
+                        + list(result.get("content") or [])
+                    answered = []
             if rtype not in (None, "complete"):
                 raise MCPError(f"unknown resultType {rtype!r} from server", code=-32600)
 
@@ -849,6 +871,120 @@ class MCPClient:
 
         return last
 
+    async def _run_task(
+        self, tool_name: str, created: dict[str, Any], *,
+        elicit: elicit_mod.Elicitor | None,
+        notify: Callable[[dict[str, Any]], Awaitable[None]] | None,
+        cancel_event: asyncio.Event | None,
+        max_wait_s: float | None,
+    ) -> tuple[dict[str, Any], list[str]] | str:
+        """Drive a CreateTaskResult to its end.
+
+        Returns (the task's CallToolResult, notes on input the user gave) on
+        ``completed``; a model-facing error string when the task was
+        cancelled (by the user, by us, or by the server), expired, or kept
+        asking; raises MCPError on ``failed`` or a broken task object.
+        """
+        try:
+            task = tasks_mod.parse_task(created)
+        except tasks_mod.InvalidTask as why:
+            raise MCPError(f"invalid task from server: {why}", code=-32600)
+        task_id = task["taskId"]
+        if max_wait_s is None:
+            try:
+                from config import get_settings
+                max_wait_s = float(get_settings().mcp_task_max_wait_seconds)
+            except Exception:
+                max_wait_s = tasks_mod.DEFAULT_MAX_WAIT_S
+        started = time.monotonic()
+        answered_keys: set[str] = set()
+        notes: list[str] = []
+        polls = 0
+        logger.info("MCP '%s' tool %s runs as task %s (ttl=%s, poll=%s ms)", self.name, tool_name,
+                    task_id, task.get("ttlMs"), task.get("pollIntervalMs"))
+
+        async def _tell(extra: dict[str, Any] | None = None) -> None:
+            if notify is None:
+                return
+            try:
+                await notify({**tasks_mod.public_status(task, elapsed_s=time.monotonic() - started), **(extra or {})})
+            except Exception:
+                logger.debug("task notify failed", exc_info=True)
+
+        async def _cancel(reason: str) -> None:
+            try:
+                await self._send_jsonrpc("tasks/cancel", {"taskId": task_id}, tool_name=task_id)
+            except Exception as e:
+                logger.warning("MCP '%s' tasks/cancel %s failed: %s", self.name, task_id, e)
+            logger.info("MCP '%s' task %s cancelled: %s", self.name, task_id, reason)
+
+        while True:
+            status = task["status"]
+            if status == tasks_mod.STATUS_COMPLETED:
+                await _tell()
+                return dict(task["result"]), notes
+            if status == tasks_mod.STATUS_FAILED:
+                err = task["error"]
+                await _tell()
+                raise MCPError(str(err.get("message") or "task failed"), code=int(err.get("code", -32603)))
+            if status == tasks_mod.STATUS_CANCELLED:
+                await _tell()
+                return (f"[MCP server '{self.name}' cancelled the background task for '{tool_name}'"
+                        f"{': ' + str(task.get('statusMessage')) if task.get('statusMessage') else ''}.]")
+            if cancel_event is not None and cancel_event.is_set():
+                await _cancel("user")
+                await _tell({"state": "cancelled"})
+                return f"[The user cancelled the background task for '{tool_name}'; it did not finish.]"
+            if tasks_mod.expired(task):
+                await _cancel("ttl elapsed")
+                return f"[MCP server '{self.name}' let the background task for '{tool_name}' expire before it finished.]"
+            if time.monotonic() - started > max_wait_s:
+                await _cancel("max wait")
+                return (f"[Gave up waiting on the background task for '{tool_name}' after "
+                        f"{int(max_wait_s)} s and cancelled it.]")
+            if status == tasks_mod.STATUS_INPUT_REQUIRED:
+                fresh = {k: v for k, v in task["inputRequests"].items() if k not in answered_keys}
+                if fresh:
+                    try:
+                        parsed = elicit_mod.parse_requests(fresh)
+                    except elicit_mod.UnsupportedInputRequest as why:
+                        await _cancel(f"unsupported input request: {why}")
+                        return (f"[MCP server '{self.name}' needed input this client cannot provide for the "
+                                f"background task of '{tool_name}' ({why}); the task was cancelled.]")
+                    if elicit is None:
+                        await _cancel("no way to ask the user")
+                        return (f"[MCP server '{self.name}' needed user input for the background task of "
+                                f"'{tool_name}' - it asked to {elicit_mod.describe_requests(parsed)}. Forms can't "
+                                "be shown here, so the task was cancelled; it works from the web chat.]")
+                    await _tell()
+                    prompt = elicit_mod.ElicitationPrompt(connection=self.name, tool=tool_name, requests=parsed,
+                                                          round=len(answered_keys) + 1)
+                    responses = await elicit(prompt)
+                    if responses is None:
+                        responses = elicit_mod.cancel_all(prompt)
+                    notes.append(elicit_mod.summarize_answers(prompt, responses))
+                    answered_keys.update(fresh.keys())
+                    await self._send_jsonrpc("tasks/update", {"taskId": task_id, "inputResponses": responses},
+                                             tool_name=task_id)
+            else:
+                await _tell()
+            delay = tasks_mod.poll_delay(task)
+            if cancel_event is not None:
+                try:
+                    await asyncio.wait_for(cancel_event.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(delay)
+            polls += 1
+            got = await self._send_jsonrpc("tasks/get", {"taskId": task_id}, retry_on_429=True, tool_name=task_id)
+            try:
+                task = tasks_mod.parse_task(got)
+            except tasks_mod.InvalidTask as why:
+                raise MCPError(f"invalid tasks/get reply: {why}", code=-32600)
+            if task["taskId"] != task_id:
+                raise MCPError(f"tasks/get answered for task {task['taskId']}, asked {task_id}", code=-32600)
+
     @staticmethod
     def _is_rate_limited_result(text: str) -> bool:
         """Detect rate-limit errors embedded in tool result text."""
@@ -882,6 +1018,7 @@ class MCPClient:
                 "server": self.server_info,
                 "protocol_version": self.protocol_version,
                 "protocol_era": self.era,
+                "extensions": list(self.server_extensions),
                 "tools_count": len(tools),
                 "tool_names": [t.get("name") for t in tools],
             }

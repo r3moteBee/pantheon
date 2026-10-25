@@ -56,6 +56,9 @@ class FakeServer:
         self.sessions: set[str] = set()
         self.list_calls = 0
         self.handlers: dict[str, object] = {}  # tool name -> fn(args, body) -> result dict
+        # Extra modern methods (tasks/*): method -> fn(params, headers) -> result dict,
+        # or an httpx.Response to send as is.
+        self.methods: dict[str, object] = {}
 
     # ── helpers ──
     @staticmethod
@@ -140,6 +143,9 @@ class FakeServer:
             return self._rpc(rid, {"resultType": "complete",
                                    "content": [{"type": "text", "text": f"ok:{json.dumps(args, sort_keys=True)}"}],
                                    "structuredContent": {"echo": args}, "_meta": srv_meta})
+        if method in self.methods:
+            out = self.methods[method](body.get("params") or {}, headers)
+            return out if isinstance(out, httpx.Response) else self._rpc(rid, out)
         return self._rpc(rid, error={"code": -32601, "message": f"Method not found: {method}"}, status=404)
 
     def _legacy(self, method, headers, body, rid):
@@ -201,10 +207,12 @@ async def test_modern_server_no_handshake_and_mirrored_headers():
         meta = b["params"]["_meta"]
         assert meta["io.modelcontextprotocol/protocolVersion"] == MODERN
         assert meta["io.modelcontextprotocol/clientInfo"]["name"] == "pantheon"
-        # Elicitation is declared where a person could answer (discover,
-        # list) and on a tools/call only when the caller passed an elicitor.
+        # The tasks extension is always declared; elicitation where a person
+        # could answer (discover, list) and on a tools/call only when the
+        # caller passed an elicitor.
         caps = meta["io.modelcontextprotocol/clientCapabilities"]
-        assert caps == ({} if method == "tools/call" else {"elicitation": {"form": {}, "url": {}}})
+        tasks = {"extensions": {"io.modelcontextprotocol/tasks": {}}}
+        assert caps == (tasks if method == "tools/call" else {**tasks, "elicitation": {"form": {}, "url": {}}})
         assert h["mcp-protocol-version"] == MODERN and h["mcp-method"] == method
         assert "mcp-session-id" not in h
     assert srv.requests[-1][1]["mcp-name"] == "echo"
@@ -419,8 +427,10 @@ async def test_task_result_and_unknown_result_type():
                                          "ttlMs": 60000, "pollIntervalMs": 1000}
     c = make_client()
     with serve(srv):
+        # A task whose ttl has long passed (tasks extension, test_mcp_tasks.py
+        # covers the live paths): the client gives up and tries to cancel it.
         res = await c.call_tool("echo", {})
-        assert res["is_error"] and "task t-1" in res["text"]
+        assert res["is_error"] and "expire" in res["text"]
         srv.handlers["echo"] = lambda a, b: {"resultType": "banana"}
         with pytest.raises(MCPError):
             await c.call_tool("echo", {})
