@@ -161,6 +161,7 @@ async def execute_tool(
     host_exec: bool = False,
     channel: str | None = None,
     user_message: str = "",
+    elicit: Any = None,
 ) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -168,6 +169,8 @@ async def execute_tool(
     it gates actions that assume the user just approved something.
     ``host_exec`` must be the caller's AgentCore.host_exec: host-execution
     tools are refused here too, not only hidden from the schema.
+    ``elicit`` (mcp_client.elicitation.Elicitor, web chat only) lets an MCP
+    server ask the user for input mid-call.
     """
     refusal = bot_refusal(tool_name, tool_args, channel)
     if refusal:
@@ -184,7 +187,7 @@ async def execute_tool(
             try:
                 from mcp_client.manager import get_mcp_manager
                 mgr = get_mcp_manager()
-                return await mgr.execute_tool(tool_name, tool_args)
+                return await mgr.execute_tool(tool_name, tool_args, elicit=elicit)
             except Exception as e:
                 logger.error("MCP tool dispatch failed for '%s': %s", tool_name, e)
                 return f"MCP tool error: {e}"

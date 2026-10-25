@@ -680,13 +680,17 @@ class MCPManager:
         from agent.tools.web import _web_search
         return f"[{why}. Falling back to built-in web search.]\n\n{await _web_search(query)}"
 
-    async def execute_tool(self, prefixed_name: str, arguments: dict[str, Any]) -> str:
+    async def execute_tool(self, prefixed_name: str, arguments: dict[str, Any], *,
+                           elicit: Any = None) -> str:
         """Execute an MCP tool by its prefixed name, for the LLM.
 
         Every call is metered against its connection's budget
         (mcp_client.budget). Over budget, the call is refused — search
         tools fall back to the built-in web search — and past 80% of a
         limit the result carries a note so the agent can pace itself.
+        ``elicit`` (mcp_client.elicitation.Elicitor) lets a modern server
+        ask the user for input mid-call; None = the capability is not
+        declared and such a request is reported to the model instead.
         """
         resolved = self.resolve_tool_call(prefixed_name)
         if not resolved:
@@ -708,7 +712,7 @@ class MCPManager:
             )
 
         try:
-            call_result = await client.call_tool(tool_name, arguments)
+            call_result = await client.call_tool(tool_name, arguments, elicit=elicit)
         except Exception as e:
             logger.error("MCP tool '%s' on '%s' failed: %s", tool_name, client.name, e)
             return f"MCP tool error: {e}"

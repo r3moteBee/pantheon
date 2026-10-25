@@ -21,9 +21,12 @@ Lifecycle used by the manager: ``initialize()`` (= make ready in whichever
 era) → ``discover_tools()`` → ``call_tool()``. Optional OAuth 2.1 bearer
 tokens come from a ``token_getter`` callback.
 
-Not implemented yet: elicitation (MRTR ``input_required`` results are
-reported to the model as an error naming what the server asked for), the
-tasks extension, ``subscriptions/listen``, resources and prompts.
+Elicitation (MRTR ``input_required`` results carrying ``elicitation/create``
+requests) is answered through the ``elicit`` callback a caller passes to
+``call_tool`` (``mcp_client/elicitation.py``); the capability is declared
+only on calls that have one. Not implemented yet: the tasks extension,
+``subscriptions/listen``, resources and prompts, and legacy (2025-11-25)
+server-initiated elicitation, which needs a listening stream.
 """
 from __future__ import annotations
 
@@ -34,6 +37,7 @@ import time
 from typing import Any, Awaitable, Callable
 
 
+from mcp_client import elicitation as elicit_mod
 from mcp_client import schema as schema_mod
 from utils.http import pooled_client
 from utils.progress import report_progress
@@ -50,9 +54,12 @@ LEGACY_PROTOCOL_VERSION = "2025-11-25"
 MCP_PROTOCOL_VERSION = MODERN_PROTOCOL_VERSIONS[0]
 
 CLIENT_INFO = {"name": "pantheon", "version": "1.0.0"}
-# Declared on every modern request. Phase 2 adds `elicitation`, phase 3
-# `extensions: {"io.modelcontextprotocol/tasks": {}}`; until then a server
-# MUST NOT send either (spec: never rely on undeclared capabilities).
+# Declared on every modern request. `elicitation` (form + url) is added when
+# the request can be answered by a person - server/discover, tools/list and a
+# tools/call made with an `elicit` callback; a tools/call from a bot or a
+# background job omits it, so the server MUST NOT ask (spec: never rely on
+# undeclared capabilities). Phase 3 adds `extensions:
+# {"io.modelcontextprotocol/tasks": {}}`.
 CLIENT_CAPABILITIES: dict[str, Any] = {}
 
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
@@ -150,14 +157,17 @@ class MCPClient:
         self._request_id += 1
         return self._request_id
 
-    def _meta(self, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _meta(self, extra: dict[str, Any] | None = None, *, elicitation: bool = False) -> dict[str, Any]:
         """The per-request protocol fields every modern request must carry."""
         # Caller-supplied keys (progressToken, trace context) are kept; the
         # protocol fields always reflect the client's current state.
         meta = dict(extra or {})
         meta[META_VERSION] = self.protocol_version or MODERN_PROTOCOL_VERSIONS[0]
         meta[META_CLIENT_INFO] = dict(CLIENT_INFO)
-        meta[META_CLIENT_CAPS] = json.loads(json.dumps(CLIENT_CAPABILITIES))
+        caps = json.loads(json.dumps(CLIENT_CAPABILITIES))
+        if elicitation:
+            caps["elicitation"] = json.loads(json.dumps(elicit_mod.ELICITATION_CAPABILITY))
+        meta[META_CLIENT_CAPS] = caps
         return meta
 
     def _build_headers(
@@ -282,13 +292,15 @@ class MCPClient:
         tool_name: str | None = None,
         param_headers: dict[str, str] | None = None,
         probe: bool = False,
+        elicitation: bool = False,
     ) -> dict[str, Any]:
         """Send a JSON-RPC 2.0 request and return the result.
 
         If retry_on_429 is True, retries with exponential backoff on HTTP 429.
         ``probe=True`` sends a modern request whatever the era and raises
         ``_LegacyServer`` instead of failing when the reply is not a modern
-        one (the era detection).
+        one (the era detection). ``elicitation=True`` declares the
+        elicitation capability in ``_meta`` (modern only).
         """
         modern = self.is_modern or probe
         request_id = self._next_id()
@@ -299,7 +311,7 @@ class MCPClient:
         }
         params = dict(params or {})
         if modern:
-            params["_meta"] = self._meta(params.get("_meta"))
+            params["_meta"] = self._meta(params.get("_meta"), elicitation=elicitation)
         if params:
             payload["params"] = params
 
@@ -430,7 +442,7 @@ class MCPClient:
                             logger.info("MCP '%s' server wants protocol %s (asked %s) — retrying",
                                         self.name, pick, self.protocol_version)
                             self.protocol_version = pick
-                            params["_meta"] = self._meta(params.get("_meta"))
+                            params["_meta"] = self._meta(params.get("_meta"), elicitation=elicitation)
                             payload["params"] = params
                             headers = self._build_headers(method, tool_name=tool_name,
                                                           param_headers=param_headers, modern=True)
@@ -535,7 +547,7 @@ class MCPClient:
         """Era detection: modern ``server/discover`` first, ``initialize`` on fallback."""
         self.protocol_version = MODERN_PROTOCOL_VERSIONS[0]
         try:
-            result = await self._send_jsonrpc("server/discover", probe=True)
+            result = await self._send_jsonrpc("server/discover", probe=True, elicitation=True)
         except _LegacyServer as why:
             logger.info("MCP '%s' is a legacy (handshake) server: %s", self.name, why)
             self.era = ERA_LEGACY
@@ -623,7 +635,7 @@ class MCPClient:
         """
         await self._ensure_ready()
 
-        result = await self._send_jsonrpc("tools/list")
+        result = await self._send_jsonrpc("tools/list", elicitation=True)
         tools = [t for t in result.get("tools", []) if isinstance(t, dict)]
         header_params: dict[str, list[tuple[str, tuple[str, ...]]]] = {}
         kept: list[dict[str, Any]] = []
@@ -672,7 +684,8 @@ class MCPClient:
             return False
 
     async def call_tool(
-        self, tool_name: str, arguments: dict[str, Any] | None = None
+        self, tool_name: str, arguments: dict[str, Any] | None = None,
+        *, elicit: elicit_mod.Elicitor | None = None,
     ) -> dict[str, Any]:
         """Call a tool on the remote MCP server.
 
@@ -689,10 +702,13 @@ class MCPClient:
 
         Modern results: ``resultType`` absent or "complete" is the ordinary
         case. "input_required" (MRTR) with only a ``requestState`` is retried
-        once with the state echoed; one that carries ``inputRequests`` (an
-        elicitation) is reported as an error naming what the server asked,
-        since this client declares no elicitation capability yet. "task" is
-        likewise reported; any other value is invalid.
+        with the state echoed; one that carries ``inputRequests`` (an
+        elicitation) is put to the user through ``elicit`` and the call is
+        retried with their ``inputResponses`` (up to MAX_INPUT_ROUNDS times;
+        the elicitation capability is declared on the call only when
+        ``elicit`` is given). Without ``elicit`` it is reported to the model
+        as an error naming what the server asked. "task" is likewise
+        reported; any other value is invalid.
         """
         await self._ensure_ready()
         if self.is_modern:
@@ -701,13 +717,18 @@ class MCPClient:
 
         last: dict[str, Any] = {"text": "", "structured": None, "is_error": False}
         header_retried = False
-        state_retried = False
+        state_retries = 0
+        input_rounds = 0
         request_state: str | None = None
+        input_responses: dict[str, Any] | None = None
+        answered: list[str] = []   # model-facing notes on what the user answered
         attempt = 0
         while attempt < MAX_RETRIES:
             params: dict[str, Any] = {"name": tool_name, "arguments": arguments}
             if request_state is not None:
                 params["requestState"] = request_state
+            if input_responses is not None:
+                params["inputResponses"] = input_responses
             param_headers = None
             if self.is_modern and self._header_params.get(tool_name):
                 param_headers = schema_mod.mirrored_headers(self._header_params[tool_name], arguments)
@@ -716,6 +737,7 @@ class MCPClient:
                     "tools/call", params, retry_on_429=True,
                     tool_name=tool_name if self.is_modern else None,
                     param_headers=param_headers,
+                    elicitation=elicit is not None,
                 )
             except MCPError as e:
                 # The server's tool definition changed under us (new or
@@ -731,14 +753,52 @@ class MCPClient:
             rtype = result.get("resultType") if isinstance(result, dict) else None
             if rtype == "input_required":
                 requests = result.get("inputRequests") or {}
+                # Echo exactly what the server sent (absent stays absent); the
+                # last round's answers never travel with a new request.
                 request_state = result.get("requestState")
-                if not requests and request_state is not None and not state_retried:
-                    state_retried = True
+                input_responses = None
+                if not requests:
+                    if request_state is None or state_retries >= 1:
+                        return {"text": (f"[MCP server '{self.name}' answered '{tool_name}' with "
+                                         "input_required but asked for nothing; giving up.]"),
+                                "structured": None, "is_error": True}
+                    state_retries += 1
                     continue
-                return {
-                    "text": _describe_input_required(self.name, tool_name, requests),
-                    "structured": None, "is_error": True,
-                }
+                try:
+                    parsed = elicit_mod.parse_requests(requests)
+                except elicit_mod.UnsupportedInputRequest as why:
+                    return {"text": (f"[MCP server '{self.name}' needs input this client cannot provide "
+                                     f"before '{tool_name}' can run: {why}.]"),
+                            "structured": None, "is_error": True}
+                if elicit is None:
+                    return {
+                        "text": _describe_input_required(self.name, tool_name, parsed),
+                        "structured": None, "is_error": True,
+                    }
+                input_rounds += 1
+                if input_rounds > elicit_mod.MAX_INPUT_ROUNDS:
+                    return {"text": (f"[MCP server '{self.name}' kept asking for more input on '{tool_name}' "
+                                     f"({input_rounds - 1} rounds); stopped. It last asked to "
+                                     f"{elicit_mod.describe_requests(parsed)}.]"),
+                            "structured": None, "is_error": True}
+                prompt = elicit_mod.ElicitationPrompt(connection=self.name, tool=tool_name,
+                                                      requests=parsed, round=input_rounds)
+                logger.info("MCP '%s' elicitation round %d for %s: %s", self.name, input_rounds,
+                            tool_name, elicit_mod.describe_requests(parsed))
+                responses = await elicit(prompt)
+                if responses is None:
+                    responses = elicit_mod.cancel_all(prompt)
+                answered.append(elicit_mod.summarize_answers(prompt, responses))
+                input_responses = responses
+                state_retries = 0
+                continue
+            if answered:
+                # The call ran after the user answered the server's
+                # questions: say so, so the model doesn't re-ask or guess.
+                result = dict(result)
+                note = f"[The user {'; then '.join(answered)}.]"
+                result["content"] = [{"type": "text", "text": note}] + list(result.get("content") or [])
+                answered = []
             if rtype == "task":
                 return {
                     "text": (f"[MCP server '{self.name}' started tool '{tool_name}' as a background task "
@@ -865,29 +925,14 @@ class MCPClient:
         return self._initialized and len(self.tools) > 0
 
 
-def _describe_input_required(connection: str, tool: str, requests: dict[str, Any]) -> str:
-    """The model-facing text for an MRTR input_required result this client
-    cannot satisfy yet. Names what the server asked (so the model can relay
-    it to the user) without pretending the call ran."""
-    asks: list[str] = []
-    for key, req in (requests or {}).items():
-        if not isinstance(req, dict):
-            continue
-        method = str(req.get("method", ""))
-        p = req.get("params") or {}
-        if method == "elicitation/create":
-            mode = p.get("mode") or "form"
-            msg = str(p.get("message") or "").strip()
-            if mode == "url":
-                asks.append(f"open a URL ({p.get('url', '?')}): {msg}")
-            else:
-                fields = list(((p.get("requestedSchema") or {}).get("properties") or {}).keys())
-                asks.append(f"fill in {', '.join(fields) or 'a form'}: {msg}")
-        elif method:
-            asks.append(method)
-    what = "; ".join(asks) if asks else "more input"
-    return (f"[MCP server '{connection}' needs user input before '{tool}' can run — it asked to {what}. "
-            "Pantheon cannot answer MCP elicitations yet, so tell the user what the server asked for.]")
+def _describe_input_required(connection: str, tool: str, requests: list[elicit_mod.ElicitRequest]) -> str:
+    """The model-facing text for an elicitation that reached a caller with no
+    way to ask the user (a bot channel, a background job, the REST API).
+    Names what the server asked, so the model can relay it, without
+    pretending the call ran."""
+    return (f"[MCP server '{connection}' needs user input before '{tool}' can run — it asked to "
+            f"{elicit_mod.describe_requests(requests)}. Forms can't be shown here; tell the user what the "
+            "server asked for and that it works from the web chat.]")
 
 
 class MCPError(Exception):

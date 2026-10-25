@@ -3,6 +3,7 @@ import { Brain, ArrowDown } from 'lucide-react'
 import { useStore } from '../store'
 import Message, { StreamingMessage } from './chat/Message'
 import SkillSuggestionCard from './chat/SkillSuggestionCard'
+import ElicitationCard from './chat/ElicitationCard'
 import ChatComposer from './chat/ChatComposer'
 import ChatHistoryDrawer from './chat/ChatHistoryDrawer'
 import SaveToArtifactModal, { defaultSavePath } from './chat/SaveToArtifactModal'
@@ -189,6 +190,16 @@ export default function Chat() {
             activeSkillBadge={socket.activeSkillBadge}
             toolCalls={currentToolCalls}
             content={streamingContent}
+          />
+        )}
+        {/* An MCP server's request for input: the turn waits on this form */}
+        {socket.pendingElicitation && isStreaming && (
+          <ElicitationCard
+            key={socket.pendingElicitation.elicitationId}
+            elicitation={socket.pendingElicitation}
+            onAnswer={socket.answerElicitation}
+            onDecline={socket.declineElicitation}
+            onCancel={socket.cancelElicitation}
           />
         )}
         {/* Skill suggestion prompt */}
