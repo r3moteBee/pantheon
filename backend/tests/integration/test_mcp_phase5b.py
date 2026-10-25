@@ -239,6 +239,7 @@ class ResourceServer(CapServer):
         self.methods["prompts/get"] = self._get
 
     def _read(self, params, headers):
+        assert headers.get("mcp-name") == params["uri"], headers.get("mcp-name")
         self.reads.append(params)
         if params["uri"] == "secret://x" and "inputResponses" not in params:
             return {"resultType": "input_required", "requestState": "r1", "inputRequests": {"ok": {
@@ -250,6 +251,7 @@ class ResourceServer(CapServer):
             {"uri": params["uri"], "mimeType": "text/markdown", "text": "# Hello\nbody"}]}
 
     def _get(self, params, headers):
+        assert headers.get("mcp-name") == params["name"]
         return {"resultType": "complete", "description": "Code review prompt", "messages": [
             {"role": "user", "content": {"type": "text", "text": f"Review: {params.get('arguments', {}).get('code')}"}},
             {"role": "assistant", "content": [{"type": "text", "text": "Sure."},
