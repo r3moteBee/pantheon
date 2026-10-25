@@ -17,6 +17,8 @@ import { createChatSocket } from '../../api/client'
 //   pendingElicitation     an MCP server's mid-call request for input (form
 //                          or link) the running turn waits on, or null
 //   answerElicitation(responses) / declineElicitation() / cancelElicitation()
+//   pendingConfirm         an MCP tool awaiting Approve/Deny (tool annotations), or null
+//   answerConfirm(approve)
 //   cancelTool(toolId)     cancel the MCP background task a tool call waits on
 //                          (its progress arrives as tool_status on the call)
 //   modelClass, setModelClass   chat mode = router pin ('auto' = unpinned),
@@ -43,6 +45,7 @@ export default function useChatSocket() {
   const [activeSkillBadge, setActiveSkillBadge] = useState(null)
   const [pendingSuggestion, setPendingSuggestion] = useState(null)
   const [pendingElicitation, setPendingElicitation] = useState(null)
+  const [pendingConfirm, setPendingConfirm] = useState(null)
   // Chat router: the chat mode ("auto" = let the router pick), sent with
   // every message so the backend pins the conversation to it, and the
   // current turn's route.
@@ -75,6 +78,7 @@ export default function useChatSocket() {
 
     const handleClose = (code, reason) => {
       setPendingElicitation(null)
+      setPendingConfirm(null)
       if (useStore.getState().isStreaming) {
         useStore.getState().setIsStreaming(false)
         useStore.getState().setStreamingContent('')
@@ -122,6 +126,24 @@ export default function useChatSocket() {
             errors: null,
           })
           break
+        case 'tool_confirm':
+          setPendingConfirm({
+            confirmId: event.confirm_id,
+            connection: event.connection,
+            tool: event.tool,
+            arguments: event.arguments || {},
+            title: event.title,
+            description: event.description,
+            annotations: event.annotations || {},
+            timeoutS: event.timeout_s,
+          })
+          break
+        case 'tool_confirm_closed':
+          setPendingConfirm((cur) => (cur && cur.confirmId === event.confirm_id ? null : cur))
+          if (event.reason === 'timeout') {
+            addNotification({ type: 'error', message: 'The approval request timed out; the tool was not run.' })
+          }
+          break
         case 'elicitation_invalid':
           setPendingElicitation((cur) =>
             cur && cur.elicitationId === event.elicitation_id ? { ...cur, errors: event.errors || {} } : cur)
@@ -150,7 +172,7 @@ export default function useChatSocket() {
           useStore.setState((state) => ({
             currentToolCalls: state.currentToolCalls.map((tc) =>
               tc.id === event.tool_id
-                ? { ...tc, status: { state: event.state, message: event.message, elapsed: event.elapsed_s, taskId: event.task_id } }
+                ? { ...tc, status: { kind: event.kind || 'task', state: event.state, message: event.message, elapsed: event.elapsed_s, taskId: event.task_id, percent: event.percent } }
                 : tc
             ),
           }))
@@ -172,6 +194,7 @@ export default function useChatSocket() {
           setIsStreaming(false)
           setActiveSkillBadge(null)
           setPendingElicitation(null)
+          setPendingConfirm(null)
           liveRouteRef.current = null
           setLiveRoute(null)
           break
@@ -187,6 +210,7 @@ export default function useChatSocket() {
           setStreamingContent('')
           clearToolCalls()
           setPendingElicitation(null)
+          setPendingConfirm(null)
           break
       }
     }, handleClose)
@@ -238,6 +262,13 @@ export default function useChatSocket() {
   const declineElicitation = useCallback(() => answerAllWith('decline'), [answerAllWith])
   const cancelElicitation = useCallback(() => answerAllWith('cancel'), [answerAllWith])
 
+  // Approve or deny an MCP tool that changes data (the turn waits on it).
+  const answerConfirm = useCallback((approve) => {
+    if (!pendingConfirm) return
+    send(JSON.stringify({ type: 'tool_confirm_response', confirm_id: pendingConfirm.confirmId, approve: !!approve }))
+    setPendingConfirm(null)
+  }, [pendingConfirm, send])
+
   // Cancel the MCP background task a running tool call is waiting on.
   const cancelTool = useCallback((toolId) => {
     send(JSON.stringify({ type: 'tool_cancel', tool_id: toolId }))
@@ -250,6 +281,8 @@ export default function useChatSocket() {
 
   return {
     cancelTool,
+    pendingConfirm,
+    answerConfirm,
     send,
     close,
     liveRoute,

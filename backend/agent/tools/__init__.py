@@ -164,6 +164,7 @@ async def execute_tool(
     elicit: Any = None,
     notify: Any = None,
     cancel_event: Any = None,
+    confirm: Any = None,
 ) -> str:
     """Execute a tool call and return the result as a string.
 
@@ -198,7 +199,7 @@ async def execute_tool(
                 token = task_store.CALL_CONTEXT.set(ctx)
                 try:
                     return await mgr.execute_tool(tool_name, tool_args, elicit=elicit, notify=notify,
-                                                  cancel_event=cancel_event)
+                                                  cancel_event=cancel_event, confirm=confirm)
                 finally:
                     task_store.CALL_CONTEXT.reset(token)
             except Exception as e:

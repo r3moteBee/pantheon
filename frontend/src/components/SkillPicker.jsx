@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Zap } from 'lucide-react'
-import { skillsApi } from '../api/client'
+import { skillsApi, mcpApi } from '../api/client'
 
 /**
  * SkillPicker — autocomplete dropdown that appears when the user types `/` in chat input.
@@ -18,12 +18,18 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
   const [selectedIndex, setSelectedIndex] = useState(0)
   const listRef = useRef(null)
 
-  // Load skills once
+  // Load skills and MCP prompt templates (/connection:prompt) once
   useEffect(() => {
     if (visible) {
-      skillsApi.list(projectId, { enabledOnly: true }).then((res) => {
-        setSkills(res.data.skills || [])
-      }).catch(() => {})
+      Promise.all([
+        skillsApi.list(projectId, { enabledOnly: true }).then((r) => r.data.skills || []).catch(() => []),
+        mcpApi.listPrompts().then((r) => (r.data.prompts || []).map((p) => ({
+          name: p.command,
+          description: `${p.title && p.title !== p.name ? `${p.title}: ` : ''}${p.description || 'MCP prompt'}${p.arguments?.length ? ` — ${p.arguments.map((a) => a.name + (a.required ? '' : '?')).join(', ')}` : ''}`,
+          tags: ['prompt', p.connection],
+          prompt: true,
+        }))).catch(() => []),
+      ]).then(([sk, pr]) => setSkills([...sk, ...pr]))
     }
   }, [visible, projectId])
 
@@ -90,7 +96,7 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
         className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl max-h-64 overflow-y-auto scrollbar-thin"
       >
         <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
-          Skills — type to filter, ↑↓ to navigate, Enter to select, Esc to dismiss
+          Skills and MCP prompts — type to filter, ↑↓ to navigate, Enter to select, Esc to dismiss
         </div>
         {filtered.map((skill, i) => (
           <button

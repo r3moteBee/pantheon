@@ -142,15 +142,24 @@ function TaskStatusLine({ status, onCancel }) {
   const label = { working: 'Running on the server', input_required: 'Waiting for your input', cancelled: 'Cancelling' }[status.state] || status.state
   const minutes = Math.floor((status.elapsed || 0) / 60)
   const seconds = String((status.elapsed || 0) % 60).padStart(2, '0')
+  const isProgress = status.kind === 'progress'
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-gray-900 border-t border-gray-800 text-gray-300" role="status">
       <span className="flex items-center gap-1.5">
         <Loader2 className="w-3 h-3 animate-spin text-sky-400" aria-hidden="true" />
-        <span>Background task · {label}</span>
+        <span>{isProgress ? 'In progress' : `Background task · ${label}`}</span>
       </span>
+      {typeof status.percent === 'number' && (
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block w-24 h-1.5 rounded bg-gray-700 overflow-hidden" aria-hidden="true">
+            <span className="block h-full bg-sky-500" style={{ width: `${status.percent}%` }} />
+          </span>
+          <span className="text-gray-400">{status.percent}%</span>
+        </span>
+      )}
       {status.message && <span className="text-gray-400 truncate max-w-[60%]" title={status.message}>{status.message}</span>}
       <span className="text-gray-500">{minutes}:{seconds}</span>
-      {onCancel && status.state !== 'cancelled' && (
+      {!isProgress && onCancel && status.state !== 'cancelled' && (
         <button
           type="button"
           onClick={() => onCancel()}

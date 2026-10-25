@@ -290,6 +290,7 @@ class AgentCore:
         elicit: Any = None,
         tool_status: Any = None,
         cancel_events: dict[str, asyncio.Event] | None = None,
+        confirm: Any = None,
     ):
         self.provider = provider
         # How an MCP server asks the user for input mid-call
@@ -303,6 +304,8 @@ class AgentCore:
         # user's cancel sets (mcp_client.tasks).
         self.tool_status = tool_status if web_person else None
         self.cancel_events = cancel_events if (web_person and cancel_events is not None) else None
+        # Approval for MCP tools that change data (mcp_client.elicitation.Confirmer).
+        self.confirm = confirm if web_person else None
         # Where replies are shown: "web" (chat UI) or a messaging adapter's
         # name; None for background jobs. Picks the user's reply style
         # (Settings → About you, utils/user_profile).
@@ -347,6 +350,7 @@ class AgentCore:
         elicit: Any = None,
         tool_status: Any = None,
         cancel_events: dict[str, asyncio.Event] | None = None,
+        confirm: Any = None,
     ) -> "AgentCore":
         """Build an AgentCore instance with working_memory pre-populated
         from the messages table for the given session_id. Used when
@@ -372,6 +376,7 @@ class AgentCore:
             elicit=elicit,
             tool_status=tool_status,
             cancel_events=cancel_events,
+            confirm=confirm,
         )
         ep = EpisodicMemory()
         history = await ep.get_history(session_id=session_id, limit=message_limit)
@@ -719,6 +724,14 @@ class AgentCore:
                 host_exec=self.host_exec,
                 channel=self.channel,
             )
+
+            # Connected MCP servers' own usage notes (stable; keep before the
+            # jobs block for the prompt cache).
+            try:
+                from mcp_client.manager import get_mcp_manager
+                system_prompt += get_mcp_manager().instructions_block()
+            except Exception:
+                logger.debug("MCP instructions block unavailable", exc_info=True)
 
             # Phase H.5 — append a "recent background jobs" block so the
             # agent doesn't confabulate progress against dead tasks.
@@ -1247,6 +1260,7 @@ class AgentCore:
                                 elicit=self.elicit,
                                 notify=notify,
                                 cancel_event=cancel_event,
+                                confirm=self.confirm,
                             )
                         finally:
                             if self.cancel_events is not None:

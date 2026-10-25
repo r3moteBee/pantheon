@@ -18,6 +18,7 @@ from agent import tool_results
 from agent.core import AgentCore
 from config import get_settings
 from mcp_client.elicitation import ElicitationBroker
+from mcp_client.manager import get_mcp_manager
 from memory.manager import create_memory_manager
 from models.provider import get_provider_for
 from skills.resolver import resolve_explicit, resolve_auto, build_skill_context
@@ -68,6 +69,7 @@ async def _build_agent(
     elicit=None,
     tool_status=None,
     cancel_events=None,
+    confirm=None,
 ):
     """Pick AgentCore() vs AgentCore.from_session() based on history.
 
@@ -101,6 +103,7 @@ async def _build_agent(
             elicit=elicit,
             tool_status=tool_status,
             cancel_events=cancel_events,
+            confirm=confirm,
         )
     return AgentCore(
         provider=provider,
@@ -115,6 +118,7 @@ async def _build_agent(
         elicit=elicit,
         tool_status=tool_status,
         cancel_events=cancel_events,
+        confirm=confirm,
     )
 
 
@@ -280,8 +284,22 @@ async def chat(req: ChatRequest) -> ChatResponse:
     if reply is not None and not message:
         return ChatResponse(session_id=session_id, response=reply, project_id=req.project_id)
 
+    # 0. /connection:prompt (MCP prompt chosen by the user; no elicitor here)
+    from mcp_client.prompts import missing_arguments, render_prompt, resolve_prompt_command
+    typed_message = None
+    prompt_cmd = resolve_prompt_command(message, get_mcp_manager())
+    if prompt_cmd:
+        missing = missing_arguments(prompt_cmd["prompt"], prompt_cmd["arguments"])
+        if missing:
+            raise HTTPException(status_code=400, detail=f"prompt needs {', '.join(missing)}")
+        try:
+            typed_message = message
+            message = await render_prompt(prompt_cmd)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"could not fetch the prompt: {e}")
+
     # 1. Explicit /skill-name invocation
-    explicit_skill, remaining_message = resolve_explicit(message)
+    explicit_skill, remaining_message = resolve_explicit(message) if not prompt_cmd else (None, message)
     if explicit_skill:
         registry = get_skill_registry()
         skill = registry.get(explicit_skill)
@@ -343,7 +361,7 @@ async def chat(req: ChatRequest) -> ChatResponse:
     try:
         await memory.episodic.save_message(
             session_id=session_id, project_id=req.project_id,
-            role="user", content=message,
+            role="user", content=typed_message or message,
         )
     except Exception as e:
         logger.warning("REST chat: failed to save user message: %s", e)
@@ -476,6 +494,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 elicit=broker.ask,
                 tool_status=broker.tool_status,
                 cancel_events=broker.cancel_events,
+                confirm=broker.confirm,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -542,6 +561,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 elicit=broker.ask,
                 tool_status=broker.tool_status,
                 cancel_events=broker.cancel_events,
+                confirm=broker.confirm,
                 provider=provider,
                 memory_manager=memory,
                 project_id=project_id,
@@ -615,9 +635,30 @@ async def websocket_chat(websocket: WebSocket) -> None:
         # ── Skill resolution ─────────────────────────────────────
         skill_context = None
         active_skill_name = None
+        typed_message = None   # what the user typed, when the agent gets something else
+
+        # 0. /connection:prompt — a prompt template the user chose from an MCP
+        # server (prompts are user-controlled; the model has no tool for them).
+        from mcp_client.prompts import missing_arguments, render_prompt, resolve_prompt_command
+        prompt_cmd = resolve_prompt_command(message, get_mcp_manager())
+        if prompt_cmd:
+            missing = missing_arguments(prompt_cmd["prompt"], prompt_cmd["arguments"])
+            label = f"{prompt_cmd['client'].name}:{prompt_cmd['prompt']['name']}"
+            if missing:
+                await _send({"type": "error", "message": f"/{label} needs {', '.join(missing)} "
+                             f"(for example: /{label} {missing[0]}=...)"})
+                return
+            try:
+                typed_message = message
+                message = await render_prompt(prompt_cmd, elicit=broker.ask)
+            except Exception as e:
+                await _send({"type": "error", "message": f"Could not fetch prompt /{label}: {e}"})
+                return
+            await _send({"type": "skill_active", "skill": label,
+                         "description": prompt_cmd["prompt"].get("description") or "MCP prompt"})
 
         # 1. Check for explicit /skill-name invocation
-        explicit_skill, remaining_message = resolve_explicit(message)
+        explicit_skill, remaining_message = resolve_explicit(message) if not prompt_cmd else (None, message)
         if explicit_skill:
             registry = get_skill_registry()
             skill = registry.get(explicit_skill)
@@ -696,6 +737,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
             elicit=broker.ask,
             tool_status=broker.tool_status,
             cancel_events=broker.cancel_events,
+            confirm=broker.confirm,
             provider=provider,
             memory_manager=memory,
             project_id=project_id,
@@ -710,7 +752,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 session_id=session_id,
                 project_id=project_id,
                 role="user",
-                content=message,
+                content=typed_message or message,
             )
         except Exception as e:
             logger.warning("Failed to save user message to episodic: %s", e)
@@ -769,6 +811,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # a link) raised by the turn that is running.
             if kind == "elicitation_response":
                 await broker.answer(data.get("elicitation_id"), data.get("responses"))
+                continue
+
+            # The user approved or denied an MCP tool that changes data.
+            if kind == "tool_confirm_response":
+                await broker.answer_confirm(data.get("confirm_id"), data.get("approve"))
                 continue
 
             # The user cancelled an MCP background task a tool call is waiting on.

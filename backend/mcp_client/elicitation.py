@@ -92,6 +92,29 @@ class ElicitationPrompt:
         }
 
 
+@dataclass
+class ConfirmPrompt:
+    """Approval the chat asks for before a tool that changes data on an MCP
+    server runs (tool annotations: destructiveHint / readOnlyHint)."""
+    connection: str
+    tool: str
+    arguments: dict[str, Any]
+    title: str = ""
+    description: str = ""
+    annotations: dict[str, Any] = field(default_factory=dict)
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+
+    def public(self) -> dict[str, Any]:
+        return {"confirm_id": self.id, "connection": self.connection, "tool": self.tool,
+                "arguments": self.arguments, "title": self.title, "description": self.description[:500],
+                "annotations": {k: v for k, v in self.annotations.items()
+                                if k in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")}}
+
+
+# The awaitable the manager calls before a tool that needs approval: True runs it.
+Confirmer = Callable[[ConfirmPrompt], Awaitable[bool]]
+
+
 # The awaitable the MCP client calls: returns {key: {"action", "content"?}}
 # for every request, or None when the user is gone / out of time (-> cancel).
 Elicitor = Callable[[ElicitationPrompt], Awaitable[dict[str, dict[str, Any]] | None]]
@@ -348,6 +371,7 @@ class ElicitationBroker:
         self._send = send
         self.timeout = timeout
         self._pending: dict[str, tuple[ElicitationPrompt, asyncio.Future]] = {}
+        self._confirms: dict[str, tuple[ConfirmPrompt, asyncio.Future]] = {}
         # Tasks extension (mcp_client.tasks): one Event per tool call that
         # is waiting on a background task, keyed by the chat's tool_id;
         # AgentCore fills it in, cancel_tool() sets it.
@@ -390,6 +414,32 @@ class ElicitationBroker:
             fut.set_result(clean)
         return True
 
+    async def confirm(self, prompt: ConfirmPrompt) -> bool:
+        """Ask the person to approve a tool run; False on deny, timeout or close."""
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        self._confirms[prompt.id] = (prompt, fut)
+        await self._send({"type": "tool_confirm", **prompt.public(), "timeout_s": int(self.timeout)})
+        try:
+            return bool(await asyncio.wait_for(fut, timeout=self.timeout))
+        except asyncio.TimeoutError:
+            await self._send({"type": "tool_confirm_closed", "confirm_id": prompt.id, "reason": "timeout"})
+            return False
+        except asyncio.CancelledError:
+            return False
+        finally:
+            self._confirms.pop(prompt.id, None)
+
+    async def answer_confirm(self, confirm_id: Any, approve: Any) -> bool:
+        entry = self._confirms.get(str(confirm_id or ""))
+        if entry is None:
+            await self._send({"type": "warning", "message": "That approval request has expired."})
+            return False
+        _prompt, fut = entry
+        if not fut.done():
+            fut.set_result(bool(approve))
+        return True
+
     async def tool_status(self, tool_id: str, tool_name: str, status: dict[str, Any]) -> None:
         """Progress of an MCP background task behind one tool call -> UI."""
         await self._send({"type": "tool_status", "tool_id": tool_id, "name": tool_name, **status})
@@ -411,3 +461,7 @@ class ElicitationBroker:
         for ev in self.cancel_events.values():
             ev.set()   # nobody is watching: let a waiting task be cancelled
         self.cancel_events.clear()
+        for _p, fut in list(self._confirms.values()):
+            if not fut.done():
+                fut.cancel()
+        self._confirms.clear()
