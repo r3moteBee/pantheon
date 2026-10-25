@@ -66,11 +66,15 @@ async def _build_agent(
     skill_context=None,
     active_skill_name=None,
     elicit=None,
+    tool_status=None,
+    cancel_events=None,
 ):
     """Pick AgentCore() vs AgentCore.from_session() based on history.
 
     ``elicit`` (mcp_client.elicitation.Elicitor) is how an MCP server asks
-    the user for input mid-call; only the WebSocket chat can pass one.
+    the user for input mid-call; ``tool_status`` / ``cancel_events`` carry an
+    MCP background task's progress and the user's cancel. Only the WebSocket
+    chat passes them.
 
     First turn: empty working_memory.
     Resume / subsequent turns: rehydrate working_memory from messages table

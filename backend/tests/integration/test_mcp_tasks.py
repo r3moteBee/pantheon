@@ -352,6 +352,15 @@ class _FakeAgent:
         yield {"type": "done", "full_response": ""}
 
 
+def test_build_agent_accepts_the_task_plumbing():
+    """The WebSocket test below stubs _build_agent; make sure the real one
+    takes what the socket passes (a missing kw-arg broke every turn once)."""
+    import inspect
+    from api import chat as chat_mod
+    params = inspect.signature(chat_mod._build_agent).parameters
+    assert {"elicit", "tool_status", "cancel_events"} <= set(params)
+
+
 def test_websocket_forwards_task_status_and_cancel():
     from starlette.testclient import TestClient
     from api import chat as chat_mod
