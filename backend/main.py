@@ -63,6 +63,7 @@ _PUBLIC_PATHS = {
     # Bearer token. Security comes from the PKCE code_verifier + state
     # parameter, not Pantheon's auth_password.
     "/api/mcp/oauth/callback",
+    "/api/mcp/oauth/client-metadata.json",   # fetched by authorization servers (CIMD)
 }
 
 # Resolve frontend dist directory (used by auth middleware and SPA serving)

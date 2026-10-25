@@ -281,6 +281,22 @@ function DevRateLimitControl({ conn, onUpdate }) {
   )
 }
 
+// How the OAuth client id was obtained (spec 2026-07-28 client registration).
+const REGISTRATION_NAMES = {
+  preregistered: 'pre-registered client',
+  cimd: 'client ID metadata document',
+  dcr: 'dynamic registration',
+}
+function registrationLabel(oauth) {
+  const r = oauth?.registration
+  return r ? ` · ${{ preregistered: 'pre-registered', cimd: 'CIMD', dcr: 'DCR' }[r] || r}` : ''
+}
+function registrationTitle(oauth) {
+  const r = oauth?.registration
+  if (!r) return 'OAuth authorized'
+  return `Client id obtained by ${REGISTRATION_NAMES[r] || r}${oauth?.client_id ? `: ${oauth.client_id}` : ''}`
+}
+
 // ── Connection Edit Form (inline panel inside expanded card) ──────────────
 
 function ConnectionEditForm({ conn, onSave, onCancel }) {
@@ -291,11 +307,23 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
   const [enabled, setEnabled] = useState(conn.enabled !== false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  // OAuth pre-registration: a client id (and secret) the user registered
+  // with the authorization server by hand. Used before CIMD / DCR.
+  const [clientId, setClientId] = useState(conn.oauth?.preregistered_client_id || '')
+  const [clientSecret, setClientSecret] = useState('')
+  const [clearSecret, setClearSecret] = useState(false)
+  const [oauthInfo, setOauthInfo] = useState(null)
+  useEffect(() => {
+    if (!isOAuth) return
+    mcpApi.oauthInfo().then((r) => setOauthInfo(r.data)).catch(() => {})
+  }, [isOAuth])
 
   const urlChanged = url.trim() !== (conn.url || '').trim()
   const enabledChanged = enabled !== (conn.enabled !== false)
   const apiKeyChanged = apiKey.length > 0
-  const hasChanges = urlChanged || enabledChanged || apiKeyChanged
+  const clientIdChanged = isOAuth && clientId.trim() !== (conn.oauth?.preregistered_client_id || '')
+  const clientSecretChanged = isOAuth && (clientSecret.length > 0 || clearSecret)
+  const hasChanges = urlChanged || enabledChanged || apiKeyChanged || clientIdChanged || clientSecretChanged
 
   const handleSave = async () => {
     if (!url.trim()) {
@@ -308,6 +336,8 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
     if (urlChanged) update.url = url.trim()
     if (enabledChanged) update.enabled = enabled
     if (apiKeyChanged) update.api_key = apiKey
+    if (clientIdChanged) update.oauth_client_id = clientId.trim()
+    if (clientSecretChanged) update.oauth_client_secret = clearSecret ? '' : clientSecret
     try {
       await onSave(conn.name, update)
     } catch (err) {
@@ -339,6 +369,53 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
           </p>
         )}
       </div>
+
+      {isOAuth && (
+        <div className="space-y-2 border border-gray-800 rounded p-2">
+          <div className="text-xs text-gray-300">Pre-registered OAuth client <span className="text-gray-500">(optional)</span></div>
+          <p className="text-xs text-gray-500">
+            If the authorization server does not register clients itself, register Pantheon there and paste the client id.
+            {oauthInfo?.redirect_uri && (<> Redirect URI to register: <code className="text-gray-300 select-all break-all">{oauthInfo.redirect_uri}</code>.</>)}
+            {oauthInfo?.client_id_metadata_url
+              ? (<> Otherwise Pantheon offers its client metadata document at <code className="text-gray-300 break-all">{oauthInfo.client_id_metadata_url}</code>, or registers dynamically.</>)
+              : (<> Otherwise Pantheon registers dynamically (no public HTTPS address for a client metadata document).</>)}
+          </p>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Client ID</label>
+            <input
+              type="text"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              placeholder="Leave empty to let Pantheon register itself"
+              className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Client secret</label>
+            <div className="flex gap-2 items-center">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={clientSecret}
+                disabled={clearSecret || !clientId.trim()}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder={conn.oauth?.has_preregistered_secret ? '••• secret set, leave empty to keep' : 'None (public client with PKCE)'}
+                className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500 disabled:opacity-50"
+              />
+              <button type="button" onClick={() => setShowKey(!showKey)} className="px-1 text-gray-400 hover:text-gray-300" aria-label={showKey ? 'Hide secret' : 'Show secret'}>
+                {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+              {conn.oauth?.has_preregistered_secret && (
+                <label className="flex items-center gap-1 text-xs text-gray-400">
+                  <input type="checkbox" checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} className="accent-blue-500" /> clear
+                </label>
+              )}
+            </div>
+          </div>
+          {(clientIdChanged || clientSecretChanged) && (
+            <p className="text-xs text-amber-400">Saving changes the client; click <b>Authorize</b> afterwards.</p>
+          )}
+        </div>
+      )}
 
       {!isOAuth && (
         <div>
@@ -497,8 +574,8 @@ function ConnectionCard({ conn, onRemove, onTest, onReconnect, onUpdate, onRefre
             )}
             {conn.auth_type === 'oauth2' ? (
               conn.oauth_status === 'ok' ? (
-                <span className="flex items-center gap-0.5 text-emerald-500">
-                  <CheckCircle className="w-2.5 h-2.5" /> OAuth authorized
+                <span className="flex items-center gap-0.5 text-emerald-500" title={registrationTitle(conn.oauth)}>
+                  <CheckCircle className="w-2.5 h-2.5" /> OAuth authorized{registrationLabel(conn.oauth)}
                 </span>
               ) : (
                 <span className="flex items-center gap-0.5 text-amber-500">
@@ -648,6 +725,13 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
   const [showKey, setShowKey] = useState(false)
   const [authType, setAuthType] = useState('api_key')
   const [submitting, setSubmitting] = useState(false)
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
+  const [oauthInfo, setOauthInfo] = useState(null)
+  useEffect(() => {
+    if (authType !== 'oauth2' || oauthInfo) return
+    mcpApi.oauthInfo().then((r) => setOauthInfo(r.data)).catch(() => {})
+  }, [authType, oauthInfo])
 
   useEffect(() => {
     if (!prefill) return
@@ -662,7 +746,10 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
     e.preventDefault()
     if (!name.trim() || !url.trim()) return
     setSubmitting(true)
-    await onAdd(name.trim(), url.trim(), apiKey.trim(), authType)
+    const oauthClient = authType === 'oauth2' && clientId.trim()
+      ? { client_id: clientId.trim(), client_secret: clientSecret.trim() || null }
+      : null
+    await onAdd(name.trim(), url.trim(), apiKey.trim(), authType, oauthClient)
     setSubmitting(false)
   }
 
@@ -719,10 +806,34 @@ function AddConnectionForm({ onAdd, onCancel, prefill, onPrefillConsumed }) {
           </label>
         </div>
         {authType === 'oauth2' && (
-          <p className="text-xs text-gray-400 mt-1.5">
-            After adding, click <b>Authorize</b> on the connection card —
-            a browser tab will open for sign-in.
-          </p>
+          <div className="mt-1.5 space-y-2">
+            <p className="text-xs text-gray-400">
+              After adding, click <b>Authorize</b> on the connection card —
+              a browser tab will open for sign-in. Pantheon registers itself with the
+              authorization server{oauthInfo?.client_id_metadata_url ? ' (client ID metadata document, or dynamic registration)' : ' (dynamic registration)'};
+              if the server needs a client you registered by hand, enter it here
+              {oauthInfo?.redirect_uri && (<> (redirect URI: <code className="text-gray-300 select-all break-all">{oauthInfo.redirect_uri}</code>)</>)}.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input
+                type="text"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="Pre-registered client ID (optional)"
+                aria-label="Pre-registered client ID"
+                className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 focus:border-blue-500"
+              />
+              <input
+                type="password"
+                value={clientSecret}
+                disabled={!clientId.trim()}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder="Client secret (optional)"
+                aria-label="Pre-registered client secret"
+                className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-100 focus:border-blue-500 disabled:opacity-50"
+              />
+            </div>
+          </div>
         )}
       </div>
       {authType === 'api_key' && (
@@ -879,9 +990,9 @@ export default function MCPConnections() {
     }
   }, [])
 
-  const handleAdd = async (name, url, apiKey, authType = 'api_key') => {
+  const handleAdd = async (name, url, apiKey, authType = 'api_key', oauthClient = null) => {
     try {
-      const res = await mcpApi.addConnection(name, url, apiKey, {}, true, authType)
+      const res = await mcpApi.addConnection(name, url, apiKey, {}, true, authType, oauthClient)
       const status = res.data.status
       if (status === 'connected') {
         addNotification({ type: 'success', message: `${name} connected — ${res.data.tools?.length || 0} tools discovered` })

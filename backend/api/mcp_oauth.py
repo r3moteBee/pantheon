@@ -14,7 +14,7 @@ import json
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from mcp_client.manager import get_mcp_manager
 
@@ -41,6 +41,36 @@ async def start_oauth(name: str, request: Request) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.get("/mcp/oauth/info")
+async def oauth_info(request: Request) -> dict:
+    """What a user needs to pre-register Pantheon with an authorization
+    server by hand, and whether Client ID Metadata Documents are on."""
+    from mcp_client.oauth import callback_url_for, cimd_client_id
+    from api.auth import request_origin
+    from mcp_client.oauth import _origin_url
+    own = request_origin(request)
+    base = _origin_url(own) if own else None
+    cimd = cimd_client_id(base)
+    return {"redirect_uri": callback_url_for(request), "client_name": "Pantheon",
+            "client_id_metadata_url": cimd, "cimd_enabled": cimd is not None}
+
+
+@router.get("/mcp/oauth/client-metadata.json")
+async def client_metadata_document(request: Request) -> JSONResponse:
+    """Our OAuth Client ID Metadata Document (draft-ietf-oauth-client-id-
+    metadata-document): public, fetched by authorization servers that
+    resolve URL client ids. 404 unless CIMD is usable from a public HTTPS
+    address, so a wrong URL is never served as a valid client id."""
+    from mcp_client.oauth import callback_url_for, cimd_client_id, cimd_document, _origin_url
+    from api.auth import request_origin
+    own = request_origin(request)
+    cimd = cimd_client_id(_origin_url(own) if own else None)
+    if not cimd:
+        raise HTTPException(status_code=404, detail="Client ID Metadata Documents are not enabled here")
+    doc = cimd_document(cimd, [callback_url_for(request)])
+    return JSONResponse(doc, headers={"Cache-Control": "public, max-age=3600"})
+
+
 @router.post("/mcp/connections/{name}/revoke-oauth")
 async def revoke_oauth(name: str) -> dict:
     """Wipe persisted OAuth tokens for a connection."""
@@ -64,10 +94,16 @@ async def oauth_callback(
     """
     if error:
         msg = error_description or error
+        noted = get_mcp_manager().note_oauth_error(state, error)
+        extra = ""
+        if noted and noted.get("fallback_to_dcr"):
+            extra = ("<p>The server did not accept Pantheon's Client ID Metadata Document, so the next "
+                     "<b>Authorize</b> will register Pantheon with it directly (Dynamic Client Registration).</p>")
+            msg = f"{msg} — click Authorize again"
         return _result_page(
             title="Authorization failed",
             body=f"<p>The authorization server returned an error:</p>"
-                 f"<pre>{html.escape(msg)}</pre>",
+                 f"<pre>{html.escape(error_description or error)}</pre>{extra}",
             ok=False,
             notify={"status": "failed", "error": msg},
         )

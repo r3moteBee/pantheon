@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     # Longest one tool call waits on an MCP background task (tasks extension)
     # before cancelling it; the agent turn is blocked meanwhile.
     mcp_task_max_wait_seconds: int = 1800
+    # MCP OAuth client registration (spec 2026-07-28). Client ID Metadata
+    # Documents: Pantheon uses the HTTPS URL of its own
+    # /api/mcp/oauth/client-metadata.json as client_id when the authorization
+    # server supports it. Derived from PUBLIC_BASE_URL (or the browser origin)
+    # when that is a public HTTPS host; MCP_CLIENT_ID_METADATA_URL overrides
+    # it; MCP_CIMD_ENABLED=false turns it off (DCR / pre-registered ids only).
+    mcp_cimd_enabled: bool = True
+    mcp_client_id_metadata_url: str = ""
 
     # Telegram
     telegram_bot_token: str = ""

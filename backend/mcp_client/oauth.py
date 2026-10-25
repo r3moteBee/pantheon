@@ -1,6 +1,10 @@
-"""OAuth 2.1 client for MCP servers — Protected Resource Metadata + DCR + PKCE.
+"""OAuth 2.1 client for MCP servers — Protected Resource Metadata, client
+registration (pre-registered / Client ID Metadata Document / DCR) + PKCE.
 
-Per MCP spec 2025-06-18 (auth) and 2025-11-25 (OIDC discovery fallback):
+Per MCP spec 2026-07-28 (client registration priority: pre-registered
+credentials, then a Client ID Metadata Document when the AS advertises
+``client_id_metadata_document_supported``, then Dynamic Client Registration,
+else ask the user) on top of the 2025-06-18 / 2025-11-25 discovery flow:
 
   1. Unauth'd request to MCP server → 401 with `WWW-Authenticate: Bearer
      resource_metadata="<url>"`. We fetch the PRM doc (RFC 9728) to learn
@@ -8,10 +12,14 @@ Per MCP spec 2025-06-18 (auth) and 2025-11-25 (OIDC discovery fallback):
   2. Fetch each AS's metadata via `/.well-known/oauth-authorization-server`
      (RFC 8414), falling back to `/.well-known/openid-configuration` if the
      AS only advertises OIDC discovery (spec 2025-11-25 addition).
-  3. Dynamic Client Registration (RFC 7591) — POST to `registration_endpoint`
-     with our localhost callback URL. The AS returns a `client_id`
-     (and `client_secret` if it insists on a confidential client; we prefer
-     `token_endpoint_auth_method=none` + PKCE).
+  3. A client id: credentials the user pre-registered on the connection
+     (bound to the AS issuer); else our Client ID Metadata Document URL
+     (``cimd_client_id``: the HTTPS URL of /api/mcp/oauth/client-metadata.json,
+     a public client with PKCE, portable across ASes); else Dynamic Client
+     Registration (RFC 7591, deprecated in 2026-07-28 but kept for ASes without
+     CIMD) — POST to `registration_endpoint` with our callback URL; the AS
+     returns a `client_id` (and `client_secret` if it insists on a
+     confidential client).
   4. Authorization Code Flow + PKCE S256: build the auth URL, user opens it
      in their browser, AS redirects back to our callback with a code, we
      exchange it for tokens.
@@ -101,6 +109,10 @@ def _client_secret_key(name: str) -> str:
     return f"mcp_oauth_client_secret__{name}"
 
 
+def _prereg_secret_key(name: str) -> str:
+    return f"mcp_oauth_prereg_secret__{name}"
+
+
 # ── Discovery / DCR / PKCE ────────────────────────────────────────────────────
 
 
@@ -124,15 +136,24 @@ class AuthServerMetadata:
     code_challenge_methods_supported: list[str] = field(default_factory=list)
     grant_types_supported: list[str] = field(default_factory=list)
     token_endpoint_auth_methods_supported: list[str] = field(default_factory=list)
+    # 2026-07-28: the AS resolves URL-shaped client ids (CIMD).
+    client_id_metadata_document_supported: bool = False
     raw: dict[str, Any] = field(default_factory=dict)
+
+
+# How a client id was obtained (connection config `oauth.registration`).
+REG_PREREGISTERED = "preregistered"
+REG_CIMD = "cimd"
+REG_DCR = "dcr"
 
 
 @dataclass
 class RegisteredClient:
-    """Result of dynamic client registration (RFC 7591)."""
+    """A client id to use with an AS, however it was obtained."""
     client_id: str
     client_secret: Optional[str]  # None for public clients
     token_endpoint_auth_method: str  # "none", "client_secret_post", etc.
+    registration: str = REG_DCR
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -151,6 +172,8 @@ class PendingAuth:
     # RFC 9207: the AS said it sends `iss` on the redirect, so a redirect
     # without one is rejected too (not only a mismatching one).
     iss_required: bool = False
+    # How the client id was obtained; a CIMD id the AS rejects falls back to DCR.
+    registration: str = REG_DCR
 
 
 # Pending-auth registry keyed by `state` param.
@@ -262,21 +285,58 @@ async def fetch_resource_metadata(prm_url: str, timeout: float = 10.0) -> Resour
     )
 
 
-async def fetch_auth_server_metadata(
-    issuer: str, timeout: float = 10.0
-) -> AuthServerMetadata:
-    """Fetch AS metadata, trying OAuth then OIDC discovery URLs.
-
-    Per RFC 8414 the path is `/.well-known/oauth-authorization-server`. As of
-    MCP spec 2025-11-25 clients should also fall back to OpenID Connect's
-    `/.well-known/openid-configuration` since many OIDC providers only host
-    metadata there.
-    """
+def auth_server_metadata_urls(issuer: str) -> list[str]:
+    """Well-known URLs to try for an issuer, in the order MCP 2026-07-28
+    requires: for an issuer with a path, OAuth metadata with path insertion,
+    OIDC discovery with path insertion, then OIDC discovery with the path
+    appended; for a bare issuer, OAuth then OIDC."""
     issuer = issuer.rstrip("/")
-    candidates = [
+    p = urlparse(issuer)
+    base = f"{p.scheme}://{p.netloc}"
+    path = p.path or ""
+    if path and path != "/":
+        return [
+            f"{base}/.well-known/oauth-authorization-server{path}",
+            f"{base}/.well-known/openid-configuration{path}",
+            f"{issuer}/.well-known/openid-configuration",
+        ]
+    return [
         f"{issuer}/.well-known/oauth-authorization-server",
         f"{issuer}/.well-known/openid-configuration",
     ]
+
+
+def parse_auth_server_metadata(raw: dict[str, Any], issuer: str) -> AuthServerMetadata:
+    """Build AuthServerMetadata from a document fetched for ``issuer``; the
+    document's own ``issuer`` must be the same identifier (RFC 8414 §3.3)."""
+    got = str(raw.get("issuer") or "")
+    if got.rstrip("/") != issuer.rstrip("/"):
+        raise RuntimeError(
+            f"Authorization server metadata for {issuer} claims issuer {got or '(none)'!r}; refusing it")
+    return AuthServerMetadata(
+        issuer=got.rstrip("/") or issuer.rstrip("/"),
+        authorization_endpoint=raw["authorization_endpoint"],
+        token_endpoint=raw["token_endpoint"],
+        registration_endpoint=raw.get("registration_endpoint"),
+        scopes_supported=list(raw.get("scopes_supported", [])),
+        code_challenge_methods_supported=list(
+            raw.get("code_challenge_methods_supported", [])
+        ),
+        grant_types_supported=list(raw.get("grant_types_supported", [])),
+        token_endpoint_auth_methods_supported=list(
+            raw.get("token_endpoint_auth_methods_supported", [])
+        ),
+        client_id_metadata_document_supported=bool(raw.get("client_id_metadata_document_supported")),
+        raw=raw,
+    )
+
+
+async def fetch_auth_server_metadata(
+    issuer: str, timeout: float = 10.0
+) -> AuthServerMetadata:
+    """Fetch AS metadata, trying the well-known URLs auth_server_metadata_urls
+    lists (RFC 8414 + OpenID Connect discovery), and validate its issuer."""
+    candidates = auth_server_metadata_urls(issuer)
     last_error: Exception | None = None
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         for url in candidates:
@@ -294,21 +354,90 @@ async def fetch_auth_server_metadata(
             raise RuntimeError(
                 f"No AS metadata found at {candidates}: {last_error}"
             )
-    return AuthServerMetadata(
-        issuer=raw.get("issuer", issuer),
-        authorization_endpoint=raw["authorization_endpoint"],
-        token_endpoint=raw["token_endpoint"],
-        registration_endpoint=raw.get("registration_endpoint"),
-        scopes_supported=list(raw.get("scopes_supported", [])),
-        code_challenge_methods_supported=list(
-            raw.get("code_challenge_methods_supported", [])
-        ),
-        grant_types_supported=list(raw.get("grant_types_supported", [])),
-        token_endpoint_auth_methods_supported=list(
-            raw.get("token_endpoint_auth_methods_supported", [])
-        ),
-        raw=raw,
-    )
+    return parse_auth_server_metadata(raw, issuer)
+
+
+# ── Client ID Metadata Documents (CIMD) ──────────────────────────────────────
+
+CIMD_PATH = "/api/mcp/oauth/client-metadata.json"
+CLIENT_NAME = "Pantheon"
+
+# Hosts an internet-facing authorization server cannot resolve or reach: a
+# document there would make the authorize step fail with invalid_client.
+_PRIVATE_SUFFIXES = (".ts.net", ".local", ".localhost", ".internal", ".lan", ".home.arpa", ".test", ".invalid")
+
+
+def host_looks_public(host: str) -> bool:
+    """False for loopback, private/link-local addresses and local-only names."""
+    import ipaddress
+    host = (host or "").strip("[]").lower()
+    if not host or host == "localhost" or host.endswith(_PRIVATE_SUFFIXES) or "." not in host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_global
+    except ValueError:
+        return True
+
+
+def valid_cimd_url(url: str) -> bool:
+    """The client_id URL rules of draft-ietf-oauth-client-id-metadata-document:
+    https, a path, no dot segments, no fragment, no userinfo."""
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False
+    if p.scheme != "https" or not p.hostname or not p.path or p.path == "/":
+        return False
+    if p.fragment or p.username or p.password or "#" in url:
+        return False
+    if any(seg in (".", "..") for seg in p.path.split("/")):
+        return False
+    return True
+
+
+def cimd_client_id(base_url: str | None = None) -> Optional[str]:
+    """The URL this Pantheon publishes its client metadata at, or None when
+    CIMD cannot be used: MCP_CIMD_ENABLED is off, no HTTPS public base, or
+    the base is a private / tailnet host no authorization server could fetch
+    from. MCP_CLIENT_ID_METADATA_URL overrides the derived URL (it must
+    still be a valid https client_id URL)."""
+    from config import get_settings
+    st = get_settings()
+    if not getattr(st, "mcp_cimd_enabled", True):
+        return None
+    explicit = (getattr(st, "mcp_client_id_metadata_url", "") or "").strip()
+    if explicit:
+        if valid_cimd_url(explicit):
+            return explicit
+        # Development escape hatch: a plain-http document on a private host
+        # (a lab authorization server on the same network). Never public.
+        p = urlparse(explicit)
+        if p.scheme == "http" and valid_cimd_url("https" + explicit[4:]) and not host_looks_public(p.hostname or ""):
+            logger.warning("MCP_CLIENT_ID_METADATA_URL %s is plain http on a private host: development use only", explicit)
+            return explicit
+        return None
+    base = (getattr(st, "public_base_url", "") or base_url or "").strip().rstrip("/")
+    if not base:
+        return None
+    url = base + CIMD_PATH
+    if not valid_cimd_url(url) or not host_looks_public(urlparse(url).hostname or ""):
+        return None
+    return url
+
+
+def cimd_document(client_id: str, redirect_uris: list[str]) -> dict[str, Any]:
+    """The Client ID Metadata Document served at ``client_id``: a public
+    client (PKCE, no secret) with exactly the callback URIs we use."""
+    p = urlparse(client_id)
+    return {
+        "client_id": client_id,
+        "client_name": CLIENT_NAME,
+        "client_uri": f"{p.scheme}://{p.netloc}",
+        "redirect_uris": list(dict.fromkeys(redirect_uris)),
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
 
 
 async def register_client(
@@ -321,8 +450,7 @@ async def register_client(
     """Dynamic Client Registration (RFC 7591). Public client + PKCE preferred."""
     if not as_meta.registration_endpoint:
         raise RuntimeError(
-            "Authorization server does not support Dynamic Client Registration. "
-            "Manual client_id entry is not yet implemented."
+            "Authorization server does not support Dynamic Client Registration."
         )
 
     body: dict[str, Any] = {
@@ -369,6 +497,7 @@ async def register_client(
         client_id=raw["client_id"],
         client_secret=raw.get("client_secret"),
         token_endpoint_auth_method=raw.get("token_endpoint_auth_method", "none"),
+        registration=REG_DCR,
         raw=raw,
     )
 
@@ -384,6 +513,7 @@ def build_authorize_url(
     redirect_uri: str,
     scopes: list[str],
     resource: str,
+    registration: str = REG_DCR,
 ) -> str:
     """Build the authorization URL and stash the PKCE verifier for callback."""
     _sweep_pending()
@@ -402,6 +532,7 @@ def build_authorize_url(
         resource=resource,
         created_at=time.time(),
         iss_required=bool((as_meta.raw or {}).get("authorization_response_iss_parameter_supported")),
+        registration=registration,
     )
 
     params = {
@@ -595,12 +726,36 @@ def mark_refresh_failed(name: str, error: str) -> None:
 
 
 def delete_tokens(name: str) -> None:
-    """Wipe persisted tokens (and any DCR secret) for a connection."""
+    """Wipe persisted tokens for a connection. The client registration (DCR
+    secret, pre-registered credentials) stays: revoking a token is not
+    un-registering, and the next Authorize reuses the client id."""
     from secrets.vault import get_vault
 
-    vault = get_vault()
-    vault.delete_secret(_tokens_key(name))
-    vault.delete_secret(_client_secret_key(name))
+    get_vault().delete_secret(_tokens_key(name))
+
+
+def delete_registration(name: str) -> None:
+    """Forget a DCR / CIMD registration's secret (the AS changed, or the
+    connection is being removed). Pre-registered credentials are the
+    user's and are kept unless delete_preregistered is called."""
+    from secrets.vault import get_vault
+
+    get_vault().delete_secret(_client_secret_key(name))
+
+
+def save_preregistered_secret(name: str, secret: str) -> None:
+    from secrets.vault import get_vault
+    get_vault().set_secret(_prereg_secret_key(name), secret)
+
+
+def load_preregistered_secret(name: str) -> Optional[str]:
+    from secrets.vault import get_vault
+    return get_vault().get_secret(_prereg_secret_key(name)) or None
+
+
+def delete_preregistered(name: str) -> None:
+    from secrets.vault import get_vault
+    get_vault().delete_secret(_prereg_secret_key(name))
 
 
 def save_client_secret(name: str, secret: str) -> None:

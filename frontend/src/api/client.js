@@ -273,8 +273,12 @@ export const llmApi = {
 // MCP Connections API
 export const mcpApi = {
   listConnections: () => api.get('/api/mcp/connections'),
-  addConnection: (name, url, apiKey, headers = {}, enabled = true, authType = 'api_key') =>
-    api.post('/api/mcp/connections', { name, url, api_key: apiKey, headers, enabled, auth_type: authType }),
+  addConnection: (name, url, apiKey, headers = {}, enabled = true, authType = 'api_key', oauthClient = null) =>
+    api.post('/api/mcp/connections', {
+      name, url, api_key: apiKey, headers, enabled, auth_type: authType,
+      ...(oauthClient?.client_id ? { oauth_client_id: oauthClient.client_id, oauth_client_secret: oauthClient.client_secret || null } : {}),
+    }),
+  oauthInfo: () => api.get('/api/mcp/oauth/info'),
   updateConnection: (name, data) => api.put(`/api/mcp/connections/${name}`, data),
   removeConnection: (name) => api.delete(`/api/mcp/connections/${name}`),
   testConnection: (name) => api.post(`/api/mcp/connections/${name}/test`),

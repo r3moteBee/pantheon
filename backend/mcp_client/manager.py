@@ -275,10 +275,17 @@ class MCPManager:
                 else:
                     oauth_status = "ok"
                 oc = cfg.get("oauth") or {}
+                pre = cfg.get("oauth_client") or {}
                 oauth_meta = {
                     "issuer": oc.get("issuer"),
                     "client_id": oc.get("client_id"),
                     "scopes": oc.get("scopes", []),
+                    # How the client id was obtained: preregistered | cimd | dcr.
+                    "registration": oc.get("registration") or (oauth_mod.REG_DCR if oc.get("client_id") else None),
+                    "redirect_uri": oc.get("redirect_uri"),
+                    "cimd_rejected": bool(oc.get("cimd_rejected_issuer")),
+                    "preregistered_client_id": pre.get("client_id"),
+                    "has_preregistered_secret": bool(pre.get("client_id")) and bool(oauth_mod.load_preregistered_secret(name)),
                 }
             live = self._clients.get(name)
             entry = {
@@ -315,6 +322,8 @@ class MCPManager:
         enabled: bool = True,
         request_interval_ms: int = 1000,
         auth_type: str = "api_key",
+        oauth_client_id: str | None = None,
+        oauth_client_secret: str | None = None,
     ) -> dict[str, Any]:
         """Add a new MCP connection.
 
@@ -337,6 +346,7 @@ class MCPManager:
             "request_interval_ms": request_interval_ms,
             "auth_type": auth_type,
         }
+        self._set_preregistered(cfg, oauth_client_id, oauth_client_secret)
         self._configs.append(cfg)
         self._save_configs()
 
@@ -364,6 +374,29 @@ class MCPManager:
 
         return result
 
+    def _set_preregistered(self, cfg: dict[str, Any], client_id: str | None, secret: str | None) -> None:
+        """Store credentials the user registered with the AS themselves
+        (spec: pre-registration). The id lives in the config (bound to the
+        issuer on first use), the secret in the vault."""
+        from mcp_client import oauth as oauth_mod
+        name = cfg["name"]
+        if client_id is not None:
+            client_id = client_id.strip()
+            if client_id:
+                prev = cfg.get("oauth_client") or {}
+                if prev.get("client_id") != client_id:
+                    cfg["oauth_client"] = {"client_id": client_id, "issuer": None}
+                    oauth_mod.delete_tokens(name)   # tokens were minted for the old client
+            else:
+                cfg.pop("oauth_client", None)
+                oauth_mod.delete_preregistered(name)
+                oauth_mod.delete_tokens(name)
+        if secret is not None and cfg.get("oauth_client"):
+            if secret:
+                oauth_mod.save_preregistered_secret(name, secret)
+            else:
+                oauth_mod.delete_preregistered(name)
+
     async def update_connection(
         self,
         name: str,
@@ -372,8 +405,12 @@ class MCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool | None = None,
         request_interval_ms: int | None = None,
+        oauth_client_id: str | None = None,
+        oauth_client_secret: str | None = None,
     ) -> dict[str, Any]:
-        """Update an existing MCP connection."""
+        """Update an existing MCP connection. ``oauth_client_id`` "" clears
+        the pre-registered credentials; ``oauth_client_secret`` "" clears
+        the secret only."""
         cfg = None
         for c in self._configs:
             if c["name"] == name:
@@ -392,6 +429,7 @@ class MCPManager:
             cfg["enabled"] = enabled
         if request_interval_ms is not None:
             cfg["request_interval_ms"] = request_interval_ms
+        self._set_preregistered(cfg, oauth_client_id, oauth_client_secret)
 
         self._save_configs()
 
@@ -445,6 +483,8 @@ class MCPManager:
         # Best-effort cleanup — safe to call even if there are no tokens.
         try:
             oauth_mod.delete_tokens(name)
+            oauth_mod.delete_registration(name)
+            oauth_mod.delete_preregistered(name)
         except Exception:
             pass
         return {"name": name, "status": "removed"}
@@ -495,35 +535,7 @@ class MCPManager:
         issuer = prm.authorization_servers[0]
         as_meta = await oauth_mod.fetch_auth_server_metadata(issuer)
 
-        # Client credentials are bound to the AS that issued them (spec
-        # 2026-07-28 "Authorization Server Binding"): reuse the stored
-        # client_id only for the same issuer + redirect, re-register when the
-        # PRM now points at a different authorization server.
-        prior = cfg.get("oauth") or {}
-        reuse = bool(prior.get("client_id")) and prior.get("issuer") == as_meta.issuer \
-            and prior.get("redirect_uri") == redirect_uri
-        if reuse:
-            logger.info("MCP '%s' reusing OAuth client %s registered with %s",
-                        name, prior["client_id"], as_meta.issuer)
-            client = oauth_mod.RegisteredClient(
-                client_id=prior["client_id"],
-                client_secret=oauth_mod.load_client_secret(name),
-                token_endpoint_auth_method=prior.get("token_endpoint_auth_method", "none"),
-                raw={},
-            )
-        else:
-            if prior.get("client_id"):
-                logger.info("MCP '%s' authorization server changed (%s → %s): re-registering",
-                            name, prior.get("issuer"), as_meta.issuer)
-                oauth_mod.delete_tokens(name)
-            client = await oauth_mod.register_client(
-                as_meta=as_meta,
-                redirect_uri=redirect_uri,
-                client_name=f"Pantheon ({name})",
-                scopes=prm.scopes_supported or as_meta.scopes_supported,
-            )
-            if client.client_secret:
-                oauth_mod.save_client_secret(name, client.client_secret)
+        client = await self._resolve_oauth_client(cfg, as_meta, redirect_uri, prm.scopes_supported or as_meta.scopes_supported)
 
         resource = prm.resource or oauth_mod._resource_id_for(cfg["url"])
         scopes = prm.scopes_supported or as_meta.scopes_supported
@@ -535,17 +547,22 @@ class MCPManager:
             redirect_uri=redirect_uri,
             scopes=scopes,
             resource=resource,
+            registration=client.registration,
         )
 
-        # Persist OAuth metadata onto the connection.
+        # Persist OAuth metadata onto the connection (keeping what the
+        # callback may have noted, e.g. a CIMD id the AS rejected).
+        prior = dict(cfg.get("oauth") or {})
         cfg["auth_type"] = "oauth2"
         cfg["oauth"] = {
+            **{k: v for k, v in prior.items() if k.startswith("cimd_rejected")},
             "issuer": as_meta.issuer,
             "authorization_endpoint": as_meta.authorization_endpoint,
             "token_endpoint": as_meta.token_endpoint,
             "registration_endpoint": as_meta.registration_endpoint,
             "client_id": client.client_id,
             "token_endpoint_auth_method": client.token_endpoint_auth_method,
+            "registration": client.registration,
             "scopes": scopes,
             "resource": resource,
             "prm_url": prm_url,
@@ -554,7 +571,112 @@ class MCPManager:
         }
         self._save_configs()
 
-        return {"name": name, "authorize_url": auth_url}
+        return {"name": name, "authorize_url": auth_url, "registration": client.registration,
+                "client_id": client.client_id}
+
+    async def _resolve_oauth_client(self, cfg: dict[str, Any], as_meta, redirect_uri: str,
+                                    scopes: list[str]):
+        """The client id to authorize with, in the spec's priority order
+        (2026-07-28 client registration):
+
+        1. credentials the user pre-registered on the connection — bound to
+           the issuer they were first used with; a different issuer is an
+           error, not a silent reuse;
+        2. the registration already stored for this issuer + redirect (a
+           CIMD id or a DCR client), unless the AS rejected that CIMD id;
+        3. our Client ID Metadata Document when the AS supports it and we
+           have a public HTTPS URL for it;
+        4. Dynamic Client Registration when the AS has a registration
+           endpoint;
+        5. otherwise an error telling the user what to register by hand.
+        """
+        from mcp_client import oauth as oauth_mod
+        name = cfg["name"]
+        pre = cfg.get("oauth_client") or {}
+        if pre.get("client_id"):
+            bound = pre.get("issuer")
+            if bound and bound.rstrip("/") != as_meta.issuer.rstrip("/"):
+                raise RuntimeError(
+                    f"The pre-registered client id for '{name}' belongs to authorization server {bound}, "
+                    f"but the MCP server now uses {as_meta.issuer}. Register Pantheon with the new server "
+                    "and update the client id under the connection's OAuth settings (or clear it to let "
+                    "Pantheon register itself).")
+            if not bound:
+                pre["issuer"] = as_meta.issuer
+                self._save_configs()
+            secret = oauth_mod.load_preregistered_secret(name)
+            logger.info("MCP '%s' using pre-registered OAuth client %s with %s", name, pre["client_id"], as_meta.issuer)
+            return oauth_mod.RegisteredClient(
+                client_id=pre["client_id"], client_secret=secret,
+                token_endpoint_auth_method="client_secret_basic" if secret else "none",
+                registration=oauth_mod.REG_PREREGISTERED)
+
+        prior = cfg.get("oauth") or {}
+        cimd_id = oauth_mod.cimd_client_id()
+        cimd_ok = bool(cimd_id) and as_meta.client_id_metadata_document_supported \
+            and prior.get("cimd_rejected_issuer") != as_meta.issuer
+        prior_reg = prior.get("registration") or (oauth_mod.REG_DCR if prior.get("client_id") else None)
+        reuse = bool(prior.get("client_id")) and prior.get("issuer") == as_meta.issuer \
+            and prior.get("redirect_uri") == redirect_uri and prior_reg != oauth_mod.REG_PREREGISTERED
+        if reuse and prior_reg == oauth_mod.REG_CIMD and (not cimd_ok or prior["client_id"] != cimd_id):
+            reuse = False
+        if reuse:
+            logger.info("MCP '%s' reusing OAuth client %s (%s) registered with %s",
+                        name, prior["client_id"], prior_reg, as_meta.issuer)
+            return oauth_mod.RegisteredClient(
+                client_id=prior["client_id"],
+                client_secret=oauth_mod.load_client_secret(name) if prior_reg == oauth_mod.REG_DCR else None,
+                token_endpoint_auth_method=prior.get("token_endpoint_auth_method", "none"),
+                registration=prior_reg, raw={})
+        if prior.get("client_id") and prior.get("issuer") != as_meta.issuer:
+            logger.info("MCP '%s' authorization server changed (%s → %s): re-registering",
+                        name, prior.get("issuer"), as_meta.issuer)
+            oauth_mod.delete_tokens(name)
+            oauth_mod.delete_registration(name)
+        if cimd_ok:
+            logger.info("MCP '%s' using Client ID Metadata Document %s with %s", name, cimd_id, as_meta.issuer)
+            return oauth_mod.RegisteredClient(client_id=cimd_id, client_secret=None,
+                                              token_endpoint_auth_method="none",
+                                              registration=oauth_mod.REG_CIMD)
+        if as_meta.registration_endpoint:
+            client = await oauth_mod.register_client(
+                as_meta=as_meta, redirect_uri=redirect_uri,
+                client_name=f"Pantheon ({name})", scopes=scopes)
+            if client.client_secret:
+                oauth_mod.save_client_secret(name, client.client_secret)
+            else:
+                oauth_mod.delete_registration(name)
+            return client
+        why = ("it does not resolve Client ID Metadata Documents" if not as_meta.client_id_metadata_document_supported
+               else "Pantheon has no public HTTPS address to publish its client metadata at "
+                    "(set PUBLIC_BASE_URL or MCP_CLIENT_ID_METADATA_URL)")
+        raise RuntimeError(
+            f"Authorization server {as_meta.issuer} offers no Dynamic Client Registration and {why}. "
+            f"Register Pantheon with it by hand (redirect URI: {redirect_uri}) and enter the client id "
+            "(and secret, if it issued one) under the connection's OAuth settings.")
+
+    def note_oauth_error(self, state: str | None, error: str) -> dict[str, Any] | None:
+        """The authorization server bounced the browser back with an error.
+        For a CIMD attempt that it rejected (it could not fetch or did not
+        accept our metadata document) remember that, so the next Authorize
+        falls back to DCR. Returns the connection name + registration, or
+        None when the state is unknown."""
+        from mcp_client import oauth as oauth_mod
+        pending = oauth_mod.take_pending(state or "")
+        if not pending:
+            return None
+        cfg = self._get_cfg(pending.name)
+        fallback = False
+        if cfg is not None and pending.registration == oauth_mod.REG_CIMD \
+                and error in ("invalid_client", "unauthorized_client", "invalid_request", "access_denied"):
+            oc = cfg.setdefault("oauth", {})
+            oc["cimd_rejected_issuer"] = pending.issuer
+            oc["cimd_rejected_error"] = error
+            self._save_configs()
+            fallback = True
+            logger.info("MCP '%s': %s rejected our Client ID Metadata Document (%s); next Authorize uses DCR",
+                        pending.name, pending.issuer, error)
+        return {"name": pending.name, "registration": pending.registration, "fallback_to_dcr": fallback}
 
     async def complete_oauth(self, code: str, state: str, iss: str | None = None) -> dict[str, Any]:
         """Finish the OAuth dance after the browser redirects to our callback.
@@ -606,7 +728,8 @@ class MCPManager:
             }
 
     async def revoke_oauth(self, name: str) -> dict[str, str]:
-        """Wipe persisted OAuth tokens (and DCR secret) for a connection."""
+        """Wipe persisted OAuth tokens for a connection (the client
+        registration and any pre-registered credentials stay)."""
         from mcp_client import oauth as oauth_mod
 
         oauth_mod.delete_tokens(name)
