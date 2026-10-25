@@ -279,6 +279,7 @@ export const mcpApi = {
       ...(oauthClient?.client_id ? { oauth_client_id: oauthClient.client_id, oauth_client_secret: oauthClient.client_secret || null } : {}),
     }),
   oauthInfo: () => api.get('/api/mcp/oauth/info'),
+  listPrompts: () => api.get('/api/mcp/prompts'),
   updateConnection: (name, data) => api.put(`/api/mcp/connections/${name}`, data),
   removeConnection: (name) => api.delete(`/api/mcp/connections/${name}`),
   testConnection: (name) => api.post(`/api/mcp/connections/${name}/test`),

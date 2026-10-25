@@ -88,6 +88,14 @@ ERA_LEGACY = "legacy"
 
 # Characters of resource / prompt text handed to the model at most.
 MAX_RESOURCE_CHARS = 60_000
+# Per-connection confirmation policy for tools that change data (tool annotations).
+CONFIRM_DESTRUCTIVE = "destructive"
+CONFIRM_WRITES = "writes"
+CONFIRM_OFF = "off"
+CONFIRM_POLICIES = (CONFIRM_DESTRUCTIVE, CONFIRM_WRITES, CONFIRM_OFF)
+# Synthetic tools that only read (never need approval). Prompts are
+# user-chosen commands (mcp_client/prompts.py), not model tools.
+SYNTHETIC_READS = frozenset({"read_resource", "list_resources"})
 # subscriptions/listen reconnect backoff (seconds).
 LISTEN_RETRY_MIN_S = 5.0
 LISTEN_RETRY_MAX_S = 300.0
@@ -325,6 +333,7 @@ class MCPClient:
         probe: bool = False,
         elicitation: bool = False,
         elicit: elicit_mod.Elicitor | None = None,
+        on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
         """Send a JSON-RPC 2.0 request and return the result.
 
@@ -392,14 +401,15 @@ class MCPClient:
 
             async with pooled_client(timeout=self.timeout) as client:
                 streamed: dict[str, Any] | None = None
-                if not modern and method == "tools/call":
-                    # A legacy server may interleave server->client requests
-                    # (elicitation/create, ping) on the SSE response before
-                    # the result: read it as it arrives and answer them.
+                if method == "tools/call":
+                    # Read the response as it arrives: progress notifications
+                    # (both eras) and, on a legacy server, its server->client
+                    # requests (elicitation/create, ping) precede the result.
                     async with client.stream("POST", url, json=payload, headers=headers,
                                              follow_redirects=True) as sresp:
                         if sresp.status_code == 200 and "text/event-stream" in sresp.headers.get("content-type", ""):
-                            streamed = await self._read_legacy_stream(sresp, request_id, elicit, client, url)
+                            streamed = await self._read_call_stream(sresp, request_id, elicit, client, url,
+                                                                    modern=modern, on_progress=on_progress)
                         else:
                             await sresp.aread()
                         resp = sresp
@@ -583,11 +593,13 @@ class MCPClient:
         except Exception:
             return "(streamed)"
 
-    async def _read_legacy_stream(self, resp: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
-                                  client: Any, url: str) -> dict[str, Any]:
-        """Read a legacy tools/call SSE response as it arrives, answering the
-        server's requests on it (``elicitation/create`` through ``elicit``,
-        ``ping``), until the message that answers ``request_id``."""
+    async def _read_call_stream(self, resp: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
+                                client: Any, url: str, *, modern: bool = False,
+                                on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> dict[str, Any]:
+        """Read a tools/call SSE response as it arrives - progress
+        notifications go to ``on_progress``; a legacy server's requests on it
+        (``elicitation/create`` through ``elicit``, ``ping``) are answered -
+        until the message that answers ``request_id``."""
         buf: list[str] = []
         async for raw in resp.aiter_lines():
             line = raw.rstrip("\r\n")
@@ -605,20 +617,31 @@ class MCPClient:
             except json.JSONDecodeError:
                 continue
             report_progress()
-            done = await self._legacy_stream_message(msg, request_id, elicit, client, url)
+            done = await self._stream_message(msg, request_id, elicit, client, url, modern=modern,
+                                              on_progress=on_progress)
             if done is not None:
                 return done
         raise MCPError("the server closed the stream before answering the tool call", code=-32000)
 
-    async def _legacy_stream_message(self, msg: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
-                                     client: Any, url: str) -> dict[str, Any] | None:
+    async def _stream_message(self, msg: Any, request_id: int, elicit: elicit_mod.Elicitor | None,
+                              client: Any, url: str, *, modern: bool = False,
+                              on_progress: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> dict[str, Any] | None:
         if not isinstance(msg, dict):
             return None
         if msg.get("id") == request_id and ("result" in msg or "error" in msg):
             return msg
         method = msg.get("method")
-        if not method or "id" not in msg:
-            return None   # our own echo, or a notification (progress, logging)
+        if not method:
+            return None
+        if "id" not in msg:
+            if method == "notifications/progress" and on_progress is not None:
+                try:
+                    await on_progress(msg.get("params") or {})
+                except Exception:
+                    logger.debug("progress hook failed", exc_info=True)
+            return None   # notifications (progress, logging)
+        if modern:
+            return None   # no back-channel in the stateless era; servers must use MRTR
         reply: dict[str, Any] = {"jsonrpc": "2.0", "id": msg["id"]}
         if method == "ping":
             reply["result"] = {}
@@ -859,12 +882,39 @@ class MCPClient:
         logger.info("MCP '%s' lists %d prompts", self.name, len(self.prompts))
         return self.prompts
 
+    # ── Tool annotations: human in the loop for writes ───────────────────
+
+    def tool_definition(self, name: str) -> dict[str, Any] | None:
+        return next((t for t in self.tools if t.get("name") == name), None)
+
+    def tool_annotations(self, name: str) -> dict[str, Any]:
+        t = self.tool_definition(name)
+        ann = (t or {}).get("annotations")
+        return ann if isinstance(ann, dict) else {}
+
+    def needs_confirmation(self, name: str, policy: str = CONFIRM_DESTRUCTIVE) -> bool:
+        """Whether the person should approve this call first.
+
+        Policies: ``destructive`` (default) - the server marked the tool
+        ``destructiveHint: true`` (and not read-only); ``writes`` - every
+        tool not marked ``readOnlyHint: true``, annotated or not; ``off`` -
+        never. Synthetic resource/prompt tools are reads and never ask.
+        """
+        if policy == CONFIRM_OFF or name in SYNTHETIC_READS:
+            return False
+        ann = self.tool_annotations(name)
+        if ann.get("readOnlyHint") is True:
+            return False
+        if policy == CONFIRM_WRITES:
+            return True
+        return ann.get("destructiveHint") is True
+
     # ── Synthetic tools: resources and prompts for the model ─────────────
 
     def synthetic_tools(self) -> dict[str, dict[str, Any]]:
         """OpenAI-style function definitions (keyed by bare name) the model
-        gets for this server's resources and prompts. A real tool of the
-        same name wins."""
+        gets for this server's resources. A real tool of the same name
+        wins. (Prompts are not here - see below.)"""
         real = {t.get("name") for t in self.tools}
         out: dict[str, dict[str, Any]] = {}
         if self.has_resources and (self.resources or self.resource_templates):
@@ -886,24 +936,9 @@ class MCPClient:
                 "description": f"List every resource and resource template MCP server '{self.name}' publishes, with descriptions.",
                 "parameters": {"type": "object", "properties": {}},
             }
-        if self.has_prompts and self.prompts:
-            lines = []
-            for pr in self.prompts[:25]:
-                args = ", ".join(f"{a.get('name')}{'' if a.get('required') else '?'}"
-                                 for a in (pr.get("arguments") or []) if isinstance(a, dict) and a.get("name"))
-                lines.append(f"- {pr['name']}({args})" + (f": {str(pr.get('description'))[:120]}" if pr.get("description") else ""))
-            out["get_prompt"] = {
-                "description": (f"Fetch a prompt template from MCP server '{self.name}' with its arguments filled in; "
-                                "it returns the messages to follow. Available:\n" + "\n".join(lines)),
-                "parameters": {"type": "object", "properties": {
-                    "name": {"type": "string"},
-                    "arguments": {"type": "object", "description": "Argument values by name", "additionalProperties": {"type": "string"}}},
-                    "required": ["name"]},
-            }
-            out["list_prompts"] = {
-                "description": f"List the prompt templates MCP server '{self.name}' offers, with their arguments.",
-                "parameters": {"type": "object", "properties": {}},
-            }
+        # Prompts are user-controlled (spec): the person picks one from the
+        # composer (/connection:prompt, mcp_client/prompts.py); the model gets
+        # no tool for them. call_synthetic("get_prompt") stays for that path.
         return {k: v for k, v in out.items() if k not in real}
 
     async def call_synthetic(self, name: str, arguments: dict[str, Any] | None = None, *,
@@ -1297,6 +1332,9 @@ class MCPClient:
         attempt = 0
         while attempt < MAX_RETRIES:
             params: dict[str, Any] = {"name": tool_name, "arguments": arguments}
+            if notify is not None:
+                # Ask for notifications/progress on the response stream.
+                params["_meta"] = {"progressToken": f"pt{self._request_id + 1}"}
             if request_state is not None:
                 params["requestState"] = request_state
             if input_responses is not None:
@@ -1313,6 +1351,7 @@ class MCPClient:
                     param_headers=param_headers,
                     elicitation=elicit is not None,
                     elicit=elicit,
+                    on_progress=self._progress_notifier(notify) if notify is not None else None,
                 )
             except MCPError as e:
                 # The server's tool definition changed under us (new or
@@ -1395,6 +1434,10 @@ class MCPClient:
                 raise MCPError(f"unknown resultType {rtype!r} from server", code=-32600)
 
             last = self._parse_call_result(result)
+            mismatch = self._output_mismatch(tool_name, last.get("structured"))
+            if mismatch:
+                last = {**last, "text": (last["text"] + "\n\n" if last["text"] else "") +
+                        f"[The structured output did not match the tool's outputSchema: {mismatch}]"}
             text_result = last["text"]
 
             # Check for rate-limit errors embedded in result content
@@ -1541,6 +1584,50 @@ class MCPClient:
                 watcher.cancel()
             if ctx:
                 task_store.forget(task_id)
+
+    def _progress_notifier(self, notify: Callable[[dict[str, Any]], Awaitable[None]]):
+        """notifications/progress params -> the UI's tool status shape."""
+        started = time.monotonic()
+
+        async def on_progress(params: dict[str, Any]) -> None:
+            status: dict[str, Any] = {"kind": "progress", "state": "working",
+                                      "elapsed_s": int(time.monotonic() - started)}
+            prog, total = params.get("progress"), params.get("total")
+            if isinstance(prog, (int, float)) and not isinstance(prog, bool):
+                status["progress"] = prog
+                if isinstance(total, (int, float)) and not isinstance(total, bool) and total > 0:
+                    status["total"] = total
+                    status["percent"] = int(min(100, max(0, prog * 100 / total)))
+            msg = params.get("message")
+            if isinstance(msg, str) and msg.strip():
+                status["message"] = msg.strip()[:500]
+            await notify(status)
+        return on_progress
+
+    def _output_mismatch(self, tool_name: str, structured: Any) -> str | None:
+        """First validation error of ``structuredContent`` against the tool's
+        ``outputSchema`` (spec: clients SHOULD validate), or None. Schemas
+        with network references or an unavailable validator are skipped."""
+        if structured is None:
+            return None
+        schema = (self.tool_definition(tool_name) or {}).get("outputSchema")
+        if not isinstance(schema, dict) or not schema:
+            return None
+        try:
+            import jsonschema
+            from jsonschema import Draft202012Validator
+            validator = Draft202012Validator(schema)
+            err = next(iter(validator.iter_errors(structured)), None)
+        except ImportError:
+            return None
+        except Exception as e:   # unresolvable $ref, invalid schema: not the tool's fault
+            logger.debug("MCP '%s' outputSchema for %s not checkable: %s", self.name, tool_name, e)
+            return None
+        if err is None:
+            return None
+        where = "/".join(str(p) for p in err.absolute_path) or "(root)"
+        logger.info("MCP '%s' %s structured output mismatch at %s: %s", self.name, tool_name, where, err.message)
+        return f"at {where}: {err.message[:200]}"
 
     @staticmethod
     def _parse_call_result(result: dict[str, Any]) -> dict[str, Any]:

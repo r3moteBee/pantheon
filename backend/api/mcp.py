@@ -26,6 +26,8 @@ class AddConnectionRequest(BaseModel):
     # with the authorization server by hand; used before CIMD / DCR.
     oauth_client_id: str | None = None
     oauth_client_secret: str | None = None
+    # Ask the user before tools that change data: destructive | writes | off
+    confirm_writes: str | None = None
 
 
 class UpdateConnectionRequest(BaseModel):
@@ -36,6 +38,7 @@ class UpdateConnectionRequest(BaseModel):
     request_interval_ms: int | None = None
     oauth_client_id: str | None = None      # "" clears the pre-registered client
     oauth_client_secret: str | None = None  # "" clears the secret
+    confirm_writes: str | None = None       # destructive | writes | off
 
 
 class ToolToggleRequest(BaseModel):
@@ -80,6 +83,7 @@ async def add_connection(req: AddConnectionRequest) -> dict[str, Any]:
             auth_type=req.auth_type,
             oauth_client_id=req.oauth_client_id,
             oauth_client_secret=req.oauth_client_secret,
+            confirm_writes=req.confirm_writes,
         )
         return result
     except ValueError as e:
@@ -112,9 +116,10 @@ async def update_connection(name: str, req: UpdateConnectionRequest) -> dict[str
             request_interval_ms=req.request_interval_ms,
             oauth_client_id=req.oauth_client_id,
             oauth_client_secret=req.oauth_client_secret,
+            confirm_writes=req.confirm_writes,
         )
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
 
 
 # ── Remove a connection ─────────────────────────────────────────────────────
@@ -188,6 +193,14 @@ async def toggle_tool(name: str, req: ToolToggleRequest) -> dict[str, Any]:
 
 
 # ── List discovered tools ───────────────────────────────────────────────────
+
+@router.get("/mcp/prompts")
+async def list_prompts() -> dict[str, Any]:
+    """Prompt templates connected servers offer, as /connection:prompt commands
+    for the composer (prompts are user-chosen, not model tools)."""
+    from mcp_client.prompts import list_prompt_commands
+    return {"prompts": list_prompt_commands(get_mcp_manager())}
+
 
 @router.get("/mcp/tools")
 async def list_mcp_tools() -> dict[str, Any]:

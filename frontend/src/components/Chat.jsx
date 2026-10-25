@@ -4,6 +4,7 @@ import { useStore } from '../store'
 import Message, { StreamingMessage } from './chat/Message'
 import SkillSuggestionCard from './chat/SkillSuggestionCard'
 import ElicitationCard from './chat/ElicitationCard'
+import ConfirmToolCard from './chat/ConfirmToolCard'
 import ChatComposer from './chat/ChatComposer'
 import ChatHistoryDrawer from './chat/ChatHistoryDrawer'
 import SaveToArtifactModal, { defaultSavePath } from './chat/SaveToArtifactModal'
@@ -202,6 +203,10 @@ export default function Chat() {
             onDecline={socket.declineElicitation}
             onCancel={socket.cancelElicitation}
           />
+        )}
+        {/* An MCP tool that changes data waits for approval */}
+        {socket.pendingConfirm && isStreaming && (
+          <ConfirmToolCard key={socket.pendingConfirm.confirmId} confirm={socket.pendingConfirm} onAnswer={socket.answerConfirm} />
         )}
         {/* Skill suggestion prompt */}
         {socket.pendingSuggestion && !isStreaming && (

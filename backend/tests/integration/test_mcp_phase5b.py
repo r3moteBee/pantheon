@@ -273,12 +273,13 @@ async def test_resources_and_prompts_become_tools():
         assert [t["uriTemplate"] for t in c.resource_templates] == ["file:///notes/{name}"]
         assert [p["name"] for p in c.prompts] == ["review"]
         names = [s["function"]["name"] for s in mgr.get_all_tool_schemas()]
-        assert "mcp_t_read_resource" in names and "mcp_t_list_resources" in names and "mcp_t_get_prompt" in names
-        assert "mcp_t_list_prompts" not in names   # excluded, like any tool
+        assert "mcp_t_read_resource" in names and "mcp_t_list_resources" in names
+        # Prompts are user-chosen commands (phase 6), never model tools.
+        assert "mcp_t_get_prompt" not in names and "mcp_t_list_prompts" not in names
         desc = next(s for s in mgr.get_all_tool_schemas() if s["function"]["name"] == "mcp_t_read_resource")["function"]["description"]
         assert "file:///notes/a.md — Notes A: Project notes" in desc and "template file:///notes/{name}" in desc
         assert mgr.resolve_tool_call("mcp_t_read_resource") == (c, "read_resource")
-        assert mgr.resolve_tool_call("mcp_t_list_prompts") is None
+        assert mgr.resolve_tool_call("mcp_t_get_prompt") is None
         # Run them through the manager like the agent does.
         with patch("mcp_client.budget.record"):
             out = await mgr.execute_tool("mcp_t_read_resource", {"uri": "file:///notes/a.md"})
@@ -287,7 +288,8 @@ async def test_resources_and_prompts_become_tools():
             assert "[binary content, 3 bytes base64-encoded; not shown]" in out
             out = await mgr.execute_tool("mcp_t_list_resources", {})
             assert "db://users" in out and "template file:///notes/{name}" in out
-            out = await mgr.execute_tool("mcp_t_get_prompt", {"name": "review", "arguments": {"code": "x=1"}})
+            got = await c.call_synthetic("get_prompt", {"name": "review", "arguments": {"code": "x=1"}})
+            out = got["text"]
             assert "(Code review prompt)" in out and "user: Review: x=1" in out
             assert "assistant: Sure.\n[resource file:///notes/a.md: read it with read_resource]" in out
             # A read that asks for input goes through the elicitor (MRTR).
@@ -302,8 +304,8 @@ async def test_resources_and_prompts_become_tools():
             assert "needs user input" in out and "web chat" in out
         discovered = mgr.get_discovered_tools()
         synth = [d for d in discovered if d.get("synthetic")]
-        assert {d["name"] for d in synth} == {"read_resource", "list_resources", "get_prompt", "list_prompts"}
-        assert next(d for d in synth if d["name"] == "list_prompts")["excluded"] is True
+        assert {d["name"] for d in synth} == {"read_resource", "list_resources"}
+        assert all(d["needs_confirmation"] is False for d in synth)
         listed = mgr.list_connections()[0]
         assert listed["resources_count"] == 3 and listed["prompts_count"] == 1
 

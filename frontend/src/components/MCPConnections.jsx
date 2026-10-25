@@ -309,6 +309,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
   const [error, setError] = useState(null)
   // OAuth pre-registration: a client id (and secret) the user registered
   // with the authorization server by hand. Used before CIMD / DCR.
+  const [confirmWrites, setConfirmWrites] = useState(conn.confirm_writes || 'destructive')
   const [clientId, setClientId] = useState(conn.oauth?.preregistered_client_id || '')
   const [clientSecret, setClientSecret] = useState('')
   const [clearSecret, setClearSecret] = useState(false)
@@ -321,9 +322,10 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
   const urlChanged = url.trim() !== (conn.url || '').trim()
   const enabledChanged = enabled !== (conn.enabled !== false)
   const apiKeyChanged = apiKey.length > 0
+  const confirmChanged = confirmWrites !== (conn.confirm_writes || 'destructive')
   const clientIdChanged = isOAuth && clientId.trim() !== (conn.oauth?.preregistered_client_id || '')
   const clientSecretChanged = isOAuth && (clientSecret.length > 0 || clearSecret)
-  const hasChanges = urlChanged || enabledChanged || apiKeyChanged || clientIdChanged || clientSecretChanged
+  const hasChanges = urlChanged || enabledChanged || apiKeyChanged || clientIdChanged || clientSecretChanged || confirmChanged
 
   const handleSave = async () => {
     if (!url.trim()) {
@@ -336,6 +338,7 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
     if (urlChanged) update.url = url.trim()
     if (enabledChanged) update.enabled = enabled
     if (apiKeyChanged) update.api_key = apiKey
+    if (confirmChanged) update.confirm_writes = confirmWrites
     if (clientIdChanged) update.oauth_client_id = clientId.trim()
     if (clientSecretChanged) update.oauth_client_secret = clearSecret ? '' : clientSecret
     try {
@@ -368,6 +371,22 @@ function ConnectionEditForm({ conn, onSave, onCancel }) {
             start returning 401.
           </p>
         )}
+      </div>
+
+      <div>
+        <label className="block text-xs text-gray-400 mb-1">Ask before running tools that change data</label>
+        <select
+          value={confirmWrites}
+          onChange={(e) => setConfirmWrites(e.target.value)}
+          className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-100 focus:border-blue-500"
+        >
+          <option value="destructive">Only tools the server marks destructive (default)</option>
+          <option value="writes">Every tool not marked read-only</option>
+          <option value="off">Never ask</option>
+        </select>
+        <p className="text-xs text-gray-500 mt-1">
+          Such tools show an Approve / Deny card in the web chat and are refused from bots and scheduled tasks unless set to Never ask.
+        </p>
       </div>
 
       {isOAuth && (
@@ -1309,9 +1328,13 @@ export default function MCPConnections() {
                 <div key={tool.prefixed_name} className="px-4 py-2.5 flex items-start gap-3">
                   <Zap className="w-3 h-3 text-yellow-400 mt-1 flex-shrink-0" />
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-mono font-medium text-yellow-300">{tool.name}</span>
                       <span className="text-xs px-1.5 py-0.5 rounded bg-gray-700 text-gray-400">{tool.connection}</span>
+                      {tool.synthetic && <span className="text-xs px-1.5 py-0.5 rounded bg-sky-900/60 text-sky-300" title="Added by Pantheon for the server's resources">resources</span>}
+                      {tool.annotations?.readOnlyHint === true && <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300">read-only</span>}
+                      {tool.annotations?.destructiveHint === true && <span className="text-xs px-1.5 py-0.5 rounded bg-red-900/60 text-red-300" title="The server marks this tool as one that may delete or overwrite data">destructive</span>}
+                      {tool.needs_confirmation && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300" title="Asks for your approval in the chat before it runs">asks first</span>}
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{tool.description}</p>
                   </div>

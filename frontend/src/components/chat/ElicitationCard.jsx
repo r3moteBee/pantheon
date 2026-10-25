@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, ExternalLink, MessageSquareWarning, XCircle } from 'lucide-react'
 import {
   contentFromValues, describeUrl, fieldsFromSchema, initialValues, validateValues,
@@ -27,6 +27,8 @@ export default function ElicitationCard({ elicitation, onAnswer, onDecline, onCa
   const [localErrors, setLocalErrors] = useState({})
   const [opened, setOpened] = useState({})
   const [left, setLeft] = useState(timeoutS || 0)
+  const cardRef = useRef(null)
+  useEffect(() => { cardRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }) }, [elicitation.elicitationId])
 
   useEffect(() => {
     if (!timeoutS) return undefined
@@ -72,7 +74,7 @@ export default function ElicitationCard({ elicitation, onAnswer, onDecline, onCa
   const seconds = String(left % 60).padStart(2, '0')
 
   return (
-    <div className="flex justify-start mb-4" data-testid="elicitation-card">
+    <div ref={cardRef} className="flex justify-start mb-4" data-testid="elicitation-card">
       <form onSubmit={submit} className="w-full border border-sky-700/60 bg-sky-950/40 rounded-2xl px-4 py-3" noValidate>
         <div className="flex flex-wrap items-center gap-2 mb-2">
           <MessageSquareWarning className="w-4 h-4 text-sky-300" aria-hidden="true" />
