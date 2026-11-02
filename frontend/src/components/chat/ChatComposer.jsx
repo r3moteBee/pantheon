@@ -92,7 +92,7 @@ export default function ChatComposer({
     <>
       {/* Attachment preview bar */}
       {attachments.length > 0 && (
-        <div className="py-2 bg-gray-950 border-t border-gray-800">
+        <div className="py-2 bg-gray-950">
           <div className={`flex flex-wrap gap-2 ${CHAT_COLUMN}`}>
             {attachments.map((file, i) => (
               <AttachmentPill key={i} file={file} onRemove={() => onRemoveAttachment(i)} />
@@ -101,9 +101,8 @@ export default function ChatComposer({
         </div>
       )}
 
-      {/* Input area: the same background as the transcript; one divider
-          above it (on the attachment tray when that shows) */}
-      <div className={`py-4 bg-gray-950 ${attachments.length > 0 ? '' : 'border-t border-gray-800'}`}>
+      {/* Input area: the same background as the transcript, no divider */}
+      <div className="py-4 bg-gray-950">
         {/* Pinned mode: the conversation is held to one class until cleared */}
         {modelClass && modelClass !== 'auto' && (() => {
           const label = modelClass === 'agent' ? 'Agent (tool use)'
