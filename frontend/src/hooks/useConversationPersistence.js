@@ -12,7 +12,7 @@ import { conversationsApi } from '../api/client'
  *   switching projects opens that project's last chat (or a fresh one).
  * - A ?c for a session of another project switches to that project.
  *
- * Mounted once by ChatTabs (all /chat tabs). Leaves the chat mode selector
+ * Mounted once by ChatTabs (all /chat tabs). Leaves the chat mode (/model pin)
  * alone: it only sets the session and its messages.
  */
 

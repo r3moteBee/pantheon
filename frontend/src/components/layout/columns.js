@@ -3,6 +3,6 @@
 // and the input line up at every viewport; parent containers add vertical
 // padding only. Put the gutter on this element in every place, never on one
 // of them only, or the edges drift apart again.
-export const CHAT_COLUMN = 'mx-auto w-full max-w-3xl px-4'
-export const CHAT_COLUMN_MAX = '48rem'   // = Tailwind max-w-3xl (768px)
+export const CHAT_COLUMN = 'mx-auto w-full max-w-4xl px-4'
+export const CHAT_COLUMN_MAX = '56rem'   // = Tailwind max-w-4xl (896px); was 3xl until the composer felt cramped
 export const CHAT_GUTTER = 'px-4'

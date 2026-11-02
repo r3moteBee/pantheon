@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { Send, Square, Paperclip } from 'lucide-react'
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { Send, Square, Paperclip, X } from 'lucide-react'
 import { llmApi } from '../../api/client'
 import SkillPicker from '../SkillPicker'
 import { AttachmentPill } from './Attachments'
@@ -18,18 +18,21 @@ function useMediaQuery(q) {
 }
 // Below the sm breakpoint the long placeholder hint gets cut off mid-word.
 const useNarrow = () => useMediaQuery('(max-width: 639px)')
-// Phone width: the mode picker shows abbreviated labels so "Quick chat"
-// isn't clipped to "Quick ch" (UI review N9); the full label stays in the
-// control's title / aria-label.
-const usePhone = () => useMediaQuery('(max-width: 479px)')
+// Attachment tray + mode chip + input row: attach button, slash-command
+// picker, textarea and send/stop. There is no mode dropdown: Auto routes each
+// turn, and "/model <class>" (listed in the / menu) pins a conversation; the
+// chip shows a pin and clears it.
 
-const shortLabel = (label) => {
-  const first = String(label || '').split(/[\s/–-]+/)[0] || label
-  return first.length > 7 ? first.slice(0, 6) + '…' : first
-}
-
-// Attachment tray + input row: model picker, attach button, skill picker,
-// textarea and send/stop.
+// What the / menu offers for /model: Auto plus every class the router can use.
+const modelCommands = (routeOptions) => [
+  { name: 'model auto', description: 'Let Pantheon pick the mode for each message (default)', tags: ['mode'], command: true },
+  { name: 'model agent', description: 'Pin this conversation to Agent (tool use)', tags: ['mode'], command: true },
+  ...routeOptions.map((c) => ({
+    name: `model ${c.name}`, description: `Pin this conversation to ${c.label || c.name}`, tags: ['mode'], command: true,
+  })),
+]
+// "/model", "/model ", "/model q": still choosing; "/model quick " is done
+const choosingModel = (val) => /^\/model(\s+\S*)?$/.test(val)
 export default function ChatComposer({
   input, setInput, onSend, onStop,
   isStreaming, uploading,
@@ -44,7 +47,6 @@ export default function ChatComposer({
   const textareaRef = useRef(null)
   const fileInputRef = useRef(null)
   const narrow = useNarrow()
-  const phone = usePhone()
 
   useEffect(() => {
     llmApi.getRouter()
@@ -60,6 +62,16 @@ export default function ChatComposer({
     if (!routesLoaded || modelClass === 'auto' || modelClass === 'agent') return
     if (!routeOptions.some((c) => c.name === modelClass)) setModelClass('auto')
   }, [routesLoaded, routeOptions, modelClass, setModelClass])
+
+  // Fit the box to its text whenever the text changes, not only on typing:
+  // clearing it after a send (or filling it from the skill picker) used to
+  // leave the grown height behind, so the empty box stayed several lines tall.
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }, [input])
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || [])
@@ -91,26 +103,31 @@ export default function ChatComposer({
 
       {/* Input area */}
       <div className="py-4 bg-gray-900 border-t border-gray-800">
+        {/* Pinned mode: the conversation is held to one class until cleared */}
+        {modelClass && modelClass !== 'auto' && (() => {
+          const label = modelClass === 'agent' ? 'Agent (tool use)'
+            : (routeOptions.find((c) => c.name === modelClass)?.label || modelClass)
+          return (
+            <div className={`flex mb-2 ${CHAT_COLUMN}`}>
+              <div className="flex">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-800 border border-gray-700 pl-3 pr-1 py-0.5 text-xs text-gray-300">
+                  Mode: <span className="text-gray-100">{label}</span>
+                  <button
+                    type="button"
+                    onClick={() => setModelClass('auto')}
+                    disabled={isStreaming}
+                    title="Back to Auto (Pantheon picks the mode for each message)"
+                    aria-label="Back to Auto mode"
+                    className="ml-1 rounded-full p-0.5 hover:bg-gray-700 disabled:opacity-40"
+                  >
+                    <X className="w-3 h-3" aria-hidden="true" />
+                  </button>
+                </span>
+              </div>
+            </div>
+          )
+        })()}
         <div data-chat-column="composer" className={`flex gap-2 items-end ${CHAT_COLUMN}`}>
-          {/* Model picker — only when the router has somewhere else to send turns */}
-          {routeOptions.length > 0 && (() => {
-            const modes = [['auto', 'Auto'], ['agent', 'Agent'], ...routeOptions.map((c) => [c.name, c.label || c.name])]
-            const current = (modes.find(([v]) => v === modelClass) || modes[0])[1]
-            return (
-              <select
-                value={modelClass}
-                onChange={(e) => setModelClass(e.target.value)}
-                disabled={isStreaming}
-                title={`Chat mode: ${current} (remembered per project). Auto lets the chat router pick per turn; /model <class> works too.`}
-                aria-label={`Chat mode: ${current}`}
-                className="flex-shrink-0 h-12 max-w-[4.5rem] sm:max-w-none bg-gray-800 border border-gray-700 rounded-xl px-2 text-xs text-gray-200 focus:border-brand-500 disabled:opacity-40"
-              >
-                {modes.map(([value, label]) => (
-                  <option key={value} value={value} title={label}>{phone ? shortLabel(label) : label}</option>
-                ))}
-              </select>
-            )
-          })()}
           {/* Attach button */}
           <button
             type="button"
@@ -135,6 +152,7 @@ export default function ChatComposer({
 
           <div className="flex-1 relative">
             <SkillPicker
+              commands={modelCommands(routeOptions)}
               query={skillQuery}
               projectId={projectId}
               visible={showSkillPicker}
@@ -155,10 +173,10 @@ export default function ChatComposer({
               onChange={(e) => {
                 const val = e.target.value
                 setInput(val)
-                // Skill picker only while typing the command name: closes
-                // after a space (so "/skill args" + Enter sends) and for the
-                // built-in /model command.
-                if (val.startsWith('/') && !/\s/.test(val) && val !== '/model') {
+                // Picker only while typing the command name: closes after a
+                // space (so "/skill args" + Enter sends), except that
+                // "/model <class>" stays open until the class is typed.
+                if (val.startsWith('/') && (!/\s/.test(val) || choosingModel(val))) {
                   const afterSlash = val.slice(1)
                   setSkillQuery(afterSlash)
                   setShowSkillPicker(true)
@@ -187,10 +205,6 @@ export default function ChatComposer({
                 minHeight: '48px',
                 maxHeight: '200px',
                 height: 'auto',
-              }}
-              onInput={(e) => {
-                e.target.style.height = 'auto'
-                e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
               }}
             />
           </div>

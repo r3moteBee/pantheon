@@ -64,7 +64,7 @@ The agent can execute multiple tools per turn. *"Search for X, then save a summa
 The web chat understands two kinds of leading `/` command:
 
 - **`/<skill-slug> [args]`** — run an installed skill explicitly (typing `/` opens the skill picker; `_` and `-` are interchangeable).
-- **`/model <class|auto> [message]`** — pin this conversation to a model class: `agent`, `quick`, `code`, `long_context` or `vision`. `/model auto` returns to automatic routing; `/model` alone shows the current pin. The model picker next to the chat input does the same thing. Pins last until the backend restarts, and a class only takes effect if it has its own route under Settings → LLMs → Model routing.
+- **`/model <class|auto> [message]`** — pin this conversation to a model class: `agent`, `quick`, `code`, `long_context` or `vision`. `/model auto` returns to automatic routing; `/model` alone shows the current pin. The `/` menu lists these as `/model …` entries, and while a conversation is pinned a **Mode** chip above the chat input shows it; its × returns to Auto. The pin is remembered per project in the browser. Pins last until the backend restarts, and a class only takes effect if it has its own route under Settings → LLMs → Model routing.
 
 ## 4. Memory
 
