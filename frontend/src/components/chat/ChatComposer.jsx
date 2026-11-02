@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Send, Square, Paperclip } from 'lucide-react'
 import { llmApi } from '../../api/client'
 import SkillPicker from '../SkillPicker'
@@ -60,6 +60,16 @@ export default function ChatComposer({
     if (!routesLoaded || modelClass === 'auto' || modelClass === 'agent') return
     if (!routeOptions.some((c) => c.name === modelClass)) setModelClass('auto')
   }, [routesLoaded, routeOptions, modelClass, setModelClass])
+
+  // Fit the box to its text whenever the text changes, not only on typing:
+  // clearing it after a send (or filling it from the skill picker) used to
+  // leave the grown height behind, so the empty box stayed several lines tall.
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+  }, [input])
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files || [])
@@ -187,10 +197,6 @@ export default function ChatComposer({
                 minHeight: '48px',
                 maxHeight: '200px',
                 height: 'auto',
-              }}
-              onInput={(e) => {
-                e.target.style.height = 'auto'
-                e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
               }}
             />
           </div>
