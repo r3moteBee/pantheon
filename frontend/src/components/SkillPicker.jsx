@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Zap } from 'lucide-react'
+import { Zap, SlidersHorizontal } from 'lucide-react'
 import { skillsApi, mcpApi } from '../api/client'
 
 /**
@@ -11,8 +11,10 @@ import { skillsApi, mcpApi } from '../api/client'
  *   onSelect   - Called with skill name when user picks one
  *   onClose    - Called when the picker should be dismissed
  *   visible    - Whether the picker is shown
+ *   commands   - Built-in commands listed before the skills, e.g.
+ *                { name: 'model quick', description, tags, command: true }
  */
-export default function SkillPicker({ query, projectId, onSelect, onClose, visible }) {
+export default function SkillPicker({ query, projectId, onSelect, onClose, visible, commands = [] }) {
   const [skills, setSkills] = useState([])
   const [filtered, setFiltered] = useState([])
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -33,14 +35,16 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
     }
   }, [visible, projectId])
 
-  // Filter by query
+  // Filter by query; built-in commands first
+  const commandKey = commands.map((c) => c.name).join('|')
   useEffect(() => {
+    const all = [...commands, ...skills]
     if (!query) {
-      setFiltered(skills)
+      setFiltered(all)
     } else {
       const q = query.toLowerCase()
       setFiltered(
-        skills.filter(
+        all.filter(
           (s) =>
             s.name.toLowerCase().includes(q) ||
             s.description?.toLowerCase().includes(q) ||
@@ -49,7 +53,7 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
       )
     }
     setSelectedIndex(0)
-  }, [query, skills])
+  }, [query, skills, commandKey])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard navigation
   useEffect(() => {
@@ -92,11 +96,11 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
       <div
         ref={listRef}
         role="listbox"
-        aria-label="Skills"
+        aria-label="Commands and skills"
         className="bg-gray-800 border border-gray-700 rounded-lg shadow-xl max-h-64 overflow-y-auto scrollbar-thin"
       >
         <div className="px-3 py-1.5 text-xs text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
-          Skills and MCP prompts — type to filter, ↑↓ to navigate, Enter to select, Esc to dismiss
+          Commands, skills and MCP prompts — type to filter, ↑↓ to navigate, Enter to select, Esc to dismiss
         </div>
         {filtered.map((skill, i) => (
           <button
@@ -108,7 +112,10 @@ export default function SkillPicker({ query, projectId, onSelect, onClose, visib
               i === selectedIndex ? 'bg-brand-900/50' : 'hover:bg-gray-750'
             }`}
           >
-            <Zap className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${i === selectedIndex ? 'text-brand-400' : 'text-gray-400'}`} />
+            {(() => {
+              const Icon = skill.command ? SlidersHorizontal : Zap
+              return <Icon className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${i === selectedIndex ? 'text-brand-400' : 'text-gray-400'}`} />
+            })()}
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className={`text-xs font-medium font-mono ${i === selectedIndex ? 'text-brand-300' : 'text-gray-300'}`}>

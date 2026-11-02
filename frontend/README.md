@@ -74,7 +74,7 @@ src/
 
 **Settings → About you** (`AboutYouSettings.jsx`) edits the user's profile, reply length and formatting per chat app, and writing voices with their samples (`/api/about-you`, `/api/writing-voices`).
 
-**Settings → LLMs** renders the `components/settings/` stack: endpoints (add, Probe for models), **Model routing** (ordered models per task class, capability badges, profile editor), **Chat router** (per-turn class selection), **Model usage**, and **Routing tuning**. All of it talks to `/api/llm/*` via `llmApi`. In chat, `/model <class|auto>` or the input's model picker pins a class for the session.
+**Settings → LLMs** renders the `components/settings/` stack: endpoints (add, Probe for models), **Model routing** (ordered models per task class, capability badges, profile editor), **Chat router** (per-turn class selection), **Model usage**, and **Routing tuning**. All of it talks to `/api/llm/*` via `llmApi`. In chat, `/model <class|auto>` (listed in the `/` menu) pins a class for the session; a Mode chip above the input shows the pin and clears it.
 
 ## Lazy loading
 

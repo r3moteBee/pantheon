@@ -138,7 +138,8 @@ workspace. Both, and the git_* tools, only exist in the web chat (AGENT_HOST_EXE
 embed, rerank) routed to a configured endpoint/model with fallbacks. In web chat a router picks the class per turn
 (quick for short no-tool messages, code for coding, vision for images the agent model can't see, else agent); the
 model that answered is shown under each reply. The user pins one with `/model <agent|quick|code|long_context|vision|auto>`
-or the model picker next to the chat input; routes are set in Settings -> LLMs.
+(also listed in the chat's / menu; a Mode chip above the input shows the pin, its x returns to auto); routes are set
+in Settings -> LLMs.
 
 **GitHub.** Needs a personal access token (Connections page -> GitHub) and a repo bound to the project (the chat's
 Repository tab). Then the `github` tool reads the repo, and `github(action="push_artifacts")` commits an artifact folder
