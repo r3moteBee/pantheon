@@ -18,8 +18,8 @@ function useMediaQuery(q) {
 }
 // Below the sm breakpoint the long placeholder hint gets cut off mid-word.
 const useNarrow = () => useMediaQuery('(max-width: 639px)')
-// Attachment tray + mode chip + input row: attach button, slash-command
-// picker, textarea and send/stop. There is no mode dropdown: Auto routes each
+// Attachment tray + mode chip + input row: slash-command picker, textarea
+// (with the attach button inside it) and send/stop. There is no mode dropdown: Auto routes each
 // turn, and "/model <class>" (listed in the / menu) pins a conversation; the
 // chip shows a pin and clears it.
 
@@ -128,29 +128,28 @@ export default function ChatComposer({
           )
         })()}
         <div data-chat-column="composer" className={`flex gap-2 items-end ${CHAT_COLUMN}`}>
-          {/* Attach button */}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isStreaming || uploading}
-            title="Attach files (uploaded to the workspace and indexed into memory)"
-            aria-label="Attach files"
-            className="flex-shrink-0 w-10 h-12 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 rounded-xl flex items-center justify-center transition-colors"
-          >
-            <Paperclip className="w-4 h-4" aria-hidden="true" />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            tabIndex={-1}
-            aria-hidden="true"
-            onChange={handleFileSelect}
-            className="hidden"
-            accept="*/*"
-          />
-
           <div className="flex-1 relative">
+            {/* Attach button, inside the text box at its bottom-left corner */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isStreaming || uploading}
+              title="Attach files (uploaded to the workspace and indexed into memory)"
+              aria-label="Attach files"
+              className="absolute left-1 bottom-1 z-10 w-9 h-10 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 rounded-lg flex items-center justify-center transition-colors"
+            >
+              <Paperclip className="w-4 h-4" aria-hidden="true" />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={handleFileSelect}
+              className="hidden"
+              accept="*/*"
+            />
             <SkillPicker
               commands={modelCommands(routeOptions)}
               query={skillQuery}
@@ -200,7 +199,7 @@ export default function ChatComposer({
               aria-label="Message the agent (Enter to send, Shift+Enter for a new line)"
               rows={1}
               disabled={isStreaming || uploading}
-              className="w-full resize-none bg-gray-800 border border-gray-700 rounded-xl px-3 sm:px-4 py-3 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
+              className="block w-full resize-none bg-gray-800 border border-gray-700 rounded-xl pl-11 pr-3 sm:pr-4 py-3 text-sm text-gray-100 focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:opacity-50 scrollbar-thin"
               style={{
                 minHeight: '48px',
                 maxHeight: '200px',
